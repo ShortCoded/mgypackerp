@@ -1,0 +1,86 @@
+<?php
+
+return [
+    'title' => 'إعدادات تطبيق الويب',
+    'subtitle' => 'إدارة شكل نظام ERP عند تثبيته على الهاتف أو الجهاز اللوحي أو سطح المكتب.',
+    'defaults' => [
+        'description' => 'تطبيق شورت كوديد ERP.',
+    ],
+    'sections' => [
+        'availability' => 'تفعيل تطبيق الويب',
+        'identity' => 'هوية التطبيق',
+        'behavior' => 'سلوك التطبيق',
+        'manifest' => 'بيانات تقنية للتطبيق',
+        'icons' => 'أيقونات التطبيق',
+        'offline' => 'صفحة عدم الاتصال',
+    ],
+    'icons' => [
+        'current_icon' => 'الأيقونة الحالية',
+        'default_icon' => 'الأيقونة الافتراضية',
+        'selected_icon' => 'الأيقونة المختارة',
+    ],
+    'fields' => [
+        'enabled' => 'تفعيل تطبيق الويب',
+        'app_name' => 'اسم التطبيق',
+        'short_name' => 'الاسم المختصر',
+        'description' => 'الوصف',
+        'start_url' => 'رابط البدء',
+        'scope' => 'النطاق',
+        'display' => 'طريقة العرض',
+        'orientation' => 'الإتجاه',
+        'theme_color' => 'لون السمة',
+        'background_color' => 'لون الخلفية',
+        'locale' => 'اللغة / الإعداد المحلي',
+        'direction' => 'إتجاه النص',
+        'service_worker_enabled' => 'تفعيل Service Worker',
+        'offline_enabled' => 'تفعيل صفحة عدم الاتصال',
+        'offline_title' => 'عنوان صفحة عدم الاتصال',
+        'offline_message' => 'رسالة صفحة عدم الاتصال',
+        'cache_name' => 'اسم التخزين المؤقت',
+        'icon_192' => 'أيقونة 192x192',
+        'icon_512' => 'أيقونة 512x512',
+        'icon_maskable' => 'أيقونة Maskable',
+        'apple_touch_icon' => 'أيقونة Apple touch',
+    ],
+    'display_modes' => [
+        'standalone' => 'مستقل',
+        'fullscreen' => 'ملء الشاشة',
+        'minimal-ui' => 'واجهة مختصرة',
+        'browser' => 'المتصفح',
+    ],
+    'orientations' => [
+        'any' => 'تلقائي',
+        'portrait' => 'رأسي',
+        'landscape' => 'أفقي',
+    ],
+    'directions' => [
+        'auto' => 'تلقائي',
+        'rtl' => 'من اليمين لليسار',
+        'ltr' => 'من اليسار لليمين',
+    ],
+    'actions' => [
+        'save' => 'حفظ إعدادات تطبيق الويب',
+        'choose_icon' => 'اختيار أيقونة',
+        'replace_icon' => 'استبدال الأيقونة',
+        'remove_icon' => 'حذف الأيقونة الحالية',
+    ],
+    'help' => [
+        'availability' => 'عند التفعيل يمكن للمستخدمين تثبيت نظام ERP من المتصفحات المدعومة.',
+        'icon_192' => 'تستخدمها المتصفحات للأيقونات الصغيرة للتطبيق المثبت.',
+        'icon_512' => 'تستخدمها المتصفحات للأيقونات الكبيرة للتطبيق المثبت.',
+        'icon_maskable' => 'تستخدمها المشغلات المدعومة عند قص الأيقونة حسب شكل الجهاز.',
+        'apple_touch_icon' => 'تستخدم لأيقونة الشاشة الرئيسية على iOS.',
+    ],
+    'offline' => [
+        'default_title' => 'أنت غير متصل',
+        'default_message' => 'تعذر على نظام ERP الوصول إلى الخادم. تحقق من الاتصال وحاول مرة أخرى.',
+    ],
+    'messages' => [
+        'updated' => 'تم تحديث إعدادات تطبيق الويب بنجاح.',
+    ],
+    'validation' => [
+        'selected_file_not_image' => 'الملف المحدد ليس صورة.',
+        'selected_file_unavailable' => 'الملف المحدد غير متاح ضمن الشركة الحالية.',
+        'selected_file_hidden_from_picker' => 'لا يمكن اختيار هذا الملف لأنه مخفي من نافذة الاختيار.',
+    ],
+];

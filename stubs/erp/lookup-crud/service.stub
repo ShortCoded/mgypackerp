@@ -1,0 +1,7 @@
+<?php
+
+namespace Modules\{{ module }}\Services;
+
+use Modules\HR\Services\HrLookupService;
+
+class {{ service }} extends HrLookupService {}

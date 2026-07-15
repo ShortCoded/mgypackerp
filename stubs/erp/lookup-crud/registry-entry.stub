@@ -1,0 +1,11 @@
+            '{{ routeKey }}' => new HrLookupDefinition(
+                key: '{{ routeKey }}',
+                routeKey: '{{ routeKey }}',
+                documentKey: '{{ docKey }}',
+                permissionPrefix: '{{ permissionPrefix }}',
+                table: '{{ table }}',
+                modelClass: {{ model }}::class,
+                translationKey: '{{ translationArrayKey }}',
+                viewPath: 'modules.hr.lookups',
+                jsNamespace: '{{ jsNamespace }}',
+            ),

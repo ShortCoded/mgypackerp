@@ -1,0 +1,126 @@
+<?php
+
+/**
+ * Human Resources navigation and permission discovery.
+ *
+ * @return list<array<string, mixed>>
+ */
+$hrCrudActions = static function (string $prefix): array {
+    return [
+        'view' => "{$prefix}.view",
+        'create' => "{$prefix}.create",
+        'clone' => "{$prefix}.clone",
+        'edit' => "{$prefix}.edit",
+        'delete' => "{$prefix}.delete",
+        'view_trashed' => "{$prefix}.view_trashed",
+        'restore' => "{$prefix}.restore",
+        'document_number_control' => "{$prefix}.document_number.control",
+        'document_number_settings_update' => "{$prefix}.document_number_settings.update",
+    ];
+};
+
+$hrScreen = static function (
+    string $label,
+    string $title,
+    string $routeKey,
+    string $permissionPrefix,
+    string $icon,
+    array $keywords = [],
+    array $extraActions = [],
+) use ($hrCrudActions): array {
+    return [
+        'label' => $label,
+        'title' => $title,
+        'icon' => $icon,
+        'route' => "admin.hr.{$routeKey}.index",
+        'permission' => "{$permissionPrefix}.view",
+        'keywords' => $keywords,
+        'actions' => [
+            ...$hrCrudActions($permissionPrefix),
+            ...$extraActions,
+        ],
+        'active' => [
+            "admin.hr.{$routeKey}.*",
+        ],
+        'children' => [],
+    ];
+};
+
+$legacyReviewScreens = [
+    $hrScreen('hr_allowances', 'Allowances', 'allowances', 'hr.allowances', 'plus-circle', ['allowances', 'بدلات']),
+    $hrScreen('hr_areas', 'Areas', 'areas', 'hr.areas', 'map-marker-alt', ['areas', 'locations', 'المناطق']),
+    $hrScreen('hr_cities', 'Cities', 'cities', 'hr.cities', 'city', ['cities', 'city', 'المدن']),
+    $hrScreen('hr_countries', 'Countries', 'countries', 'hr.countries', 'globe', ['countries', 'country', 'الدول']),
+    $hrScreen('hr_faculties', 'Faculties', 'faculties', 'hr.faculties', 'university', ['faculties', 'الكليات']),
+    $hrScreen('hr_governorates', 'Governorates', 'governorates', 'hr.governorates', 'map', ['governorates', 'المحافظات']),
+    $hrScreen('hr_grades', 'Grades', 'grades', 'hr.grades', 'layer-group', ['grades', 'الدرجات الوظيفية']),
+    $hrScreen('hr_hiring_statuses', 'Hiring Statuses', 'hiring-statuses', 'hr.hiring_statuses', 'user-check', ['hiring statuses', 'حالات التعيين']),
+    $hrScreen('hr_identifications', 'Identifications', 'identifications', 'hr.identifications', 'id-card', ['identifications', 'identity', 'الهويات']),
+    $hrScreen('hr_military_services', 'Military Services', 'military-services', 'hr.military_services', 'medal', ['military services', 'الموقف من التجنيد']),
+    $hrScreen('hr_nationalities', 'Nationalities', 'nationalities', 'hr.nationalities', 'flag', ['nationalities', 'الجنسيات']),
+    $hrScreen('hr_qualifications', 'Qualifications', 'qualifications', 'hr.qualifications', 'graduation-cap', ['qualifications', 'المؤهلات']),
+    $hrScreen('hr_religions', 'Religions', 'religions', 'hr.religions', 'star-and-crescent', ['religions', 'الديانات']),
+    $hrScreen('hr_specializations', 'Specializations', 'specializations', 'hr.specializations', 'certificate', ['specializations', 'التخصصات']),
+    $hrScreen('hr_universities', 'Universities', 'universities', 'hr.universities', 'university', ['universities', 'الجامعات']),
+];
+
+return [
+    [
+        'label' => 'human_resources',
+        'title' => 'Human Resources',
+        'icon' => 'users',
+        'route' => null,
+        'permission' => null,
+        'keywords' => ['hr', 'human resources', 'employees', 'الموارد البشرية', 'الموظفون'],
+        'active' => [
+            'admin.hr.employees.*',
+            'admin.hr.departments.*',
+            'admin.hr.sections.*',
+            'admin.hr.jobs.*',
+            'admin.hr.employment-types.*',
+            'admin.hr.document-types.*',
+            'admin.hr.shifts.*',
+            'admin.hr.biometric-devices.*',
+            'admin.hr.insurance-offices.*',
+            'admin.hr.allowances.*',
+            'admin.hr.areas.*',
+            'admin.hr.cities.*',
+            'admin.hr.countries.*',
+            'admin.hr.faculties.*',
+            'admin.hr.governorates.*',
+            'admin.hr.grades.*',
+            'admin.hr.hiring-statuses.*',
+            'admin.hr.identifications.*',
+            'admin.hr.military-services.*',
+            'admin.hr.nationalities.*',
+            'admin.hr.qualifications.*',
+            'admin.hr.religions.*',
+            'admin.hr.specializations.*',
+            'admin.hr.universities.*',
+        ],
+        'children' => [
+            $hrScreen(
+                'hr_employees',
+                'Employees',
+                'employees',
+                'hr.employees',
+                'user-tie',
+                ['employees', 'staff', 'people', 'labor', 'الموظفون', 'الأفراد', 'العمالة'],
+                [
+                    'documents_view' => 'hr.employees.documents.view',
+                    'documents_manage' => 'hr.employees.documents.manage',
+                    'documents_delete' => 'hr.employees.documents.delete',
+                ],
+            ),
+            $hrScreen('hr_departments', 'Departments', 'departments', 'hr.departments', 'building', ['departments', 'الإدارات']),
+            $hrScreen('hr_sections', 'Job Sections', 'sections', 'hr.sections', 'sitemap', ['job sections', 'sections', 'الأقسام الوظيفية']),
+            $hrScreen('hr_jobs', 'Jobs', 'jobs', 'hr.jobs', 'briefcase', ['jobs', 'الوظائف']),
+            $hrScreen('hr_employment_types', 'Job Types', 'employment-types', 'hr.employment_types', 'id-badge', ['job types', 'employment types', 'أنواع الوظائف']),
+            $hrScreen('hr_biometric_devices', 'Attendance Devices', 'biometric-devices', 'hr.biometric_devices', 'fingerprint', ['attendance devices', 'biometric', 'devices', 'fingerprint', 'أجهزة البصمة']),
+            $hrScreen('hr_shifts', 'Work Shifts', 'shifts', 'hr.shifts', 'clock', ['work shifts', 'shifts', 'work times', 'الورديات']),
+            $hrScreen('hr_document_types', 'Employee Document Types', 'document-types', 'hr.document_types', 'file-alt', ['employee document types', 'documents', 'أنواع مستندات الموظفين']),
+            $hrScreen('hr_insurance_offices', 'Insurance Offices', 'insurance-offices', 'hr.insurance_offices', 'shield-alt', ['insurance offices', 'insurance', 'مكاتب التأمين']),
+            ...$legacyReviewScreens,
+        ],
+    ],
+];

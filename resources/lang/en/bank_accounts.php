@@ -1,0 +1,10 @@
+<?php
+
+return [
+    'title' => 'Bank Accounts', 'singular' => 'Bank Account', 'create' => 'Create Bank Account', 'edit' => 'Edit Bank Account', 'view' => 'View Bank Account', 'clone' => 'Clone Bank Account',
+    'attributes' => ['doc_number' => 'Document Number', 'doc_num' => 'Document Number', 'bank' => 'Bank', 'currency' => 'Currency', 'bank_name' => 'Bank Name', 'account_name' => 'Account Name', 'account_number' => 'Account Number', 'iban' => 'IBAN', 'swift_code' => 'SWIFT Code', 'owner_name' => 'Owner', 'bank_branch_name' => 'Bank Branch', 'status' => 'Status', 'notes' => 'Notes'],
+    'actions' => ['add_bank' => 'Add Bank'],
+    'messages' => ['created' => 'Bank account created successfully.', 'updated' => 'Bank account updated successfully.', 'deleted' => 'Bank account deleted successfully.', 'bulk_deleted' => ':count bank accounts deleted successfully.', 'restored' => 'Bank account restored successfully.', 'bank_created' => 'Bank created successfully', 'account_outside_bank_accounts' => 'Please select a bank from the chart of accounts.', 'account_used' => 'A bank account with the same details already exists.', 'doc_number_unique' => 'Document number already exists.', 'account_number_used' => 'This bank account number is already used by another bank account.', 'iban_used' => 'This IBAN is already used by another bank account.', 'currency_inactive' => 'Currency must be active.', 'restore_conflict' => 'This bank account is already linked to another active record.', 'linked_account_missing' => 'The linked chart account is missing and cannot be restored automatically.', 'main_bank_parent_missing' => 'The main Banks account is missing from Chart of Accounts.', 'child_account_failed' => 'Could not create the bank account in the chart of accounts.', 'child_account_notice' => 'A postable child bank account will be created under the selected bank.'],
+    'js' => ['bankCreated' => 'Bank created successfully'],
+    'document_number_settings' => ['updated_successfully' => 'Bank account document number settings updated successfully.'],
+];

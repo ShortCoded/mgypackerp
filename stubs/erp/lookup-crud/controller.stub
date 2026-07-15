@@ -1,0 +1,51 @@
+<?php
+
+namespace Modules\{{ module }}\Http\Controllers;
+
+use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Modules\{{ module }}\DataTables\{{ dataTable }};
+use Modules\{{ module }}\Models\{{ model }};
+use Modules\HR\Http\Controllers\HrLookupController;
+use Modules\HR\Http\Requests\UpdateHrLookupRequest;
+use Modules\HR\Services\HrLookupDefinition;
+use Modules\HR\Services\HrLookupRegistry;
+
+class {{ controller }} extends HrLookupController
+{
+    public function data(Request $request, {{ dataTable }} $dataTable): JsonResponse
+    {
+        return $dataTable->json($request);
+    }
+
+    public function show(Request $request, {{ model }} ${{ routeParameter }}): View
+    {
+        return $this->showRecord($request, ${{ routeParameter }});
+    }
+
+    public function edit({{ model }} ${{ routeParameter }}): View
+    {
+        return $this->editRecord(${{ routeParameter }});
+    }
+
+    public function clone({{ model }} ${{ routeParameter }}): View
+    {
+        return $this->cloneRecord(${{ routeParameter }});
+    }
+
+    public function update(UpdateHrLookupRequest $request, {{ model }} ${{ routeParameter }}): JsonResponse
+    {
+        return $this->updateRecord($request, ${{ routeParameter }});
+    }
+
+    public function destroy(Request $request, {{ model }} ${{ routeParameter }}): JsonResponse
+    {
+        return $this->destroyRecord($request, ${{ routeParameter }});
+    }
+
+    protected function definition(): HrLookupDefinition
+    {
+        return app(HrLookupRegistry::class)->get('{{ routeKey }}');
+    }
+}

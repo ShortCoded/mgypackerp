@@ -1,0 +1,77 @@
+.erp-calendar-card #erpCalendar {
+  block-size: calc(100vh - 12.4rem) !important;
+  min-block-size: 36rem;
+}
+
+.erp-calendar-modal .modal-content,
+.erp-calendar-details-modal .modal-content {
+  overflow: hidden;
+}
+
+.erp-calendar-modal form {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  max-block-size: 100%;
+}
+
+.erp-calendar-modal .modal-body,
+.erp-calendar-details-modal .modal-body {
+  background-color: var(--falcon-body-bg);
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.erp-calendar-modal .modal-footer,
+.erp-calendar-details-modal .modal-footer {
+  flex-shrink: 0;
+}
+
+.calendar-event-section {
+  padding: 1rem;
+  margin-block-end: 1rem;
+  border: 1px solid var(--falcon-border-color);
+  border-radius: .5rem;
+  background-color: var(--falcon-body-bg);
+}
+
+.calendar-event-section-title {
+  margin-block-end: .85rem;
+  color: var(--falcon-gray-700);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+html[dir="rtl"] .calendar-event-section-title {
+  text-transform: none;
+}
+
+.calendar-detail-item {
+  display: flex;
+  gap: .75rem;
+  margin-block-start: 1rem;
+}
+
+.calendar-detail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 2rem;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 50%;
+  color: var(--falcon-primary);
+  background-color: var(--falcon-gray-200);
+}
+
+.calendar-detail-description {
+  white-space: pre-wrap;
+}
+
+@media (max-width: 575.98px) {
+  .erp-calendar-card #erpCalendar {
+    min-block-size: 32rem;
+  }
+}

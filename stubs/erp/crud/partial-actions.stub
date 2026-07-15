@@ -1,0 +1,53 @@
+@php
+    $isTrashed = ${{ variable }}->trashed();
+    $canView = auth()->user()?->can('{{ permissionPrefix }}.view') && ${{ variable }}->doc_num !== null;
+    $canClone = ! $isTrashed && auth()->user()?->can('{{ permissionPrefix }}.clone') && ${{ variable }}->doc_num !== null;
+    $canRestore = $isTrashed && auth()->user()?->can('{{ permissionPrefix }}.restore') && ${{ variable }}->doc_num !== null;
+@endphp
+
+@if ((! $isTrashed && ($canView || auth()->user()?->can('{{ permissionPrefix }}.edit') || $canClone || auth()->user()?->can('{{ permissionPrefix }}.delete'))) || ($isTrashed && ($canView || $canRestore)))
+    <div class="dropstart font-sans-serif position-static d-inline-block">
+        <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal float-end" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-haspopup="true" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}">
+            <span class="fas fa-ellipsis-h fs-10"></span>
+        </button>
+        <div class="py-2 border dropdown-menu dropdown-menu-end">
+            @if ($isTrashed)
+                @if ($canView)
+                    <a class="dropdown-item" href="{{ route('{{ routePrefix }}.show', ${{ variable }}->doc_num) }}" data-doc-num="{{ ${{ variable }}->doc_num }}">
+                        {{ __('common.actions.view') }}
+                    </a>
+                @endif
+                @if ($canRestore)
+                    @if ($canView)
+                        <div class="dropdown-divider"></div>
+                    @endif
+                    <button type="button" class="dropdown-item text-success js-restore-record" data-doc-num="{{ ${{ variable }}->doc_num }}" data-record-name="{{ ${{ variable }}->{{ displayField }} }}" data-restore-url="{{ route('{{ routePrefix }}.restore', ${{ variable }}->doc_num) }}" data-{{ kebabSingular }}-restore-url="{{ route('{{ routePrefix }}.restore', ${{ variable }}->doc_num) }}">
+                        {{ __('common.actions.restore') }}
+                    </button>
+                @endif
+            @else
+                @if ($canView)
+                    <a class="dropdown-item" href="{{ route('{{ routePrefix }}.show', ${{ variable }}->doc_num) }}" data-doc-num="{{ ${{ variable }}->doc_num }}">
+                        {{ __('common.actions.view') }}
+                    </a>
+                @endif
+                @can('{{ permissionPrefix }}.edit')
+                    <a class="dropdown-item js-edit-record" href="{{ route('{{ routePrefix }}.edit', ${{ variable }}->doc_num) }}" data-doc-num="{{ ${{ variable }}->doc_num }}">
+                        {{ __('common.actions.edit') }}
+                    </a>
+                @endcan
+                @if ($canClone)
+                    <a class="dropdown-item js-clone-record" href="{{ route('{{ routePrefix }}.clone', ${{ variable }}->doc_num) }}" data-doc-num="{{ ${{ variable }}->doc_num }}">
+                        {{ __('common.actions.clone_record') }}
+                    </a>
+                @endif
+                @can('{{ permissionPrefix }}.delete')
+                    <div class="dropdown-divider"></div>
+                    <button type="button" class="dropdown-item text-danger js-delete-record" data-doc-num="{{ ${{ variable }}->doc_num }}" data-record-name="{{ ${{ variable }}->{{ displayField }} }}" data-delete-url="{{ route('{{ routePrefix }}.destroy', ${{ variable }}->doc_num) }}" data-{{ kebabSingular }}-delete-url="{{ route('{{ routePrefix }}.destroy', ${{ variable }}->doc_num) }}">
+                        {{ __('common.actions.delete') }}
+                    </button>
+                @endcan
+            @endif
+        </div>
+    </div>
+@endif

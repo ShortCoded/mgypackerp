@@ -1,0 +1,38 @@
+<?php
+
+return [
+    'title' => 'Finance',
+    'statuses' => ['active' => 'Active', 'inactive' => 'Inactive'],
+    'trash' => ['filter_label' => 'Trash', 'active' => 'Active', 'trashed' => 'Trashed', 'all' => 'All'],
+    'select_all' => 'Select all records',
+    'bulk_action' => 'Bulk action',
+    'columns' => [
+        'doc_num' => 'Document Number', 'bank' => 'Bank', 'generated_account' => 'Generated Account', 'bank_name' => 'Bank Name', 'account_name' => 'Account Name', 'account' => 'Accounting Account',
+        'currency' => 'Currency', 'account_number' => 'Account Number', 'iban' => 'IBAN', 'status' => 'Status',
+        'created_by' => 'Created By', 'created_at' => 'Created At', 'updated_by' => 'Updated By', 'updated_at' => 'Updated At',
+        'approved_by' => 'Approved By', 'approved_at' => 'Approved At',
+        'name' => 'Name', 'branch' => 'Branch', 'currencies_summary' => 'Currencies',
+        'company' => 'Company', 'financial_period' => 'Financial Period', 'document_date' => 'Document Date', 'voucher_date' => 'Voucher Date',
+        'debit_amount' => 'Debit', 'credit_amount' => 'Credit', 'total_debit' => 'Total Debit', 'total_credit' => 'Total Credit', 'state' => 'State',
+        'bank_account' => 'Bank Account', 'payee_name' => 'Payee', 'amount' => 'Amount', 'cheque_date' => 'Cheque Date', 'cheque_serial' => 'Cheque No.',
+        'cheque_type' => 'Cheque Type', 'cheque_number' => 'Cheque No.', 'party' => 'Party', 'external_bank_name' => 'External Bank',
+        'exchange_rate' => 'Exchange Rate', 'distributed_amount' => 'Distributed', 'remaining_amount' => 'Remaining', 'due_date' => 'Due Date',
+        'transfer_date' => 'Transfer Date', 'source' => 'Source', 'source_currency' => 'Source Currency', 'source_amount' => 'Source Amount',
+        'target' => 'Target', 'target_currency' => 'Target Currency', 'target_amount' => 'Target Amount', 'cashbox' => 'Cashbox', 'person_name' => 'Person Name', 'person_national_id' => 'National ID', 'person_phone' => 'Phone Number', 'reason' => 'Reason / Purpose',
+    ],
+    'js' => [
+        'deleteConfirmTitle' => 'Delete record?', 'deleteConfirmText' => 'This record will be moved to trash.', 'deleteConfirmYes' => 'Yes, delete',
+        'bulkDeleteConfirmTitle' => 'Delete selected records?', 'bulkDeleteConfirmText' => 'Selected records will be moved to trash.', 'bulkDeleteConfirmYes' => 'Yes, delete selected',
+        'restoreConfirmTitle' => 'Restore record?', 'restoreConfirmText' => 'This record will be restored.', 'restoreConfirmYes' => 'Restore',
+        'cancel' => 'Cancel',
+        'noRowsSelected' => 'Please select at least one record.',
+        'noActionSelected' => 'Please select an action.',
+        'bulkApproveConfirmTitle' => 'Approve selected records',
+        'bulkApproveConfirmText' => 'Do you want to approve the selected records?',
+        'bulkApproveConfirmYes' => 'Approve',
+        'noChanges' => 'No changes were detected.',
+        'unexpectedError' => 'Unexpected error occurred.',
+        'validationFailed' => 'Please review the highlighted fields.',
+        'saved' => 'Saved successfully.',
+    ],
+];

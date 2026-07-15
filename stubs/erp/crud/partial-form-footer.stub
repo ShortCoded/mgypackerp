@@ -1,0 +1,3 @@
+<div class="card-footer">
+    @include('{{ viewPath }}.partials.form-actions', ['class' => '{{ kebabSingular }}-form-actions-footer'])
+</div>

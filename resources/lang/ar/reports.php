@@ -1,0 +1,24 @@
+<?php
+
+return [
+    'apply_filter' => 'تطبيق الفلتر',
+    'apply_filters' => 'تطبيق الفلاتر',
+    'company' => 'الشركة',
+    'details' => 'التفاصيل',
+    'details_load_failed' => 'تعذر تحميل تفاصيل التقرير.',
+    'export' => 'تصدير',
+    'export_csv' => 'تصدير CSV',
+    'export_excel' => 'تصدير Excel',
+    'export_pdf' => 'تصدير PDF',
+    'filters' => 'الفلاتر',
+    'from_date' => 'من تاريخ',
+    'generated_by' => 'تم الإنشاء بواسطة',
+    'no_data' => 'لا توجد بيانات',
+    'page' => 'صفحة',
+    'pdf_limited' => 'تم تحديد ملف PDF بأول 500 سجل مطابق. استخدم الفلاتر لتقرير أضيق.',
+    'print_date' => 'تاريخ الطباعة',
+    'refresh' => 'تحديث',
+    'report_title' => 'عنوان التقرير',
+    'reset' => 'إعادة تعيين',
+    'to_date' => 'إلى تاريخ',
+];

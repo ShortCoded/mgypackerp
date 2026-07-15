@@ -1,0 +1,38 @@
+<?php
+
+return [
+    'title' => 'المالية',
+    'statuses' => ['active' => 'نشط', 'inactive' => 'غير نشط'],
+    'trash' => ['filter_label' => 'السجلات', 'active' => 'النشطة', 'trashed' => 'المحذوفة', 'all' => 'الكل'],
+    'select_all' => 'تحديد كل السجلات',
+    'bulk_action' => 'إجراء جماعي',
+    'columns' => [
+        'doc_num' => 'رقم المستند', 'bank' => 'البنك', 'generated_account' => 'الحساب المنشأ', 'bank_name' => 'اسم البنك', 'account_name' => 'اسم الحساب', 'account' => 'الحساب المحاسبي',
+        'currency' => 'العملة', 'account_number' => 'رقم الحساب', 'iban' => 'IBAN', 'status' => 'الحالة',
+        'created_by' => 'أنشئ بواسطة', 'created_at' => 'تاريخ الإنشاء', 'updated_by' => 'حدث بواسطة', 'updated_at' => 'تاريخ التحديث',
+        'approved_by' => 'اعتمد بواسطة', 'approved_at' => 'تاريخ الاعتماد',
+        'name' => 'الاسم', 'branch' => 'الفرع', 'currencies_summary' => 'العملات',
+        'company' => 'الشركة', 'financial_period' => 'الفترة المالية', 'document_date' => 'تاريخ المستند', 'voucher_date' => 'تاريخ السند',
+        'debit_amount' => 'مدين', 'credit_amount' => 'دائن', 'total_debit' => 'إجمالي المدين', 'total_credit' => 'إجمالي الدائن', 'state' => 'الحالة',
+        'bank_account' => 'الحساب البنكي', 'payee_name' => 'المستفيد', 'amount' => 'المبلغ', 'cheque_date' => 'تاريخ الشيك', 'cheque_serial' => 'رقم الشيك',
+        'cheque_type' => 'نوع الشيك', 'cheque_number' => 'رقم الشيك', 'party' => 'الطرف', 'external_bank_name' => 'البنك الخارجي',
+        'exchange_rate' => 'سعر الصرف', 'distributed_amount' => 'الموزع', 'remaining_amount' => 'المتبقي', 'due_date' => 'تاريخ الاستحقاق',
+        'transfer_date' => 'تاريخ التحويل', 'source' => 'المصدر', 'source_currency' => 'عملة المصدر', 'source_amount' => 'مبلغ المصدر',
+        'target' => 'الهدف', 'target_currency' => 'عملة الهدف', 'target_amount' => 'مبلغ الهدف', 'cashbox' => 'الخزنة', 'person_name' => 'اسم الشخص', 'person_national_id' => 'الرقم القومي', 'person_phone' => 'رقم الهاتف', 'reason' => 'السبب / الغرض',
+    ],
+    'js' => [
+        'deleteConfirmTitle' => 'حذف السجل؟', 'deleteConfirmText' => 'سيتم نقل السجل إلى سلة المحذوفات.', 'deleteConfirmYes' => 'نعم، احذف',
+        'bulkDeleteConfirmTitle' => 'حذف السجلات المحددة؟', 'bulkDeleteConfirmText' => 'سيتم نقل السجلات المحددة إلى سلة المحذوفات.', 'bulkDeleteConfirmYes' => 'نعم، احذف المحدد',
+        'restoreConfirmTitle' => 'استعادة السجل؟', 'restoreConfirmText' => 'سيتم استعادة هذا السجل.', 'restoreConfirmYes' => 'استعادة',
+        'cancel' => 'إلغاء',
+        'noRowsSelected' => 'يرجى تحديد سجل واحد على الأقل.',
+        'noActionSelected' => 'يرجى اختيار إجراء.',
+        'bulkApproveConfirmTitle' => 'اعتماد السجلات المحددة',
+        'bulkApproveConfirmText' => 'هل تريد اعتماد السجلات المحددة؟',
+        'bulkApproveConfirmYes' => 'اعتماد',
+        'noChanges' => 'لا توجد تغييرات.',
+        'unexpectedError' => 'حدث خطأ غير متوقع.',
+        'validationFailed' => 'يرجى مراجعة الحقول المحددة.',
+        'saved' => 'تم الحفظ بنجاح.',
+    ],
+];

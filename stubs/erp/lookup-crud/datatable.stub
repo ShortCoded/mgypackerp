@@ -1,0 +1,15 @@
+<?php
+
+namespace Modules\{{ module }}\DataTables;
+
+use Modules\HR\DataTables\HrLookupDataTable;
+use Modules\HR\Services\HrLookupDefinition;
+use Modules\HR\Services\HrLookupRegistry;
+
+class {{ dataTable }} extends HrLookupDataTable
+{
+    protected function definition(): HrLookupDefinition
+    {
+        return app(HrLookupRegistry::class)->get('{{ routeKey }}');
+    }
+}

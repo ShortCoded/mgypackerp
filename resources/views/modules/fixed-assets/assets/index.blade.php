@@ -1,0 +1,131 @@
+@extends('layouts.app')
+
+@php
+    $resource = 'fixed_assets';
+    $routePrefix = 'admin.fixed-assets.assets';
+    $title = __('fixed_assets.title');
+    $columns = ['doc_num', 'asset_name', 'entry_type', 'asset_category', 'branch', 'cost_center', 'purchase_value', 'currency', 'previous_depreciation', 'net_value', 'is_depreciable', 'status', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
+    $auditColumns = ['created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
+@endphp
+
+@section('title', $title)
+
+@section('content')
+    @can('fixed_assets.document_number_settings.update')
+        <div class="card mb-3">
+            <div class="card-header py-2">
+                <button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center justify-content-between"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#fixed-assets-document-number-settings"
+                    aria-expanded="false"
+                    aria-controls="fixed-assets-document-number-settings">
+                    <span class="fw-semibold">{{ __('common.document_number_settings.title') }}</span>
+                    <span class="fas fa-chevron-down fs-11"></span>
+                </button>
+            </div>
+            <div class="collapse" id="fixed-assets-document-number-settings">
+                <div class="card-body">
+                    <p class="text-700 mb-3">{{ __('common.document_number_settings.description') }}</p>
+                    <form class="js-fixed-assets-document-number-settings-form"
+                        action="{{ route($routePrefix.'.document-number-settings.update') }}"
+                        method="POST"
+                        novalidate>
+                        @csrf
+                        @method('PUT')
+                        <div class="alert alert-danger alert-dismissible fade show d-none js-form-alert" role="alert">
+                            <span class="js-form-alert-message"></span>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="{{ __('auth.alerts.close') }}"></button>
+                        </div>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-6 col-lg-4">
+                                <label class="form-label" for="fixed-assets-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
+                                <input class="form-control" id="fixed-assets-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <div class="invalid-feedback d-block" data-error-for="prefix"></div>
+                            </div>
+                            <div class="col-md-3 col-lg-2">
+                                <label class="form-label" for="fixed-assets-document-padding">{{ __('common.document_number_settings.padding') }}</label>
+                                <input class="form-control" id="fixed-assets-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required>
+                                <div class="invalid-feedback d-block" data-error-for="padding"></div>
+                            </div>
+                            <div class="col-md-auto">
+                                <button type="submit" class="btn btn-falcon-primary">
+                                    <span class="fas fa-save me-1"></span>{{ __('common.document_number_settings.save') }}
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    @endcan
+
+    <div class="card erp-datatable-card fixed-assets-datatable-card" data-fixed-assets-root data-bulk-delete-url="{{ route($routePrefix.'.bulk-delete') }}">
+        <div class="card-header">
+            <div class="row flex-between-center">
+                <div class="col-6 col-sm-auto d-flex align-items-center pe-0">
+                    <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ $title }}</h5>
+                </div>
+                <div class="col-6 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2">
+                    @can('fixed_assets.view_trashed')
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="form-label mb-0 text-700 fs-10" for="fixed_assets_trash_filter">{{ __('business_partners.trash.filter_label') }}</label>
+                            <select class="form-select form-select-sm w-auto js-fixed-assets-trash-filter" id="fixed_assets_trash_filter" aria-label="{{ __('business_partners.trash.filter_label') }}">
+                                <option value="active">{{ __('business_partners.trash.active') }}</option>
+                                <option value="trashed">{{ __('business_partners.trash.trashed') }}</option>
+                                <option value="all">{{ __('business_partners.trash.all') }}</option>
+                            </select>
+                        </div>
+                    @endcan
+                    @can('fixed_assets.delete')
+                        <div class="d-none align-items-center gap-2" id="bulk_actions_bar">
+                            <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
+                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('business_partners.bulk_action') }}">
+                                <option value="delete">{{ __('common.actions.delete') }}</option>
+                            </select>
+                            <button type="button" class="btn btn-falcon-danger btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
+                                <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
+                            </button>
+                        </div>
+                    @endcan
+                    <x-buttons.add-record :href="route($routePrefix.'.create')" permission="fixed_assets.create" />
+                </div>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="falcon-data-table">
+                <div class="erp-datatable-wrapper">
+                    <div class="erp-datatable-scroll">
+                        <table id="fixed-assets-table" class="table table-sm table-hover mb-0 data-table erp-datatable align-middle js-fixed-assets-table"
+                            data-url="{{ route($routePrefix.'.data') }}"
+                            data-table-name="fixed_assets">
+                            <thead class="bg-100 text-900">
+                                <tr>
+                                    <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
+                                        <div class="form-check mb-0 d-flex align-items-center justify-content-center">
+                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('business_partners.select_all') }}">
+                                        </div>
+                                    </th>
+                                    @foreach($columns as $index => $column)
+                                        <th class="text-900 sort pe-1 align-middle white-space-nowrap {{ $index === 0 ? 'all no-colvis dt-code' : 'dt-text dt-ellipsis' }}">{{ in_array($column, $auditColumns, true) ? __("common.fields.{$column}") : __("fixed_assets.columns.{$column}") }}</th>
+                                    @endforeach
+                                    <th class="text-900 no-sort pe-1 align-middle data-table-row-action all no-colvis dt-actions"></th>
+                                </tr>
+                            </thead>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+@endsection
+
+@push('scripts')
+    <script>
+        window.fixedAssetsMessages = @json(__('fixed_assets.js'));
+        window.fixedAssetsCrudColumns = @json($columns);
+        window.dataTableTranslations = @json(__('datatables'));
+    </script>
+    <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+@endpush

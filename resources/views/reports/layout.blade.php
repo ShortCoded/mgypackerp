@@ -1,0 +1,1 @@
+@extends('reports.layouts.pdf')

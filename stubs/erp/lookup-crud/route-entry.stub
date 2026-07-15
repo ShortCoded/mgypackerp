@@ -1,0 +1,1 @@
+    '{{ routeKey }}' => [{{ controller }}::class, '{{ permissionPrefix }}', '{{ routeParameter }}'],

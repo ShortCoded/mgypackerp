@@ -1,0 +1,5 @@
+@can('{{ permissionPrefix }}.delete')
+    <div class="form-check mb-0 d-flex align-items-center justify-content-center">
+        <input class="form-check-input js-record-select js-{{ kebabSingular }}-row-checkbox" type="checkbox" value="{{ ${{ variable }}->doc_num }}" data-doc-num="{{ ${{ variable }}->doc_num }}" aria-label="{{ __('{{ translationKey }}.select_record', ['record' => ${{ variable }}->doc_num]) }}">
+    </div>
+@endcan

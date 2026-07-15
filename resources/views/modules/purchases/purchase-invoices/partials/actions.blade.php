@@ -1,0 +1,77 @@
+@php
+    $docNum = $record->doc_num;
+    $isTrashed = $record->trashed();
+@endphp
+
+<div class="btn-reveal-trigger position-static">
+    <button class="btn btn-sm dropdown-toggle dropdown-caret-none transition-none btn-reveal fs-10" type="button" data-bs-toggle="dropdown" data-boundary="window" aria-haspopup="true" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}">
+        <span class="fas fa-ellipsis-h fs-10"></span>
+    </button>
+    <div class="dropdown-menu dropdown-menu-end py-2">
+        @can('purchase_invoices.view')
+            <a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.show', $docNum) }}">
+                <span class="fas fa-eye me-2"></span>{{ __('common.actions.view') }}
+            </a>
+        @endcan
+
+        @if(! $isTrashed && ! $record->isLockedForEditing())
+            @can('purchase_invoices.edit')
+                <a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.edit', $docNum) }}">
+                    <span class="fas fa-edit me-2"></span>{{ __('common.actions.edit') }}
+                </a>
+            @endcan
+        @endif
+
+        @if(! $isTrashed)
+            @can('purchase_invoices.clone')
+                <a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.clone', $docNum) }}">
+                    <span class="fas fa-copy me-2"></span>{{ __('common.actions.clone') }}
+                </a>
+            @endcan
+            @can('purchase_invoices.print')
+                <a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.print', $docNum) }}" target="_blank" rel="noopener">
+                    <span class="fas fa-print me-2"></span>{{ __('purchase_invoices.actions.print') }}
+                </a>
+            @endcan
+        @endif
+
+        @if(! $isTrashed && $record->isDraft())
+            @can('purchase_invoices.approve')
+                <button class="dropdown-item js-purchase-invoice-row-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.approve', $docNum) }}" data-method="POST" data-action="approve">
+                    <span class="fas fa-check me-2"></span>{{ __('purchase_invoices.actions.approve') }}
+                </button>
+            @endcan
+        @endif
+
+        @if(! $isTrashed && $record->isApproved())
+            @can('purchase_invoices.close')
+                <button class="dropdown-item js-purchase-invoice-row-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.close', $docNum) }}" data-method="POST" data-action="close">
+                    <span class="fas fa-lock me-2"></span>{{ __('purchase_invoices.actions.close') }}
+                </button>
+            @endcan
+        @endif
+
+        @if(! $isTrashed && $record->isDraft())
+            @can('purchase_invoices.cancel')
+                <button class="dropdown-item text-danger js-purchase-invoice-row-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.cancel', $docNum) }}" data-method="POST" data-action="cancel">
+                    <span class="fas fa-ban me-2"></span>{{ __('purchase_invoices.actions.cancel') }}
+                </button>
+            @endcan
+        @endif
+
+        @if($isTrashed)
+            @can('purchase_invoices.restore')
+                <button class="dropdown-item text-success js-purchase-invoice-row-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.restore', $docNum) }}" data-method="PATCH" data-action="restore">
+                    <span class="fas fa-trash-restore me-2"></span>{{ __('common.actions.restore') }}
+                </button>
+            @endcan
+        @elseif($record->isDeletable())
+            @can('purchase_invoices.delete')
+                <div class="dropdown-divider"></div>
+                <button class="dropdown-item text-danger js-purchase-invoice-row-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.destroy', $docNum) }}" data-method="DELETE" data-action="delete">
+                    <span class="fas fa-trash-alt me-2"></span>{{ __('common.actions.delete') }}
+                </button>
+            @endcan
+        @endif
+    </div>
+</div>

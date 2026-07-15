@@ -1,0 +1,133 @@
+<?php
+
+namespace Modules\{{ module }}\DataTables;
+
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Modules\{{ module }}\Models\{{ model }};
+use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
+use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\SettingService;
+use Yajra\DataTables\Facades\DataTables;
+
+class {{ dataTable }}
+{
+    use FormatsNullableColumns;
+
+    public function __construct(
+        private readonly DataTableSearchService $searchService,
+    ) {}
+
+    public function json(Request $request): JsonResponse
+    {
+        $dateTimeFormat = app(SettingService::class)->dateTimeFormat();
+        $canView = (bool) $request->user()?->can('{{ permissionPrefix }}.view');
+        $searchColumns = $this->searchColumns();
+        $query = $this->baseQuery($this->trashFilter($request))
+            ->leftJoin('users as created_users', 'created_users.id', '=', '{{ table }}.created_by')
+            ->leftJoin('users as updated_users', 'updated_users.id', '=', '{{ table }}.updated_by')
+            ->select([
+                '{{ table }}.doc_number',
+                '{{ table }}.doc_num',
+{{ dataTableSelects }}
+                '{{ table }}.created_at',
+                '{{ table }}.updated_at',
+                '{{ table }}.deleted_at',
+                'created_users.name as created_by_name',
+                'updated_users.name as updated_by_name',
+            ]);
+
+        return DataTables::eloquent($query)
+            ->filter(function ($query) use ($request, $searchColumns): void {
+                $search = $request->input('search.value');
+                $terms = $this->searchService->terms(is_string($search) ? $search : null);
+
+                if ($terms === []) {
+                    return;
+                }
+
+                $this->searchService->applyMultiTermSearch($query, $terms, $searchColumns);
+            })
+            ->addColumn('checkbox', fn ({{ model }} ${{ variable }}): string => view('{{ viewPath }}.partials.checkbox', ['{{ variable }}' => ${{ variable }}])->render())
+            ->editColumn('doc_num', fn ({{ model }} ${{ variable }}): string => $this->docNumColumn(${{ variable }}, $canView))
+{{ dataTableColumns }}
+            ->addColumn('created_by', fn ({{ model }} ${{ variable }}): string => $this->ellipsisText(${{ variable }}->created_by_name))
+            ->editColumn('created_at', fn ({{ model }} ${{ variable }}): string => $this->plainText(${{ variable }}->created_at?->format($dateTimeFormat) ?? ''))
+            ->addColumn('updated_by', fn ({{ model }} ${{ variable }}): string => $this->ellipsisText(${{ variable }}->updated_by_name))
+            ->editColumn('updated_at', fn ({{ model }} ${{ variable }}): string => $this->plainText(${{ variable }}->updated_at?->format($dateTimeFormat) ?? ''))
+            ->addColumn('actions', fn ({{ model }} ${{ variable }}): string => view('{{ viewPath }}.partials.actions', ['{{ variable }}' => ${{ variable }}])->render())
+            ->orderColumn('doc_num', '{{ table }}.doc_number $1')
+{{ orderColumns }}
+            ->orderColumn('created_by', 'created_users.name $1')
+            ->orderColumn('created_at', '{{ table }}.created_at $1')
+            ->orderColumn('updated_by', 'updated_users.name $1')
+            ->orderColumn('updated_at', '{{ table }}.updated_at $1')
+            ->removeColumn('id')
+            ->rawColumns(['checkbox', 'doc_num', {{ rawColumns }} 'created_by', 'updated_by', 'actions'])
+            ->toJson();
+    }
+
+    private function baseQuery(string $trashFilter): Builder
+    {
+        $query = {{ model }}::query();
+
+        return match ($trashFilter) {
+            'trashed' => $query->onlyTrashed(),
+            'all' => $query->withTrashed(),
+            default => $query,
+        };
+    }
+
+    private function trashFilter(Request $request): string
+    {
+        if (! $request->user()?->can('{{ permissionPrefix }}.view_trashed')) {
+            return 'active';
+        }
+
+        $filter = $request->string('trash_filter')->trim()->toString();
+
+        return in_array($filter, ['active', 'trashed', 'all'], true) ? $filter : 'active';
+    }
+
+    private function docNumColumn({{ model }} $record, bool $canView): string
+    {
+        if (! $canView) {
+            return sprintf(
+                '<span class="fw-semibold text-700">%s</span>',
+                e((string) $record->doc_num),
+            );
+        }
+
+        return sprintf(
+            '<a class="fw-semibold" href="%s">%s</a>',
+            e(route('{{ routePrefix }}.show', $record->doc_num)),
+            e((string) $record->doc_num),
+        );
+    }
+
+    /**
+     * @return array{text: list<string>, dates: list<string>, date_text: list<string>}
+     */
+    private function searchColumns(): array
+    {
+        return [
+            'text' => [
+                '{{ table }}.doc_num',
+{{ searchTextColumns }}
+                'created_users.name',
+                'updated_users.name',
+            ],
+            'dates' => [
+                '{{ table }}.created_at',
+                '{{ table }}.updated_at',
+{{ searchDateColumns }}
+            ],
+            'date_text' => [
+                '{{ table }}.created_at',
+                '{{ table }}.updated_at',
+{{ searchDateColumns }}
+            ],
+        ];
+    }
+}

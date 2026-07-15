@@ -1,0 +1,242 @@
+<?php
+
+namespace Modules\{{ module }}\Services;
+
+use DomainException;
+use Illuminate\Support\Facades\DB;
+use Modules\{{ module }}\Models\{{ model }};
+use Modules\Core\Services\CrudAuditService;
+use Modules\Core\Services\DocumentNumberService;
+
+class {{ service }}
+{
+    /**
+     * @var list<string>
+     */
+    private array $fillableFields = [
+{{ serviceFillable }}
+    ];
+
+    public function __construct(
+        private readonly DocumentNumberService $documentNumberService,
+        private readonly CrudAuditService $crudAudit,
+    ) {}
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{record: {{ model }}}
+     */
+    public function create(array $data): array
+    {
+        return DB::transaction(function () use ($data): array {
+            $documentNumber = array_key_exists('doc_number', $data)
+                ? $this->manualDocumentNumber((int) $data['doc_number'])
+                : $this->documentNumberService->next('{{ docKey }}', {{ model }}::class);
+            $values = $this->normalizedValues($data);
+
+            $record = {{ model }}::query()->create([
+                ...$values,
+                'doc_number' => $documentNumber['doc_number'],
+                'doc_num' => $documentNumber['doc_num'],
+                'created_by' => auth()->id(),
+            ]);
+
+            $this->crudAudit->clearCreationUpdateAudit($record);
+
+            return ['record' => $record->refresh()];
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{record: {{ model }}, changed: bool, changed_fields: list<string>, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string|null}
+     */
+    public function update({{ model }} $record, array $data): array
+    {
+        return DB::transaction(function () use ($record, $data): array {
+            $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
+            $oldDocNum = $record->doc_num;
+            $canChangeDocumentNumber = array_key_exists('doc_number', $data);
+            $newValues = $this->normalizedValues($data, $record);
+
+            if ($canChangeDocumentNumber) {
+                $newValues['doc_number'] = (int) $data['doc_number'];
+                $newValues['doc_num'] = $this->documentNumberService->format('{{ docKey }}', (int) $data['doc_number']);
+            }
+
+            $changes = $this->changedValues($record, $newValues);
+            $changedFields = collect(array_keys($changes))
+                ->map(fn (string $field): string => $field === 'doc_num' ? 'doc_number' : $field)
+                ->unique()
+                ->values()
+                ->all();
+
+            if ($changedFields === []) {
+                return [
+                    'record' => $record->refresh(),
+                    'changed' => false,
+                    'changed_fields' => [],
+                    'changes' => [],
+                    'old_doc_number' => $oldDocNumber,
+                    'old_doc_num' => $oldDocNum,
+                ];
+            }
+
+            $this->crudAudit->saveUpdate($record, [
+                ...$newValues,
+            ]);
+
+            return [
+                'record' => $record->refresh(),
+                'changed' => true,
+                'changed_fields' => $changedFields,
+                'changes' => $changes,
+                'old_doc_number' => $oldDocNumber,
+                'old_doc_num' => $oldDocNum,
+            ];
+        });
+    }
+
+    public function delete({{ model }} $record): void
+    {
+        $this->ensureCanDelete($record);
+
+        DB::transaction(function () use ($record): void {
+            $this->crudAudit->softDelete($record);
+        });
+    }
+
+    /**
+     * @param  list<string>  $docNums
+     */
+    public function bulkDelete(array $docNums): int
+    {
+        return DB::transaction(function () use ($docNums): int {
+            $records = {{ model }}::query()
+                ->whereIn('doc_num', $docNums)
+                ->get();
+
+            // Validate the complete selection before deleting anything so bulk delete stays all-or-nothing.
+            foreach ($records as $record) {
+                $this->ensureCanDelete($record);
+            }
+
+            $deleted = 0;
+
+            foreach ($records as $record) {
+                $this->crudAudit->softDelete($record);
+                $deleted++;
+            }
+
+            return $deleted;
+        });
+    }
+
+    public function restore({{ model }} $record): {{ model }}
+    {
+        return DB::transaction(function () use ($record): {{ model }} {
+            $record = {{ model }}::withTrashed()
+                ->lockForUpdate()
+                ->whereKey($record->getKey())
+                ->firstOrFail();
+
+            $this->ensureCanRestore($record);
+            $this->crudAudit->restore($record, auth()->id());
+
+            return $record->refresh();
+        });
+    }
+
+    protected function ensureCanDelete({{ model }} $record): void
+    {
+        // TODO: Add resource-specific dependency checks before enabling deletes for referenced business records.
+        // This default is only safe for independent resources. Throw DomainException with a translated message
+        // when this record is protected, referenced by another table, or otherwise blocked by business rules.
+    }
+
+    protected function ensureCanRestore({{ model }} $record): void
+    {
+        if (! $record->trashed()) {
+            throw new DomainException(__('{{ translationKey }}.messages.restore_not_allowed'));
+        }
+
+        // TODO: Add resource-specific active-record conflict checks before restoring unique business values.
+    }
+
+    /**
+     * @return array{doc_number: int, doc_num: string}
+     */
+    private function manualDocumentNumber(int $docNumber): array
+    {
+        return [
+            'doc_number' => $docNumber,
+            'doc_num' => $this->documentNumberService->format('{{ docKey }}', $docNumber),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function normalizedValues(array $data, ?{{ model }} $existing = null): array
+    {
+        $values = [];
+
+        foreach ($this->fillableFields as $field) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $values[$field] = $this->normalizeValue($field, $data[$field]);
+        }
+
+{{ defaultValues }}
+        return $values;
+    }
+
+    private function normalizeValue(string $field, mixed $value): mixed
+    {
+        return match ($field) {
+{{ normalizeCases }}
+            default => $this->normalizeNullableString($value),
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $newValues
+     * @return array<string, array{old: mixed, new: mixed}>
+     */
+    private function changedValues({{ model }} $record, array $newValues): array
+    {
+        $changes = [];
+
+        foreach ($newValues as $field => $value) {
+            $current = $record->{$field};
+
+            if ($current instanceof \DateTimeInterface) {
+                $current = $current->format('Y-m-d H:i:s');
+            }
+
+            if ((string) ($current ?? '') !== (string) ($value ?? '')) {
+                $changes[$field] = [
+                    'old' => $current,
+                    'new' => $value,
+                ];
+            }
+        }
+
+        return $changes;
+    }
+
+    private function normalizeString(string $value): string
+    {
+        return trim($value);
+    }
+
+    private function normalizeNullableString(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
+    }
+}

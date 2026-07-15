@@ -1,0 +1,66 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (! Schema::hasTable('{{ table }}')) {
+            Schema::create('{{ table }}', function (Blueprint $table): void {
+                $table->id();
+                $table->unsignedBigInteger('doc_number')->nullable()->index();
+                $table->string('doc_num')->nullable()->index();
+                $table->string('name')->index();
+                $table->text('notes')->nullable();
+                $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->foreignId('deleted_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->foreignId('restored_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->timestamp('restored_at')->nullable();
+                $table->timestamps();
+                $table->softDeletes()->index();
+            });
+        }
+
+        match (DB::getDriverName()) {
+            'pgsql', 'sqlite' => $this->createActiveUniqueIndexes(),
+            default => null,
+        };
+    }
+
+    public function down(): void
+    {
+        foreach ([
+            '{{ table }}_doc_number_unique_active',
+            '{{ table }}_doc_num_unique_active',
+            '{{ table }}_name_unique_active',
+        ] as $index) {
+            $wrappedIndex = DB::getQueryGrammar()->wrap($index);
+
+            match (DB::getDriverName()) {
+                'pgsql', 'sqlite' => DB::statement("DROP INDEX IF EXISTS {$wrappedIndex}"),
+                default => null,
+            };
+        }
+
+        Schema::dropIfExists('{{ table }}');
+    }
+
+    private function createActiveUniqueIndexes(): void
+    {
+        $grammar = DB::getQueryGrammar();
+        $table = $grammar->wrapTable('{{ table }}');
+        $deletedAt = $grammar->wrap('deleted_at');
+        $docNumber = $grammar->wrap('doc_number');
+        $docNum = $grammar->wrap('doc_num');
+        $name = $grammar->wrap('name');
+
+        DB::statement("CREATE UNIQUE INDEX IF NOT EXISTS {$grammar->wrap('{{ table }}_doc_number_unique_active')} ON {$table} ({$docNumber}) WHERE {$deletedAt} IS NULL AND {$docNumber} IS NOT NULL");
+        DB::statement("CREATE UNIQUE INDEX IF NOT EXISTS {$grammar->wrap('{{ table }}_doc_num_unique_active')} ON {$table} ({$docNum}) WHERE {$deletedAt} IS NULL AND {$docNum} IS NOT NULL");
+        DB::statement("CREATE UNIQUE INDEX IF NOT EXISTS {$grammar->wrap('{{ table }}_name_unique_active')} ON {$table} (LOWER({$name})) WHERE {$deletedAt} IS NULL");
+    }
+};

@@ -1,0 +1,119 @@
+<?php
+
+namespace Modules\{{ module }}\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
+use Modules\{{ module }}\Models\{{ model }};
+use Modules\Core\Services\DocumentNumberService;
+
+class {{ updateRequest }} extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return (bool) $this->user()?->can('{{ permissionPrefix }}.edit');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function rules(): array
+    {
+        ${{ variable }} = $this->route('{{ routeParameter }}');
+
+        $rules = [
+            'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_clone'])],
+{{ updateRules }}
+        ];
+
+        if ($this->canControlDocumentNumber()) {
+            $rules['doc_number'] = [
+                'nullable',
+                'regex:/^\d+$/',
+                Rule::unique('{{ table }}', 'doc_number')->ignore(${{ variable }}?->getKey())->withoutTrashed(),
+            ];
+        }
+
+        return $rules;
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            ${{ variable }} = $this->route('{{ routeParameter }}');
+
+            if (! $this->canControlDocumentNumber()
+                || ! ${{ variable }} instanceof {{ model }}
+                || $validator->errors()->has('doc_number')
+                || ! $this->hasFilledDocumentNumber()
+            ) {
+                return;
+            }
+
+            $docNumber = (int) $this->input('doc_number');
+            $docNum = app(DocumentNumberService::class)->format('{{ docKey }}', $docNumber);
+
+            if ({{ model }}::query()->where('doc_num', $docNum)->whereKeyNot(${{ variable }}->getKey())->exists()) {
+                $validator->errors()->add('doc_number', __('{{ translationKey }}.validation.doc_number_unique'));
+            }
+        });
+    }
+
+    /**
+     * @param  string|null  $key
+     */
+    public function validated($key = null, $default = null): mixed
+    {
+        $data = parent::validated($key, $default);
+
+        if ($key !== null || ! is_array($data)) {
+            return $data;
+        }
+
+        if (! $this->canControlDocumentNumber()) {
+            unset($data['doc_number']);
+        }
+
+        if (array_key_exists('doc_number', $data) && ($data['doc_number'] === null || $data['doc_number'] === '')) {
+            unset($data['doc_number']);
+        } elseif (array_key_exists('doc_number', $data)) {
+            $data['doc_number'] = (int) $data['doc_number'];
+        }
+{{ validatedCasts }}
+
+        return $data;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function attributes(): array
+    {
+        return __('{{ translationKey }}.attributes');
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'doc_number.regex' => __('{{ translationKey }}.validation.doc_number_numeric'),
+            'doc_number.unique' => __('{{ translationKey }}.validation.doc_number_unique'),
+{{ validationMessages }}
+        ];
+    }
+
+    private function canControlDocumentNumber(): bool
+    {
+        return (bool) $this->user()?->can('{{ permissionPrefix }}.document_number.control');
+    }
+
+    private function hasFilledDocumentNumber(): bool
+    {
+        $value = $this->input('doc_number');
+
+        return $value !== null && $value !== '';
+    }
+}

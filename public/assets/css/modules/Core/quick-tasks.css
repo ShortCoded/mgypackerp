@@ -1,0 +1,179 @@
+.quick-tasks-datatable-card .quick-task-status-cell {
+    min-width: 9rem;
+}
+
+.quick-tasks-datatable-card .quick-task-status-cell .form-select {
+    min-width: 8.5rem;
+}
+
+.quick-task-form .select2-container {
+    width: 100% !important;
+}
+
+.quick-task-attachments-table td,
+.quick-task-attachments-table th {
+    vertical-align: middle;
+}
+
+.quick-task-board-page {
+    min-height: calc(100vh - 9rem);
+}
+
+.quick-task-board-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.quick-task-board-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quick-task-board-column {
+    background: var(--falcon-gray-100, #f9fafd);
+    border: 1px solid var(--falcon-border-color, #d8e2ef);
+    border-radius: .375rem;
+    min-height: 24rem;
+    overflow: hidden;
+}
+
+.quick-task-board-column-header {
+    align-items: center;
+    background: var(--falcon-white, #fff);
+    border-bottom: 1px solid var(--falcon-border-color, #d8e2ef);
+    display: flex;
+    gap: .75rem;
+    justify-content: space-between;
+    padding: .875rem 1rem;
+}
+
+.quick-task-board-list {
+    display: flex;
+    flex-direction: column;
+    gap: .875rem;
+    padding: 1rem;
+}
+
+.quick-task-board-card {
+    background: var(--falcon-white, #fff);
+    border: 1px solid var(--falcon-border-color, #d8e2ef);
+    border-inline-start: .25rem solid var(--falcon-primary, #2c7be5);
+    border-radius: .375rem;
+    box-shadow: 0 .25rem .75rem rgba(18, 38, 63, .05);
+    padding: 1rem;
+}
+
+.quick-task-board-column-new .quick-task-board-card {
+    border-inline-start-color: var(--falcon-gray-500, #9da9bb);
+}
+
+.quick-task-board-column-ready .quick-task-board-card {
+    border-inline-start-color: var(--falcon-info, #27bcfd);
+}
+
+.quick-task-board-doc {
+    color: var(--falcon-600, #748194);
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.quick-task-board-title {
+    color: var(--falcon-900, #344050);
+    font-size: clamp(1.05rem, 1.4vw, 1.35rem);
+    line-height: 1.35;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.quick-task-board-summary {
+    color: var(--falcon-700, #5e6e82);
+    font-size: .9rem;
+    line-height: 1.45;
+    margin: .5rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.quick-task-board-meta {
+    color: var(--falcon-600, #748194);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .875rem;
+    margin-top: .875rem;
+    min-width: 0;
+}
+
+.quick-task-board-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: .875rem;
+}
+
+.quick-task-board-empty {
+    align-items: center;
+    color: var(--falcon-600, #748194);
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    justify-content: center;
+    min-height: 12rem;
+    text-align: center;
+}
+
+.quick-task-board-empty .far {
+    color: var(--falcon-400, #b6c1d2);
+    font-size: 1.5rem;
+}
+
+body.quick-task-display-mode {
+    background: var(--falcon-gray-100, #f9fafd);
+}
+
+body.quick-task-display-mode .navbar-vertical,
+body.quick-task-display-mode .navbar-top,
+body.quick-task-display-mode [data-double-top-nav],
+body.quick-task-display-mode .navbar-combo,
+body.quick-task-display-mode .customizer,
+body.quick-task-display-mode .breadcrumb,
+body.quick-task-display-mode footer,
+body.quick-task-display-mode .footer,
+body.quick-task-display-mode .navbar-glass,
+body.quick-task-display-mode .content > .alert {
+    display: none !important;
+}
+
+body.quick-task-display-mode [data-layout="container"] {
+    max-width: none !important;
+    width: 100% !important;
+}
+
+body.quick-task-display-mode .content {
+    margin: 0 !important;
+    padding: 1rem !important;
+}
+
+body.quick-task-display-mode .quick-task-board-page {
+    min-height: calc(100vh - 2rem);
+}
+
+body.quick-task-display-mode .quick-task-board-column {
+    min-height: calc(100vh - 8rem);
+}
+
+@media (max-width: 991.98px) {
+    .quick-task-board-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .quick-task-board-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .quick-task-board-column {
+        min-height: 18rem;
+    }
+}

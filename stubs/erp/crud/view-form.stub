@@ -1,0 +1,106 @@
+@extends('layouts.app')
+
+@php
+    $record = ${{ variable }} ?? null;
+    $isView = $mode === 'view';
+    $isEdit = $mode === 'edit';
+    $isClone = $mode === 'clone';
+    $isCreateLike = in_array($mode, ['create', 'clone'], true);
+    $title = match ($mode) {
+        'edit' => __('{{ translationKey }}.edit'),
+        'view' => __('{{ translationKey }}.view'),
+        'clone' => __('{{ translationKey }}.titles.clone'),
+        default => __('{{ translationKey }}.create'),
+    };
+    $documentNumberValue = old('doc_number', ($isEdit || $isView) ? $record?->doc_number : '');
+    $showsDocumentNumberColumn = $canControlDocumentNumber || (($isEdit || $isView) && ! $canControlDocumentNumber);
+@endphp
+
+@section('title', $title)
+
+@section('content')
+    <form id="{{ kebabSingular }}-form" class="js-{{ kebabSingular }}-form" action="{{ $action }}" method="{{ $method }}" data-mode="{{ $mode }}" novalidate>
+        @csrf
+        @if ($method !== 'POST')
+            @method($method)
+        @endif
+        <input type="hidden" name="submit_action" value="save">
+        @if ($isClone && ! empty($cloneSourceToken))
+            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+        @endif
+
+        <div class="card">
+            @include('{{ viewPath }}.partials.form-header')
+
+            <div class="card-body js-{{ kebabSingular }}-form-body">
+                <div class="alert alert-danger alert-dismissible fade show d-none js-{{ kebabSingular }}-alert" role="alert">
+                    <span class="js-{{ kebabSingular }}-alert-message"></span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="{{ __('common.actions.close') }}"></button>
+                </div>
+
+                <div class="row g-3 align-items-start">
+                    @if ($canControlDocumentNumber)
+                        <div class="col-md-3 col-lg-2">
+                            <label class="form-label" for="{{ kebabSingular }}-doc-number">{{ __('common.fields.document_number') }}</label>
+                            @if ($isView)
+                                <x-forms.view-field for="{{ kebabSingular }}-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-{{ kebabSingular }}-doc-number" />
+                            @else
+                                <input id="{{ kebabSingular }}-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-{{ kebabSingular }}-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('{{ translationKey }}.document_number_control.placeholder') }}">
+                            @endif
+                            <div class="form-text">{{ __('{{ translationKey }}.document_number_control.helper') }}</div>
+                            <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
+                        </div>
+                    @elseif ($isEdit || $isView)
+                        <div class="col-md-3 col-lg-2">
+                            <x-forms.view-field
+                                for="{{ kebabSingular }}-doc-number-display"
+                                as="display"
+                                :label="__('common.fields.doc_number')"
+                                :value="$record?->doc_number"
+                                input-class="text-center"
+                            />
+                        </div>
+                    @endif
+
+{{ formFields }}
+                </div>
+
+                @if ($isEdit || $isView)
+                    <x-audit-fields-row
+                        :metadata="$metadata"
+                        :show-deleted="$isView && ($record?->trashed() ?? false)"
+                        :show-restored="$isView && ! ($record?->trashed() ?? false) && (($record?->restored_at ?? null) || ($record?->restored_by ?? null))"
+                    />
+                @endif
+            </div>
+
+            @include('{{ viewPath }}.partials.form-footer')
+        </div>
+    </form>
+@endsection
+
+@push('scripts')
+    @php
+        ${{ jsNamespace }}Messages = [
+            'noChanges' => __('common.messages.no_changes'),
+            'validationSummary' => __('common.messages.validation_failed'),
+            'unexpectedError' => __('auth.ajax.unexpected_error'),
+            'close' => __('auth.alerts.close'),
+            'yes' => __('common.actions.yes'),
+            'no' => __('common.actions.no'),
+            'loading' => __('common.messages.loading'),
+            'deleteConfirmTitle' => __('{{ translationKey }}.messages.delete_confirm_title'),
+            'deleteConfirmText' => __('{{ translationKey }}.messages.delete_confirm_text'),
+            'deleteConfirmYes' => __('{{ translationKey }}.messages.delete_confirm_yes'),
+            'restore' => __('common.actions.restore'),
+            'restoreConfirmTitle' => __('{{ translationKey }}.messages.restore_confirm_title'),
+            'restoreConfirmText' => __('{{ translationKey }}.messages.restore_confirm_text'),
+            'restoreConfirmYes' => __('{{ translationKey }}.messages.restore_confirm_yes'),
+        ];
+    @endphp
+    <script>
+        window.{{ jsNamespace }}Messages = @json(${{ jsNamespace }}Messages);
+    </script>
+    <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+    <script src="{{ asset('{{ jsAsset }}') }}"></script>
+@endpush

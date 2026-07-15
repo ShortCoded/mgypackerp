@@ -1,0 +1,1 @@
+@extends('modules.finance.partials.index', ['title' => __('cashboxes.title'), 'createLabel' => __('cashboxes.create'), 'resource' => 'cashboxes', 'routePrefix' => 'admin.finance.cashboxes', 'tableId' => 'cashboxes-table', 'columns' => ['doc_num', 'name', 'account', 'branch', 'currencies_summary', 'status', 'created_by', 'created_at', 'updated_by', 'updated_at']])

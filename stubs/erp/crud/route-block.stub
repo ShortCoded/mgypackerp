@@ -1,0 +1,36 @@
+        Route::get('/{{ urlResource }}', [{{ controller }}::class, 'index'])
+            ->middleware('can:{{ permissionPrefix }}.view')
+            ->name('{{ routeResource }}.index');
+        Route::get('/{{ urlResource }}/data', [{{ controller }}::class, 'data'])
+            ->middleware('can:{{ permissionPrefix }}.view')
+            ->name('{{ routeResource }}.data');
+        Route::get('/{{ urlResource }}/create', [{{ controller }}::class, 'create'])
+            ->middleware('can:{{ permissionPrefix }}.create')
+            ->name('{{ routeResource }}.create');
+        Route::post('/{{ urlResource }}', [{{ controller }}::class, 'store'])
+            ->name('{{ routeResource }}.store');
+        Route::delete('/{{ urlResource }}/bulk-delete', [{{ controller }}::class, 'bulkDelete'])
+            ->middleware('can:{{ permissionPrefix }}.delete')
+            ->name('{{ routeResource }}.bulk-delete');
+        Route::put('/{{ urlResource }}/document-number-settings', [{{ controller }}::class, 'updateDocumentNumberSettings'])
+            ->middleware('can:{{ permissionPrefix }}.document_number_settings.update')
+            ->name('{{ routeResource }}.document-number-settings.update');
+        Route::patch('/{{ urlResource }}/{{ routeBinding }}/restore', [{{ controller }}::class, 'restore'])
+            ->middleware('can:{{ permissionPrefix }}.restore')
+            ->name('{{ routeResource }}.restore');
+        Route::get('/{{ urlResource }}/{{ routeBinding }}/clone', [{{ controller }}::class, 'clone'])
+            ->middleware('can:{{ permissionPrefix }}.clone')
+            ->name('{{ routeResource }}.clone');
+        Route::get('/{{ urlResource }}/{{ routeBinding }}', [{{ controller }}::class, 'show'])
+            ->withTrashed()
+            ->middleware('can:{{ permissionPrefix }}.view')
+            ->name('{{ routeResource }}.show');
+        Route::get('/{{ urlResource }}/{{ routeBinding }}/edit', [{{ controller }}::class, 'edit'])
+            ->middleware('can:{{ permissionPrefix }}.edit')
+            ->name('{{ routeResource }}.edit');
+        Route::put('/{{ urlResource }}/{{ routeBinding }}', [{{ controller }}::class, 'update'])
+            ->middleware('can:{{ permissionPrefix }}.edit')
+            ->name('{{ routeResource }}.update');
+        Route::delete('/{{ urlResource }}/{{ routeBinding }}', [{{ controller }}::class, 'destroy'])
+            ->middleware('can:{{ permissionPrefix }}.delete')
+            ->name('{{ routeResource }}.destroy');

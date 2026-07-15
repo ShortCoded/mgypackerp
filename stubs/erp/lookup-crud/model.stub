@@ -1,0 +1,10 @@
+<?php
+
+namespace Modules\{{ module }}\Models;
+
+use Modules\HR\Models\HrLookupModel;
+
+class {{ model }} extends HrLookupModel
+{
+    protected $table = '{{ table }}';
+}
