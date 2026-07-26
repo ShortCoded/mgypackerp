@@ -589,6 +589,48 @@ Route::middleware('auth')
                     ->name('destroy');
             });
 
+        Route::prefix('packaging-materials')
+            ->name('packaging-materials.')
+            ->controller(ProductController::class)
+            ->group(function (): void {
+                Route::get('/', 'index')
+                    ->middleware('can:packaging_materials.view')
+                    ->name('index');
+                Route::get('/data', 'data')
+                    ->middleware('can:packaging_materials.view')
+                    ->name('data');
+                Route::get('/create', 'create')
+                    ->middleware('can:packaging_materials.create')
+                    ->name('create');
+                Route::post('/', 'store')
+                    ->name('store');
+                Route::delete('/bulk-delete', 'bulkDelete')
+                    ->middleware('can:packaging_materials.delete')
+                    ->name('bulk-delete');
+                Route::put('/document-number-settings', 'updateDocumentNumberSettings')
+                    ->middleware('can:packaging_materials.document_number_settings.update')
+                    ->name('document-number-settings.update');
+                Route::patch('/{product}/restore', 'restore')
+                    ->middleware('can:packaging_materials.restore')
+                    ->name('restore');
+                Route::get('/{product}/clone', 'clone')
+                    ->middleware('can:packaging_materials.clone')
+                    ->name('clone');
+                Route::get('/{product}', 'show')
+                    ->withTrashed()
+                    ->middleware('can:packaging_materials.view')
+                    ->name('show');
+                Route::get('/{product}/edit', 'edit')
+                    ->middleware('can:packaging_materials.edit')
+                    ->name('edit');
+                Route::put('/{product}', 'update')
+                    ->middleware('can:packaging_materials.edit')
+                    ->name('update');
+                Route::delete('/{product}', 'destroy')
+                    ->middleware('can:packaging_materials.delete')
+                    ->name('destroy');
+            });
+
         Route::prefix('products')
             ->name('products.')
             ->controller(ProductController::class)
@@ -614,7 +656,6 @@ Route::middleware('auth')
                     ->whereIn('lookup', ['item-units', 'item-sizes', 'item-colors', 'item-decals', 'item-models', 'item-categories', 'item-groups', 'item-origin-countries'])
                     ->name('lookups.store');
                 Route::get('/{product}/image', 'image')
-                    ->middleware('can:products.view')
                     ->name('image');
                 Route::get('/{product}/components', [ProductComponentController::class, 'index'])
                     ->middleware('can:products.view')

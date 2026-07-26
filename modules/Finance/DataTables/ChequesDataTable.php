@@ -7,9 +7,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Models\Cheque;
+use Modules\Finance\Services\FinanceAmountService;
 use Yajra\DataTables\Facades\DataTables;
 
 class ChequesDataTable
@@ -19,6 +21,8 @@ class ChequesDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
+        private readonly FinanceAmountService $amounts,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -85,10 +89,14 @@ class ChequesDataTable
             ->addColumn('bank_account', fn (Cheque $record): string => $this->ellipsisText(trim(implode(' — ', array_filter([$record->bank_account_doc_num, $record->bank_name, $record->bank_account_name])))))
             ->editColumn('external_bank_name', fn (Cheque $record): string => $this->ellipsisText($record->external_bank_name ?: __('common.empty_value')))
             ->addColumn('currency', fn (Cheque $record): string => $this->plainText(trim(implode(' — ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->editColumn('exchange_rate', fn (Cheque $record): string => $this->plainText($this->formatAmount((float) $record->exchange_rate, 6)))
-            ->editColumn('amount', fn (Cheque $record): string => $this->plainText($this->formatAmount((float) $record->amount)))
-            ->addColumn('distributed_amount', fn (Cheque $record): string => $this->plainText($this->formatAmount((float) $record->distributed_total)))
-            ->addColumn('remaining_amount', fn (Cheque $record): string => $this->plainText($this->formatAmount(((float) $record->amount) - ((float) $record->distributed_total))))
+            ->editColumn('exchange_rate', fn (Cheque $record): string => $this->plainText($this->numbers->format($record->exchange_rate)))
+            ->editColumn('amount', fn (Cheque $record): string => $this->plainText($this->numbers->format($record->amount)))
+            ->addColumn('distributed_amount', fn (Cheque $record): string => $this->plainText($this->numbers->format($record->distributed_total)))
+            ->addColumn('remaining_amount', fn (Cheque $record): string => $this->plainText($this->numbers->format(
+                $this->amounts->fromUnits(
+                    $this->amounts->toUnits($record->amount) - $this->amounts->toUnits($record->distributed_total)
+                )
+            )))
             ->editColumn('due_date', fn (Cheque $record): string => $this->plainText($record->due_date?->format($dateFormat) ?? ''))
             ->editColumn('status', fn (Cheque $record): string => view('modules.finance.cheques.partials.status', ['record' => $record])->render())
             ->addColumn('created_by', fn (Cheque $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
@@ -148,10 +156,5 @@ class ChequesDataTable
         }
 
         return __('cheques.messages.document_locked');
-    }
-
-    private function formatAmount(float $amount, int $scale = 4): string
-    {
-        return rtrim(rtrim(number_format($amount, $scale, '.', ''), '0'), '.') ?: '0';
     }
 }

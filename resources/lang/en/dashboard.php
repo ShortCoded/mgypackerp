@@ -28,11 +28,15 @@ return [
         'metrics' => [
             'products' => [
                 'title' => 'Active Products',
-                'meta' => 'Non-raw product records',
+                'meta' => 'Product records only',
             ],
             'raw_materials' => [
                 'title' => 'Active Raw Materials',
                 'meta' => 'Raw material records only',
+            ],
+            'packaging_materials' => [
+                'title' => 'Active Packaging Materials',
+                'meta' => 'Packaging material records only',
             ],
             'products_with_bom' => [
                 'title' => 'Products With BOM',
@@ -84,9 +88,10 @@ return [
             ],
         ],
         'charts' => [
-            'product_types' => 'Products and Raw Materials by Type',
+            'product_types' => 'Products and Materials by Type',
             'bom_coverage' => 'Product BOM Coverage',
             'raw_material_units' => 'Raw Materials by Unit',
+            'packaging_material_units' => 'Packaging Materials by Unit',
             'task_status' => 'Tasks by Status',
         ],
         'chart_labels' => [
@@ -111,6 +116,7 @@ return [
         'quick_actions' => [
             'product' => 'Product',
             'raw_material' => 'Raw Material',
+            'packaging_material' => 'Packaging Material',
             'products_report' => 'Products Data Report',
             'task' => 'Task',
         ],

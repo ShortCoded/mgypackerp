@@ -1,3 +1,5 @@
+@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+
 <td>
     @if ($isReadonly)
         <div class="form-control-plaintext">{{ $row['phase_name'] ?? __('common.empty_value') }}</div>
@@ -29,9 +31,9 @@
 </td>
 <td>
     @if ($isReadonly)
-        <div class="form-control-plaintext text-center" dir="ltr">{{ $row['duration_days'] ?? '' }}</div>
+        <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($row['duration_days'] ?? null) }}</div>
     @else
-        <input class="form-control text-center" name="execution_schedule_lines[{{ $index }}][duration_days]" type="number" min="0" step="1" value="{{ $row['duration_days'] ?? '' }}" dir="ltr">
+        <x-forms.numeric-input class="text-center" :name="'execution_schedule_lines['.$index.'][duration_days]'" :value="$row['duration_days'] ?? ''" :scale="0" min="0" step="1" />
     @endif
 </td>
 <td>

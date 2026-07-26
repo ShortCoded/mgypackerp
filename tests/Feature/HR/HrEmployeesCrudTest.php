@@ -528,6 +528,8 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertDontSee(route('admin.hr.select2.foundation', 'shifts'), false)
         ->assertSee(route('admin.hr.select2.foundation', 'biometric-devices'), false)
         ->assertDontSee('documents[__INDEX__][document_number_text]', false)
+        ->assertSee('name="documents[__INDEX__][alert_before_expiry_days]"', false)
+        ->assertSee('data-numeric-max="3650"', false)
         ->assertDontSee('dropdown-toggle-split', false)
         ->assertDontSee('hr-inline-select2.js', false)
         ->assertDontSee('data-target-select=', false)
@@ -686,6 +688,143 @@ test('HrEmployee datatable supports active inactive trashed lookup search orderi
 
     $activeEmployee->refresh();
     expect($activeEmployee->status)->toBe('active');
+});
+
+test('HrEmployee pay fields use grouped presentation and canonical decimal persistence', function () {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Precision Wage Employee',
+            'national_id' => '00123456789012',
+            'email' => 'precision.wage@example.test',
+            'work_email' => 'precision.wage@company.example.test',
+            'phone' => '0012345000',
+            'pay_basis' => 'hourly_wage',
+            'basic_salary' => null,
+            'hourly_wage' => '1,250.5001',
+            'biometric_mappings' => [],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $employee = HrEmployee::query()->where('full_name', 'Precision Wage Employee')->firstOrFail();
+
+    expect((string) $employee->hourly_wage)->toBe('1250.5001')
+        ->and($employee->phone)->toBe('0012345000')
+        ->and($employee->national_id)->toBe('00123456789012');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.show', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('value="1,250.5001"', false)
+        ->assertSee('dir="ltr"', false);
+
+    $row = $this->withSession($session)
+        ->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([
+            'search' => ['value' => 'Precision Wage Employee'],
+        ])))
+        ->assertOk()
+        ->json('data.0');
+
+    expect($row['pay_amount'] ?? null)->toBe('1,250.5001');
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Malformed Wage Employee',
+            'national_id' => '00123456789013',
+            'email' => 'malformed.wage@example.test',
+            'work_email' => 'malformed.wage@company.example.test',
+            'pay_basis' => 'hourly_wage',
+            'basic_salary' => null,
+            'hourly_wage' => '1,2,3',
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['hourly_wage']);
+});
+
+test('employee document alert days use grouped input display and canonical integer validation on both save paths', function () {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Document Alert Employee',
+            'national_id' => '00123456789014',
+            'email' => 'document.alert@example.test',
+            'work_email' => 'document.alert@company.example.test',
+            'basic_salary' => 250,
+            'biometric_mappings' => [],
+            'documents' => [
+                [
+                    'document_type_doc_num' => $fixtures['documentType']->doc_num,
+                    'archive_file_doc_num' => $fixtures['archiveFile']->doc_num,
+                    'file_label' => 'Nested Contract',
+                    'alert_before_expiry_days' => '1,000',
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $employee = HrEmployee::query()->where('full_name', 'Document Alert Employee')->firstOrFail();
+    $nestedDocument = $employee->documents()->firstOrFail();
+
+    expect($nestedDocument->alert_before_expiry_days)->toBe(1000);
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.show', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('<td class="white-space-nowrap text-end" dir="ltr">1,000</td>', false);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Out Of Range Document Alert Employee',
+            'national_id' => '00123456789015',
+            'email' => 'document.alert.range@example.test',
+            'work_email' => 'document.alert.range@company.example.test',
+            'biometric_mappings' => [],
+            'documents' => [
+                [
+                    'document_type_doc_num' => $fixtures['documentType']->doc_num,
+                    'archive_file_doc_num' => $fixtures['archiveFile']->doc_num,
+                    'alert_before_expiry_days' => '3,651',
+                ],
+            ],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['documents.0.alert_before_expiry_days']);
+
+    $documentResponse = $this->withSession($session)
+        ->postJson(route('admin.hr.employees.documents.store', $employee->doc_num), [
+            'document_type_doc_num' => $fixtures['documentType']->doc_num,
+            'title' => 'Standalone Contract',
+            'archive_file_doc_num' => $fixtures['archiveFile']->doc_num,
+            'alert_before_expiry_days' => '1,200',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $standaloneDocument = $employee->documents()->latest('id')->firstOrFail();
+
+    expect($standaloneDocument->alert_before_expiry_days)->toBe(1200)
+        ->and($documentResponse->json('data.row'))->toContain('>1,200</td>');
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.documents.store', $employee->doc_num), [
+            'document_type_doc_num' => $fixtures['documentType']->doc_num,
+            'title' => 'Malformed Alert',
+            'archive_file_doc_num' => $fixtures['archiveFile']->doc_num,
+            'alert_before_expiry_days' => '1,2,3',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['alert_before_expiry_days']);
 });
 
 test('file picker document mode accepts employee attachment files', function () {

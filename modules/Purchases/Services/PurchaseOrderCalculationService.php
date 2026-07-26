@@ -2,8 +2,14 @@
 
 namespace Modules\Purchases\Services;
 
+use Modules\Core\Services\NumericFormatService;
+
 class PurchaseOrderCalculationService
 {
+    public function __construct(
+        private readonly NumericFormatService $numbers,
+    ) {}
+
     /**
      * @param  list<array<string, mixed>>  $lines
      * @return array{order: array<string, string>, lines: list<array<string, mixed>>}
@@ -17,19 +23,24 @@ class PurchaseOrderCalculationService
         $subtotalAmount = 0.0;
 
         foreach (array_values($lines) as $line) {
-            $orderedQuantity = $this->number($line['ordered_quantity'] ?? 0);
-            $receivedQuantity = max(0, $this->number($line['received_quantity'] ?? 0));
+            $orderedQuantityInput = $line['ordered_quantity'] ?? 0;
+            $receivedQuantityInput = $line['received_quantity'] ?? 0;
+            $unitPriceInput = $line['unit_price'] ?? 0;
+            $orderedQuantity = $this->number($orderedQuantityInput);
+            $receivedQuantity = max(0, $this->number($receivedQuantityInput));
             $remainingQuantity = max(0, $orderedQuantity - $receivedQuantity);
-            $unitPrice = $this->number($line['unit_price'] ?? 0);
+            $unitPrice = $this->number($unitPriceInput);
             $lineTotal = $orderedQuantity * $unitPrice;
 
             $calculatedLines[] = [
                 ...$line,
-                'ordered_quantity' => $this->formatQuantity($orderedQuantity),
-                'received_quantity' => $this->formatQuantity($receivedQuantity),
-                'remaining_quantity' => $this->formatQuantity($remainingQuantity),
-                'unit_price' => $this->formatAmount($unitPrice),
-                'line_total' => $this->formatAmount($lineTotal),
+                'ordered_quantity' => $this->formatQuantity($orderedQuantityInput),
+                'received_quantity' => $receivedQuantity > 0
+                    ? $this->formatQuantity($receivedQuantityInput)
+                    : $this->formatQuantity(0),
+                'remaining_quantity' => $this->decimalQuantity($remainingQuantity),
+                'unit_price' => $this->formatAmount($unitPriceInput),
+                'line_total' => $this->decimalAmount($lineTotal),
             ];
 
             $totalOrderedQuantity += $orderedQuantity;
@@ -40,11 +51,11 @@ class PurchaseOrderCalculationService
 
         return [
             'order' => [
-                'total_ordered_quantity' => $this->formatQuantity($totalOrderedQuantity),
-                'total_received_quantity' => $this->formatQuantity($totalReceivedQuantity),
-                'total_remaining_quantity' => $this->formatQuantity($totalRemainingQuantity),
-                'subtotal_amount' => $this->formatAmount($subtotalAmount),
-                'total_amount' => $this->formatAmount($subtotalAmount),
+                'total_ordered_quantity' => $this->decimalQuantity($totalOrderedQuantity),
+                'total_received_quantity' => $this->decimalQuantity($totalReceivedQuantity),
+                'total_remaining_quantity' => $this->decimalQuantity($totalRemainingQuantity),
+                'subtotal_amount' => $this->decimalAmount($subtotalAmount),
+                'total_amount' => $this->decimalAmount($subtotalAmount),
             ],
             'lines' => $calculatedLines,
         ];
@@ -59,11 +70,21 @@ class PurchaseOrderCalculationService
 
     public function formatQuantity(mixed $value): string
     {
-        return number_format($this->number($value), 8, '.', '');
+        return $this->numbers->normalizeToScale($value ?? 0, 8) ?? '0.00000000';
     }
 
     public function formatAmount(mixed $value): string
     {
-        return number_format($this->number($value), 4, '.', '');
+        return $this->numbers->normalizeToScale($value ?? 0, 4) ?? '0.0000';
+    }
+
+    private function decimalQuantity(float $value): string
+    {
+        return number_format($value, 8, '.', '');
+    }
+
+    private function decimalAmount(float $value): string
+    {
+        return number_format($value, 4, '.', '');
     }
 }

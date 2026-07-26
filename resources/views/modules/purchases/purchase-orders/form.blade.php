@@ -5,12 +5,11 @@
     $isReadonly = $mode === 'view' || (! $isCreateLike && ($record?->isLockedForEditing() ?? false));
     $title = __("purchase_orders.{$mode}");
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $routePrefix = 'admin.purchases.purchase-orders';
     $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $dateValue = fn ($field, $default = null) => old($field, $dates->formatDate($default, ''));
     $plainDate = fn ($date) => $dates->formatDate($date, __('common.empty_value'));
-    $formatQuantity = fn ($value) => rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.') ?: '0';
-    $formatAmount = fn ($value) => rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $selectedSupplier = old('supplier_doc_num', $supplierOption['id'] ?? '');
     $selectedCurrency = old('currency_doc_num', $currencyOption['id'] ?? '');
@@ -168,9 +167,9 @@
                     <div class="col-md-2">
                         <x-forms.label for="exchange_rate" :label="__('purchase_orders.attributes.exchange_rate')" required />
                         @if($isReadonly)
-                            <x-forms.view-field for="exchange_rate" :value="$formatAmount($record?->exchange_rate ?? 1)" dir="ltr" input-class="text-center" />
+                            <x-forms.view-field for="exchange_rate" :value="$numbers->format($record?->exchange_rate ?? 1)" dir="ltr" input-class="text-center" />
                         @else
-                            <input class="form-control text-center" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ old('exchange_rate', $record?->exchange_rate ?? '1') }}" dir="ltr" required>
+                            <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                     </div>
@@ -280,23 +279,23 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <div class="text-end">{{ $formatQuantity($line['ordered_quantity'] ?? 0) }}</div>
+                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['ordered_quantity'] ?? 0) }}</div>
                                         @else
-                                            <input class="form-control text-end js-line-quantity" name="lines[{{ $index }}][ordered_quantity]" type="number" min="0.00000001" step="0.00000001" value="{{ $line['ordered_quantity'] ?? '' }}" dir="ltr" required>
+                                            <x-forms.numeric-input class="text-end js-line-quantity" :name="'lines['.$index.'][ordered_quantity]'" :value="$line['ordered_quantity'] ?? ''" :scale="8" min="0.00000001" step="0.00000001" required />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.ordered_quantity"></div>
                                         @endif
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <div class="text-end">{{ $formatAmount($line['unit_price'] ?? 0) }}</div>
+                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                         @else
-                                            <input class="form-control text-end js-line-unit-price" name="lines[{{ $index }}][unit_price]" type="number" min="0" step="0.0001" value="{{ $line['unit_price'] ?? '' }}" dir="ltr" required>
+                                            <x-forms.numeric-input class="text-end js-line-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" required />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                         @endif
                                     </td>
-                                    <td class="text-end fw-semibold js-line-total">{{ $formatAmount($line['line_total'] ?? 0) }}</td>
-                                    <td class="text-end text-700">{{ $formatQuantity($line['received_quantity'] ?? 0) }}</td>
-                                    <td class="text-end text-700 js-line-remaining">{{ $formatQuantity($line['remaining_quantity'] ?? 0) }}</td>
+                                    <td class="text-end fw-semibold js-line-total" dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</td>
+                                    <td class="text-end text-700" dir="ltr">{{ $numbers->format($line['received_quantity'] ?? 0) }}</td>
+                                    <td class="text-end text-700 js-line-remaining" dir="ltr">{{ $numbers->format($line['remaining_quantity'] ?? 0) }}</td>
                                     <td>
                                         @if($isReadonly)
                                             <span>{{ $line['notes'] ?? __('common.empty_value') }}</span>
@@ -352,20 +351,20 @@
                         <h6 class="text-700 mb-3">{{ __('purchase_orders.sections.totals') }}</h6>
                         <div class="d-flex justify-content-between mb-2">
                             <span>{{ __('purchase_orders.totals.ordered_quantity') }}</span>
-                            <strong class="js-total-ordered">{{ $formatQuantity($record?->total_ordered_quantity ?? 0) }}</strong>
+                            <strong class="js-total-ordered" dir="ltr">{{ $numbers->format($record?->total_ordered_quantity ?? 0) }}</strong>
                         </div>
                         <div class="d-flex justify-content-between mb-2">
                             <span>{{ __('purchase_orders.totals.received_quantity') }}</span>
-                            <strong class="js-total-received">{{ $formatQuantity($record?->total_received_quantity ?? 0) }}</strong>
+                            <strong class="js-total-received" dir="ltr">{{ $numbers->format($record?->total_received_quantity ?? 0) }}</strong>
                         </div>
                         <div class="d-flex justify-content-between mb-2">
                             <span>{{ __('purchase_orders.totals.remaining_quantity') }}</span>
-                            <strong class="js-total-remaining">{{ $formatQuantity($record?->total_remaining_quantity ?? 0) }}</strong>
+                            <strong class="js-total-remaining" dir="ltr">{{ $numbers->format($record?->total_remaining_quantity ?? 0) }}</strong>
                         </div>
                         <hr>
                         <div class="d-flex justify-content-between fs-8">
                             <span>{{ __('purchase_orders.totals.net_total') }}</span>
-                            <strong class="js-total-amount">{{ $formatAmount($record?->total_amount ?? 0) }}</strong>
+                            <strong class="js-total-amount" dir="ltr">{{ $numbers->format($record?->total_amount ?? 0) }}</strong>
                         </div>
                     </div>
                 </div>
@@ -386,11 +385,11 @@
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
             </td>
             <td>
-                <input class="form-control text-end js-line-quantity" name="lines[__INDEX__][ordered_quantity]" type="number" min="0.00000001" step="0.00000001" dir="ltr" required>
+                <x-forms.numeric-input class="text-end js-line-quantity" name="lines[__INDEX__][ordered_quantity]" :scale="8" min="0.00000001" step="0.00000001" required />
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.ordered_quantity"></div>
             </td>
             <td>
-                <input class="form-control text-end js-line-unit-price" name="lines[__INDEX__][unit_price]" type="number" min="0" step="0.0001" dir="ltr" required>
+                <x-forms.numeric-input class="text-end js-line-unit-price" name="lines[__INDEX__][unit_price]" :scale="4" min="0" step="0.0001" required />
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
             </td>
             <td class="text-end fw-semibold js-line-total">0</td>

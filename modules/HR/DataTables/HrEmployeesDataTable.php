@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrEmployee;
 use Yajra\DataTables\Facades\DataTables;
@@ -17,6 +18,7 @@ class HrEmployeesDataTable
 
     public function __construct(
         private readonly DataTableSearchService $searchService,
+        private readonly NumericFormatService $numericFormatter,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -243,7 +245,7 @@ class HrEmployeesDataTable
             default => null,
         };
 
-        return $value === null || $value === '' ? '' : number_format((float) $value, 2);
+        return $this->numericFormatter->format($value);
     }
 
     private function indicatorBadge(int $count, string $icon): string

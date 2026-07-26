@@ -3,5 +3,5 @@
 @endphp
 
 <ul class="navbar-nav flex-column mb-3" id="navbarVerticalNav">
-    @include('layouts.partials.menu.vertical-items', ['items' => $menuItems])
+    @include('layouts.partials.menu.vertical-items', ['items' => $menuItems, 'menuPath' => []])
 </ul>

@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
@@ -20,6 +21,7 @@ class CashVoucherService
         private readonly DocumentNumberService $documents,
         private readonly CrudAuditService $audit,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(string $voucherType, array $data): array
@@ -524,9 +526,8 @@ class CashVoucherService
 
     private function normalizeDecimal(mixed $value, int $scale): string
     {
-        $numeric = is_numeric($value) ? (float) $value : 0.0;
-
-        return number_format($numeric, $scale, '.', '');
+        return $this->numbers->normalizeToScale($value, $scale)
+            ?? $this->numbers->normalizeToScale(0, $scale);
     }
 
     private function multiplyDecimal(mixed $left, mixed $right, int $scale): string

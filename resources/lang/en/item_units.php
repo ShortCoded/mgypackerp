@@ -16,6 +16,7 @@ return [
         'equivalent_value_required' => 'Equivalent value is required when an equivalent unit is selected.',
         'equivalent_value_numeric' => 'Equivalent value must be a number.',
         'equivalent_value_gt_zero' => 'Equivalent value must be greater than 0.',
+        'equivalent_value_precision' => 'Equivalent value may contain up to 12 whole digits and 6 decimal places.',
         'equivalent_unit_required' => 'Equivalent unit is required when an equivalent value is filled.',
         'equivalent_unit_exists' => 'Selected equivalent unit is not available.',
         'equivalent_unit_self' => 'A unit cannot reference itself as its equivalent unit.',

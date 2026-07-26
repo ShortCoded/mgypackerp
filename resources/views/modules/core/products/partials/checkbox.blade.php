@@ -1,12 +1,17 @@
 @php
     use Modules\Core\Models\Product;
 
-    $selectRecordTranslation = ($productContext ?? Product::ContextProducts) === Product::ContextRawMaterials
-        ? 'products.raw_materials.select_record'
-        : 'products.select_record';
-    $permissionPrefix = ($productContext ?? Product::ContextProducts) === Product::ContextRawMaterials
-        ? 'raw_materials'
-        : 'products';
+    $productContext = $productContext ?? Product::ContextProducts;
+    $selectRecordTranslation = match ($productContext) {
+        Product::ContextRawMaterials => 'products.raw_materials.select_record',
+        Product::ContextPackagingMaterials => 'products.packaging_materials.select_record',
+        default => 'products.select_record',
+    };
+    $permissionPrefix = match ($productContext) {
+        Product::ContextRawMaterials => 'raw_materials',
+        Product::ContextPackagingMaterials => 'packaging_materials',
+        default => 'products',
+    };
 @endphp
 
 @if (auth()->user()?->can($permissionPrefix.'.delete'))

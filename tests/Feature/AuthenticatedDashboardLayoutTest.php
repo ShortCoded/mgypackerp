@@ -168,7 +168,7 @@ test('dashboard navigation renders from menu config and filters permissions', fu
         ->assertDontSee(__('menu.roles'))
         ->assertDontSee(__('menu.permissions'))
         ->assertDontSee(__('menu.auth_logs'))
-        ->assertSee('href="#!"', false);
+        ->assertDontSee('href="#!"', false);
 });
 
 test('menu service marks active items and hides empty parents', function () {
@@ -188,7 +188,7 @@ test('menu service marks active items and hides empty parents', function () {
 test('menu service opens basic data when a moved administration child route is active', function () {
     app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-    Route::middleware('web')->get('/_menu-test/users', fn () => view('dashboard'))->name('admin.users.index');
+    Route::middleware('web')->get('/_menu-test/users', fn () => response('ok'))->name('admin.users.index');
 
     Permission::findOrCreate('users.view');
 
@@ -240,9 +240,7 @@ test('main navigation keeps business order and nests utility pages under tools',
     expect($topLevelLabels)->toBe([
         'dashboard',
         'basic_data',
-        'item_data',
-        'general_ledger',
-        'finance',
+        'accounting_costing',
         'human_resources',
         'tools',
     ])->not->toContain('file_manager', 'calendar', 'my_board', 'chat', 'administration', 'settings');
@@ -305,7 +303,7 @@ test('tools menu appears from child permissions and opens for moved tool routes'
     'web app settings' => ['admin.settings.pwa', 'settings.pwa.view', 'pwa_settings'],
 ]);
 
-test('former administration items are under basic data and open it from their routes', function (string $routeName, string $permission, string $label) {
+test('former administration and system audit items open their owning domains', function (string $routeName, string $permission, string $label, string $expectedDomain) {
     app(PermissionRegistrar::class)->forgetCachedPermissions();
 
     Permission::findOrCreate($permission, 'web');
@@ -323,18 +321,18 @@ test('former administration items are under basic data and open it from their ro
 
     $menu = app(MenuService::class)->getMenu($user);
     $topLevelLabels = collect($menu)->pluck('label')->all();
-    $basicData = collect($menu)->firstWhere('label', 'basic_data');
+    $domain = collect($menu)->firstWhere('label', $expectedDomain);
 
-    expect($topLevelLabels)->toContain('basic_data')
+    expect($topLevelLabels)->toContain($expectedDomain)
         ->and($topLevelLabels)->not->toContain('administration', $label)
-        ->and($basicData)->not->toBeNull()
-        ->and($basicData['active'])->toBeTrue()
-        ->and($basicData['open'])->toBeTrue()
-        ->and(collect($basicData['children'])->pluck('label')->all())->toBe([$label]);
+        ->and($domain)->not->toBeNull()
+        ->and($domain['active'])->toBeTrue()
+        ->and($domain['open'])->toBeTrue()
+        ->and(collect($domain['children'])->pluck('label')->all())->toBe([$label]);
 })->with([
-    'users' => ['admin.users.index', 'users.view', 'users'],
-    'roles' => ['admin.roles.index', 'roles.view', 'roles'],
-    'activity logs' => ['admin.activity-logs.index', 'activity.logs.view', 'activity_logs'],
-    'auth logs' => ['admin.auth-logs.index', 'auth.logs.view', 'auth_logs'],
-    'active sessions' => ['admin.auth-sessions.index', 'auth.sessions.view', 'auth_sessions'],
+    'users' => ['admin.users.index', 'users.view', 'users', 'basic_data'],
+    'roles' => ['admin.roles.index', 'roles.view', 'roles', 'basic_data'],
+    'activity logs' => ['admin.activity-logs.index', 'activity.logs.view', 'activity_logs', 'tools'],
+    'auth logs' => ['admin.auth-logs.index', 'auth.logs.view', 'auth_logs', 'tools'],
+    'active sessions' => ['admin.auth-sessions.index', 'auth.sessions.view', 'auth_sessions', 'tools'],
 ]);

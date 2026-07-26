@@ -7,9 +7,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Models\CashVoucher;
+use Modules\Finance\Services\FinanceAmountService;
 use Yajra\DataTables\Facades\DataTables;
 
 class CashVouchersDataTable
@@ -19,6 +21,8 @@ class CashVouchersDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
+        private readonly FinanceAmountService $amounts,
     ) {}
 
     public function json(Request $request, string $voucherType, string $permissionPrefix, string $routePrefix, string $translationKey): JsonResponse
@@ -84,10 +88,14 @@ class CashVouchersDataTable
             ->addColumn('cashbox', fn (CashVoucher $record): string => $this->ellipsisText(trim(implode(' — ', array_filter([$record->cashbox_doc_num, $record->cashbox_name])))))
             ->editColumn('person_name', fn (CashVoucher $record): string => $this->ellipsisText($record->person_name))
             ->addColumn('currency', fn (CashVoucher $record): string => $this->ellipsisText(trim(implode(' — ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->editColumn('exchange_rate', fn (CashVoucher $record): string => $this->plainText($this->formatAmount((float) $record->exchange_rate, 6)))
-            ->editColumn('amount', fn (CashVoucher $record): string => $this->plainText($this->formatAmount((float) $record->amount)))
-            ->addColumn('distributed_amount', fn (CashVoucher $record): string => $this->plainText($this->formatAmount((float) $record->distributed_total)))
-            ->addColumn('remaining_amount', fn (CashVoucher $record): string => $this->plainText($this->formatAmount(((float) $record->amount) - ((float) $record->distributed_total))))
+            ->editColumn('exchange_rate', fn (CashVoucher $record): string => $this->plainText($this->numbers->format($record->exchange_rate)))
+            ->editColumn('amount', fn (CashVoucher $record): string => $this->plainText($this->numbers->format($record->amount)))
+            ->addColumn('distributed_amount', fn (CashVoucher $record): string => $this->plainText($this->numbers->format($record->distributed_total)))
+            ->addColumn('remaining_amount', fn (CashVoucher $record): string => $this->plainText($this->numbers->format(
+                $this->amounts->fromUnits(
+                    $this->amounts->toUnits($record->amount) - $this->amounts->toUnits($record->distributed_total)
+                )
+            )))
             ->editColumn('status', fn (CashVoucher $record): string => view('modules.finance.cash-vouchers.partials.status', ['record' => $record, 'translationKey' => $translationKey])->render())
             ->editColumn('reason', fn (CashVoucher $record): string => $this->ellipsisText($record->reason))
             ->addColumn('created_by', fn (CashVoucher $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
@@ -148,10 +156,5 @@ class CashVouchersDataTable
         }
 
         return __($translationKey.'.messages.document_locked');
-    }
-
-    private function formatAmount(float $amount, int $scale = 4): string
-    {
-        return rtrim(rtrim(number_format($amount, $scale, '.', ''), '0'), '.') ?: '0';
     }
 }

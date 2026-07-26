@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Modules\Sales\Http\Controllers\CustomerController;
+use Modules\Sales\Http\Controllers\CustomerDataReportController;
 use Modules\Sales\Http\Controllers\ProjectStructureController;
 use Modules\Sales\Http\Controllers\ProjectStructureModelController;
 use Modules\Sales\Http\Controllers\QuotationController;
@@ -99,4 +100,18 @@ Route::middleware('auth')
             Route::put('/{quotation}', 'update')->middleware('can:quotations.edit')->name('update');
             Route::delete('/{quotation}', 'destroy')->middleware('can:quotations.delete')->name('destroy');
         });
+    });
+
+Route::middleware('auth')
+    ->prefix('admin/reports/customers')
+    ->as('admin.reports.customers.')
+    ->controller(CustomerDataReportController::class)
+    ->group(function (): void {
+        Route::get('/', 'index')->middleware('can:reports.customers.view')->name('index');
+        Route::get('/data', 'data')->middleware('can:reports.customers.view')->name('data');
+        Route::get('/filter-options/accounts', 'filterAccounts')->middleware('can:reports.customers.view')->name('filter-options.accounts');
+        Route::get('/filter-options/account-groups', 'filterAccountGroups')->middleware('can:reports.customers.view')->name('filter-options.account-groups');
+        Route::get('/export/excel', 'exportExcel')->middleware('can:reports.customers.export')->name('export.excel');
+        Route::get('/export/csv', 'exportCsv')->middleware('can:reports.customers.export')->name('export.csv');
+        Route::get('/export/pdf', 'exportPdf')->middleware('can:reports.customers.pdf')->name('export.pdf');
     });

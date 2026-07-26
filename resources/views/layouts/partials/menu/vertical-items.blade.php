@@ -1,7 +1,8 @@
 @foreach ($items as $item)
     @php
         $hasChildren = count($item['children']) > 0;
-        $menuId = 'vertical-menu-' . \Illuminate\Support\Str::slug($item['label']) . '-' . substr(md5($item['text'] . $loop->index), 0, 8);
+        $itemPath = [...($menuPath ?? []), $item['label'].'-'.$loop->index];
+        $menuId = 'vertical-menu-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
     @endphp
 
     <li class="nav-item">
@@ -13,7 +14,7 @@
                 </div>
             </a>
             <ul class="nav collapse {{ $item['open'] ? 'show' : '' }}" id="{{ $menuId }}">
-                @include('layouts.partials.menu.vertical-items', ['items' => $item['children']])
+                @include('layouts.partials.menu.vertical-items', ['items' => $item['children'], 'menuPath' => $itemPath])
             </ul>
         @else
             <a class="nav-link {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}">

@@ -162,6 +162,11 @@
                             $fieldType = (string) ($field['type'] ?? 'text');
                             $fieldLabel = __('hr.foundation.attributes.' . $fieldName);
                             $value = $fieldValue($field);
+                            $isNumericField = in_array($fieldType, ['number', 'decimal'], true);
+                            $numericScale = (int) ($field['scale'] ?? ($fieldType === 'number' ? 0 : 2));
+                            $numericMin = $field['min'] ?? null;
+                            $numericMax = $field['max'] ?? null;
+                            $numericStep = $field['step'] ?? ($numericScale === 0 ? '1' : '0.'.str_repeat('0', max(0, $numericScale - 1)).'1');
                         @endphp
 
                         <div class="{{ in_array($fieldType, ['checkbox'], true) ? 'col-md-4 col-lg-3 d-flex align-items-end' : (in_array($fieldType, ['textarea', 'weekdays'], true) ? 'col-12' : 'col-md-6 col-lg-4') }}">
@@ -176,6 +181,8 @@
                                     <x-forms.view-field :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :value="$selectedRelations[$fieldName]['text'] ?? null" />
                                 @elseif ($fieldType === 'textarea')
                                     <x-forms.view-field :for="'hr-foundation-'.$fieldName" as="textarea" :label="$fieldLabel" :value="$value" rows="4" />
+                                @elseif ($isNumericField)
+                                    <x-forms.view-field :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :value="$value" numeric dir="ltr" />
                                 @else
                                     <x-forms.view-field :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :value="$value" />
                                 @endif
@@ -232,15 +239,26 @@
                                 <label class="form-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
                                 <textarea id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-control" rows="4">{{ $value }}</textarea>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
+                            @elseif ($isNumericField)
+                                <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" />
+                                <x-forms.numeric-input
+                                    :id="'hr-foundation-'.$fieldName"
+                                    :name="$fieldName"
+                                    :value="$value"
+                                    :scale="$numericScale"
+                                    :min="$numericMin"
+                                    :max="$numericMax"
+                                    :step="$numericStep"
+                                    class="text-center"
+                                />
+                                <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @else
                                 <label class="form-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
                                 <input id="hr-foundation-{{ $fieldName }}"
                                     name="{{ $fieldName }}"
-                                    type="{{ in_array($fieldType, ['number', 'decimal'], true) ? 'number' : ($fieldType === 'time' ? 'time' : 'text') }}"
+                                    type="{{ $fieldType === 'time' ? 'time' : 'text' }}"
                                     class="form-control {{ $fieldType === 'date' ? 'datetimepicker' : '' }}"
                                     value="{{ $value }}"
-                                    @if ($fieldType === 'decimal') step="0.01" @endif
-                                    @if ($fieldType === 'number') step="1" @endif
                                     @if ($fieldType === 'date') placeholder="{{ __('common.placeholders.select_date') }}" data-options='{"disableMobile":true,"dateFormat":"Y-m-d"}' @endif>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @endif

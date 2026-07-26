@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Services;
 
+use App\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -14,6 +15,7 @@ use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
@@ -28,6 +30,7 @@ class PurchasesSelect2Service
         private readonly BusinessPartnerAccountService $accounts,
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly ProductImageResolver $productImages,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     public function suppliers(Request $request): array
@@ -62,7 +65,7 @@ class PurchasesSelect2Service
     {
         $companyId = $this->operatingContext->snapshot($request)['company_id'];
         $selectedDocNum = $request->string('selected_doc_num')->trim()->toString();
-        $query = $this->productQuery($companyId);
+        $query = $this->productQuery($companyId, $request->user());
 
         if ($selectedDocNum !== '') {
             $selected = (clone $query)->where('products.doc_num', $selectedDocNum)->first();
@@ -282,14 +285,19 @@ class PurchasesSelect2Service
         ];
     }
 
-    private function productQuery(?int $companyId): Builder
+    private function productQuery(?int $companyId, ?User $user): Builder
     {
-        return Product::query()
+        $query = Product::query()
             ->with(['unit', 'equivalentUnit', 'mainImageUsage.file'])
             ->active()
             ->nonService()
-            ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'))
-            ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
+            ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'));
+
+        if ($user instanceof User) {
+            $query = $this->visibility->applyAnyScreenToEloquent($query, $user, [Product::ContextProducts, Product::ContextRawMaterials, Product::ContextPackagingMaterials]);
+        }
+
+        return $query->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
             ->leftJoin('item_categories', 'item_categories.id', '=', 'products.item_category_id')
             ->leftJoin('item_groups', 'item_groups.id', '=', 'products.item_group_id')
             ->leftJoin('item_models', 'item_models.id', '=', 'products.item_model_id')

@@ -1,0 +1,63 @@
+<?php
+
+return [
+    'estimated_cost_sheets' => 'costing_work_order_estimated_cost',
+    'actual_cost_sheets' => 'costing_work_order_actual_cost',
+    'cost_variance_analysis' => 'costing_cost_variance_analysis',
+    'job_closing' => 'costing_cost_closing',
+    'costing_settings' => 'costing_costing_settings',
+
+    'sales_orders' => 'sales_sales_orders',
+    'customer_invoices' => 'sales_sales_invoices',
+    'customer_receipts' => 'sales_customer_receipts',
+    'customer_receipt_allocations' => 'sales_customer_receipt_allocations',
+    'customer_advances' => 'sales_customer_advances',
+    'trip_sheets' => 'sales_trip_sheets',
+    'delivery_notes' => 'sales_delivery_notes',
+    'change_orders' => 'sales_sales_order_change_requests',
+
+    'goods_receipts' => 'purchases_goods_receipt_notes',
+    'purchase_order_receiving' => 'purchases_goods_receipt_notes',
+    'supplier_payments' => 'purchases_supplier_payments',
+    'supplier_invoice_allocations' => 'purchases_purchase_invoice_allocations',
+
+    'production_identifier_assignments' => 'production_contract_identifier_allocation',
+    'production_work_orders' => 'production_work_orders',
+    'technical_office_reviews' => 'production_work_order_approval',
+    'production_stages' => 'production_production_stages',
+    'production_material_requests' => 'production_material_requests',
+    'production_material_issues' => 'production_material_issue_request',
+    'production_material_returns' => 'inventory_production_material_return',
+    'production_output_receipts' => 'production_production_output_receipt',
+    'external_manufacturing_orders' => 'production_external_manufacturing_orders',
+    'supplier_custodies' => 'production_supplier_custody',
+
+    'quality_inspection_types' => 'quality_inspection_types',
+    'quality_checkpoints' => 'quality_quality_characteristics',
+    'quality_inspections' => 'quality_incoming_material_inspection',
+    'quality_results' => 'quality_inspection_result_entry',
+    'quality_reports' => 'reports_quality_inspection_results',
+
+    'maintenance_requests' => 'maintenance_maintenance_request',
+    'maintenance_work_orders' => 'maintenance_maintenance_work_orders',
+    'preventive_maintenance_plans' => 'maintenance_preventive_maintenance_plans',
+    'maintenance_execution' => 'maintenance_maintenance_completion',
+    'maintenance_history' => 'maintenance_maintenance_history',
+    'maintenance_reports' => 'reports_maintenance_maintenance_work_orders',
+
+    'inventory_material_requests' => 'production_material_requests',
+    'inventory_material_issues' => 'inventory_material_issue_vouchers',
+    'inventory_material_returns' => 'inventory_material_return_vouchers',
+    'inventory_transfers' => 'inventory_inventory_transfer_vouchers',
+
+    'inventory_reports' => 'reports_inventory_inventory_balances',
+    'purchases_reports' => 'reports_purchases_purchases_by_supplier',
+    'sales_reports' => 'reports_sales_sales_orders',
+    'production_reports' => 'reports_production_work_orders_by_status',
+    'quality_domain_reports' => 'reports_quality_inspection_results',
+    'finance_reports' => 'reports_finance_cashbox_balances',
+    'costing_reports' => 'reports_costing_product_cost',
+    'maintenance_domain_reports' => 'reports_maintenance_maintenance_requests',
+    'human_resources_reports' => 'hr_hr_history',
+    'fixed_assets_reports' => 'fixed_assets_asset_history',
+];

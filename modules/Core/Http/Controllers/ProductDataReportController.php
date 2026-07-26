@@ -61,7 +61,7 @@ class ProductDataReportController extends Controller
         $filters = $this->report->filtersFromRequest($request);
 
         return Excel::download(
-            new ProductDataReportExport($this->report, $filters),
+            new ProductDataReportExport($this->report, $filters, forCsv: true),
             'products-data-report.csv',
             ExcelFormat::CSV,
         );

@@ -110,7 +110,7 @@ test('item unit index renders through shared item lookup crud', function () {
         ->get(route('admin.item-units.index'))
         ->assertOk()
         ->assertSee(__('item_units.title'))
-        ->assertSee(__('menu.item_data'))
+        ->assertSee(__('menu.basic_data'))
         ->assertSee(route('admin.item-units.data'), false)
         ->assertSee(route('admin.item-units.bulk-delete'), false)
         ->assertSee('js-item-lookup-table', false)
@@ -119,7 +119,7 @@ test('item unit index renders through shared item lookup crud', function () {
         ->assertDontSee('data-id=', false);
 });
 
-test('item data is a top level menu group outside basic data', function () {
+test('item lookups are under basic data while product masters are under inventory', function () {
     $actor = itemLookupActor([
         'companies.view',
         'products.view',
@@ -136,17 +136,18 @@ test('item data is a top level menu group outside basic data', function () {
     $menu = app(MenuService::class)->getMenu($actor);
     $topLevelLabels = collect($menu)->pluck('label')->all();
     $basicData = collect($menu)->firstWhere('label', 'basic_data');
-    $itemData = collect($menu)->firstWhere('label', 'item_data');
-    $itemDataLabels = collect($itemData['children'])->pluck('label')->all();
+    $inventory = collect($menu)->firstWhere('label', 'inventory');
+    $basicDataLabels = collect($basicData['children'])->pluck('label')->all();
+    $inventoryLabels = collect($inventory['children'])->pluck('label')->all();
 
     expect($topLevelLabels)
         ->toContain('basic_data')
-        ->toContain('item_data')
+        ->toContain('inventory')
+        ->not->toContain('item_data')
         ->and($basicData)->not->toBeNull()
-        ->and($itemData)->not->toBeNull()
-        ->and(collect($basicData['children'])->pluck('label')->all())->not->toContain('item_data')
-        ->and($itemDataLabels)->toBe([
-            'products',
+        ->and($inventory)->not->toBeNull()
+        ->and($basicDataLabels)->toBe([
+            'companies',
             'item_categories',
             'item_units',
             'item_sizes',
@@ -155,7 +156,8 @@ test('item data is a top level menu group outside basic data', function () {
             'item_models',
             'item_groups',
             'item_origin_countries',
-        ]);
+        ])
+        ->and($inventoryLabels)->toBe(['products']);
 });
 
 test('item lookup routes config and translations are registered', function (string $routePrefix, string $documentKey, string $prefix, string $translationFile, string $menuKey, string $englishMenu, string $arabicMenu) {
@@ -233,6 +235,107 @@ test('item unit create update delete and restore use public document numbers', f
     expect(ItemUnit::query()->where('doc_num', $docNum)->exists())->toBeTrue();
 });
 
+test('item unit forms render equivalence values through the shared numeric input', function () {
+    $actor = itemLookupActor([
+        'item_units.view',
+        'item_units.edit',
+        'item_units.clone',
+    ]);
+    $equivalentUnit = ItemUnit::query()->create([
+        'company_id' => $this->itemLookupCompany->getKey(),
+        'doc_number' => 97,
+        'doc_num' => 'Unit-00097',
+        'name' => 'Piece',
+        'status' => 'active',
+    ]);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->itemLookupCompany->getKey(),
+        'doc_number' => 98,
+        'doc_num' => 'Unit-00098',
+        'name' => 'Carton',
+        'equivalent_value' => '1250.500000',
+        'equivalent_unit_id' => $equivalentUnit->getKey(),
+        'status' => 'active',
+    ]);
+
+    foreach (['edit', 'clone'] as $action) {
+        $this->actingAs($actor)
+            ->get(route("admin.item-units.{$action}", $unit->doc_num))
+            ->assertOk()
+            ->assertSee('data-numeric-input', false)
+            ->assertSee('data-numeric-scale="6"', false)
+            ->assertSee('data-numeric-allow-negative="false"', false)
+            ->assertSee('value="1,250.5"', false)
+            ->assertDontSee('id="equivalent_value" name="equivalent_value" type="number"', false);
+    }
+
+    $this->actingAs($actor)
+        ->get(route('admin.item-units.show', $unit->doc_num))
+        ->assertOk()
+        ->assertSee('value="1,250.5"', false)
+        ->assertSee('dir="ltr"', false);
+
+    $this->actingAs($actor)
+        ->withSession(['_old_input' => ['equivalent_value' => '2,500.500000']])
+        ->get(route('admin.item-units.edit', $unit->doc_num))
+        ->assertOk()
+        ->assertSee('value="2,500.5"', false);
+});
+
+test('item unit equivalence dirty detection compares canonical decimal strings', function () {
+    $actor = itemLookupActor(['item_units.edit']);
+    $baseUnit = ItemUnit::query()->create([
+        'company_id' => $this->itemLookupCompany->getKey(),
+        'doc_number' => 95,
+        'doc_num' => 'Unit-00095',
+        'name' => 'Piece',
+        'status' => 'active',
+    ]);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->itemLookupCompany->getKey(),
+        'doc_number' => 96,
+        'doc_num' => 'Unit-00096',
+        'name' => 'Carton',
+        'equivalent_value' => '2.500000',
+        'equivalent_unit_id' => $baseUnit->getKey(),
+        'status' => 'active',
+    ]);
+    $payload = [
+        'name' => 'Carton',
+        'status' => 'active',
+        'notes' => null,
+        'equivalent_unit_doc_num' => $baseUnit->doc_num,
+        'submit_action' => 'save_edit',
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.item-units.update', $unit->doc_num), [
+            ...$payload,
+            'equivalent_value' => '2.5',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('type', 'no_changes');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.item-units.update', $unit->doc_num), [
+            ...$payload,
+            'equivalent_value' => '2.500001',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect((string) $unit->refresh()->equivalent_value)->toBe('2.500001');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.item-units.update', $unit->doc_num), [
+            ...$payload,
+            'equivalent_value' => '1,2,3',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['equivalent_value']);
+});
+
 test('item color shared item lookup crud uses public document numbers and shared ui', function () {
     $actor = itemLookupActor([
         'item_colors.view',
@@ -250,7 +353,7 @@ test('item color shared item lookup crud uses public document numbers and shared
         ->get(route('admin.item-colors.index'))
         ->assertOk()
         ->assertSee(__('item_colors.title'))
-        ->assertSee(__('menu.item_data'))
+        ->assertSee(__('menu.basic_data'))
         ->assertSee(route('admin.item-colors.data'), false)
         ->assertSee(route('admin.item-colors.bulk-delete'), false)
         ->assertSee(route('admin.item-colors.document-number-settings.update'), false)

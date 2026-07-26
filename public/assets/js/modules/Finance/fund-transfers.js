@@ -44,15 +44,13 @@
     }
 
     function numberValue(value) {
-        const parsed = parseFloat(String(value || '').replace(/,/g, ''));
-
-        return Number.isFinite(parsed) ? parsed : 0;
+        return window.AppNumbers.number(value, 0);
     }
 
     function formatAmount(value, scale) {
         const factor = Math.pow(10, scale || 4);
 
-        return (Math.round((Number(value) || 0) * factor) / factor).toString();
+        return (Math.round(numberValue(value) * factor) / factor).toString();
     }
 
     function holderValue($form, side) {
@@ -127,6 +125,8 @@
         if (currenciesMatch($form)) {
             $rate.val('1').prop('readonly', true);
             $target.val(sourceAmount > 0 ? formatAmount(sourceAmount) : '');
+            window.AppNumbers.refresh($rate[0]);
+            window.AppNumbers.refresh($target[0]);
             return;
         }
 
@@ -134,6 +134,8 @@
 
         const rate = numberValue($rate.val());
         $target.val(sourceAmount > 0 && rate > 0 ? formatAmount(sourceAmount * rate) : '');
+        window.AppNumbers.refresh($rate[0]);
+        window.AppNumbers.refresh($target[0]);
     }
 
     function initForm() {

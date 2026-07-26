@@ -5,7 +5,8 @@
     $isReadonly = $mode === 'view' || (! $isCreateLike && ($isLocked ?? false));
     $title = __('cheques.'.$mode);
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
-    $formatAmount = fn ($amount, $scale = 4) => rtrim(rtrim(number_format((float) $amount, $scale, '.', ''), '0'), '.') ?: '0';
+    $financeAmounts = app(\Modules\Finance\Services\FinanceAmountService::class);
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $value = fn($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $dateValue = fn($field) => old($field, $record?->{$field} ? $dateFormatService->formatDate($record->{$field}, '') : '');
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
@@ -29,9 +30,10 @@
     if ($existingLines === []) {
         $existingLines = [['account_doc_num' => null, 'account_label' => null, 'amount' => null, 'description' => null, 'notes' => null]];
     }
-    $chequeAmount = (float) $value('amount', 0);
-    $distributedAmount = collect($existingLines)->sum(fn (array $line) => (float) ($line['amount'] ?? 0));
-    $remainingAmount = $chequeAmount - $distributedAmount;
+    $chequeAmountUnits = $financeAmounts->toUnits($value('amount', 0));
+    $distributedAmountUnits = collect($existingLines)->sum(fn (array $line) => $financeAmounts->toUnits($line['amount'] ?? 0));
+    $distributedAmount = $financeAmounts->fromUnits($distributedAmountUnits);
+    $remainingAmount = $financeAmounts->fromUnits($chequeAmountUnits - $distributedAmountUnits);
 @endphp
 
 @section('title', $title)
@@ -279,9 +281,9 @@
                         <div class="col-md-3">
                             <x-forms.label for="exchange_rate" :label="__('cheques.attributes.exchange_rate')" required />
                             @if($isReadonly)
-                                <x-forms.view-field for="exchange_rate" :value="$formatAmount($value('exchange_rate', 1), 6)" input-class="text-center" dir="ltr" />
+                                <x-forms.view-field for="exchange_rate" :value="$numbers->format($value('exchange_rate', 1))" input-class="text-center" dir="ltr" />
                             @else
-                                <input class="form-control text-center js-cheque-exchange-rate" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ $value('exchange_rate', 1) }}" dir="ltr" required @readonly($isMainCurrencySelected)>
+                                <x-forms.numeric-input class="text-center js-cheque-exchange-rate" id="exchange_rate" name="exchange_rate" :value="$value('exchange_rate', 1)" :scale="6" min="0.000001" step="0.000001" required :readonly="$isMainCurrencySelected" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                         </div>
@@ -289,9 +291,9 @@
                         <div class="col-md-3">
                             <x-forms.label for="amount" :label="__('cheques.attributes.amount')" required />
                             @if($isReadonly)
-                                <x-forms.view-field for="amount" :value="$formatAmount($value('amount', 0))" input-class="text-end" dir="ltr" />
+                                <x-forms.view-field for="amount" :value="$numbers->format($value('amount', 0))" input-class="text-end" dir="ltr" />
                             @else
-                                <input class="form-control text-end js-cheque-amount" id="amount" name="amount" type="number" min="0.0001" step="0.0001" value="{{ $value('amount') }}" dir="ltr" required>
+                                <x-forms.numeric-input class="text-end js-cheque-amount" id="amount" name="amount" :value="$value('amount')" :scale="4" min="0.0001" step="0.0001" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="amount"></div>
                         </div>
@@ -368,9 +370,9 @@
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['amount'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['amount'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control text-end js-cheque-line-amount" name="lines[{{ $index }}][amount]" type="number" min="0.0001" step="0.0001" value="{{ $line['amount'] ?? '' }}" dir="ltr">
+                                                <x-forms.numeric-input class="text-end js-cheque-line-amount" :name="'lines['.$index.'][amount]'" :value="$line['amount'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.amount"></div>
                                             @endif
                                         </td>
@@ -406,9 +408,9 @@
                             <tfoot class="bg-light">
                                 <tr>
                                     <th class="text-end">{{ __('cheques.attributes.total_distributed') }}</th>
-                                    <th class="text-end js-cheque-total-distributed" dir="ltr">{{ $formatAmount($distributedAmount) }}</th>
+                                    <th class="text-end js-cheque-total-distributed" dir="ltr">{{ $numbers->format($distributedAmount) }}</th>
                                     <th class="text-end">{{ __('cheques.attributes.remaining_amount') }}</th>
-                                    <th class="text-end js-cheque-remaining" dir="ltr">{{ $formatAmount($remainingAmount) }}</th>
+                                    <th class="text-end js-cheque-remaining" dir="ltr">{{ $numbers->format($remainingAmount) }}</th>
                                     @unless($isReadonly)
                                         <th></th>
                                     @endunless

@@ -8,6 +8,7 @@
     'inputClass' => '',
     'label' => null,
     'link' => false,
+    'numeric' => false,
     'rel' => 'noopener noreferrer',
     'required' => false,
     'rows' => 4,
@@ -16,9 +17,13 @@
 ])
 
 @php
-    $stringValue = trim((string) $value);
-    $hasValue = $stringValue !== '';
+    $rawStringValue = trim((string) $value);
+    $hasValue = $value !== null && $rawStringValue !== '';
+    $stringValue = $numeric && $hasValue
+        ? app(\Modules\Core\Services\NumericFormatService::class)->formatForInput($value)
+        : $rawStringValue;
     $displayValue = $hasValue ? $stringValue : $empty;
+    $effectiveDirection = $dir ?: ($numeric ? 'ltr' : null);
     $controlClass = trim('form-control '.$inputClass.' erp-view-field-control');
     $slotHtml = trim($slot->toHtml());
     $hasSlot = $slotHtml !== '';
@@ -35,14 +40,14 @@
             @if ($for) id="{{ $for }}" @endif
             class="{{ $controlClass }} erp-view-field-textarea"
             rows="{{ $rows }}"
-            @if ($dir) dir="{{ $dir }}" @endif
+            @if ($effectiveDirection) dir="{{ $effectiveDirection }}" @endif
             readonly
             disabled>{{ $displayValue }}</textarea>
     @elseif ($as === 'display' || $link || $hasSlot)
         <div
             @if ($for) id="{{ $for }}" @endif
             class="{{ $controlClass }} erp-view-field-display"
-            @if ($dir) dir="{{ $dir }}" @endif>
+            @if ($effectiveDirection) dir="{{ $effectiveDirection }}" @endif>
             @if ($hasSlot)
                 {!! $slotHtml !!}
             @elseif ($link && $hasValue && $linkHref)
@@ -57,7 +62,7 @@
             type="text"
             class="{{ $controlClass }}"
             value="{{ $displayValue }}"
-            @if ($dir) dir="{{ $dir }}" @endif
+            @if ($effectiveDirection) dir="{{ $effectiveDirection }}" @endif
             readonly
             disabled>
     @endif

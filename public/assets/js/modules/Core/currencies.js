@@ -84,6 +84,10 @@
         const current = currentFormData($form);
 
         return Object.keys(original).some(function (field) {
+            if (field === 'minor_unit_factor' && window.AppNumbers && typeof window.AppNumbers.same === 'function') {
+                return !window.AppNumbers.same(original[field], current[field]);
+            }
+
             return original[field] !== current[field];
         });
     }

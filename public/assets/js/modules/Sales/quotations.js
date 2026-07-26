@@ -184,7 +184,7 @@
     }
 
     if (['total'].indexOf(column) !== -1) {
-      return 'align-middle white-space-nowrap text-end';
+      return 'align-middle white-space-nowrap dt-number text-end';
     }
 
     if (['quotation_date', 'valid_until'].indexOf(column) !== -1) {
@@ -415,13 +415,13 @@
   }
 
   function toNumber(value) {
-    const number = parseFloat(String(value || '0').replace(/,/g, ''));
-
-    return Number.isFinite(number) ? number : 0;
+    return window.AppNumbers.number(value, 0);
   }
 
   function decimal(value) {
-    return (Math.round((value + Number.EPSILON) * 10000) / 10000).toFixed(4).replace(/\.?0+$/, '') || '0';
+    const normalized = (Math.round((value + Number.EPSILON) * 10000) / 10000).toFixed(4).replace(/\.?0+$/, '') || '0';
+
+    return window.AppNumbers.format(normalized);
   }
 
   function discountAmount(base, type, value) {

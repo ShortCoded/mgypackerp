@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -19,6 +20,7 @@ class PurchaseInvoicesDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -95,9 +97,9 @@ class PurchaseInvoicesDataTable
             ->editColumn('payment_type', fn (PurchaseInvoice $record): string => $this->plainText(__('purchase_invoices.payment_types.'.$record->payment_type)))
             ->editColumn('status', fn (PurchaseInvoice $record): string => view('modules.purchases.purchase-invoices.partials.status', ['record' => $record])->render())
             ->editColumn('payment_status', fn (PurchaseInvoice $record): string => view('modules.purchases.purchase-invoices.partials.payment-status', ['record' => $record])->render())
-            ->editColumn('total_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->formatAmount((float) $record->total_amount)))
-            ->editColumn('paid_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->formatAmount((float) $record->paid_amount)))
-            ->editColumn('remaining_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->formatAmount((float) $record->remaining_amount)))
+            ->editColumn('total_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->numbers->format($record->total_amount)))
+            ->editColumn('paid_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->numbers->format($record->paid_amount)))
+            ->editColumn('remaining_amount', fn (PurchaseInvoice $record): string => $this->plainText($this->numbers->format($record->remaining_amount)))
             ->addColumn('created_by', fn (PurchaseInvoice $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
             ->editColumn('created_at', fn (PurchaseInvoice $record): string => $this->plainText($record->created_at?->format($dateTimeFormat) ?? ''))
             ->addColumn('approved_by', fn (PurchaseInvoice $record): string => $this->ellipsisText($record->approved_by_name ?: __('common.empty_value')))
@@ -178,10 +180,5 @@ class PurchaseInvoicesDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatAmount(float $amount): string
-    {
-        return rtrim(rtrim(number_format($amount, 4, '.', ''), '0'), '.') ?: '0';
     }
 }

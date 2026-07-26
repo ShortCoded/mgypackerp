@@ -26,7 +26,7 @@ class ModuleServiceProvider extends ServiceProvider
             $this->loadModuleApiRoutes($module);
         }
 
-        $this->loadExpandedPlaceholderRoutes();
+        $this->loadErpUiShellRoutes();
     }
 
     protected function loadModuleWebRoutes(string $module): void
@@ -54,9 +54,9 @@ class ModuleServiceProvider extends ServiceProvider
             ->group($path);
     }
 
-    protected function loadExpandedPlaceholderRoutes(): void
+    protected function loadErpUiShellRoutes(): void
     {
-        $path = base_path('modules/Core/Routes/expanded_placeholders.php');
+        $path = base_path('modules/Core/Routes/erp_ui_shell.php');
 
         if (! file_exists($path)) {
             return;

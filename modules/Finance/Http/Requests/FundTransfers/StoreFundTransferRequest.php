@@ -5,6 +5,7 @@ namespace Modules\Finance\Http\Requests\FundTransfers;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
@@ -15,6 +16,8 @@ use Modules\Finance\Services\FinanceAmountService;
 
 class StoreFundTransferRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         $action = $this->filled('clone_source_token') ? 'clone' : 'create';
@@ -24,6 +27,12 @@ class StoreFundTransferRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'source_amount',
+            'exchange_rate',
+            'target_amount',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
 
         $this->merge([
@@ -37,9 +46,9 @@ class StoreFundTransferRequest extends FormRequest
             'target_bank_account_doc_num' => $this->filled('target_bank_account_doc_num') ? trim((string) $this->input('target_bank_account_doc_num')) : null,
             'source_currency_doc_num' => $this->filled('source_currency_doc_num') ? trim((string) $this->input('source_currency_doc_num')) : null,
             'target_currency_doc_num' => $this->filled('target_currency_doc_num') ? trim((string) $this->input('target_currency_doc_num')) : null,
-            'source_amount' => $this->filled('source_amount') ? str_replace(',', '', (string) $this->input('source_amount')) : null,
-            'exchange_rate' => $this->filled('exchange_rate') ? str_replace(',', '', (string) $this->input('exchange_rate')) : 1,
-            'target_amount' => $this->filled('target_amount') ? str_replace(',', '', (string) $this->input('target_amount')) : null,
+            'source_amount' => $this->filled('source_amount') ? trim((string) $this->input('source_amount')) : null,
+            'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : 1,
+            'target_amount' => $this->filled('target_amount') ? trim((string) $this->input('target_amount')) : null,
             'reason' => $this->filled('reason') ? trim((string) $this->input('reason')) : null,
             'description' => $this->filled('description') ? trim((string) $this->input('description')) : null,
         ]);
@@ -63,9 +72,9 @@ class StoreFundTransferRequest extends FormRequest
             'target_bank_account_doc_num' => [$this->requiredWhenHolder('target', FundTransfer::HolderBankAccount), 'nullable', 'string', $this->bankAccountExistsRule()],
             'source_currency_doc_num' => ['required', 'string', $this->currencyExistsRule()],
             'target_currency_doc_num' => ['required', 'string', $this->currencyExistsRule()],
-            'source_amount' => ['required', 'numeric', 'gt:0'],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'target_amount' => ['required', 'numeric', 'gt:0'],
+            'source_amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
+            'target_amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'reason' => ['required', 'string', 'max:1000'],
             'description' => ['nullable', 'string'],
             'submit_action' => ['nullable', Rule::in(['save', 'save_new'])],

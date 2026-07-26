@@ -16,6 +16,7 @@ return [
         'equivalent_value_required' => 'قيمة المعادل مطلوبة عند اختيار وحدة مقابلة.',
         'equivalent_value_numeric' => 'يجب أن تكون قيمة المعادل رقمًا.',
         'equivalent_value_gt_zero' => 'يجب أن تكون قيمة المعادل أكبر من 0.',
+        'equivalent_value_precision' => 'يمكن أن تحتوي قيمة المعادل على 12 رقمًا صحيحًا و6 خانات عشرية كحد أقصى.',
         'equivalent_unit_required' => 'الوحدة المقابلة مطلوبة عند إدخال قيمة المعادل.',
         'equivalent_unit_exists' => 'الوحدة المقابلة المحددة غير متاحة.',
         'equivalent_unit_self' => 'لا يمكن أن تشير الوحدة إلى نفسها كوحدة مقابلة.',

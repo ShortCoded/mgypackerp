@@ -14,6 +14,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
@@ -28,6 +29,7 @@ class QuotationService
         private readonly OperatingCompanyContextService $companies,
         private readonly QuotationCalculationService $calculator,
         private readonly FilePickerService $filePicker,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data, ?Request $request = null): array
@@ -306,7 +308,7 @@ class QuotationService
             'quotation_date' => $data['quotation_date'],
             'valid_until' => $data['valid_until'] ?? null,
             'currency_id' => $this->currencyId($companyId, $data['currency_doc_num'] ?? null),
-            'exchange_rate' => number_format((float) ($data['exchange_rate'] ?? 1), 6, '.', ''),
+            'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
             'sales_person_id' => $this->salesPersonId($data['sales_person_doc_num'] ?? null),
             'notes' => $data['notes'] ?? null,
         ];

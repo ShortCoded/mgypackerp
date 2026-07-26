@@ -230,6 +230,60 @@ test('quotation creation creates quotation revision one lines milestones and sch
         ->and($revision->executionScheduleLines)->toHaveCount(1);
 });
 
+test('quotation grouped numeric input persists canonically and displays grouped totals', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    $actor = quotationActor(['quotations.view', 'quotations.create', 'quotations.edit']);
+    $payload = quotationPayload($product, $unit, $context['currency'], [
+        'lines' => [[
+            'product_doc_num' => $product->doc_num,
+            'description' => 'Grouped numeric line',
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '1,250.5',
+            'unit_price' => '2.5',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '0',
+        ]],
+        'payment_milestones' => [],
+    ]);
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $quotation = Quotation::query()
+        ->where('doc_num', $response->json('data.doc_num'))
+        ->with('currentRevision.lines')
+        ->firstOrFail();
+    $line = $quotation->currentRevision->lines->sole();
+
+    expect((string) $line->quantity)->toBe('1250.5000')
+        ->and((string) $line->unit_price)->toBe('2.5000')
+        ->and((string) $quotation->currentRevision->total)->toBe('3126.2500');
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.edit', $quotation->doc_num))
+        ->assertOk()
+        ->assertSee('value="1,250.5"', false)
+        ->assertSee('value="2.5"', false);
+
+    $row = $this->actingAs($actor)
+        ->getJson(route('admin.sales.quotations.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertOk()
+        ->json('data.0');
+
+    expect(strip_tags($row['total']))->toBe('3,126.25');
+
+    $payload['lines'][0]['quantity'] = '1,2,3';
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['lines.0.quantity']);
+});
+
 test('draft revision can be updated in place', function (): void {
     ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp();
     $originalRevisionId = $quotation->current_revision_id;
@@ -437,4 +491,35 @@ test('quotation tables include required operational detail structures', function
         ->and(Schema::hasColumns('quotation_revision_lines', ['product_name_snapshot', 'unit_name_snapshot', 'specs_snapshot']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_payment_milestones', ['title', 'percentage', 'amount', 'due_type', 'due_date']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_execution_schedule_lines', ['phase_name', 'start_date', 'end_date', 'duration_days']))->toBeTrue();
+});
+
+test('quotation exchange rate keeps maximum accepted precision before persistence', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    $actor = quotationActor(['quotations.create']);
+    $currency = Currency::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => 902,
+        'doc_num' => 'Currency-00902',
+        'name' => 'Precision Currency',
+        'code' => 'PRC',
+        'minor_unit_name' => 'Part',
+        'minor_unit_factor' => 100,
+        'is_main' => false,
+        'status' => 'active',
+    ]);
+    $capturedExchangeRate = null;
+
+    Quotation::creating(function (Quotation $quotation) use (&$capturedExchangeRate): void {
+        $capturedExchangeRate = $quotation->getAttributes()['exchange_rate'] ?? null;
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), quotationPayload($product, $unit, $currency, [
+            'exchange_rate' => '999,999,999,999.999999',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedExchangeRate)->toBe('999999999999.999999');
 });

@@ -95,6 +95,12 @@
         const current = currentFormData($form);
 
         return Object.keys(current).some(function (field) {
+            const $input = $form.find('[name="' + field + '"]').first();
+
+            if ($input.is('[data-numeric-input]') && window.AppNumbers && typeof window.AppNumbers.same === 'function') {
+                return !window.AppNumbers.same(original[field], current[field]);
+            }
+
             return String(original[field] || '') !== String(current[field] || '');
         });
     }

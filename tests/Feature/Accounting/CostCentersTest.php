@@ -141,7 +141,7 @@ function costCenterDataTableQuery(int $orderColumn = 2, string $direction = 'asc
     ];
 }
 
-test('cost center permissions are discovered and menu item appears under chart of accounts', function () {
+test('cost center permissions are discovered under accounting and costing', function () {
     $this->seed(PermissionSeeder::class);
 
     $admin = Role::query()->where('name', 'admin')->where('guard_name', 'web')->firstOrFail();
@@ -153,8 +153,8 @@ test('cost center permissions are discovered and menu item appears under chart o
 
     $actor = costCenterActor(['accounts.view', 'cost_centers.view']);
     $menu = app(MenuService::class)->getMenu($actor);
-    $generalLedger = collect($menu)->firstWhere('label', 'general_ledger');
-    $children = collect($generalLedger['children'] ?? [])->pluck('label')->all();
+    $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
+    $children = collect($accountingCosting['children'] ?? [])->pluck('label')->all();
 
     expect($children)->toContain('chart_of_accounts', 'cost_centers')
         ->and(array_search('cost_centers', $children, true))->toBe(array_search('chart_of_accounts', $children, true) + 1);

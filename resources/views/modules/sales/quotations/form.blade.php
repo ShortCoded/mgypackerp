@@ -3,6 +3,7 @@
 @php
     use Modules\Core\Services\AssetVersionService;
     use Modules\Core\Services\DateFormatService;
+    use Modules\Core\Services\NumericFormatService;
     use Modules\Core\Services\SettingService;
     use Modules\Sales\Models\Quotation;
     use Modules\Sales\Models\QuotationPaymentMilestone;
@@ -19,6 +20,7 @@
         default => __('quotations.create'),
     };
     $dates = app(DateFormatService::class);
+    $numbers = app(NumericFormatService::class);
     $settings = app(SettingService::class);
     $asset = app(AssetVersionService::class);
     $editorDirection = app()->getLocale() === 'ar' ? 'rtl' : 'ltr';
@@ -29,7 +31,6 @@
     $richValue = fn ($field, $snapshot) => old($field, $isCreateLike ? ($snapshot ?? '') : ($snapshot ?? ''));
     $richDisplay = fn ($value) => trim((string) $value) !== '' ? $value : e(__('common.empty_value'));
     $discountType = old('discount_type', $currentRevision?->discount_type);
-    $formatMoney = fn ($value) => rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
     $formatFileSize = static function (int $bytes): string {
         if ($bytes < 1024) {
             return $bytes.' B';
@@ -255,9 +256,9 @@
                             <div class="col-md-3">
                                 <x-forms.label for="exchange_rate" :label="__('quotations.attributes.exchange_rate')" required />
                                 @if ($isReadonly)
-                                    <x-forms.view-field for="exchange_rate" :value="$formatMoney($record?->exchange_rate ?? 1)" dir="ltr" input-class="text-center" />
+                                    <x-forms.view-field for="exchange_rate" :value="$numbers->format($record?->exchange_rate ?? 1)" dir="ltr" input-class="text-center" />
                                 @else
-                                    <input class="form-control text-center" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ old('exchange_rate', $formatMoney($record?->exchange_rate ?? 1)) }}" dir="ltr" required>
+                                    <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                             </div>
@@ -381,23 +382,23 @@
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $line['quantity'] ?? '0' }}</div>
+                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                                 @else
-                                                    <input class="form-control text-center js-quotation-calc" name="lines[{{ $index }}][quantity]" type="number" min="0" step="0.0001" value="{{ $line['quantity'] ?? '' }}" dir="ltr">
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0" step="0.0001" />
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $line['unit_price'] ?? '0' }}</div>
+                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                                 @else
-                                                    <input class="form-control text-center js-quotation-calc" name="lines[{{ $index }}][unit_price]" type="number" min="0" step="0.0001" value="{{ $line['unit_price'] ?? '' }}" dir="ltr">
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" />
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext">{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$line['discount_value'] : __('common.empty_value') }}</div>
+                                                    <div class="form-control-plaintext">{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$numbers->format($line['discount_value']) : __('common.empty_value') }}</div>
                                                 @else
                                                     <div class="input-group input-group-sm">
                                                         <select class="form-select js-quotation-calc" name="lines[{{ $index }}][discount_type]">
@@ -405,19 +406,19 @@
                                                             <option value="fixed" @selected(($line['discount_type'] ?? null) === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
                                                             <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
                                                         </select>
-                                                        <input class="form-control text-center js-quotation-calc" name="lines[{{ $index }}][discount_value]" type="number" min="0" step="0.0001" value="{{ $line['discount_value'] ?? '0' }}" dir="ltr">
+                                                        <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" />
                                                     </div>
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $line['tax_rate'] ?? '0' }}</div>
+                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['tax_rate'] ?? 0) }}</div>
                                                 @else
-                                                    <input class="form-control text-center js-quotation-calc" name="lines[{{ $index }}][tax_rate]" type="number" min="0" max="100" step="0.0001" value="{{ $line['tax_rate'] ?? '0' }}" dir="ltr">
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][tax_rate]'" :value="$line['tax_rate'] ?? 0" :scale="4" min="0" max="100" step="0.0001" />
                                                 @endif
                                             </td>
                                             <td class="text-center">
-                                                <span class="js-quotation-line-total" dir="ltr">{{ $line['line_total'] ?? '0' }}</span>
+                                                <span class="js-quotation-line-total" dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</span>
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
@@ -443,7 +444,7 @@
                                 <label class="col-5 col-form-label">{{ __('quotations.attributes.revision_discount') }}</label>
                                 <div class="col-7">
                                     @if ($isReadonly)
-                                        <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$formatMoney($currentRevision->discount_value) : __('common.empty_value') }}</div>
+                                        <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$numbers->format($currentRevision->discount_value) : __('common.empty_value') }}</div>
                                     @else
                                         <div class="input-group input-group-sm">
                                             <select class="form-select js-quotation-calc" name="discount_type">
@@ -451,18 +452,18 @@
                                                 <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
                                                 <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
                                             </select>
-                                            <input class="form-control text-center js-quotation-calc" name="discount_value" type="number" min="0" step="0.0001" value="{{ old('discount_value', $formatMoney($currentRevision?->discount_value ?? 0)) }}" dir="ltr">
+                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" />
                                         </div>
                                     @endif
                                 </div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>
-                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $formatMoney($currentRevision?->subtotal ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $numbers->format($currentRevision?->subtotal ?? 0) }}</div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.discount_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $formatMoney($currentRevision?->discount_amount ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $numbers->format($currentRevision?->discount_amount ?? 0) }}</div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.tax_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $formatMoney($currentRevision?->tax_amount ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $numbers->format($currentRevision?->tax_amount ?? 0) }}</div>
                                 <div class="col-5 fw-bold">{{ __('quotations.attributes.total') }}</div>
-                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $formatMoney($currentRevision?->total ?? 0) }}</div>
+                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $numbers->format($currentRevision?->total ?? 0) }}</div>
                             </div>
                         </div>
                     </div>
@@ -674,7 +675,7 @@
                                                 <td dir="ltr" class="fw-semibold">{{ $history->revision_code }}</td>
                                                 <td dir="ltr">{{ $plainDate($history->revision_date) }}</td>
                                                 <td>@include('modules.sales.quotations.partials.status', ['status' => $history->status])</td>
-                                                <td dir="ltr">{{ $formatMoney($history->total) }}</td>
+                                                <td dir="ltr">{{ $numbers->format($history->total) }}</td>
                                                 <td>{{ $history->createdBy ? trim(implode(' / ', array_filter([$history->createdBy->name, $history->createdBy->doc_num]))) : __('common.empty_value') }}</td>
                                                 <td>{{ $history->change_reason ?: __('common.empty_value') }}</td>
                                                 <td class="text-end white-space-nowrap">

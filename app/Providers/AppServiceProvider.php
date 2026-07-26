@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Modules\Core\Services\ScreenDataVisibilityScopeRegistrar;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -22,9 +23,9 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Bootstrap any application services.
      */
-    public function boot(): void
+    public function boot(ScreenDataVisibilityScopeRegistrar $screenDataVisibilityScopes): void
     {
-        //
         View::addNamespace('modules', app_path('Modules'));
+        $screenDataVisibilityScopes->register();
     }
 }

@@ -16,6 +16,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
@@ -37,6 +38,7 @@ class UnpricedInventoryReceiptController extends Controller
         private readonly UnpricedInventoryReceiptService $service,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(FinanceDocumentNumberSettingsService $settings): View
@@ -398,7 +400,7 @@ class UnpricedInventoryReceiptController extends Controller
                     'unit' => $unitLabel,
                     'unit_options' => $product instanceof Product ? app(ProductComponentUnitOptionsService::class)->options($product) : [],
                     'imageUrl' => $snapshot['image_url'] ?? ($product instanceof Product ? app(ProductImageResolver::class)->url($product) : null),
-                    'quantity' => $this->formatQuantity($line->quantity),
+                    'quantity' => $this->numbers->format($line->quantity),
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
@@ -409,11 +411,6 @@ class UnpricedInventoryReceiptController extends Controller
         }
 
         return array_values($lines);
-    }
-
-    private function formatQuantity(mixed $value): string
-    {
-        return rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.') ?: '0';
     }
 
     /**

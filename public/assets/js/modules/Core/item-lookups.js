@@ -65,13 +65,25 @@
             return normalized;
         }
 
-        const numericValue = Number(normalized.charAt(0) === '.' ? '0' + normalized : normalized);
-
-        if (!Number.isFinite(numericValue)) {
+        if (!window.AppNumbers || typeof window.AppNumbers.normalize !== 'function') {
             return normalized;
         }
 
-        return numericValue.toFixed(6).replace(/\.?0+$/, '');
+        const numericValue = window.AppNumbers.normalize(normalized);
+
+        return numericValue === null ? normalized : numericValue;
+    }
+
+    function formValuesAreSame(field, original, current) {
+        if (
+            field === 'equivalent_value'
+            && window.AppNumbers
+            && typeof window.AppNumbers.same === 'function'
+        ) {
+            return window.AppNumbers.same(original, current);
+        }
+
+        return original === current;
     }
 
     function formFieldNames($form) {
@@ -97,7 +109,7 @@
         const current = currentFormData($form);
 
         return formFieldNames($form).some(function (field) {
-            return original[field] !== current[field];
+            return !formValuesAreSame(field, original[field], current[field]);
         });
     }
 
@@ -198,6 +210,10 @@
         $form.find('[name="submit_action"]').val('save');
         $form.find('[name="clone_source_token"]').remove();
         updateOriginalFormData($form);
+
+        if (window.AppNumbers && typeof window.AppNumbers.refresh === 'function') {
+            window.AppNumbers.refresh($form[0]);
+        }
     }
 
     function updateUrlsAfterDocNumberChange($form, response) {
@@ -680,6 +696,10 @@
             const $button = $form.data('submit-button') || $form.find('[type="submit"]').first();
 
             clearFormErrors($form);
+
+            if (window.AppNumbers && typeof window.AppNumbers.normalizeForm === 'function') {
+                window.AppNumbers.normalizeForm($form[0]);
+            }
 
             if (!hasChanges($form)) {
                 showFormNotice($form, messages.noChanges, 'warning');

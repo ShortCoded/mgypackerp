@@ -1,3 +1,5 @@
+@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+
 <td>
     @if ($isReadonly)
         <div class="form-control-plaintext">{{ $row['title'] ?? __('common.empty_value') }}</div>
@@ -15,16 +17,16 @@
 </td>
 <td>
     @if ($isReadonly)
-        <div class="form-control-plaintext text-center" dir="ltr">{{ $row['percentage'] ?? '' }}</div>
+        <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($row['percentage'] ?? null) }}</div>
     @else
-        <input class="form-control text-center" name="payment_milestones[{{ $index }}][percentage]" type="number" min="0" max="100" step="0.0001" value="{{ $row['percentage'] ?? '' }}" dir="ltr">
+        <x-forms.numeric-input class="text-center" :name="'payment_milestones['.$index.'][percentage]'" :value="$row['percentage'] ?? ''" :scale="4" min="0" max="100" step="0.0001" />
     @endif
 </td>
 <td>
     @if ($isReadonly)
-        <div class="form-control-plaintext text-center" dir="ltr">{{ $row['amount'] ?? '' }}</div>
+        <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($row['amount'] ?? null) }}</div>
     @else
-        <input class="form-control text-center" name="payment_milestones[{{ $index }}][amount]" type="number" min="0" step="0.0001" value="{{ $row['amount'] ?? '' }}" dir="ltr">
+        <x-forms.numeric-input class="text-center" :name="'payment_milestones['.$index.'][amount]'" :value="$row['amount'] ?? ''" :scale="4" min="0" step="0.0001" />
     @endif
 </td>
 <td>

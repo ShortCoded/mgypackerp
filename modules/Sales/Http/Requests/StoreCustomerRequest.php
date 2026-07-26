@@ -9,12 +9,15 @@ use Illuminate\Validation\Rules\Unique;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\Customer;
 
 class StoreCustomerRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'customers.clone' : 'customers.create');
@@ -22,6 +25,10 @@ class StoreCustomerRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'credit_limits.*.credit_limit',
+        ]);
+
         $this->merge([
             'name' => trim((string) $this->input('name')),
             'account_group_doc_num' => $this->filled('account_group_doc_num') ? trim((string) $this->input('account_group_doc_num')) : null,
@@ -70,7 +77,7 @@ class StoreCustomerRequest extends FormRequest
             'area_doc_num' => ['nullable', 'string', Rule::exists('hr_areas', 'doc_num')->whereNull('deleted_at')],
             'credit_limits' => ['nullable', 'array'],
             'credit_limits.*.currency_doc_num' => ['nullable', 'string'],
-            'credit_limits.*.credit_limit' => ['nullable', 'numeric', 'min:0'],
+            'credit_limits.*.credit_limit' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'credit_limits.*.notes' => ['nullable', 'string'],
             'credit_limits.*._delete' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string'],
@@ -202,7 +209,7 @@ class StoreCustomerRequest extends FormRequest
             ->filter(fn ($row): bool => is_array($row))
             ->map(fn (array $row): array => [
                 'currency_doc_num' => isset($row['currency_doc_num']) ? trim((string) $row['currency_doc_num']) ?: null : null,
-                'credit_limit' => isset($row['credit_limit']) ? str_replace(',', '', trim((string) $row['credit_limit'])) ?: null : null,
+                'credit_limit' => isset($row['credit_limit']) ? trim((string) $row['credit_limit']) ?: null : null,
                 'notes' => isset($row['notes']) ? trim((string) $row['notes']) ?: null : null,
                 '_delete' => filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])

@@ -12,6 +12,9 @@
     var selectAllSelector = '#select_all_records';
     var imagePreviewModalSelector = '#product-image-preview-modal';
     var dataTable = null;
+    var componentCalculationScale = 8;
+    var componentWorkingScale = 24;
+    var componentUuidCounter = 0;
 
     function csrfToken() {
         return $('meta[name="csrf-token"]').attr('content');
@@ -26,6 +29,342 @@
 
     function message(key) {
         return messages[key] || '';
+    }
+
+    function refreshNumericInputs(root) {
+        if (window.AppNumbers && typeof window.AppNumbers.refresh === 'function') {
+            window.AppNumbers.refresh(root);
+        }
+    }
+
+    function normalizeNumericForm(form) {
+        if (window.AppNumbers && typeof window.AppNumbers.normalizeForm === 'function') {
+            window.AppNumbers.normalizeForm(form);
+        }
+    }
+
+    function normalizedDecimal(value) {
+        if (window.AppNumbers && typeof window.AppNumbers.normalize === 'function') {
+            return window.AppNumbers.normalize(value);
+        }
+
+        var normalized = String(value === null || value === undefined ? '' : value).trim().replace(/,/g, '');
+
+        return normalized === '' || /^-?\d+(?:\.\d+)?$/.test(normalized) ? normalized : null;
+    }
+
+    function decimalParts(value) {
+        var normalized = normalizedDecimal(value);
+
+        if (normalized === null || normalized === '' || typeof BigInt !== 'function') {
+            return null;
+        }
+
+        var negative = normalized.charAt(0) === '-';
+        var unsigned = negative ? normalized.slice(1) : normalized;
+        var parts = unsigned.split('.');
+        var fraction = parts[1] || '';
+        var digits = ((parts[0] || '0') + fraction).replace(/^0+(?=\d)/, '');
+
+        try {
+            var integer = BigInt(digits || '0');
+
+            return {
+                integer: negative ? -integer : integer,
+                scale: fraction.length
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function decimalPowerOfTen(scale) {
+        var result = BigInt(1);
+        var ten = BigInt(10);
+
+        for (var index = 0; index < scale; index += 1) {
+            result *= ten;
+        }
+
+        return result;
+    }
+
+    function decimalRoundDivide(numerator, denominator) {
+        if (denominator === BigInt(0)) {
+            return null;
+        }
+
+        var negative = (numerator < BigInt(0)) !== (denominator < BigInt(0));
+        var positiveNumerator = numerator < BigInt(0) ? -numerator : numerator;
+        var positiveDenominator = denominator < BigInt(0) ? -denominator : denominator;
+        var quotient = positiveNumerator / positiveDenominator;
+        var remainder = positiveNumerator % positiveDenominator;
+
+        if (remainder * BigInt(2) >= positiveDenominator) {
+            quotient += BigInt(1);
+        }
+
+        return negative ? -quotient : quotient;
+    }
+
+    function decimalScaledInteger(value, scale) {
+        var parts = decimalParts(value);
+
+        if (!parts) {
+            return null;
+        }
+
+        if (parts.scale === scale) {
+            return parts.integer;
+        }
+
+        if (parts.scale < scale) {
+            return parts.integer * decimalPowerOfTen(scale - parts.scale);
+        }
+
+        return decimalRoundDivide(parts.integer, decimalPowerOfTen(parts.scale - scale));
+    }
+
+    function decimalFromScaledInteger(integer, scale) {
+        if (integer === null || integer === undefined) {
+            return null;
+        }
+
+        var negative = integer < BigInt(0);
+        var digits = String(negative ? -integer : integer).padStart(scale + 1, '0');
+        var integerPart = scale > 0 ? digits.slice(0, -scale) : digits;
+        var fraction = scale > 0 ? digits.slice(-scale).replace(/0+$/, '') : '';
+        var result = integerPart + (fraction === '' ? '' : '.' + fraction);
+
+        return negative && result !== '0' ? '-' + result : result;
+    }
+
+    function decimalMultiply(left, right, scale) {
+        var leftParts = decimalParts(left);
+        var rightParts = decimalParts(right);
+
+        if (!leftParts || !rightParts) {
+            return null;
+        }
+
+        var sourceScale = leftParts.scale + rightParts.scale;
+        var product = leftParts.integer * rightParts.integer;
+        var result = sourceScale > scale
+            ? decimalRoundDivide(product, decimalPowerOfTen(sourceScale - scale))
+            : product * decimalPowerOfTen(scale - sourceScale);
+
+        return decimalFromScaledInteger(result, scale);
+    }
+
+    function decimalDivide(left, right, scale) {
+        var leftParts = decimalParts(left);
+        var rightParts = decimalParts(right);
+
+        if (!leftParts || !rightParts || rightParts.integer === BigInt(0)) {
+            return null;
+        }
+
+        var numerator = leftParts.integer * decimalPowerOfTen(rightParts.scale + scale);
+        var denominator = rightParts.integer * decimalPowerOfTen(leftParts.scale);
+
+        return decimalFromScaledInteger(decimalRoundDivide(numerator, denominator), scale);
+    }
+
+    function decimalAdd(left, right, scale) {
+        var leftInteger = decimalScaledInteger(left, scale);
+        var rightInteger = decimalScaledInteger(right, scale);
+
+        if (leftInteger === null || rightInteger === null) {
+            return null;
+        }
+
+        return decimalFromScaledInteger(leftInteger + rightInteger, scale);
+    }
+
+    function decimalIsPositive(value) {
+        if (window.AppNumbers && typeof window.AppNumbers.compare === 'function') {
+            return window.AppNumbers.compare(value, '0') === 1;
+        }
+
+        var parts = decimalParts(value);
+
+        return parts !== null && parts.integer > BigInt(0);
+    }
+
+    function bigIntegerAbsolute(value) {
+        return value < BigInt(0) ? -value : value;
+    }
+
+    function bigIntegerGreatestCommonDivisor(left, right) {
+        var first = bigIntegerAbsolute(left);
+        var second = bigIntegerAbsolute(right);
+
+        while (second !== BigInt(0)) {
+            var remainder = first % second;
+
+            first = second;
+            second = remainder;
+        }
+
+        return first;
+    }
+
+    function normalizedRational(numerator, denominator) {
+        if (denominator === BigInt(0)) {
+            return null;
+        }
+
+        var normalizedNumerator = denominator < BigInt(0) ? -numerator : numerator;
+        var normalizedDenominator = denominator < BigInt(0) ? -denominator : denominator;
+        var divisor = bigIntegerGreatestCommonDivisor(normalizedNumerator, normalizedDenominator);
+
+        return {
+            numerator: normalizedNumerator / divisor,
+            denominator: normalizedDenominator / divisor
+        };
+    }
+
+    function decimalRational(value) {
+        var parts = decimalParts(value);
+
+        if (!parts) {
+            return null;
+        }
+
+        return normalizedRational(parts.integer, decimalPowerOfTen(parts.scale));
+    }
+
+    function rationalMultiply(left, right) {
+        if (!left || !right) {
+            return null;
+        }
+
+        return normalizedRational(
+            left.numerator * right.numerator,
+            left.denominator * right.denominator
+        );
+    }
+
+    function rationalInverse(value) {
+        if (!value || value.numerator === BigInt(0)) {
+            return null;
+        }
+
+        return normalizedRational(value.denominator, value.numerator);
+    }
+
+    function rationalToDecimal(value, scale) {
+        if (!value) {
+            return null;
+        }
+
+        return decimalFromScaledInteger(
+            decimalRoundDivide(
+                value.numerator * decimalPowerOfTen(scale),
+                value.denominator
+            ),
+            scale
+        );
+    }
+
+    function rationalFactorsAreOutputEquivalent(left, right) {
+        if (!left || !right) {
+            return false;
+        }
+
+        var leftAtCommonDenominator = left.numerator * right.denominator;
+        var rightAtCommonDenominator = right.numerator * left.denominator;
+        var difference = bigIntegerAbsolute(leftAtCommonDenominator - rightAtCommonDenominator);
+
+        if (difference === BigInt(0)) {
+            return true;
+        }
+
+        var largestFactor = leftAtCommonDenominator > rightAtCommonDenominator
+            ? leftAtCommonDenominator
+            : rightAtCommonDenominator;
+
+        if (largestFactor <= BigInt(0)) {
+            return false;
+        }
+
+        var maximumStoredWeightNumerator = BigInt('999999999999999999');
+        var maximumStoredWeightDenominator = BigInt('100000000');
+        var halfStoredWeightQuantumNumerator = BigInt('5');
+        var halfStoredWeightQuantumDenominator = BigInt('1000000000');
+
+        return difference * maximumStoredWeightNumerator * halfStoredWeightQuantumDenominator
+            <= largestFactor * halfStoredWeightQuantumNumerator * maximumStoredWeightDenominator;
+    }
+
+    function formatDecimal(value) {
+        if (value === null || value === undefined || value === '') {
+            return '';
+        }
+
+        if (window.AppNumbers && typeof window.AppNumbers.format === 'function') {
+            return window.AppNumbers.format(value);
+        }
+
+        return String(value);
+    }
+
+    function setNumericFieldValue($field, value) {
+        if (!$field.length || value === null || value === undefined) {
+            return;
+        }
+
+        $field.val(value);
+
+        if (!window.AppNumbers) {
+            return;
+        }
+
+        if (document.activeElement === $field.get(0) && typeof window.AppNumbers.validateInput === 'function') {
+            window.AppNumbers.validateInput($field.get(0));
+            return;
+        }
+
+        if (typeof window.AppNumbers.formatInput === 'function') {
+            window.AppNumbers.formatInput($field.get(0));
+        }
+    }
+
+    function interpolateMessage(template, replacements) {
+        var result = String(template || '');
+
+        $.each(replacements || {}, function (key, value) {
+            result = result.split(':' + key).join(String(value === null || value === undefined ? '' : value));
+        });
+
+        return result;
+    }
+
+    function componentUuid() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+
+        var bytes = new Uint8Array(16);
+
+        if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+            window.crypto.getRandomValues(bytes);
+        } else {
+            componentUuidCounter += 1;
+            var seed = Date.now() + componentUuidCounter;
+
+            for (var index = 0; index < bytes.length; index += 1) {
+                seed = (seed * 1664525 + 1013904223) % 4294967296;
+                bytes[index] = seed % 256;
+            }
+        }
+
+        bytes[6] = (bytes[6] & 15) | 64;
+        bytes[8] = (bytes[8] & 63) | 128;
+
+        return Array.prototype.map.call(bytes, function (byte) {
+            return byte.toString(16).padStart(2, '0');
+        }).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
     }
 
     function responseMessage(xhr) {
@@ -219,7 +558,7 @@
                 { data: 'name', name: 'products.name', className: 'dt-text dt-ellipsis align-middle white-space-nowrap', responsivePriority: 10 },
                 { data: 'barcode', name: 'products.barcode', className: 'dt-code align-middle white-space-nowrap', responsivePriority: 25 },
                 { data: 'item_classification', name: 'products.item_classification', className: 'align-middle white-space-nowrap', responsivePriority: 25 },
-                { data: 'reorder_point', name: 'products.reorder_point', className: 'align-middle white-space-nowrap text-end', responsivePriority: 30 },
+                { data: 'reorder_point', name: 'products.reorder_point', className: 'dt-number align-middle white-space-nowrap text-end', responsivePriority: 30 },
                 { data: 'unit', name: 'unit_name', className: 'dt-text dt-ellipsis align-middle white-space-nowrap', responsivePriority: 20 },
                 { data: 'category', name: 'category_name', className: 'dt-text dt-ellipsis align-middle white-space-nowrap', responsivePriority: 30 },
                 { data: 'group', name: 'group_name', className: 'dt-text dt-ellipsis align-middle white-space-nowrap', responsivePriority: 30 },
@@ -702,7 +1041,7 @@
         $form.find('[name="reorder_point"]').val('');
         $form.find('[name="equivalent_value"]').val('');
         $form.find('[name="status"]').val('active').trigger('change');
-        $form.find('[name="cost_as_inventory"]').prop('checked', false);
+        $form.find('[name="cost_as_inventory"]').prop('checked', true);
         $form.find('[name="is_displayable"]').prop('checked', true);
         $field.attr('data-current-url', '').data('current-url', '');
         $field.attr('data-existing-url', '').data('existing-url', '');
@@ -718,6 +1057,7 @@
         $field.attr('data-current-url', '').data('current-url', '');
         resetImagePreview($field);
         resetComponents($form.find('.product-components-panel').first());
+        refreshNumericInputs($form[0]);
 
         if (!$focusTarget.length) {
             $focusTarget = $form.find('[name="name"]:visible:enabled').first();
@@ -822,7 +1162,82 @@
     }
 
     function componentColumnCount($panel) {
-        return componentReadonly($panel) ? 4 : 5;
+        return componentReadonly($panel) ? 6 : 7;
+    }
+
+    function componentClientKey($row) {
+        return String($row.find('[data-component-field="client_key"]').val() || $row.attr('data-client-key') || '').trim();
+    }
+
+    function componentCalculationMethod($row) {
+        var method = String($row.find('[data-component-field="calculation_method"]').val() || $row.attr('data-calculation-method') || 'direct').trim();
+
+        return method === 'percentage' ? 'percentage' : 'direct';
+    }
+
+    function componentInputSource($row) {
+        var source = String($row.find('[data-component-field="input_source"]').val() || 'weight').trim();
+
+        return source === 'percentage' ? 'percentage' : 'weight';
+    }
+
+    function setComponentInputSource($row, source) {
+        $row.find('[data-component-field="input_source"]').val(source === 'percentage' ? 'percentage' : 'weight');
+        updateComponentCalculatedFieldState($row);
+    }
+
+    function componentReferenceKey($row) {
+        return String($row.find('[data-component-field="reference_component_key"]').val() || $row.attr('data-reference-component-key') || '').trim();
+    }
+
+    function componentQuantityValue($row) {
+        return normalizedDecimal($row.find('[data-component-field="quantity"]').val());
+    }
+
+    function componentPercentageValue($row) {
+        return normalizedDecimal($row.find('[data-component-field="percentage"]').val());
+    }
+
+    function componentActive($row) {
+        return !$row.hasClass('d-none') && String($row.find('[data-component-field="_delete"]').val() || '') !== '1';
+    }
+
+    function componentBoolean(value) {
+        return value === true || value === 1 || value === '1' || value === 'true';
+    }
+
+    function normalizedInitialComponentRows(initialRows) {
+        var usedKeys = {};
+        var publicIdMap = {};
+        var rows = (initialRows || []).map(function (row) {
+            var values = $.extend({}, row || {});
+            var key = String(values.client_key || '').trim();
+
+            if (key === '' || usedKeys[key]) {
+                key = componentUuid();
+            }
+
+            values.client_key = key;
+            values.calculation_method = values.calculation_method === 'percentage' ? 'percentage' : 'direct';
+            values.input_source = values.input_source === 'percentage' ? 'percentage' : 'weight';
+            values.reference_component_key = String(values.reference_component_key || values.reference_client_key || '').trim();
+            values._delete = componentBoolean(values._delete);
+            usedKeys[key] = true;
+
+            if (values.public_id) {
+                publicIdMap[String(values.public_id)] = key;
+            }
+
+            return values;
+        });
+
+        rows.forEach(function (values) {
+            if (values.reference_component_key && publicIdMap[values.reference_component_key]) {
+                values.reference_component_key = publicIdMap[values.reference_component_key];
+            }
+        });
+
+        return rows;
     }
 
     function showComponentAlert($panel, text, type) {
@@ -871,6 +1286,9 @@
         var $panel = $field.closest('.product-components-panel');
 
         $field.removeClass('is-invalid');
+        if ($field.hasClass('select2-hidden-accessible')) {
+            $field.next('.select2-container').find('.select2-selection').removeClass('is-invalid');
+        }
 
         if (errorKey !== '') {
             $panel.find('[data-error-for="' + errorKey + '"]').text('');
@@ -930,16 +1348,29 @@
         var $row = $(componentTemplateHtml(index).trim()).first();
         var rawMaterialValue = String(rowValues.component_product_doc_num || '');
         var rawMaterialText = String(rowValues.raw_material || rawMaterialValue);
+        var method = rowValues.calculation_method === 'percentage' ? 'percentage' : 'direct';
+        var referenceKey = String(rowValues.reference_component_key || rowValues.reference_client_key || '').trim();
+        var inputSource = rowValues.input_source === 'percentage' ? 'percentage' : 'weight';
+        var deleted = componentBoolean(rowValues._delete);
 
         if (!$row.length) {
             return $row;
         }
 
+        $row.attr('data-client-key', rowValues.client_key || componentUuid());
+        $row.find('[data-component-field="client_key"]').val($row.attr('data-client-key'));
         $row.find('[data-component-field="public_id"]').val(rowValues.public_id || '');
-        $row.find('[data-component-field="_delete"]').val(rowValues._delete ? '1' : '0');
+        $row.find('[data-component-field="_delete"]').val(deleted ? '1' : '0');
+        $row.find('[data-component-field="calculation_method"]').val(method);
+        $row.find('[data-component-field="input_source"]').val(inputSource);
+        $row.find('[data-component-field="percentage"]').val(rowValues.percentage_raw || rowValues.percentage || '');
+        $row.find('[data-component-field="reference_component_key"]').val(referenceKey);
+        $row.data('componentMetadataComplete', Object.prototype.hasOwnProperty.call(rowValues, 'unit_conversion_edges'));
+        $row.data('componentUnitConversionEdges', $.isArray(rowValues.unit_conversion_edges) ? rowValues.unit_conversion_edges : []);
         setComponentUnitOptions($row, rowValues.unit_options || fallbackComponentUnitOptions(rowValues), rowValues.unit_doc_num || '');
         $row.find('[data-component-field="quantity"]').val(rowValues.quantity_raw || rowValues.quantity || '');
         $row.find('[data-component-field="notes"]').val(rowValues.notes || '');
+        updateComponentMethodUi($row);
 
         if (rawMaterialValue !== '') {
             var option = new Option(rawMaterialText, rawMaterialValue, true, true);
@@ -948,21 +1379,104 @@
                 $(option).attr('data-image-url', String(rowValues.imageUrl));
             }
 
+            if ($.isArray(rowValues.unit_options)) {
+                $(option).attr('data-unit-options', JSON.stringify(rowValues.unit_options));
+            }
+
+            if ($.isArray(rowValues.unit_conversion_edges)) {
+                $(option).attr('data-unit-conversion-edges', JSON.stringify(rowValues.unit_conversion_edges));
+            }
+
             $row.find('.js-product-component-raw-material')
                 .append(option)
                 .val(rawMaterialValue);
         }
 
+        if (referenceKey !== '') {
+            $row.find('.js-product-component-reference')
+                .append(new Option(referenceKey, referenceKey, true, true))
+                .val(referenceKey);
+        }
+
+        if (deleted) {
+            $row.addClass('d-none').attr('aria-hidden', 'true');
+            $row.find(':input')
+                .not('[data-component-field="client_key"], [data-component-field="public_id"], [data-component-field="_delete"]')
+                .prop('disabled', true);
+        }
+
+        refreshNumericInputs($row[0]);
+
         return $row;
     }
 
-    function readonlyComponentRow($panel, values) {
+    function readonlyComponentRow($panel, values, rowMap) {
         var rowValues = values || {};
-        var $row = $('<tr class="js-product-component-readonly-row"></tr>');
+        var method = rowValues.calculation_method === 'percentage' ? 'percentage' : 'direct';
+        var referenceKey = String(rowValues.reference_component_key || '').trim();
+        var reference = rowMap[referenceKey] || null;
+        var $row = $('<tr class="js-product-component-readonly-row"></tr>')
+            .attr('data-client-key', rowValues.client_key || '')
+            .attr('data-calculation-method', method)
+            .attr('data-reference-component-key', referenceKey)
+            .attr('data-unit-doc-num', rowValues.unit_doc_num || '')
+            .attr('data-unit-text', rowValues.unit || '')
+            .attr('data-quantity', rowValues.quantity_raw || rowValues.quantity || '');
+        $row.data('componentUnitConversionEdges', $.isArray(rowValues.unit_conversion_edges) ? rowValues.unit_conversion_edges : []);
+        var rawQuantity = rowValues.quantity_raw !== null && rowValues.quantity_raw !== undefined && rowValues.quantity_raw !== ''
+            ? rowValues.quantity_raw
+            : (rowValues.quantity === null || rowValues.quantity === undefined ? '' : rowValues.quantity);
+        var quantity = formatDecimal(rawQuantity);
+        var percentage = formatDecimal(rowValues.percentage_raw || rowValues.percentage || '');
+        var methodText = method === 'percentage' ? message('componentPercentage') : message('componentDirect');
+        var calculationText = message('componentDirectFormula');
+
+        if (method === 'percentage') {
+            var referenceText = reference
+                ? componentLineLabelFromValues(reference, Number(reference._line_number || 0))
+                : (message('componentUnknownReference') || referenceKey);
+            var resultWeight = quantity + (rowValues.unit ? ' ' + rowValues.unit : '');
+
+            calculationText = referenceText;
+
+            if (reference && percentage !== '') {
+                var $referenceConversionRow = $('<span></span>');
+
+                $referenceConversionRow.data(
+                    'componentUnitConversionEdges',
+                    $.isArray(reference.unit_conversion_edges) ? reference.unit_conversion_edges : []
+                );
+
+                var referenceFactor = componentConversionFactor(
+                    $panel,
+                    reference.unit_doc_num || '',
+                    rowValues.unit_doc_num || '',
+                    $referenceConversionRow,
+                    $row
+                );
+                var convertedReference = referenceFactor === null
+                    ? null
+                    : decimalMultiply(
+                        reference.quantity_raw || reference.quantity || '',
+                        referenceFactor,
+                        componentWorkingScale
+                    );
+
+                calculationText = convertedReference === null
+                    ? referenceText + ' · ' + message('componentIncompatibleUnits')
+                    : referenceText + ' · ' + interpolateMessage(message('componentFormulaTemplate'), {
+                        reference_weight: formatDecimal(convertedReference) + (rowValues.unit ? ' ' + rowValues.unit : ''),
+                        percentage: percentage,
+                        weight: resultWeight
+                    });
+            }
+        }
 
         $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.raw_material || '') + '">' + escapeHtml(rowValues.raw_material || '') + '</span></td>');
         $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.unit || '') + '">' + escapeHtml(rowValues.unit || '') + '</span></td>');
-        $row.append('<td class="text-center white-space-nowrap" dir="ltr">' + escapeHtml(rowValues.quantity || '') + '</td>');
+        $row.append('<td class="dt-text white-space-nowrap">' + escapeHtml(methodText) + '</td>');
+        $row.append('<td class="dt-number text-center white-space-nowrap" dir="ltr">' + escapeHtml(quantity) + '</td>');
+        $row.append('<td class="dt-text"><span class="small">' + escapeHtml(calculationText) + '</span></td>');
         $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.notes || '') + '">' + escapeHtml(rowValues.notes || '') + '</span></td>');
 
         if (!componentReadonly($panel)) {
@@ -970,6 +1484,56 @@
         }
 
         return $row;
+    }
+
+    function componentLineLabelFromValues(values, lineNumber) {
+        var componentText = String(values && (values.raw_material || values.component_product_doc_num) || '').trim();
+        var template = componentText === '' ? message('componentLineOnlyLabel') : message('componentLineLabel');
+
+        return interpolateMessage(template, {
+            line: lineNumber,
+            component: componentText
+        });
+    }
+
+    function updateComponentMethodUi($row) {
+        var isPercentage = componentCalculationMethod($row) === 'percentage';
+
+        $row.find('.js-product-component-percentage-fields').toggleClass('d-none', !isPercentage);
+
+        if (!isPercentage) {
+            setComponentInputSource($row, 'weight');
+            updateComponentCalculatedFieldState($row);
+            return;
+        }
+
+        updateComponentCalculatedFieldState($row);
+    }
+
+    function updateComponentCalculatedFieldState($row) {
+        var $weight = $row.find('[data-component-field="quantity"]').first();
+        var $percentage = $row.find('[data-component-field="percentage"]').first();
+        var $fields = $weight.add($percentage);
+
+        $fields
+            .removeClass('product-component-calculated-field')
+            .removeAttr('data-calculated title aria-description');
+
+        if (componentCalculationMethod($row) !== 'percentage') {
+            return;
+        }
+
+        var weightIsCalculated = componentInputSource($row) === 'percentage';
+        var $calculatedField = weightIsCalculated ? $weight : $percentage;
+        var title = weightIsCalculated
+            ? message('componentCalculatedWeightTitle')
+            : message('componentCalculatedPercentageTitle');
+
+        $calculatedField
+            .addClass('product-component-calculated-field')
+            .attr('data-calculated', 'true')
+            .attr('title', title)
+            .attr('aria-description', title);
     }
 
     function componentUnitPlaceholder($unit) {
@@ -1047,11 +1611,60 @@
         return data && $.isArray(data.unit_options) ? data.unit_options : [];
     }
 
+    function componentUnitConversionEdgesFromData(data) {
+        if (data && $.isArray(data.unit_conversion_edges)) {
+            return data.unit_conversion_edges;
+        }
+
+        return [];
+    }
+
+    function storeComponentUnitConversionEdges($field, data) {
+        var edges = componentUnitConversionEdgesFromData(data);
+        var $option = $field.find('option:selected').first();
+
+        $field.data('componentUnitConversionEdges', edges);
+        $field.closest('.js-product-component-row').data('componentUnitConversionEdges', edges);
+
+        if (!$option.length) {
+            return;
+        }
+
+        if (edges.length > 0) {
+            $option.attr('data-unit-conversion-edges', JSON.stringify(edges));
+        } else {
+            $option.removeAttr('data-unit-conversion-edges');
+        }
+    }
+
+    function storedComponentUnitConversionEdges($field) {
+        var storedEdges = $field.data('componentUnitConversionEdges');
+
+        if ($.isArray(storedEdges)) {
+            return storedEdges;
+        }
+
+        var rawEdges = String($field.find('option:selected').attr('data-unit-conversion-edges') || '').trim();
+
+        if (rawEdges === '') {
+            return [];
+        }
+
+        try {
+            var parsed = JSON.parse(rawEdges);
+
+            return $.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
     function storeComponentUnitOptions($field, data) {
         var unitOptions = componentUnitOptionsFromData(data);
         var $option = $field.find('option:selected').first();
 
         $field.data('componentUnitOptions', unitOptions);
+        storeComponentUnitConversionEdges($field, data);
 
         if (!$option.length) {
             return;
@@ -1127,10 +1740,23 @@
             }
 
             if (result) {
+                var $selectedOption = $field.find('option:selected').first();
+
+                if ($selectedOption.length && result.text) {
+                    $selectedOption.text(String(result.text));
+                }
+
+                if ($selectedOption.length && result.imageUrl) {
+                    $selectedOption.attr('data-image-url', String(result.imageUrl));
+                }
+
                 storeComponentUnitOptions($field, result);
+                $field.trigger('change.select2');
             }
 
             setComponentUnitOptions($row, unitOptions, selectedUnitDocNum || '');
+            rebuildComponentReferenceOptions($row.closest('.product-components-panel'));
+            recalculateComponentGraph($row.closest('.product-components-panel'));
         }).fail(function () {
             if ($row.data('componentUnitRequestKey') !== requestKey) {
                 return;
@@ -1143,6 +1769,8 @@
     function setComponentUnitOptionsForSelection($field, data, selectedUnitDocNum) {
         var $row = $field.closest('.js-product-component-row');
         var unitOptions = componentUnitOptionsForSelection($field, data);
+
+        storeComponentUnitConversionEdges($field, data || {});
 
         setComponentUnitOptions($row, [], '');
 
@@ -1179,12 +1807,19 @@
         var selectedText = $rawMaterial.find('option:selected').text() || '';
 
         return {
+            client_key: componentUuid(),
             public_id: '',
             component_product_doc_num: copyRawMaterial ? ($rawMaterial.val() || '') : '',
             raw_material: copyRawMaterial ? selectedText : '',
             unit: copyRawMaterial ? componentUnitText($row) : '',
             unit_doc_num: copyRawMaterial ? componentUnitValue($row) : '',
+            unit_options: copyRawMaterial ? storedComponentUnitOptions($rawMaterial) : [],
+            unit_conversion_edges: copyRawMaterial ? storedComponentUnitConversionEdges($rawMaterial) : [],
+            calculation_method: componentCalculationMethod($row),
             quantity_raw: $row.find('[data-component-field="quantity"]').val() || '',
+            percentage: $row.find('[data-component-field="percentage"]').val() || '',
+            reference_component_key: componentReferenceKey($row),
+            input_source: componentInputSource($row),
             notes: $row.find('[data-component-field="notes"]').val() || '',
             _delete: false
         };
@@ -1198,6 +1833,649 @@
 
     function visibleReadonlyComponentRows($panel) {
         return $panel.find('.js-product-component-readonly-row');
+    }
+
+    function componentSelectedText($row) {
+        var $selected = $row.find('.js-product-component-raw-material option:selected').first();
+
+        return String($selected.text() || $row.find('.js-product-component-raw-material').val() || '').trim();
+    }
+
+    function componentLineLabel($row, lineNumber) {
+        return componentLineLabelFromValues({
+            raw_material: componentSelectedText($row)
+        }, lineNumber);
+    }
+
+    function activeComponentRowMap($panel) {
+        var rowMap = {};
+
+        visibleEditableComponentRows($panel).each(function () {
+            var $row = $(this);
+            var key = componentClientKey($row);
+
+            if (key !== '') {
+                rowMap[key] = $row;
+            }
+        });
+
+        return rowMap;
+    }
+
+    function componentDependentKeys($panel, rootKey) {
+        var rowMap = activeComponentRowMap($panel);
+        var result = {};
+        var queue = [rootKey];
+
+        while (queue.length > 0) {
+            var targetKey = queue.shift();
+
+            $.each(rowMap, function (key, $row) {
+                if (!result[key] && componentCalculationMethod($row) === 'percentage' && componentReferenceKey($row) === targetKey) {
+                    result[key] = true;
+                    queue.push(key);
+                }
+            });
+        }
+
+        return result;
+    }
+
+    function rebuildComponentReferenceOptions($panel) {
+        if (!$panel.length || componentReadonly($panel)) {
+            return;
+        }
+
+        var $rows = visibleEditableComponentRows($panel);
+
+        $rows.each(function (visibleIndex) {
+            $(this).attr('data-line-number', visibleIndex + 1);
+        });
+
+        $rows.each(function () {
+            var $row = $(this);
+            var selfKey = componentClientKey($row);
+            var selectedKey = componentReferenceKey($row);
+            var excludedKeys = componentDependentKeys($panel, selfKey);
+            var $reference = $row.find('.js-product-component-reference').first();
+            var selectedFound = false;
+
+            if (!$reference.length) {
+                return;
+            }
+
+            $reference.empty().append($('<option></option>').attr('value', '').text($reference.data('placeholder') || ''));
+
+            $rows.each(function (candidateIndex) {
+                var $candidate = $(this);
+                var candidateKey = componentClientKey($candidate);
+
+                if (candidateKey === '' || candidateKey === selfKey || excludedKeys[candidateKey]) {
+                    return;
+                }
+
+                var label = componentLineLabel($candidate, candidateIndex + 1);
+
+                $reference.append($('<option></option>').attr('value', candidateKey).text(label));
+
+                if (candidateKey === selectedKey) {
+                    selectedFound = true;
+                }
+            });
+
+            if (selectedKey !== '' && !selectedFound) {
+                $reference.append(
+                    $('<option></option>')
+                        .attr('value', selectedKey)
+                        .text(message('componentUnknownReference') || selectedKey)
+                );
+            }
+
+            $reference.val(selectedKey).trigger('change.select2');
+        });
+    }
+
+    function componentGraphStatuses($panel) {
+        var rowMap = activeComponentRowMap($panel);
+        var statuses = {};
+        var visiting = {};
+        var visited = {};
+        var path = [];
+
+        $.each(rowMap, function (key, $row) {
+            if (componentCalculationMethod($row) !== 'percentage') {
+                return;
+            }
+
+            var referenceKey = componentReferenceKey($row);
+
+            if (referenceKey === '') {
+                statuses[key] = 'missing';
+            } else if (referenceKey === key) {
+                statuses[key] = 'self';
+            } else if (!rowMap[referenceKey]) {
+                statuses[key] = 'missing';
+            }
+        });
+
+        function visit(key) {
+            if (visited[key] || !rowMap[key]) {
+                return;
+            }
+
+            if (visiting[key]) {
+                var cycleStart = path.indexOf(key);
+
+                path.slice(cycleStart < 0 ? 0 : cycleStart).forEach(function (cycleKey) {
+                    statuses[cycleKey] = 'cycle';
+                });
+
+                return;
+            }
+
+            visiting[key] = true;
+            path.push(key);
+
+            var $row = rowMap[key];
+            var referenceKey = componentCalculationMethod($row) === 'percentage'
+                ? componentReferenceKey($row)
+                : '';
+
+            if (referenceKey !== '' && referenceKey !== key && rowMap[referenceKey]) {
+                visit(referenceKey);
+            }
+
+            path.pop();
+            delete visiting[key];
+            visited[key] = true;
+        }
+
+        $.each(rowMap, function (key) {
+            visit(key);
+        });
+
+        return statuses;
+    }
+
+    function conversionEdgeValues(edges) {
+        if ($.isArray(edges)) {
+            return edges;
+        }
+
+        if (edges && $.isArray(edges.edges)) {
+            return edges.edges;
+        }
+
+        return [];
+    }
+
+    function firstConversionEdgeValue(edge, keys) {
+        var value = '';
+
+        keys.some(function (key) {
+            if (edge && edge[key] !== undefined && edge[key] !== null && String(edge[key]).trim() !== '') {
+                value = String(edge[key]).trim();
+                return true;
+            }
+
+            return false;
+        });
+
+        return value;
+    }
+
+    function normalizedConversionEdge(edge) {
+        var from = firstConversionEdgeValue(edge, ['from_unit_doc_num', 'source_unit_doc_num', 'from_unit', 'source_unit', 'from', 'source', 'unit_doc_num']);
+        var to = firstConversionEdgeValue(edge, ['to_unit_doc_num', 'target_unit_doc_num', 'to_unit', 'target_unit', 'to', 'target', 'equivalent_unit_doc_num']);
+        var factor = firstConversionEdgeValue(edge, ['factor', 'multiplier', 'conversion_factor', 'equivalent_value', 'ratio']);
+        var numerator = firstConversionEdgeValue(edge, ['numerator', 'ratio_numerator']);
+        var denominator = firstConversionEdgeValue(edge, ['denominator', 'ratio_denominator']);
+
+        if (factor === '' && numerator !== '' && denominator !== '') {
+            factor = decimalDivide(numerator, denominator, componentWorkingScale);
+        }
+
+        if (from === '' || to === '' || !decimalIsPositive(factor)) {
+            return null;
+        }
+
+        return {
+            from: from,
+            to: to,
+            factor: factor
+        };
+    }
+
+    function allComponentConversionEdges($panel, componentRows) {
+        var edges = [];
+
+        conversionEdgeValues(window.coreProductUnitConversionEdges || []).forEach(function (edge) {
+            edges.push(edge);
+        });
+
+        var $conversionRows = componentRows && componentRows.length
+            ? componentRows
+            : $panel.find('.js-product-component-row, .js-product-component-readonly-row');
+
+        $conversionRows.each(function () {
+            conversionEdgeValues($(this).data('componentUnitConversionEdges') || []).forEach(function (edge) {
+                edges.push(edge);
+            });
+        });
+
+        return edges;
+    }
+
+    function componentConversionFactor($panel, fromUnit, toUnit, $fromRow, $toRow) {
+        var from = String(fromUnit || '').trim();
+        var to = String(toUnit || '').trim();
+
+        if (from === '' || to === '') {
+            return null;
+        }
+
+        if (from === to) {
+            return '1';
+        }
+
+        var adjacency = {};
+
+        var $conversionRows = $();
+
+        if ($fromRow && $fromRow.length) {
+            $conversionRows = $conversionRows.add($fromRow);
+        }
+
+        if ($toRow && $toRow.length) {
+            $conversionRows = $conversionRows.add($toRow);
+        }
+
+        allComponentConversionEdges($panel, $conversionRows).forEach(function (rawEdge) {
+            var edge = normalizedConversionEdge(rawEdge);
+            var edgeFactor = edge ? decimalRational(edge.factor) : null;
+
+            if (!edge || !edgeFactor) {
+                return;
+            }
+
+            adjacency[edge.from] = adjacency[edge.from] || [];
+            adjacency[edge.to] = adjacency[edge.to] || [];
+            adjacency[edge.from].push({ unit: edge.to, factor: edgeFactor });
+
+            var inverseFactor = rationalInverse(edgeFactor);
+
+            if (inverseFactor !== null) {
+                adjacency[edge.to].push({ unit: edge.from, factor: inverseFactor });
+            }
+        });
+
+        var queue = [from];
+        var factors = {};
+        var processed = {};
+
+        factors[from] = normalizedRational(BigInt(1), BigInt(1));
+
+        while (queue.length > 0) {
+            var currentUnit = queue.shift();
+
+            if (processed[currentUnit]) {
+                continue;
+            }
+
+            processed[currentUnit] = true;
+
+            for (var edgeIndex = 0; edgeIndex < (adjacency[currentUnit] || []).length; edgeIndex += 1) {
+                var edge = adjacency[currentUnit][edgeIndex];
+                var factor = rationalMultiply(factors[currentUnit], edge.factor);
+
+                if (factor === null) {
+                    continue;
+                }
+
+                if (factors[edge.unit] === undefined) {
+                    factors[edge.unit] = factor;
+                    queue.push(edge.unit);
+                    continue;
+                }
+
+                if (!rationalFactorsAreOutputEquivalent(factors[edge.unit], factor)) {
+                    return null;
+                }
+            }
+        }
+
+        return factors[to] === undefined
+            ? null
+            : rationalToDecimal(factors[to], componentWorkingScale);
+    }
+
+    function setComponentCalculationState($row, text, state) {
+        var $state = $row.find('.js-product-component-calculation-state').first();
+        var style = state || 'muted';
+
+        $state
+            .removeClass('text-600 text-success text-danger text-warning')
+            .addClass(style === 'danger' ? 'text-danger' : (style === 'success' ? 'text-success' : (style === 'warning' ? 'text-warning' : 'text-600')))
+            .text(text || '');
+        $row
+            .attr('data-component-calculation-state', style)
+            .toggleClass('table-danger', style === 'danger');
+    }
+
+    function componentGraphStatusMessage(status) {
+        if (status === 'self') {
+            return message('componentReferenceSelf');
+        }
+
+        if (status === 'cycle') {
+            return message('componentReferenceCycle');
+        }
+
+        return message('componentReferenceMissing');
+    }
+
+    function prepareComponentDependentsForRecalculation($panel, rootKey) {
+        var pending = [rootKey];
+        var visited = {};
+
+        while (pending.length > 0) {
+            var referenceKey = pending.shift();
+
+            visibleEditableComponentRows($panel).each(function () {
+                var $row = $(this);
+                var key = componentClientKey($row);
+
+                if (visited[key] || componentCalculationMethod($row) !== 'percentage' || componentReferenceKey($row) !== referenceKey) {
+                    return;
+                }
+
+                visited[key] = true;
+
+                if (decimalIsPositive(componentPercentageValue($row))) {
+                    setComponentInputSource($row, 'percentage');
+                }
+
+                pending.push(key);
+            });
+        }
+    }
+
+    function recalculateComponentGraph($panel, options) {
+        if (!$panel.length || componentReadonly($panel) || $panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+            updateComponentTotals($panel);
+            return true;
+        }
+
+        var settings = options || {};
+        $panel.data('calculatingComponents', true);
+
+        var rowMap = activeComponentRowMap($panel);
+        var statuses = componentGraphStatuses($panel);
+        var results = {};
+        var clientValid = true;
+
+        function evaluate(key) {
+            if (results[key]) {
+                return results[key];
+            }
+
+            var $row = rowMap[key];
+
+            if (!$row) {
+                return { valid: false };
+            }
+
+            updateComponentMethodUi($row);
+
+            if (componentCalculationMethod($row) === 'direct') {
+                var directQuantity = componentQuantityValue($row);
+
+                setComponentCalculationState($row, message('componentDirectFormula'), 'muted');
+                results[key] = {
+                    valid: decimalIsPositive(directQuantity),
+                    quantity: directQuantity,
+                    unit: componentUnitValue($row),
+                    row: $row
+                };
+
+                return results[key];
+            }
+
+            if (statuses[key]) {
+                clientValid = false;
+                setComponentCalculationState($row, componentGraphStatusMessage(statuses[key]), 'danger');
+                results[key] = { valid: false };
+
+                return results[key];
+            }
+
+            var referenceKey = componentReferenceKey($row);
+            var referenceResult = evaluate(referenceKey);
+
+            if (!referenceResult.valid || !decimalIsPositive(referenceResult.quantity)) {
+                clientValid = false;
+                setComponentCalculationState($row, message('componentReferenceWeightUnavailable'), 'danger');
+                results[key] = { valid: false };
+
+                return results[key];
+            }
+
+            var unit = componentUnitValue($row);
+            var conversionFactor = componentConversionFactor($panel, referenceResult.unit, unit, referenceResult.row, $row);
+
+            if (conversionFactor === null) {
+                clientValid = false;
+                setComponentCalculationState($row, message('componentIncompatibleUnits'), 'danger');
+                results[key] = { valid: false };
+
+                return results[key];
+            }
+
+            var convertedReferenceWeight = decimalMultiply(referenceResult.quantity, conversionFactor, componentWorkingScale);
+            var source = componentInputSource($row);
+            var weight = componentQuantityValue($row);
+            var percentage = componentPercentageValue($row);
+
+            if (source === 'weight') {
+                if (!decimalIsPositive(weight) || !decimalIsPositive(convertedReferenceWeight)) {
+                    clientValid = false;
+                    setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
+                    results[key] = { valid: false };
+
+                    return results[key];
+                }
+
+                var percentageNumerator = decimalMultiply(
+                    weight,
+                    '100',
+                    componentWorkingScale
+                );
+                var calculatedPercentage = decimalDivide(
+                    percentageNumerator,
+                    convertedReferenceWeight,
+                    componentCalculationScale
+                );
+
+                if (!settings.preserveValues || !decimalIsPositive(percentage)) {
+                    percentage = calculatedPercentage;
+                    setNumericFieldValue($row.find('[data-component-field="percentage"]'), percentage);
+
+                    var durablePercentageRatio = decimalDivide(percentage, '100', componentWorkingScale);
+                    var durableWeight = decimalMultiply(
+                        convertedReferenceWeight,
+                        durablePercentageRatio,
+                        componentCalculationScale
+                    );
+
+                    if (decimalIsPositive(durableWeight)) {
+                        weight = durableWeight;
+                        setNumericFieldValue($row.find('[data-component-field="quantity"]'), weight);
+                    }
+                }
+            } else {
+                if (!decimalIsPositive(percentage) || !decimalIsPositive(convertedReferenceWeight)) {
+                    clientValid = false;
+                    setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
+                    results[key] = { valid: false };
+
+                    return results[key];
+                }
+
+                var percentageRatio = decimalDivide(percentage, '100', componentWorkingScale);
+
+                var calculatedWeight = decimalMultiply(convertedReferenceWeight, percentageRatio, componentCalculationScale);
+
+                if (!settings.preserveValues || !decimalIsPositive(weight)) {
+                    weight = calculatedWeight;
+                    setNumericFieldValue($row.find('[data-component-field="quantity"]'), weight);
+                }
+            }
+
+            if (!decimalIsPositive(weight) || !decimalIsPositive(percentage)) {
+                clientValid = false;
+                setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
+                results[key] = { valid: false };
+
+                return results[key];
+            }
+
+            var unitText = componentUnitText($row);
+            var formula = interpolateMessage(message('componentFormulaTemplate'), {
+                reference_weight: formatDecimal(convertedReferenceWeight) + (unitText ? ' ' + unitText : ''),
+                percentage: formatDecimal(percentage),
+                weight: formatDecimal(weight) + (unitText ? ' ' + unitText : '')
+            });
+
+            setComponentCalculationState($row, formula, 'success');
+            results[key] = {
+                valid: true,
+                quantity: weight,
+                unit: unit,
+                row: $row
+            };
+
+            return results[key];
+        }
+
+        $.each(rowMap, function (key) {
+            evaluate(key);
+        });
+
+        $panel.removeData('calculatingComponents');
+        updateComponentTotals($panel);
+
+        return clientValid;
+    }
+
+    function componentRowsForTotals($panel) {
+        var rows = [];
+
+        if (componentReadonly($panel)) {
+            visibleReadonlyComponentRows($panel).each(function () {
+                var $row = $(this);
+
+                rows.push({
+                    invalid: false,
+                    quantity: String($row.attr('data-quantity') || ''),
+                    row: $row,
+                    unit: String($row.attr('data-unit-doc-num') || ''),
+                    unitText: String($row.attr('data-unit-text') || '')
+                });
+            });
+
+            return rows;
+        }
+
+        visibleEditableComponentRows($panel).each(function () {
+            var $row = $(this);
+
+            rows.push({
+                invalid: String($row.attr('data-component-calculation-state') || '') === 'danger',
+                quantity: componentQuantityValue($row),
+                row: $row,
+                unit: componentUnitValue($row),
+                unitText: componentUnitText($row)
+            });
+        });
+
+        return rows;
+    }
+
+    function updateComponentTotals($panel) {
+        var $container = $panel.find('[data-components-total]').first();
+
+        if (!$container.length) {
+            return;
+        }
+
+        var groups = [];
+        var incomplete = false;
+
+        componentRowsForTotals($panel).forEach(function (row) {
+            if (row.invalid || !decimalIsPositive(row.quantity) || row.unit === '') {
+                incomplete = true;
+                return;
+            }
+
+            var matchedGroup = null;
+            var convertedQuantity = row.quantity;
+
+            groups.some(function (group) {
+                var factor = componentConversionFactor($panel, row.unit, group.unit, row.row, group.row);
+
+                if (factor === null) {
+                    return false;
+                }
+
+                var candidateQuantity = decimalMultiply(row.quantity, factor, componentCalculationScale);
+
+                if (candidateQuantity === null) {
+                    return false;
+                }
+
+                convertedQuantity = candidateQuantity;
+                matchedGroup = group;
+
+                return true;
+            });
+
+            if (!matchedGroup) {
+                matchedGroup = {
+                    quantity: '0',
+                    row: row.row,
+                    unit: row.unit,
+                    unitText: row.unitText || row.unit
+                };
+                groups.push(matchedGroup);
+                convertedQuantity = row.quantity;
+            }
+
+            matchedGroup.quantity = decimalAdd(matchedGroup.quantity, convertedQuantity, componentCalculationScale);
+        });
+
+        $container.empty();
+
+        if (groups.length === 0) {
+            if (incomplete && componentRowsForTotals($panel).length > 0) {
+                $container.append($('<span class="text-warning"></span>').text(message('componentTotalUnavailable')));
+            }
+
+            return;
+        }
+
+        var totalText = groups.map(function (group) {
+            return formatDecimal(group.quantity) + (group.unitText ? ' ' + group.unitText : '');
+        }).join(' + ');
+
+        $container.append(
+            $('<span></span>').text(interpolateMessage(message('componentTotalTemplate'), { total: totalText }))
+        );
+
+        if (incomplete) {
+            $container.append(
+                $('<span class="d-block small text-warning fw-normal mt-1"></span>').text(message('componentTotalIncomplete'))
+            );
+        }
     }
 
     function updateComponentEmptyState($panel) {
@@ -1239,10 +2517,14 @@
                 }
             });
         });
+
+        rebuildComponentReferenceOptions($panel);
     }
 
     function syncComponentInputs($panel) {
         renumberComponents($panel);
+
+        return recalculateComponentGraph($panel, { preserveValues: true });
     }
 
     function focusComponentRawMaterial($row) {
@@ -1294,6 +2576,7 @@
         initSelect2($row[0]);
         initComponentUnitSelect($row);
         updateComponentEmptyState($panel);
+        recalculateComponentGraph($panel);
 
         if (shouldFocus !== false) {
             focusComponentRawMaterial($row);
@@ -1315,14 +2598,30 @@
         );
     }
 
+    function destroyComponentSelect2($root) {
+        if (!$.fn.select2 || !$root.length) {
+            return;
+        }
+
+        $root.find('select.select2-hidden-accessible').each(function () {
+            try {
+                $(this).select2('destroy');
+            } catch (error) {
+                // The row is being discarded; a partially initialized Select2 needs no recovery.
+            }
+        });
+    }
+
     function resetComponents($panel) {
         if (!$panel.length) {
             return;
         }
 
+        destroyComponentSelect2($panel);
         $panel.find('.product-components-table tbody').empty();
         clearComponentValidation($panel);
         updateComponentEmptyState($panel);
+        updateComponentTotals($panel);
     }
 
     function removeComponentRow($row) {
@@ -1331,6 +2630,40 @@
         }
 
         var $panel = $row.closest('.product-components-panel');
+        var clientKey = componentClientKey($row);
+        var dependentLines = [];
+        var $firstDependentReference = $();
+
+        visibleEditableComponentRows($panel).each(function (visibleIndex) {
+            var $candidate = $(this);
+
+            if (
+                componentClientKey($candidate) !== clientKey
+                && componentCalculationMethod($candidate) === 'percentage'
+                && componentReferenceKey($candidate) === clientKey
+            ) {
+                dependentLines.push(componentLineLabel($candidate, visibleIndex + 1));
+
+                if (!$firstDependentReference.length) {
+                    $firstDependentReference = $candidate.find('.js-product-component-reference').first();
+                }
+            }
+        });
+
+        if (dependentLines.length > 0) {
+            var dependencyMessage = interpolateMessage(message('componentDeleteReferenced'), {
+                lines: dependentLines.join(', ')
+            });
+
+            showComponentAlert($panel, dependencyMessage, 'danger');
+            showToast('error', dependencyMessage);
+            $firstDependentReference.trigger('focus');
+
+            return;
+        }
+
+        clearComponentAlert($panel);
+
         var publicId = String($row.find('[data-component-field="public_id"]').val() || '').trim();
 
         if (publicId === '') {
@@ -1338,9 +2671,11 @@
                 ? $row.next('.js-product-component-row:not(.d-none)')
                 : $row.prev('.js-product-component-row:not(.d-none)');
 
+            destroyComponentSelect2($row);
             $row.remove();
             renumberComponents($panel);
             updateComponentEmptyState($panel);
+            recalculateComponentGraph($panel);
 
             if ($focusTarget.length) {
                 focusComponentRawMaterial($focusTarget);
@@ -1351,20 +2686,37 @@
 
         $row.addClass('d-none').attr('aria-hidden', 'true');
         $row.find('[data-component-field="_delete"]').val('1');
-        $row.find(':input').not('[data-component-field="public_id"], [data-component-field="_delete"]').prop('disabled', true);
+        $row.find(':input')
+            .not('[data-component-field="client_key"], [data-component-field="public_id"], [data-component-field="_delete"]')
+            .prop('disabled', true);
         clearComponentValidation($panel);
         renumberComponents($panel);
         updateComponentEmptyState($panel);
+        recalculateComponentGraph($panel);
     }
 
     function renderInitialComponents($panel, initialRows) {
         var $tbody = $panel.find('.product-components-table tbody');
+        var normalizedRows = normalizedInitialComponentRows($.isArray(initialRows) ? initialRows : []);
+        var rowMap = {};
+        var readonlyEdges = [];
 
+        destroyComponentSelect2($panel);
         $tbody.empty();
+        $panel.data('hydratingComponents', true);
 
-        initialRows.forEach(function (row, index) {
+        normalizedRows.forEach(function (row, index) {
+            row._line_number = index + 1;
+            rowMap[row.client_key] = row;
+            conversionEdgeValues(row.unit_conversion_edges || []).forEach(function (edge) {
+                readonlyEdges.push(edge);
+            });
+        });
+        $panel.data('readonlyComponentConversionEdges', readonlyEdges);
+
+        normalizedRows.forEach(function (row, index) {
             var $row = componentReadonly($panel)
-                ? readonlyComponentRow($panel, row)
+                ? readonlyComponentRow($panel, row, rowMap)
                 : editableComponentRow(index, row);
 
             $tbody.append($row);
@@ -1372,6 +2724,10 @@
             if (!componentReadonly($panel)) {
                 initSelect2($row[0]);
                 initComponentUnitSelect($row);
+
+                if (componentActive($row) && !$row.data('componentMetadataComplete') && String(row.component_product_doc_num || '').trim() !== '') {
+                    loadComponentUnitOptions($row, row.unit_doc_num || '');
+                }
             }
         });
 
@@ -1379,7 +2735,14 @@
             renumberComponents($panel);
         }
 
+        $panel.removeData('hydratingComponents');
         updateComponentEmptyState($panel);
+
+        if (componentReadonly($panel)) {
+            updateComponentTotals($panel);
+        } else {
+            recalculateComponentGraph($panel, { preserveValues: true });
+        }
     }
 
     function isAltShortcut(event, codes, keyCodes, legacyKeys) {
@@ -1737,8 +3100,23 @@
             event.preventDefault();
 
             var $form = $(this);
-            syncComponentInputs($form.find('.product-components-panel').first());
+            var $componentPanel = $form.find('.product-components-panel').first();
+
             clearValidation($form);
+
+            if (!syncComponentInputs($componentPanel)) {
+                showComponentAlert($componentPanel, message('componentClientValidationFailed'), 'danger');
+
+                var componentsTab = document.getElementById('product-components-tab');
+
+                if (componentsTab && window.bootstrap && window.bootstrap.Tab) {
+                    window.bootstrap.Tab.getOrCreateInstance(componentsTab).show();
+                }
+
+                return;
+            }
+
+            normalizeNumericForm($form[0]);
 
             $.ajax({
                 url: $form.attr('action'),
@@ -1768,6 +3146,16 @@
 
                 updateUrlsAfterSave($form, response);
                 updateImagePickerFromResponse($form, response);
+
+                var responseData = response && response.data ? response.data : {};
+
+                if ($.isArray(responseData.unit_conversion_edges)) {
+                    window.coreProductUnitConversionEdges = responseData.unit_conversion_edges;
+                }
+
+                if ($.isArray(responseData.components) && $componentPanel.length) {
+                    renderInitialComponents($componentPanel, responseData.components);
+                }
 
                 if (response && response.redirect) {
                     window.location.href = response.redirect;
@@ -1877,6 +3265,8 @@
 
             setComponentUnitOptionsForSelection($field, data, '');
             clearComponentFieldValidation($field);
+            rebuildComponentReferenceOptions($field.closest('.product-components-panel'));
+            recalculateComponentGraph($field.closest('.product-components-panel'));
         })
         .off('change.coreProductsComponentsRawClear', '.js-product-component-raw-material')
         .on('change.coreProductsComponentsRawClear', '.js-product-component-raw-material', function () {
@@ -1899,10 +3289,97 @@
                 }
             } else {
                 $field.removeData('componentUnitOptions');
+                $field.removeData('componentUnitConversionEdges');
+                $row.removeData('componentUnitConversionEdges');
                 setComponentUnitOptions($row, [], '');
             }
 
             clearComponentFieldValidation($field);
+            rebuildComponentReferenceOptions($row.closest('.product-components-panel'));
+            prepareComponentDependentsForRecalculation($row.closest('.product-components-panel'), componentClientKey($row));
+            recalculateComponentGraph($row.closest('.product-components-panel'));
+        })
+        .off('change.coreProductsComponentsMethod', '.js-product-component-calculation-method')
+        .on('change.coreProductsComponentsMethod', '.js-product-component-calculation-method', function () {
+            var $row = $(this).closest('.js-product-component-row');
+            var $panel = $row.closest('.product-components-panel');
+
+            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+                return;
+            }
+
+            if (componentCalculationMethod($row) === 'direct') {
+                $row.find('[data-component-field="reference_component_key"]').val('').trigger('change.select2');
+                $row.find('[data-component-field="percentage"]').val('');
+                setComponentInputSource($row, 'weight');
+            } else {
+                setComponentInputSource($row, 'weight');
+            }
+
+            updateComponentMethodUi($row);
+            rebuildComponentReferenceOptions($panel);
+            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            recalculateComponentGraph($panel);
+        })
+        .off('change.coreProductsComponentsReference', '.js-product-component-reference')
+        .on('change.coreProductsComponentsReference', '.js-product-component-reference', function () {
+            var $row = $(this).closest('.js-product-component-row');
+            var $panel = $row.closest('.product-components-panel');
+
+            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+                return;
+            }
+
+            setComponentInputSource($row, decimalIsPositive(componentPercentageValue($row)) ? 'percentage' : 'weight');
+            clearComponentFieldValidation($(this));
+            rebuildComponentReferenceOptions($panel);
+            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            recalculateComponentGraph($panel);
+        })
+        .off('input.coreProductsComponentsWeight', '.js-product-component-quantity')
+        .on('input.coreProductsComponentsWeight', '.js-product-component-quantity', function () {
+            var $row = $(this).closest('.js-product-component-row');
+            var $panel = $row.closest('.product-components-panel');
+
+            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+                return;
+            }
+
+            if (componentCalculationMethod($row) === 'percentage') {
+                setComponentInputSource($row, 'weight');
+            }
+
+            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            recalculateComponentGraph($panel);
+        })
+        .off('input.coreProductsComponentsPercentage', '.js-product-component-percentage')
+        .on('input.coreProductsComponentsPercentage', '.js-product-component-percentage', function () {
+            var $row = $(this).closest('.js-product-component-row');
+            var $panel = $row.closest('.product-components-panel');
+
+            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+                return;
+            }
+
+            setComponentInputSource($row, 'percentage');
+            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            recalculateComponentGraph($panel);
+        })
+        .off('change.coreProductsComponentsUnit', '.js-product-component-unit')
+        .on('change.coreProductsComponentsUnit', '.js-product-component-unit', function () {
+            var $row = $(this).closest('.js-product-component-row');
+            var $panel = $row.closest('.product-components-panel');
+
+            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
+                return;
+            }
+
+            if (componentCalculationMethod($row) === 'percentage' && decimalIsPositive(componentPercentageValue($row))) {
+                setComponentInputSource($row, 'percentage');
+            }
+
+            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            recalculateComponentGraph($panel);
         })
         .off('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field]')
         .on('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field]', function () {

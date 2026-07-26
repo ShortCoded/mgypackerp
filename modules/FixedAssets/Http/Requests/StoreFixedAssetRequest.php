@@ -10,6 +10,7 @@ use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
@@ -22,6 +23,8 @@ use Modules\FixedAssets\Models\FixedAsset;
 
 class StoreFixedAssetRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'fixed_assets.clone' : 'fixed_assets.create');
@@ -29,6 +32,16 @@ class StoreFixedAssetRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'purchase_value',
+            'salvage_value',
+            'exchange_rate',
+            'previous_depreciation',
+            'annual_depreciation_rate',
+            'expected_usage_units',
+            'useful_life',
+        ]);
+
         $dates = app(DateFormatService::class);
 
         $this->merge([
@@ -117,15 +130,15 @@ class StoreFixedAssetRequest extends FormRequest
             'purchase_date' => ['required', 'date'],
             'acquisition_date' => ['nullable', 'date'],
             'operation_date' => [Rule::requiredIf($this->isDepreciable()), 'nullable', 'date'],
-            'purchase_value' => ['required', 'numeric', 'gt:0'],
-            'salvage_value' => ['nullable', 'numeric', 'min:0'],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'previous_depreciation' => [Rule::requiredIf($this->isDepreciable() && $this->input('entry_type') === FixedAsset::EntryTypeOpeningAsset), 'nullable', 'numeric', 'min:0'],
+            'purchase_value' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'salvage_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
+            'previous_depreciation' => [Rule::requiredIf($this->isDepreciable() && $this->input('entry_type') === FixedAsset::EntryTypeOpeningAsset), 'nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'previous_depreciation_until_date' => ['nullable', 'date'],
             'depreciation_method' => [Rule::requiredIf($this->isDepreciable()), 'nullable', Rule::in(FixedAsset::depreciationMethods())],
-            'annual_depreciation_rate' => ['nullable', 'numeric', 'gt:0', 'max:100'],
-            'expected_usage_units' => ['nullable', 'numeric', 'gt:0'],
-            'useful_life' => ['nullable', 'numeric', 'gt:0'],
+            'annual_depreciation_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'gt:0', 'max:100'],
+            'expected_usage_units' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'useful_life' => ['nullable', 'numeric', 'decimal:0,2', 'regex:/^\d{1,8}(?:\.\d{1,2})?$/D', 'gt:0'],
             'is_depreciable' => ['required', 'boolean'],
             'location_address' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
@@ -232,7 +245,7 @@ class StoreFixedAssetRequest extends FormRequest
 
     private function normalizedNumber(string $field): ?string
     {
-        $value = str_replace(',', '', trim((string) $this->input($field)));
+        $value = trim((string) $this->input($field));
 
         return $value === '' ? null : $value;
     }

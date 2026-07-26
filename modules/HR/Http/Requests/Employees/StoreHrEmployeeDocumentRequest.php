@@ -5,12 +5,15 @@ namespace Modules\HR\Http\Requests\Employees;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 class StoreHrEmployeeDocumentRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can('hr.employees.documents.manage');
@@ -38,6 +41,8 @@ class StoreHrEmployeeDocumentRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput(['alert_before_expiry_days']);
+
         $dates = [];
         $dateFormat = app(DateFormatService::class);
 

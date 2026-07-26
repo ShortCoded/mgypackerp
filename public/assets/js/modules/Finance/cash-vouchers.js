@@ -30,14 +30,14 @@
     }
 
     function formatAmount(value) {
-        const numeric = Number(value) || 0;
+        const numeric = window.AppNumbers.number(value, 0);
         const rounded = Math.round((numeric + Number.EPSILON) * 10000) / 10000;
 
-        return rounded.toFixed(4).replace(/\.?0+$/, '') || '0';
+        return window.AppNumbers.format(rounded.toFixed(4).replace(/\.?0+$/, '') || '0');
     }
 
     function parseAmount(value) {
-        return parseFloat(String(value || '').replace(/,/g, '')) || 0;
+        return window.AppNumbers.number(value, 0);
     }
 
     function initSelect2(root) {
@@ -96,7 +96,7 @@
         return [
             '<tr class="js-cash-voucher-line" data-index="' + index + '">',
             '<td><select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[' + index + '][account_doc_num]" data-url="' + escapeHtml($form.data('account-url') || '') + '" data-placeholder="' + escapeHtml(trans('select_account', 'Select Account')) + '" data-allow-clear="true" data-extra-params=\'{"exclude":"#cashbox_account_doc_num_filter"}\' required>' + accountOption + '</select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.account_doc_num"></div></td>',
-            '<td><input class="form-control text-end js-cash-voucher-line-amount" name="lines[' + index + '][amount]" type="number" min="0.0001" step="0.0001" value="' + escapeHtml(amount) + '" dir="ltr" required><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>',
+            '<td><input class="form-control text-end js-cash-voucher-line-amount" name="lines[' + index + '][amount]" type="text" inputmode="decimal" min="0.0001" step="0.0001" value="' + escapeHtml(amount) + '" dir="ltr" data-numeric-input data-numeric-scale="4" data-numeric-min="0.0001" required><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>',
             '<td><input class="form-control" name="lines[' + index + '][description]" value="' + escapeHtml(description) + '"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.description"></div></td>',
             '<td><input class="form-control" name="lines[' + index + '][notes]" value="' + escapeHtml(notes) + '"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.notes"></div></td>',
             '<td class="text-center"><button class="btn btn-link text-600 p-0 me-2 js-cash-voucher-duplicate-line" type="button" title="' + escapeHtml(trans('duplicate_line_title', 'Duplicate row')) + '" data-bs-title="' + escapeHtml(trans('duplicate_line_title', 'Duplicate row')) + '"><span class="fas fa-copy"></span></button><button class="btn btn-link text-danger p-0 js-cash-voucher-remove-line" type="button" title="' + escapeHtml(trans('delete_line_title', 'Delete row')) + '" data-bs-title="' + escapeHtml(trans('delete_line_title', 'Delete row')) + '"><span class="fas fa-trash-alt"></span></button></td>',
@@ -146,6 +146,7 @@
 
         renumberLines($form);
         initSelect2($row[0]);
+        window.AppNumbers.refresh($row[0]);
         calculateTotals($form);
         if ($row.find('.js-cash-voucher-account').data('select2')) {
             $row.find('.js-cash-voucher-account').select2('open');

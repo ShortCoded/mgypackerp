@@ -2,8 +2,14 @@
 
 namespace Modules\Purchases\Services;
 
+use Modules\Core\Services\NumericFormatService;
+
 class PurchaseInvoiceCalculationService
 {
+    public function __construct(
+        private readonly NumericFormatService $numbers,
+    ) {}
+
     /**
      * @param  list<array<string, mixed>>  $lines
      * @return array{invoice: array<string, string|null>, lines: list<array<string, mixed>>}
@@ -31,11 +37,11 @@ class PurchaseInvoiceCalculationService
 
             $calculatedLines[] = [
                 ...$line,
-                'quantity' => $this->decimal($quantity),
-                'unit_price' => $this->decimal($unitPrice),
-                'discount_value' => $this->decimal($this->number($line['discount_value'] ?? 0)),
+                'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
+                'unit_price' => $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000',
+                'discount_value' => $this->numbers->normalizeToScale($line['discount_value'] ?? 0, 4) ?? '0.0000',
                 'discount_amount' => $this->decimal($lineDiscount),
-                'tax_rate' => $this->decimal($taxRate),
+                'tax_rate' => $this->numbers->normalizeToScale($line['tax_rate'] ?? 0, 4) ?? '0.0000',
                 'tax_amount' => $this->decimal($lineTax),
                 'subtotal_amount' => $this->decimal($lineSubtotal),
                 'total_before_tax' => $this->decimal($totalBeforeTax),
@@ -51,7 +57,7 @@ class PurchaseInvoiceCalculationService
         return [
             'invoice' => [
                 'header_discount_type' => $headerDiscountType ?: null,
-                'header_discount_value' => $this->decimal($this->number($headerDiscountValue)),
+                'header_discount_value' => $this->numbers->normalizeToScale($headerDiscountValue ?? 0, 4) ?? '0.0000',
                 'header_discount_amount' => $this->decimal($headerDiscount),
                 'subtotal_amount' => $this->decimal($subtotal),
                 'line_discount_amount' => $this->decimal($lineDiscountTotal),

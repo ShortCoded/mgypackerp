@@ -105,4 +105,27 @@
     .report-table td {
         color: #1f2937;
     }
+
+    .report-filter-summary {
+        background: #f8fafc;
+        border: 1px solid #d8e2ef;
+        border-radius: 4px;
+        color: #344050;
+        font-size: 8.2px;
+        line-height: 1.45;
+        margin-bottom: 8px;
+        padding: 6px 8px;
+    }
+
+    .business-partner-report-table {
+        table-layout: fixed;
+    }
+
+    .business-partner-report-table th,
+    .business-partner-report-table td {
+        font-size: 7.4px;
+        line-height: 1.3;
+        overflow-wrap: break-word;
+        vertical-align: top;
+    }
 </style>

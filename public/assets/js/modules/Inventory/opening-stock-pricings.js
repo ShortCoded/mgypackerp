@@ -155,19 +155,17 @@
   }
 
   function formatNumber(value, precision) {
-    const number = Number(String(value || '').replace(/,/g, ''));
+    const number = window.AppNumbers.number(value, NaN);
 
     if (!Number.isFinite(number)) {
       return '';
     }
 
-    return number.toFixed(precision || 4).replace(/\.?0+$/, '');
+    return window.AppNumbers.format(number.toFixed(precision || 4).replace(/\.?0+$/, ''));
   }
 
   function numericValue(value) {
-    const number = Number(String(value || '').replace(/,/g, ''));
-
-    return Number.isFinite(number) ? number : 0;
+    return window.AppNumbers.number(value, 0);
   }
 
   function columnName(column) {
@@ -205,7 +203,7 @@
     }
 
     if (['exchange_rate', 'total_amount', 'lines_count'].indexOf(column) !== -1) {
-      return 'align-middle white-space-nowrap text-center';
+      return 'align-middle white-space-nowrap dt-number text-center';
     }
 
     return 'align-middle white-space-nowrap dt-text dt-ellipsis';
@@ -482,6 +480,7 @@
     updateLineTotal($row);
     renumberLines($form);
     initSelect2($row[0]);
+    window.AppNumbers.refresh($row[0]);
 
     if (shouldFocus !== false) {
       focusProduct($row);

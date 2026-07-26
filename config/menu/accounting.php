@@ -2,8 +2,8 @@
 
 return [
     [
-        'label' => 'general_ledger',
-        'title' => 'General Ledger',
+        'label' => 'accounting_costing',
+        'title' => 'Accounting & Costing',
         'icon' => 'calculator',
         'route' => null,
         'permission' => null,

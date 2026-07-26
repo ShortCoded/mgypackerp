@@ -13,6 +13,13 @@ return [
         'column' => 'doc_num',
         'number_column' => 'doc_number',
     ],
+    'screen_data_visibility_rules' => [
+        'prefix' => 'VisibilityRule-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
     'companies' => [
         'prefix' => 'Company-',
         'padding' => 5,
@@ -259,6 +266,13 @@ return [
     ],
     'raw_materials' => [
         'prefix' => 'RAW-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
+    'packaging_materials' => [
+        'prefix' => 'PACK-',
         'padding' => 5,
         'column' => 'doc_num',
         'number_column' => 'doc_number',

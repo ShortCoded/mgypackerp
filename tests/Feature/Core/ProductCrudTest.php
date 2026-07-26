@@ -203,7 +203,7 @@ test('products index renders through standard core crud shell', function () {
         ->get(route('admin.products.index'))
         ->assertOk()
         ->assertSee(__('products.title'))
-        ->assertSee(__('menu.item_data'))
+        ->assertSee(__('menu.inventory'))
         ->assertSee(__('products.attributes.color'))
         ->assertSee(__('products.attributes.decal'))
         ->assertSee(__('products.attributes.origin_country'))
@@ -277,7 +277,8 @@ test('products create form renders without blade parse errors', function () {
         ->assertSee(__('products.attributes.barcode'))
         ->assertSee(__('products.attributes.reorder_point'))
         ->assertSee(__('products.attributes.item_classification'))
-        ->assertSee(__('products.classifications.'.Product::ClassificationRawMaterial))
+        ->assertDontSee(__('products.classifications.'.Product::ClassificationRawMaterial))
+        ->assertDontSee(__('products.classifications.'.Product::ClassificationPackaging))
         ->assertSee(__('products.tabs.components'))
         ->assertSee(__('products.components.helper'))
         ->assertSee(__('products.components.add'))
@@ -324,6 +325,74 @@ test('products create form renders without blade parse errors', function () {
         ->not->toContain('name="image"')
         ->not->toContain(__('products.image.upload'))
         ->not->toContain('js-company-logo-input');
+});
+
+test('inventory cost defaults on create and preserves submitted stored and cloned values', function () {
+    $actor = productCrudActor(['products.create', 'products.edit', 'products.clone']);
+    $checkbox = static fn (string $html): string => Str::match(
+        '/<input[^>]*id="cost_as_inventory"[^>]*>/',
+        $html,
+    );
+
+    $createHtml = $this->actingAs($actor)
+        ->get(route('admin.products.create'))
+        ->assertOk()
+        ->getContent();
+
+    expect($createHtml)->toContain('<input type="hidden" name="cost_as_inventory" value="0">')
+        ->and($checkbox($createHtml))->toContain('checked');
+
+    $failedUncheckedHtml = $this->actingAs($actor)
+        ->withSession(['_old_input' => ['cost_as_inventory' => '0']])
+        ->get(route('admin.products.create'))
+        ->assertOk()
+        ->getContent();
+
+    expect($checkbox($failedUncheckedHtml))->not->toContain('checked');
+    session()->forget('_old_input');
+
+    $store = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayloadWithImage([
+            'name' => 'Unchecked Inventory Cost Product',
+            'cost_as_inventory' => '0',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $product = Product::query()->where('doc_num', $store->json('data.doc_num'))->firstOrFail();
+
+    expect($product->cost_as_inventory)->toBeFalse();
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+            'name' => 'Unchecked Inventory Cost Product',
+            'cost_as_inventory' => '1',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($product->refresh()->cost_as_inventory)->toBeTrue();
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+            'name' => 'Unchecked Inventory Cost Product',
+            'cost_as_inventory' => '0',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($product->refresh()->cost_as_inventory)->toBeFalse();
+
+    $editHtml = $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->getContent();
+    $cloneHtml = $this->actingAs($actor)
+        ->get(route('admin.products.clone', $product->doc_num))
+        ->assertOk()
+        ->getContent();
+
+    expect($checkbox($editHtml))->not->toContain('checked')
+        ->and($checkbox($cloneHtml))->not->toContain('checked');
 });
 
 test('product create form marks image required only when product config requires it', function () {
@@ -1235,7 +1304,7 @@ test('product edit form keeps required controls enabled and updates through meth
         'doc_num' => 'Product-00911',
         'name' => 'Editable Required Product',
         'image_path' => 'products/images/edit-required.jpg',
-        'item_classification' => Product::ClassificationPackaging,
+        'item_classification' => Product::ClassificationFinishedProduct,
         'status' => 'inactive',
     ]);
 
@@ -1252,7 +1321,7 @@ test('product edit form keeps required controls enabled and updates through meth
         ->not->toContain('name="product_type"')
         ->toMatch('/<input(?=[^>]*id="name")(?=[^>]*name="name")(?![^>]*disabled)[^>]*value="Editable Required Product"/')
         ->toMatch('/<select(?=[^>]*id="item_classification")(?=[^>]*name="item_classification")(?![^>]*disabled)[^>]*>/')
-        ->toMatch('/<option value="'.preg_quote(Product::ClassificationPackaging, '/').'" selected>/')
+        ->toMatch('/<option value="'.preg_quote(Product::ClassificationFinishedProduct, '/').'" selected>/')
         ->toMatch('/<select(?=[^>]*id="status")(?=[^>]*name="status")(?![^>]*disabled)[^>]*>/')
         ->toMatch('/<option value="inactive" selected>/')
         ->toContain(__('products.image.select'))
@@ -1263,7 +1332,7 @@ test('product edit form keeps required controls enabled and updates through meth
         ->post(route('admin.products.update', $product->doc_num), [
             ...productPayload([
                 'name' => 'Editable Required Product Updated',
-                'item_classification' => Product::ClassificationPackaging,
+                'item_classification' => Product::ClassificationFinishedProduct,
                 'status' => 'active',
             ]),
             '_method' => 'PUT',
@@ -1274,7 +1343,7 @@ test('product edit form keeps required controls enabled and updates through meth
     $product->refresh();
 
     expect($product->name)->toBe('Editable Required Product Updated')
-        ->and($product->item_classification)->toBe(Product::ClassificationPackaging)
+        ->and($product->item_classification)->toBe(Product::ClassificationFinishedProduct)
         ->and($product->status)->toBe('active')
         ->and($product->image_path)->toBe('products/images/edit-required.jpg');
 });
@@ -1340,6 +1409,320 @@ test('product clone form leaves document number automatic instead of copying the
         ->assertDontSee('value="910"', false);
 
     expect($response->getContent())->toMatch('/<input[^>]*id="doc_number"[^>]*name="doc_number"[^>]*value=""[^>]*placeholder="'.preg_quote(__('products.document_number_control.placeholder'), '/').'"/');
+});
+
+test('product clone token survives a transactional bom validation failure and is consumed after success', function () {
+    $actor = productCrudActor(['products.clone']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 911,
+        'doc_num' => 'Unit-00911',
+        'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
+    $material = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 912,
+        'doc_num' => 'RawMaterial-00912',
+        'name' => 'Clone Token Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $source = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 913,
+        'doc_num' => 'Product-00913',
+        'name' => 'Clone Token Source',
+        'status' => 'active',
+    ]);
+    $cloneHtml = $this->actingAs($actor)
+        ->get(route('admin.products.clone', $source->doc_num))
+        ->assertOk()
+        ->getContent();
+    $cloneToken = Str::match('/name="clone_source_token" value="([^"]+)"/', $cloneHtml);
+    $componentKey = (string) Str::uuid();
+    $component = [
+        'public_id' => (string) Str::uuid(),
+        'client_key' => $componentKey,
+        'component_product_doc_num' => $material->doc_num,
+        'unit_doc_num' => $unit->doc_num,
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '1',
+        'percentage' => '',
+        'reference_component_key' => '',
+        'input_source' => ProductComponent::InputWeight,
+        'notes' => '',
+        '_delete' => '0',
+    ];
+
+    expect($cloneToken)->not->toBe('');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Rejected Clone Token Attempt',
+            'submit_action' => 'save_new',
+            'clone_source_token' => $cloneToken,
+            'components' => [$component],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['components.0.public_id']);
+
+    expect(Product::query()->where('name', 'Rejected Clone Token Attempt')->exists())->toBeFalse();
+
+    $component['public_id'] = '';
+    $success = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Successful Clone Token Retry',
+            'submit_action' => 'save_new',
+            'clone_source_token' => $cloneToken,
+            'components' => [$component],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect(Product::query()->where('doc_num', $success->json('data.doc_num'))->exists())->toBeTrue();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Consumed Clone Token Attempt',
+            'submit_action' => 'save_new',
+            'clone_source_token' => $cloneToken,
+            'components' => [$component],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['name']);
+});
+
+test('product clone form remaps percentage bom references to the cloned rows', function () {
+    config()->set('products.image_required', false);
+    $actor = productCrudActor(['products.clone']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 914,
+        'doc_num' => 'Unit-00914',
+        'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
+    $baseMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 915,
+        'doc_num' => 'RawMaterial-00915',
+        'name' => 'Clone Base Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $dependentMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 916,
+        'doc_num' => 'RawMaterial-00916',
+        'name' => 'Clone Dependent Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $source = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 917,
+        'doc_num' => 'Product-00917',
+        'name' => 'Percentage Clone Source',
+        'cost_as_inventory' => false,
+        'status' => 'active',
+    ]);
+    $sourceBase = ProductComponent::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'product_id' => $source->getKey(),
+        'component_product_id' => $baseMaterial->getKey(),
+        'unit_id' => $unit->getKey(),
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '100',
+    ]);
+    $sourceDependent = ProductComponent::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'product_id' => $source->getKey(),
+        'component_product_id' => $dependentMaterial->getKey(),
+        'unit_id' => $unit->getKey(),
+        'calculation_method' => ProductComponent::CalculationPercentage,
+        'quantity' => '2',
+        'percentage' => '2',
+        'reference_component_id' => $sourceBase->getKey(),
+    ]);
+    $cloneHtml = $this->actingAs($actor)
+        ->get(route('admin.products.clone', $source->doc_num))
+        ->assertOk()
+        ->getContent();
+    $cloneToken = Str::match('/name="clone_source_token" value="([^"]+)"/', $cloneHtml);
+    $initialRowsMatched = preg_match(
+        '/window\.coreProductInitialComponents = (.*?);\s*window\.coreProductUnitConversionEdges =/s',
+        $cloneHtml,
+        $initialRowsMatches,
+    );
+    $initialRowsJson = $initialRowsMatches[1] ?? '';
+
+    expect($initialRowsMatched)->toBe(1)
+        ->and($initialRowsJson)->toBeJson();
+    $initialRows = json_decode($initialRowsJson, true, flags: JSON_THROW_ON_ERROR);
+    $baseRow = collect($initialRows)->firstWhere('component_product_doc_num', $baseMaterial->doc_num);
+    $dependentRow = collect($initialRows)->firstWhere('component_product_doc_num', $dependentMaterial->doc_num);
+
+    expect($baseRow)->toBeArray()
+        ->and($dependentRow)->toBeArray()
+        ->and($baseRow['public_id'])->toBe('')
+        ->and($dependentRow['public_id'])->toBe('')
+        ->and($baseRow['client_key'])->not->toBe($sourceBase->public_id)
+        ->and($dependentRow['client_key'])->not->toBe($sourceDependent->public_id)
+        ->and($dependentRow['reference_component_key'])->toBe($baseRow['client_key']);
+
+    $submittedRows = collect($initialRows)
+        ->map(fn (array $row): array => [
+            'public_id' => $row['public_id'],
+            'client_key' => $row['client_key'],
+            'component_product_doc_num' => $row['component_product_doc_num'],
+            'unit_doc_num' => $row['unit_doc_num'],
+            'calculation_method' => $row['calculation_method'],
+            'quantity' => $row['quantity_raw'],
+            'percentage' => $row['percentage_raw'],
+            'reference_component_key' => $row['reference_component_key'],
+            'input_source' => $row['input_source'],
+            'notes' => $row['notes'],
+            '_delete' => '0',
+        ])
+        ->all();
+    $store = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Percentage Clone Target',
+            'cost_as_inventory' => '0',
+            'submit_action' => 'save_new',
+            'clone_source_token' => $cloneToken,
+            'components' => $submittedRows,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $target = Product::query()->where('doc_num', $store->json('data.doc_num'))->firstOrFail();
+    $targetBase = ProductComponent::query()
+        ->where('product_id', $target->getKey())
+        ->where('component_product_id', $baseMaterial->getKey())
+        ->firstOrFail();
+    $targetDependent = ProductComponent::query()
+        ->where('product_id', $target->getKey())
+        ->where('component_product_id', $dependentMaterial->getKey())
+        ->firstOrFail();
+
+    expect($target->cost_as_inventory)->toBeFalse()
+        ->and($targetBase->public_id)->not->toBe($sourceBase->public_id)
+        ->and($targetDependent->public_id)->not->toBe($sourceDependent->public_id)
+        ->and($targetDependent->reference_component_id)->toBe($targetBase->getKey())
+        ->and($targetDependent->reference_component_id)->not->toBe($sourceBase->getKey())
+        ->and((string) $targetDependent->percentage)->toBe('2.00000000')
+        ->and((string) $targetDependent->quantity)->toBe('2.00000000');
+});
+
+test('legacy unitless direct bom rows round trip through product edit and clone', function () {
+    config()->set('products.image_required', false);
+    $actor = productCrudActor(['products.edit', 'products.clone']);
+    $unitlessMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 918,
+        'doc_num' => 'RawMaterial-00918',
+        'name' => 'Legacy Unitless HTTP Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'status' => 'active',
+    ]);
+    $source = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 919,
+        'doc_num' => 'Product-00919',
+        'name' => 'Legacy Unitless HTTP Source',
+        'status' => 'active',
+    ]);
+    $component = ProductComponent::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'product_id' => $source->getKey(),
+        'component_product_id' => $unitlessMaterial->getKey(),
+        'unit_id' => null,
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '1',
+    ]);
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $source->doc_num))
+        ->assertOk()
+        ->assertSee('"unit_doc_num":null', false);
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $source->doc_num), productPayload([
+            'name' => $source->name,
+            'components' => [
+                [
+                    'public_id' => $component->public_id,
+                    'client_key' => $component->public_id,
+                    'component_product_doc_num' => $unitlessMaterial->doc_num,
+                    'unit_doc_num' => '',
+                    'calculation_method' => ProductComponent::CalculationDirect,
+                    'quantity' => '2',
+                    'percentage' => '',
+                    'reference_component_key' => '',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect((string) $component->refresh()->quantity)->toBe('2.00000000')
+        ->and($component->unit_id)->toBeNull();
+
+    $cloneHtml = $this->actingAs($actor)
+        ->get(route('admin.products.clone', $source->doc_num))
+        ->assertOk()
+        ->assertSee('"unit_doc_num":null', false)
+        ->getContent();
+    $cloneToken = Str::match('/name="clone_source_token" value="([^"]+)"/', $cloneHtml);
+    $initialRowsMatched = preg_match(
+        '/window\.coreProductInitialComponents = (.*?);\s*window\.coreProductUnitConversionEdges =/s',
+        $cloneHtml,
+        $initialRowsMatches,
+    );
+    $initialRows = json_decode($initialRowsMatches[1] ?? '', true, flags: JSON_THROW_ON_ERROR);
+    $initialRow = $initialRows[0] ?? null;
+
+    expect($cloneToken)->not->toBe('')
+        ->and($initialRowsMatched)->toBe(1)
+        ->and($initialRow)->toBeArray()
+        ->and($initialRow['unit_doc_num'])->toBeNull();
+
+    $clone = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Legacy Unitless HTTP Clone',
+            'submit_action' => 'save_new',
+            'clone_source_token' => $cloneToken,
+            'components' => [
+                [
+                    'public_id' => $initialRow['public_id'],
+                    'client_key' => $initialRow['client_key'],
+                    'component_product_doc_num' => $initialRow['component_product_doc_num'],
+                    'unit_doc_num' => '',
+                    'calculation_method' => $initialRow['calculation_method'],
+                    'quantity' => $initialRow['quantity_raw'],
+                    'percentage' => '',
+                    'reference_component_key' => '',
+                    'input_source' => $initialRow['input_source'],
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $target = Product::query()->where('doc_num', $clone->json('data.doc_num'))->firstOrFail();
+    $clonedComponent = ProductComponent::query()
+        ->where('product_id', $target->getKey())
+        ->firstOrFail();
+
+    expect($clonedComponent->public_id)->not->toBe($component->public_id)
+        ->and($clonedComponent->component_product_id)->toBe($unitlessMaterial->getKey())
+        ->and($clonedComponent->unit_id)->toBeNull()
+        ->and($clonedComponent->calculation_method)->toBe(ProductComponent::CalculationDirect)
+        ->and((string) $clonedComponent->quantity)->toBe('2.00000000');
 });
 
 test('product edit ignores direct uploaded image and keeps existing product image', function () {
@@ -1425,6 +1808,7 @@ test('product can be created without optional relations or reorder point', funct
 });
 
 test('product components can be submitted while creating product master', function () {
+    config()->set('products.image_required', false);
     $actor = productCrudActor(['products.create', 'products.view', 'products.edit']);
     $unit = ItemUnit::query()->create([
         'company_id' => $this->productCompany->getKey(),
@@ -1444,11 +1828,12 @@ test('product components can be submitted while creating product master', functi
     ]);
 
     $this->actingAs($actor)
-        ->postJson(route('admin.products.store'), productPayloadWithImage([
+        ->postJson(route('admin.products.store'), productPayload([
             'name' => 'Assembled Oak Desk',
             'components' => [
                 [
                     'component_product_doc_num' => $rawMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
                     'quantity' => '2.5000',
                     'notes' => 'Desktop board',
                 ],
@@ -1463,8 +1848,140 @@ test('product components can be submitted while creating product master', functi
     expect($component->company_id)->toBe($this->productCompany->getKey())
         ->and($component->component_product_id)->toBe($rawMaterial->getKey())
         ->and($component->unit_id)->toBe($unit->getKey())
-        ->and((string) $component->quantity)->toBe('2.5000')
+        ->and((string) $component->quantity)->toBe('2.50000000')
         ->and($component->notes)->toBe('Desktop board');
+});
+
+test('percentage bom rows round trip through product store edit and update endpoints', function () {
+    config()->set('products.image_required', false);
+    $actor = productCrudActor(['products.create', 'products.edit', 'products.view']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 714,
+        'doc_num' => 'Unit-00714',
+        'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
+    $baseMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 714,
+        'doc_num' => 'RawMaterial-00714',
+        'name' => 'HTTP Base Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $dependentMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 715,
+        'doc_num' => 'RawMaterial-00715',
+        'name' => 'HTTP Dependent Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $baseClientKey = (string) Str::uuid();
+    $dependentClientKey = (string) Str::uuid();
+
+    $store = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'HTTP Percentage BOM Product',
+            'components' => [
+                [
+                    'client_key' => $baseClientKey,
+                    'component_product_doc_num' => $baseMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationDirect,
+                    'quantity' => '100',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+                [
+                    'client_key' => $dependentClientKey,
+                    'component_product_doc_num' => $dependentMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationPercentage,
+                    'quantity' => '10',
+                    'percentage' => ['stale-percentage'],
+                    'reference_component_key' => $baseClientKey,
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $product = Product::query()->where('doc_num', $store->json('data.doc_num'))->firstOrFail();
+    $base = ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->where('component_product_id', $baseMaterial->getKey())
+        ->firstOrFail();
+    $dependent = ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->where('component_product_id', $dependentMaterial->getKey())
+        ->firstOrFail();
+
+    expect((string) $base->quantity)->toBe('100.00000000')
+        ->and((string) $dependent->quantity)->toBe('10.00000000')
+        ->and((string) $dependent->percentage)->toBe('10.00000000')
+        ->and($dependent->reference_component_id)->toBe($base->getKey());
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->assertSee('"calculation_method":"percentage"', false)
+        ->assertSee('"quantity_raw":"10.00000000"', false)
+        ->assertSee('"percentage_raw":"10.00000000"', false);
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.show', $product->doc_num))
+        ->assertOk()
+        ->assertSee('"reference_component_key":"'.$base->public_id.'"', false)
+        ->assertSee($baseMaterial->name)
+        ->assertSee($dependentMaterial->name);
+
+    expect(file_get_contents(public_path('assets/js/modules/Core/products.js')))
+        ->toContain("referenceText + ' · ' + interpolateMessage(message('componentFormulaTemplate')");
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+            'name' => $product->name,
+            'components' => [
+                [
+                    'public_id' => $base->public_id,
+                    'client_key' => $base->public_id,
+                    'component_product_doc_num' => $baseMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationDirect,
+                    'quantity' => '200',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+                [
+                    'public_id' => $dependent->public_id,
+                    'client_key' => $dependent->public_id,
+                    'component_product_doc_num' => $dependentMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationPercentage,
+                    'quantity' => ['stale-weight'],
+                    'percentage' => '10',
+                    'reference_component_key' => $base->public_id,
+                    'input_source' => ProductComponent::InputPercentage,
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect((string) $base->refresh()->quantity)->toBe('200.00000000')
+        ->and((string) $dependent->refresh()->quantity)->toBe('20.00000000')
+        ->and((string) $dependent->percentage)->toBe('10.00000000')
+        ->and($dependent->reference_component_id)->toBe($base->getKey())
+        ->and((string) $dependent->quantity)->not->toContain(',');
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->assertSee('"quantity_raw":"20.00000000"', false)
+        ->assertSee('"percentage_raw":"10.00000000"', false);
 });
 
 test('empty submitted product component rows are ignored', function () {
@@ -1488,6 +2005,47 @@ test('empty submitted product component rows are ignored', function () {
     $product = Product::query()->where('name', 'Empty Component Rows Product')->firstOrFail();
 
     expect(ProductComponent::query()->where('product_id', $product->getKey())->exists())->toBeFalse();
+
+    $nullStore = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayloadWithImage([
+            'name' => 'Null Component Collection Product',
+            'components' => null,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $nullStoreProduct = Product::query()
+        ->where('doc_num', $nullStore->json('data.doc_num'))
+        ->firstOrFail();
+
+    expect(ProductComponent::query()
+        ->where('product_id', $nullStoreProduct->getKey())
+        ->exists())->toBeFalse();
+
+    $material = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 920,
+        'doc_num' => 'RawMaterial-00920',
+        'name' => 'Null BOM Payload Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'status' => 'active',
+    ]);
+    $component = ProductComponent::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'product_id' => $product->getKey(),
+        'component_product_id' => $material->getKey(),
+        'unit_id' => null,
+        'quantity' => '1',
+    ]);
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+            'name' => $product->name,
+            'components' => null,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    expect(ProductComponent::query()->whereKey($component->getKey())->exists())->toBeTrue();
 });
 
 test('partially filled product component rows validate on product save', function () {
@@ -1525,7 +2083,150 @@ test('partially filled product component rows validate on product save', functio
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['components.0.quantity']);
 
-    expect(Product::query()->whereIn('name', ['Missing Component Material', 'Missing Component Quantity'])->exists())->toBeFalse();
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayloadWithImage([
+            'name' => 'Incomplete Percentage Component',
+            'components' => [
+                [
+                    'calculation_method' => ProductComponent::CalculationPercentage,
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+            ],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([
+            'components.0.component_product_doc_num',
+            'components.0.quantity',
+            'components.0.reference_component_key',
+        ]);
+
+    expect(Product::query()
+        ->whereIn('name', [
+            'Missing Component Material',
+            'Missing Component Quantity',
+            'Incomplete Percentage Component',
+        ])
+        ->exists())->toBeFalse();
+});
+
+test('product bom requests require compatible units without rejecting unitless direct rows', function () {
+    config()->set('products.image_required', false);
+    $actor = productCrudActor(['products.create']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 921,
+        'doc_num' => 'Unit-00921',
+        'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
+    $otherUnit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 922,
+        'doc_num' => 'Unit-00922',
+        'name' => 'Piece',
+        'status' => 'active',
+    ]);
+    $unitBearingMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 923,
+        'doc_num' => 'RawMaterial-00923',
+        'name' => 'Nested Unit Bearing Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $unitlessMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 924,
+        'doc_num' => 'RawMaterial-00924',
+        'name' => 'Nested Unitless Material',
+        'item_classification' => Product::ClassificationPackaging,
+        'status' => 'active',
+    ]);
+
+    foreach (['' => 'unit_required', $otherUnit->doc_num => 'invalid_unit'] as $submittedUnit => $case) {
+        $this->actingAs($actor)
+            ->postJson(route('admin.products.store'), productPayload([
+                'name' => "Rejected Nested Direct Unit {$case}",
+                'components' => [
+                    [
+                        'client_key' => (string) Str::uuid(),
+                        'component_product_doc_num' => $unitBearingMaterial->doc_num,
+                        'unit_doc_num' => $submittedUnit,
+                        'calculation_method' => ProductComponent::CalculationDirect,
+                        'quantity' => '1',
+                    ],
+                ],
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['components.0.unit_doc_num']);
+    }
+
+    $baseKey = (string) Str::uuid();
+    $dependentKey = (string) Str::uuid();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Rejected Nested Percentage Without Unit',
+            'components' => [
+                [
+                    'client_key' => $baseKey,
+                    'component_product_doc_num' => $unitlessMaterial->doc_num,
+                    'unit_doc_num' => '',
+                    'calculation_method' => ProductComponent::CalculationDirect,
+                    'quantity' => '100',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+                [
+                    'client_key' => $dependentKey,
+                    'component_product_doc_num' => $unitlessMaterial->doc_num,
+                    'unit_doc_num' => '',
+                    'calculation_method' => ProductComponent::CalculationPercentage,
+                    'percentage' => '2',
+                    'reference_component_key' => $baseKey,
+                    'input_source' => ProductComponent::InputPercentage,
+                ],
+            ],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['components.1.unit_doc_num']);
+
+    $forgedBaseKey = (string) Str::uuid();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Rejected Nested Forged Input Source',
+            'components' => [
+                [
+                    'client_key' => $forgedBaseKey,
+                    'component_product_doc_num' => $unitBearingMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationDirect,
+                    'quantity' => '100',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+                [
+                    'client_key' => (string) Str::uuid(),
+                    'component_product_doc_num' => $unitBearingMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationPercentage,
+                    'percentage' => '2',
+                    'reference_component_key' => $forgedBaseKey,
+                    'input_source' => ['forged-source'],
+                ],
+            ],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['components.1.input_source']);
+
+    expect(Product::query()
+        ->whereIn('name', [
+            'Rejected Nested Direct Unit unit_required',
+            'Rejected Nested Direct Unit invalid_unit',
+            'Rejected Nested Percentage Without Unit',
+            'Rejected Nested Forged Input Source',
+        ])
+        ->exists())->toBeFalse();
 });
 
 test('invalid submitted product components reject master creation', function () {
@@ -1555,35 +2256,49 @@ test('invalid submitted product components reject master creation', function () 
     expect(Product::query()->where('name', 'Invalid Component Master')->exists())->toBeFalse();
 });
 
-test('duplicate submitted product component rows are rejected', function () {
-    $actor = productCrudActor(['products.create']);
+test('duplicate submitted product component rows remain distinct bom lines', function () {
+    $actor = productCrudActor(['products.create', 'products.edit']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 73,
+        'doc_num' => 'Unit-00073',
+        'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
     $rawMaterial = Product::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 73,
         'doc_num' => 'Product-00073',
         'name' => 'Raw Hinge',
         'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
         'status' => 'active',
     ]);
 
-    $this->actingAs($actor)
+    $response = $this->actingAs($actor)
         ->postJson(route('admin.products.store'), productPayloadWithImage([
             'name' => 'Duplicate Component Master',
             'components' => [
                 [
                     'component_product_doc_num' => $rawMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
                     'quantity' => '1',
                 ],
                 [
                     'component_product_doc_num' => $rawMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
                     'quantity' => '2',
                 ],
             ],
         ]))
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['components.1.component_product_doc_num']);
+        ->assertOk()
+        ->assertJsonPath('success', true);
 
-    expect(Product::query()->where('name', 'Duplicate Component Master')->exists())->toBeFalse();
+    $product = Product::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+
+    expect($product->components)->toHaveCount(2)
+        ->and($product->components->pluck('component_product_id')->unique()->all())->toBe([$rawMaterial->getKey()])
+        ->and($product->components->pluck('quantity')->all())->toBe(['1.00000000', '2.00000000']);
 });
 
 test('existing product components can be updated and deleted from product edit save', function () {
@@ -1645,6 +2360,7 @@ test('existing product components can be updated and deleted from product edit s
                 [
                     'public_id' => $componentToUpdate->public_id,
                     'component_product_doc_num' => $rawOne->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
                     'quantity' => '4.2500',
                     'notes' => 'Adjusted quantity',
                 ],
@@ -1657,7 +2373,7 @@ test('existing product components can be updated and deleted from product edit s
         ->assertOk()
         ->assertJsonPath('success', true);
 
-    expect((string) $componentToUpdate->refresh()->quantity)->toBe('4.2500')
+    expect((string) $componentToUpdate->refresh()->quantity)->toBe('4.25000000')
         ->and($componentToUpdate->notes)->toBe('Adjusted quantity')
         ->and(ProductComponent::withTrashed()->where('public_id', $componentToDelete->public_id)->first()?->trashed())->toBeTrue();
 });
@@ -1890,6 +2606,8 @@ test('product decal and origin country validation reject cross company and delet
 test('product barcode reorder point and item classification are validated', function () {
     $actor = productCrudActor(['products.create', 'products.edit']);
 
+    Storage::disk('public')->put('products/images/display.jpg', 'display image');
+
     Product::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 63,
@@ -1929,7 +2647,7 @@ test('product barcode reorder point and item classification are validated', func
             'name' => 'Nullable Barcode Product',
             'barcode' => '',
             'reorder_point' => '5.2500',
-            'item_classification' => Product::ClassificationPackaging,
+            'item_classification' => Product::ClassificationOther,
         ]))
         ->assertOk()
         ->assertJsonPath('success', true);
@@ -1938,7 +2656,153 @@ test('product barcode reorder point and item classification are validated', func
 
     expect($product->barcode)->toBeNull()
         ->and((string) $product->reorder_point)->toBe('5.2500')
-        ->and($product->item_classification)->toBe(Product::ClassificationPackaging);
+        ->and($product->item_classification)->toBe(Product::ClassificationOther);
+});
+
+test('product numeric input accepts valid grouping, rejects malformed grouping, and persists canonical decimals', function () {
+    $actor = productCrudActor(['products.create', 'products.edit']);
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayloadWithImage([
+            'name' => 'Grouped Reorder Product',
+            'barcode' => '000125050',
+            'reorder_point' => '1,250.5',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $product = Product::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+
+    expect((string) $product->reorder_point)->toBe('1250.5000')
+        ->and($product->barcode)->toBe('000125050');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayloadWithImage([
+            'name' => 'Malformed Grouping Product',
+            'reorder_point' => '1,2,3',
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['reorder_point']);
+});
+
+test('product numeric presentation is consistent across form modes and both layout directions', function () {
+    $actor = productCrudActor([
+        'products.view',
+        'products.create',
+        'products.edit',
+        'products.clone',
+    ]);
+    $baseUnit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 881,
+        'doc_num' => 'Unit-00881',
+        'name' => 'Carton',
+        'status' => 'active',
+    ]);
+    $equivalentUnit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 882,
+        'doc_num' => 'Unit-00882',
+        'name' => 'Piece',
+        'status' => 'active',
+    ]);
+    $product = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 883,
+        'doc_num' => 'Product-00883',
+        'name' => 'Directional Numeric Product',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'barcode' => '000125050',
+        'reorder_point' => '1250.5000',
+        'item_unit_id' => $baseUnit->getKey(),
+        'equivalent_value' => '0.000458',
+        'equivalent_unit_id' => $equivalentUnit->getKey(),
+        'status' => 'active',
+    ]);
+
+    $actor->forceFill(['locale' => 'en'])->save();
+
+    foreach (['edit', 'show', 'clone'] as $action) {
+        $this->actingAs($actor)
+            ->get(route("admin.products.{$action}", $product->doc_num))
+            ->assertOk()
+            ->assertSee('lang="en" dir="ltr"', false)
+            ->assertSee('value="1,250.5"', false)
+            ->assertSee('value="0.000458"', false)
+            ->assertSee('value="000125050"', false);
+    }
+
+    $this->actingAs($actor)
+        ->withSession([
+            '_old_input' => [
+                'reorder_point' => '2.50000000',
+                'equivalent_value' => '0.050000',
+                'barcode' => '00000012',
+            ],
+        ])
+        ->get(route('admin.products.create'))
+        ->assertOk()
+        ->assertSee('value="2.5"', false)
+        ->assertSee('value="0.05"', false)
+        ->assertSee('value="00000012"', false);
+
+    $actor->forceFill(['locale' => 'ar'])->save();
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->assertSee('lang="ar" dir="rtl"', false)
+        ->assertSee('value="1,250.5"', false)
+        ->assertSee('value="0.000458"', false)
+        ->assertSee('name="reorder_point"', false)
+        ->assertSee('dir="ltr"', false)
+        ->assertDontSee('١٬٢٥٠', false);
+});
+
+test('raw and packaging material forms share grouped numeric presentation and canonical persistence', function () {
+    $actor = productCrudActor([
+        'raw_materials.view',
+        'raw_materials.create',
+        'raw_materials.edit',
+        'raw_materials.clone',
+        'raw_materials.document_number.control',
+        'packaging_materials.view',
+        'packaging_materials.create',
+        'packaging_materials.edit',
+        'packaging_materials.clone',
+        'packaging_materials.document_number.control',
+    ]);
+
+    foreach ([
+        'raw-materials' => [Product::ClassificationRawMaterial, 91],
+        'packaging-materials' => [Product::ClassificationPackaging, 92],
+    ] as $routeContext => [$classification, $documentNumber]) {
+        $response = $this->actingAs($actor)
+            ->postJson(
+                route("admin.{$routeContext}.store"),
+                productPayloadWithImage([
+                    'doc_number' => $documentNumber,
+                    'name' => "Grouped {$classification}",
+                    'item_classification' => $classification,
+                    'reorder_point' => '1,250.5',
+                ]),
+            )
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $record = Product::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+
+        expect((string) $record->reorder_point)->toBe('1250.5000')
+            ->and($record->item_classification)->toBe($classification);
+
+        foreach (['edit', 'show', 'clone'] as $action) {
+            $this->actingAs($actor)
+                ->get(route("admin.{$routeContext}.{$action}", $record->doc_num))
+                ->assertOk()
+                ->assertSee('value="1,250.5"', false)
+                ->assertSee('dir="ltr"', false);
+        }
+    }
 });
 
 test('same product barcode can be reused in another operating company', function () {
@@ -1981,6 +2845,7 @@ test('legacy product classifier payload is ignored', function () {
 test('products data table exposes public document number without internal ids', function () {
     $actor = productCrudActor(['products.view', 'products.edit', 'products.delete', 'products.clone']);
     $legacyClassifierField = 'product'.'_type';
+    Storage::disk('public')->put('products/images/display.jpg', 'display image');
     $color = ItemColor::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 24,
@@ -2084,8 +2949,54 @@ test('products data table exposes public document number without internal ids', 
         ->not->toContain('data-id=');
 });
 
-test('products data includes raw materials while raw materials data stays raw only', function () {
-    $actor = productCrudActor(['products.view', 'raw_materials.view']);
+test('products data table displays grouped reorder points while ordering by the numeric database column', function () {
+    $actor = productCrudActor(['products.view']);
+
+    foreach (['1000.0000', '10.0000', '100.0000', '2.0000'] as $index => $reorderPoint) {
+        Product::query()->create([
+            'company_id' => $this->productCompany->getKey(),
+            'doc_number' => 8100 + $index,
+            'doc_num' => 'Product-'.(8100 + $index),
+            'name' => 'Index Numeric Sort Product '.($index + 1),
+            'item_classification' => Product::ClassificationFinishedProduct,
+            'reorder_point' => $reorderPoint,
+            'status' => 'active',
+        ]);
+    }
+
+    $columns = collect([
+        ['checkbox', 'checkbox', false],
+        ['doc_num', 'products.doc_number', true],
+        ['image', 'image', false],
+        ['name', 'products.name', true],
+        ['barcode', 'products.barcode', true],
+        ['item_classification', 'products.item_classification', true],
+        ['reorder_point', 'products.reorder_point', true],
+    ])->map(fn (array $column): array => [
+        'data' => $column[0],
+        'name' => $column[1],
+        'searchable' => $column[2] ? 'true' : 'false',
+        'orderable' => $column[2] ? 'true' : 'false',
+        'search' => ['value' => '', 'regex' => 'false'],
+    ])->all();
+
+    $rows = $this->actingAs($actor)
+        ->getJson(route('admin.products.data', [
+            'draw' => 1,
+            'start' => 0,
+            'length' => 10,
+            'search' => ['value' => 'Index Numeric Sort Product', 'regex' => 'false'],
+            'columns' => $columns,
+            'order' => [['column' => 6, 'dir' => 'asc']],
+        ]))
+        ->assertOk()
+        ->json('data');
+
+    expect(array_column($rows, 'reorder_point'))->toBe(['2', '10', '100', '1,000']);
+});
+
+test('product, raw material, and packaging material data stay in their own contexts', function () {
+    $actor = productCrudActor(['products.view', 'raw_materials.view', 'packaging_materials.view']);
     $normalProduct = Product::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 2201,
@@ -2100,6 +3011,14 @@ test('products data includes raw materials while raw materials data stays raw on
         'doc_num' => 'Material-02202',
         'name' => 'Classification Visibility Raw',
         'item_classification' => Product::ClassificationRawMaterial,
+        'status' => 'active',
+    ]);
+    $packagingMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 2203,
+        'doc_num' => 'Packaging-02203',
+        'name' => 'Classification Visibility Packaging',
+        'item_classification' => Product::ClassificationPackaging,
         'status' => 'active',
     ]);
 
@@ -2117,9 +3036,8 @@ test('products data includes raw materials while raw materials data stays raw on
 
     expect($productsHtml)
         ->toContain($normalProduct->doc_num)
-        ->toContain($rawMaterial->doc_num)
-        ->toContain(__('products.classifications.'.Product::ClassificationRawMaterial))
-        ->toContain('badge-subtle-warning');
+        ->not->toContain($rawMaterial->doc_num)
+        ->not->toContain($packagingMaterial->doc_num);
 
     $rawMaterialsPayload = $this->actingAs($actor)
         ->getJson(route('admin.raw-materials.data', [
@@ -2135,13 +3053,29 @@ test('products data includes raw materials while raw materials data stays raw on
 
     expect($rawMaterialsHtml)
         ->toContain($rawMaterial->doc_num)
-        ->not->toContain($normalProduct->doc_num);
+        ->not->toContain($normalProduct->doc_num)
+        ->not->toContain($packagingMaterial->doc_num);
+
+    $packagingMaterialsPayload = $this->actingAs($actor)
+        ->getJson(route('admin.packaging-materials.data', [
+            'draw' => 1,
+            'start' => 0,
+            'length' => 10,
+            'search' => ['value' => 'Classification Visibility'],
+        ]))
+        ->assertOk()
+        ->json('data');
+
+    expect(json_encode($packagingMaterialsPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
+        ->toContain($packagingMaterial->doc_num)
+        ->not->toContain($normalProduct->doc_num)
+        ->not->toContain($rawMaterial->doc_num);
 });
 
-test('products edit can move item into and out of raw materials screen', function () {
+test('products cannot create or convert material classifications', function () {
     config()->set('products.image_required', true);
 
-    $actor = productCrudActor(['products.view', 'products.edit', 'raw_materials.view']);
+    $actor = productCrudActor(['products.view', 'products.edit', 'products.create']);
     $product = Product::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 2210,
@@ -2152,75 +3086,25 @@ test('products edit can move item into and out of raw materials screen', functio
         'status' => 'active',
     ]);
 
-    $this->actingAs($actor)
-        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
-            'name' => 'Classification Toggle Item',
-            'item_classification' => Product::ClassificationRawMaterial,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('success', true);
+    foreach ([Product::ClassificationRawMaterial, Product::ClassificationPackaging] as $classification) {
+        $this->actingAs($actor)
+            ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+                'name' => 'Classification Toggle Item',
+                'item_classification' => $classification,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('item_classification');
 
-    expect($product->refresh()->item_classification)->toBe(Product::ClassificationRawMaterial);
-
-    $productsPayload = $this->actingAs($actor)
-        ->getJson(route('admin.products.data', [
-            'draw' => 1,
-            'start' => 0,
-            'length' => 10,
-            'search' => ['value' => 'Classification Toggle Item'],
-        ]))
-        ->assertOk()
-        ->json('data');
-    $rawMaterialsPayload = $this->actingAs($actor)
-        ->getJson(route('admin.raw-materials.data', [
-            'draw' => 1,
-            'start' => 0,
-            'length' => 10,
-            'search' => ['value' => 'Classification Toggle Item'],
-        ]))
-        ->assertOk()
-        ->json('data');
-
-    expect(json_encode($productsPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
-        ->toContain($product->doc_num)
-        ->toContain(__('products.classifications.'.Product::ClassificationRawMaterial));
-    expect(json_encode($rawMaterialsPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
-        ->toContain($product->doc_num);
+        expect($product->refresh()->item_classification)->toBe(Product::ClassificationFinishedProduct);
+    }
 
     $this->actingAs($actor)
-        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
-            'name' => 'Classification Toggle Item',
-            'item_classification' => Product::ClassificationFinishedProduct,
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Forged Packaging Product',
+            'item_classification' => Product::ClassificationPackaging,
         ]))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    expect($product->refresh()->item_classification)->toBe(Product::ClassificationFinishedProduct);
-
-    $productsPayload = $this->actingAs($actor)
-        ->getJson(route('admin.products.data', [
-            'draw' => 1,
-            'start' => 0,
-            'length' => 10,
-            'search' => ['value' => 'Classification Toggle Item'],
-        ]))
-        ->assertOk()
-        ->json('data');
-    $rawMaterialsPayload = $this->actingAs($actor)
-        ->getJson(route('admin.raw-materials.data', [
-            'draw' => 1,
-            'start' => 0,
-            'length' => 10,
-            'search' => ['value' => 'Classification Toggle Item'],
-        ]))
-        ->assertOk()
-        ->json('data');
-
-    expect(json_encode($productsPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
-        ->toContain($product->doc_num)
-        ->toContain(__('products.classifications.'.Product::ClassificationFinishedProduct));
-    expect(json_encode($rawMaterialsPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
-        ->not->toContain($product->doc_num);
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('item_classification');
 });
 
 test('inline lookup create requires lookup create permission', function () {

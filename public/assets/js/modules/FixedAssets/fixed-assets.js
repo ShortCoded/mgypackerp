@@ -77,7 +77,7 @@
         }
 
         if (['purchase_value', 'previous_depreciation', 'net_value'].indexOf(column) !== -1) {
-            return 'align-middle white-space-nowrap text-center';
+            return 'align-middle white-space-nowrap dt-number text-center';
         }
 
         if (['created_at', 'updated_at', 'deleted_at'].indexOf(column) !== -1) {
@@ -227,9 +227,9 @@
     }
 
     function trimNumber(value, precision) {
-        const numeric = parseFloat(String(value || '').replace(/,/g, ''));
+        const numeric = window.AppNumbers.number(value, NaN);
 
-        if (Number.isNaN(numeric)) {
+        if (!Number.isFinite(numeric)) {
             return '';
         }
 
@@ -313,15 +313,15 @@
     }
 
     function updateNetValue() {
-        const purchase = parseFloat(String($('#purchase_value').val() || '').replace(/,/g, ''));
-        const previous = parseFloat(String($('#previous_depreciation').val() || '').replace(/,/g, ''));
+        const purchase = window.AppNumbers.number($('#purchase_value').val(), NaN);
+        const previous = window.AppNumbers.number($('#previous_depreciation').val(), NaN);
 
-        if (Number.isNaN(purchase)) {
+        if (!Number.isFinite(purchase)) {
             $('.js-fixed-asset-net-value').val('');
             return;
         }
 
-        $('.js-fixed-asset-net-value').val(trimNumber(purchase - (Number.isNaN(previous) ? 0 : previous), 4));
+        $('.js-fixed-asset-net-value').val(window.AppNumbers.format(trimNumber(purchase - (Number.isFinite(previous) ? previous : 0), 4)));
     }
 
     function formIsDepreciable() {
@@ -425,8 +425,8 @@
     }
 
     function togglePreviousDepreciationDateRequirement() {
-        const previous = parseFloat(String($('#previous_depreciation').val() || '').replace(/,/g, ''));
-        const required = formIsDepreciable() && !Number.isNaN(previous) && previous > 0;
+        const previous = window.AppNumbers.number($('#previous_depreciation').val(), NaN);
+        const required = formIsDepreciable() && Number.isFinite(previous) && previous > 0;
         const $untilDate = $('#previous_depreciation_until_date');
 
         $('.js-previous-depreciation-date-required-marker').toggleClass('d-none', !required);
@@ -446,19 +446,21 @@
         }
 
         if (changedField === 'useful_life') {
-            const usefulLife = parseFloat(String($usefulLife.val() || '').replace(/,/g, ''));
+            const usefulLife = window.AppNumbers.number($usefulLife.val(), NaN);
 
-            if (!Number.isNaN(usefulLife) && usefulLife > 0) {
-                $rate.val(trimNumber(100 / usefulLife, 6));
+            if (Number.isFinite(usefulLife) && usefulLife > 0) {
+                $rate.val(trimNumber(100 / usefulLife, 4));
+                window.AppNumbers.refresh($rate[0]);
             }
 
             return;
         }
 
-        const rate = parseFloat(String($rate.val() || '').replace(/,/g, ''));
+        const rate = window.AppNumbers.number($rate.val(), NaN);
 
-        if (!Number.isNaN(rate) && rate > 0) {
-            $usefulLife.val(trimNumber(100 / rate, 6));
+        if (Number.isFinite(rate) && rate > 0) {
+            $usefulLife.val(trimNumber(100 / rate, 2));
+            window.AppNumbers.refresh($usefulLife[0]);
         }
     }
 

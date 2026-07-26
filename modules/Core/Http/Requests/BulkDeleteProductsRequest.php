@@ -28,15 +28,17 @@ class BulkDeleteProductsRequest extends FormRequest
                 Rule::exists('products', 'doc_num')
                     ->where('company_id', app(OperatingCompanyContextService::class)->requireCompanyId($this))
                     ->where(function ($query): void {
-                        if ($this->productContext() === Product::ContextRawMaterials) {
-                            $query->where('item_classification', Product::ClassificationRawMaterial);
+                        $classification = Product::classificationForContext($this->productContext());
+
+                        if ($classification !== null) {
+                            $query->where('item_classification', $classification);
 
                             return;
                         }
 
                         $query
                             ->whereNull('item_classification')
-                            ->orWhere('item_classification', '<>', Product::ClassificationRawMaterial);
+                            ->orWhereNotIn('item_classification', Product::materialClassifications());
                     })
                     ->whereNull('deleted_at'),
             ],
@@ -47,15 +49,19 @@ class BulkDeleteProductsRequest extends FormRequest
     {
         $routeName = (string) ($this->route()?->getName() ?? '');
 
-        return str_starts_with($routeName, 'admin.raw-materials.')
-            ? Product::ContextRawMaterials
-            : Product::ContextProducts;
+        return match (true) {
+            str_starts_with($routeName, 'admin.raw-materials.') => Product::ContextRawMaterials,
+            str_starts_with($routeName, 'admin.packaging-materials.') => Product::ContextPackagingMaterials,
+            default => Product::ContextProducts,
+        };
     }
 
     private function permissionPrefix(): string
     {
-        return $this->productContext() === Product::ContextRawMaterials
-            ? 'raw_materials'
-            : 'products';
+        return match ($this->productContext()) {
+            Product::ContextRawMaterials => 'raw_materials',
+            Product::ContextPackagingMaterials => 'packaging_materials',
+            default => 'products',
+        };
     }
 }

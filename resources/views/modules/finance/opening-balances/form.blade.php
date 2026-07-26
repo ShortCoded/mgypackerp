@@ -4,8 +4,9 @@
     $isReadonly = $mode === 'view' || (! $isCreateLike && ($isLocked ?? false));
     $title = __("opening_balances.{$mode}");
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
+    $financeAmounts = app(\Modules\Finance\Services\FinanceAmountService::class);
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dateValue = fn () => old('document_date', $record?->document_date ? $dateFormatService->formatDate($record->document_date, '') : $dateFormatService->formatDate(now(), ''));
-    $formatAmount = fn ($amount) => rtrim(rtrim(number_format((float) $amount, 3, '.', ''), '0'), '.') ?: '0';
     $value = fn($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $currencyOption = $record?->currency ? ['id' => $record->currency->doc_num, 'text' => trim($record->currency->code.' — '.$record->currency->name)] : ($defaultCurrencyOption ?? null);
@@ -27,10 +28,10 @@
     if ($existingLines === []) {
         $existingLines = [['account_doc_num' => null, 'account_label' => null, 'transaction_type' => 'debit', 'amount' => null, 'description' => null]];
     }
-    $lineDebit = fn (array $line) => array_key_exists('debit_amount', $line) ? (float) $line['debit_amount'] : (($line['transaction_type'] ?? 'debit') === 'debit' ? (float) ($line['amount'] ?? 0) : 0.0);
-    $lineCredit = fn (array $line) => array_key_exists('credit_amount', $line) ? (float) $line['credit_amount'] : (($line['transaction_type'] ?? 'debit') === 'credit' ? (float) ($line['amount'] ?? 0) : 0.0);
-    $totalDebit = collect($existingLines)->sum(fn (array $line) => $lineDebit($line));
-    $totalCredit = collect($existingLines)->sum(fn (array $line) => $lineCredit($line));
+    $lineDebit = fn (array $line) => array_key_exists('debit_amount', $line) ? $line['debit_amount'] : (($line['transaction_type'] ?? 'debit') === 'debit' ? ($line['amount'] ?? 0) : 0);
+    $lineCredit = fn (array $line) => array_key_exists('credit_amount', $line) ? $line['credit_amount'] : (($line['transaction_type'] ?? 'debit') === 'credit' ? ($line['amount'] ?? 0) : 0);
+    $totalDebit = $financeAmounts->fromUnits(collect($existingLines)->sum(fn (array $line) => $financeAmounts->toUnits($lineDebit($line))));
+    $totalCredit = $financeAmounts->fromUnits(collect($existingLines)->sum(fn (array $line) => $financeAmounts->toUnits($lineCredit($line))));
 @endphp
 @section('title', $title)
 @section('content')
@@ -120,9 +121,9 @@
                 <div class="col-md-3">
                     <x-forms.label for="exchange_rate" :label="__('opening_balances.attributes.exchange_rate')" required />
                     @if($isReadonly)
-                        <x-forms.view-field for="exchange_rate" :value="$formatAmount($value('exchange_rate', 1))" input-class="text-center" dir="ltr" />
+                        <x-forms.view-field for="exchange_rate" :value="$numbers->format($value('exchange_rate', 1))" input-class="text-center" dir="ltr" />
                     @else
-                        <input class="form-control text-center" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ $value('exchange_rate', 1) }}" dir="ltr" required @readonly($isMainCurrencySelected)>
+                        <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="$value('exchange_rate', 1)" :scale="6" min="0.000001" step="0.000001" required :readonly="$isMainCurrencySelected" />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                 </div>
@@ -200,9 +201,9 @@
                                 </td>
                                 <td>
                                     @if($isReadonly)
-                                        <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['amount'] ?? 0) }}</div>
+                                        <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['amount'] ?? 0) }}</div>
                                     @else
-                                        <input class="form-control text-end js-opening-balance-amount" name="lines[{{ $index }}][amount]" type="number" min="0.0001" step="0.0001" value="{{ $line['amount'] ?? '' }}" dir="ltr" required>
+                                        <x-forms.numeric-input class="text-end js-opening-balance-amount" :name="'lines['.$index.'][amount]'" :value="$line['amount'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
                                         <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.amount"></div>
                                     @endif
                                 </td>
@@ -231,7 +232,7 @@
                         <tr>
                             <th></th>
                             <th class="text-end">{{ __('opening_balances.attributes.total_debit') }}</th>
-                            <th class="text-end js-opening-balance-total-debit" dir="ltr">{{ $formatAmount($totalDebit) }}</th>
+                            <th class="text-end js-opening-balance-total-debit" dir="ltr">{{ $numbers->format($totalDebit) }}</th>
                             <th></th>
                             @unless($isReadonly)
                                 <th></th>
@@ -240,7 +241,7 @@
                         <tr>
                             <th></th>
                             <th class="text-end">{{ __('opening_balances.attributes.total_credit') }}</th>
-                            <th class="text-end js-opening-balance-total-credit" dir="ltr">{{ $formatAmount($totalCredit) }}</th>
+                            <th class="text-end js-opening-balance-total-credit" dir="ltr">{{ $numbers->format($totalCredit) }}</th>
                             <th></th>
                             @unless($isReadonly)
                                 <th></th>

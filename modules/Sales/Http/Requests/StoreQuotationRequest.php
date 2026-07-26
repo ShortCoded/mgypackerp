@@ -7,6 +7,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Unique;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -18,6 +19,8 @@ use Modules\Sales\Models\QuotationPaymentMilestone;
 
 class StoreQuotationRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'quotations.clone' : 'quotations.create');
@@ -25,6 +28,18 @@ class StoreQuotationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'discount_value',
+            'lines.*.quantity',
+            'lines.*.unit_price',
+            'lines.*.discount_value',
+            'lines.*.tax_rate',
+            'payment_milestones.*.percentage',
+            'payment_milestones.*.amount',
+            'execution_schedule_lines.*.duration_days',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
 
         $data = [
@@ -75,14 +90,14 @@ class StoreQuotationRequest extends FormRequest
             'quotation_date' => ['required', $this->dateRule('quotation_date')],
             'valid_until' => ['nullable', $this->dateRule('valid_until')],
             'currency_doc_num' => ['nullable', 'string'],
-            'exchange_rate' => ['required', 'numeric', 'min:0.000001'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'min:0.000001'],
             'sales_person_doc_num' => ['nullable', 'string', Rule::exists('users', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'notes' => ['nullable', 'string'],
             'revision_date' => ['required', $this->dateRule('revision_date')],
             'change_reason' => ['nullable', 'string'],
             'customer_feedback' => ['nullable', 'string'],
             'discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
-            'discount_value' => ['nullable', 'numeric', 'min:0'],
+            'discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'terms' => ['nullable', 'string'],
             'payment_terms' => ['nullable', 'string'],
             'execution_terms' => ['nullable', 'string'],
@@ -93,18 +108,18 @@ class StoreQuotationRequest extends FormRequest
             'lines.*.product_doc_num' => ['nullable', 'string'],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.unit_doc_num' => ['nullable', 'string'],
-            'lines.*.quantity' => ['nullable', 'numeric', 'min:0'],
-            'lines.*.unit_price' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
-            'lines.*.discount_value' => ['nullable', 'numeric', 'min:0'],
-            'lines.*.tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'payment_milestones' => ['nullable', 'array'],
             'payment_milestones.*.title' => ['nullable', 'string', 'max:255'],
             'payment_milestones.*.description' => ['nullable', 'string'],
-            'payment_milestones.*.percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'payment_milestones.*.amount' => ['nullable', 'numeric', 'min:0'],
+            'payment_milestones.*.percentage' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
+            'payment_milestones.*.amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'payment_milestones.*.due_type' => ['nullable', Rule::in(QuotationPaymentMilestone::DueTypes)],
             'payment_milestones.*.due_date' => ['nullable', $this->dateRule('due_date')],
             'payment_milestones.*.notes' => ['nullable', 'string'],
@@ -114,7 +129,7 @@ class StoreQuotationRequest extends FormRequest
             'execution_schedule_lines.*.description' => ['nullable', 'string'],
             'execution_schedule_lines.*.start_date' => ['nullable', $this->dateRule('start_date')],
             'execution_schedule_lines.*.end_date' => ['nullable', $this->dateRule('end_date')],
-            'execution_schedule_lines.*.duration_days' => ['nullable', 'integer', 'min:0'],
+            'execution_schedule_lines.*.duration_days' => ['nullable', 'integer', 'min:0', 'max:4294967295'],
             'execution_schedule_lines.*.responsibility' => ['nullable', 'string', 'max:255'],
             'execution_schedule_lines.*.notes' => ['nullable', 'string'],
             'execution_schedule_lines.*._delete' => ['nullable', 'boolean'],
@@ -433,7 +448,7 @@ class StoreQuotationRequest extends FormRequest
 
     private function decimalInput(string $field): ?string
     {
-        $value = str_replace(',', '', trim((string) $this->input($field)));
+        $value = trim((string) $this->input($field));
 
         return $value === '' ? null : $value;
     }
@@ -449,11 +464,11 @@ class StoreQuotationRequest extends FormRequest
                 'product_doc_num' => isset($row['product_doc_num']) ? trim((string) $row['product_doc_num']) ?: null : null,
                 'description' => isset($row['description']) ? trim((string) $row['description']) ?: null : null,
                 'unit_doc_num' => isset($row['unit_doc_num']) ? trim((string) $row['unit_doc_num']) ?: null : null,
-                'quantity' => isset($row['quantity']) ? str_replace(',', '', trim((string) $row['quantity'])) ?: null : null,
-                'unit_price' => isset($row['unit_price']) ? str_replace(',', '', trim((string) $row['unit_price'])) ?: null : null,
+                'quantity' => isset($row['quantity']) ? trim((string) $row['quantity']) ?: null : null,
+                'unit_price' => isset($row['unit_price']) ? trim((string) $row['unit_price']) ?: null : null,
                 'discount_type' => isset($row['discount_type']) ? trim((string) $row['discount_type']) ?: null : null,
-                'discount_value' => isset($row['discount_value']) ? str_replace(',', '', trim((string) $row['discount_value'])) ?: '0' : '0',
-                'tax_rate' => isset($row['tax_rate']) ? str_replace(',', '', trim((string) $row['tax_rate'])) ?: '0' : '0',
+                'discount_value' => isset($row['discount_value']) ? trim((string) $row['discount_value']) ?: '0' : '0',
+                'tax_rate' => isset($row['tax_rate']) ? trim((string) $row['tax_rate']) ?: '0' : '0',
                 'notes' => isset($row['notes']) ? trim((string) $row['notes']) ?: null : null,
                 '_delete' => filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
@@ -471,8 +486,8 @@ class StoreQuotationRequest extends FormRequest
             ->map(fn (array $row): array => [
                 'title' => isset($row['title']) ? trim((string) $row['title']) ?: null : null,
                 'description' => isset($row['description']) ? trim((string) $row['description']) ?: null : null,
-                'percentage' => isset($row['percentage']) ? str_replace(',', '', trim((string) $row['percentage'])) ?: null : null,
-                'amount' => isset($row['amount']) ? str_replace(',', '', trim((string) $row['amount'])) ?: null : null,
+                'percentage' => isset($row['percentage']) ? trim((string) $row['percentage']) ?: null : null,
+                'amount' => isset($row['amount']) ? trim((string) $row['amount']) ?: null : null,
                 'due_type' => isset($row['due_type']) ? trim((string) $row['due_type']) ?: null : null,
                 'due_date' => isset($row['due_date']) ? trim((string) $row['due_date']) ?: null : null,
                 'notes' => isset($row['notes']) ? trim((string) $row['notes']) ?: null : null,

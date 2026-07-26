@@ -31,6 +31,8 @@ class Product extends Model
 
     public const ContextRawMaterials = 'raw_materials';
 
+    public const ContextPackagingMaterials = 'packaging_materials';
+
     public const ImageCollection = 'product_images';
 
     public const MainImageRole = 'main_image';
@@ -73,7 +75,7 @@ class Product extends Model
      */
     protected $attributes = [
         'item_classification' => self::ClassificationFinishedProduct,
-        'cost_as_inventory' => false,
+        'cost_as_inventory' => true,
         'is_displayable' => true,
         'status' => 'active',
     ];
@@ -104,16 +106,64 @@ class Product extends Model
         ));
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function productItemClassifications(): array
+    {
+        return array_values(array_filter(
+            self::itemClassifications(),
+            fn (string $classification): bool => ! in_array($classification, self::materialClassifications(), true),
+        ));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function materialClassifications(): array
+    {
+        return [
+            self::ClassificationRawMaterial,
+            self::ClassificationPackaging,
+        ];
+    }
+
     public static function contextForClassification(?string $classification): string
     {
-        return $classification === self::ClassificationRawMaterial
-            ? self::ContextRawMaterials
-            : self::ContextProducts;
+        return match ($classification) {
+            self::ClassificationRawMaterial => self::ContextRawMaterials,
+            self::ClassificationPackaging => self::ContextPackagingMaterials,
+            default => self::ContextProducts,
+        };
+    }
+
+    public static function classificationForContext(string $context): ?string
+    {
+        return match ($context) {
+            self::ContextRawMaterials => self::ClassificationRawMaterial,
+            self::ContextPackagingMaterials => self::ClassificationPackaging,
+            default => null,
+        };
+    }
+
+    public static function isMaterialContext(string $context): bool
+    {
+        return in_array($context, [self::ContextRawMaterials, self::ContextPackagingMaterials], true);
     }
 
     public function isRawMaterial(): bool
     {
         return $this->item_classification === self::ClassificationRawMaterial;
+    }
+
+    public function isPackagingMaterial(): bool
+    {
+        return $this->item_classification === self::ClassificationPackaging;
+    }
+
+    public function isMaterial(): bool
+    {
+        return in_array($this->item_classification, self::materialClassifications(), true);
     }
 
     protected function casts(): array
@@ -328,11 +378,46 @@ class Product extends Model
      * @param  Builder<Product>  $query
      * @return Builder<Product>
      */
+    public function scopePackagingMaterials(Builder $query): Builder
+    {
+        return $query->where($this->getTable().'.item_classification', self::ClassificationPackaging);
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopeMaterialItems(Builder $query): Builder
+    {
+        return $query->whereIn($this->getTable().'.item_classification', self::materialClassifications());
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopeProductItems(Builder $query): Builder
+    {
+        $column = $this->getTable().'.item_classification';
+
+        return $query->where(function (Builder $query) use ($column): void {
+            $query
+                ->whereNull($column)
+                ->orWhereNotIn($column, self::materialClassifications());
+        });
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
     public function scopeForProductContext(Builder $query, string $context): Builder
     {
-        return $context === self::ContextRawMaterials
-            ? $query->rawMaterials()
-            : $query->withoutRawMaterials();
+        return match ($context) {
+            self::ContextRawMaterials => $query->rawMaterials(),
+            self::ContextPackagingMaterials => $query->packagingMaterials(),
+            default => $query->productItems(),
+        };
     }
 
     /**

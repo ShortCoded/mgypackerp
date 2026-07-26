@@ -2,8 +2,8 @@
 
 return [
     [
-        'label' => 'planning_production',
-        'title' => 'Planning & Production',
+        'label' => 'production',
+        'title' => 'Production',
         'icon' => 'industry',
         'route' => null,
         'permission' => null,

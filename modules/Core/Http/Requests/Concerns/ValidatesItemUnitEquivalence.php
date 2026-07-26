@@ -7,15 +7,20 @@ use Illuminate\Validation\Rules\Exists;
 use Illuminate\Validation\Validator;
 use Modules\Core\Models\ItemLookup;
 use Modules\Core\Models\ItemUnit;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 trait ValidatesItemUnitEquivalence
 {
+    use NormalizesNumericInput;
+
     protected function prepareItemUnitEquivalenceForValidation(): void
     {
         if (! $this->isItemUnitsLookup()) {
             return;
         }
+
+        $this->normalizeNumericInput(['equivalent_value']);
 
         foreach (['equivalent_value', 'equivalent_unit_doc_num'] as $field) {
             if ($this->has($field)) {
@@ -34,7 +39,7 @@ trait ValidatesItemUnitEquivalence
         }
 
         return [
-            'equivalent_value' => ['nullable', 'numeric', 'gt:0', 'required_with:equivalent_unit_doc_num'],
+            'equivalent_value' => ['nullable', 'numeric', 'gt:0', 'regex:/^(?:\d{1,12}|\d{0,12}\.\d{1,6})$/', 'required_with:equivalent_unit_doc_num'],
             'equivalent_unit_doc_num' => ['nullable', 'string', 'required_with:equivalent_value', $this->activeEquivalentUnitExistsRule()],
         ];
     }
@@ -101,6 +106,7 @@ trait ValidatesItemUnitEquivalence
             'equivalent_value.required_with' => __('item_units.validation.equivalent_value_required'),
             'equivalent_value.numeric' => __('item_units.validation.equivalent_value_numeric'),
             'equivalent_value.gt' => __('item_units.validation.equivalent_value_gt_zero'),
+            'equivalent_value.regex' => __('item_units.validation.equivalent_value_precision'),
             'equivalent_unit_doc_num.required_with' => __('item_units.validation.equivalent_unit_required'),
             'equivalent_unit_doc_num.exists' => __('item_units.validation.equivalent_unit_exists'),
         ];
@@ -141,11 +147,7 @@ trait ValidatesItemUnitEquivalence
 
     private function normalizeItemUnitDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 6, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 6);
     }
 
     private function itemUnitBlankToNull(mixed $value): ?string

@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Purchases\Http\Controllers\PurchaseInvoiceController;
 use Modules\Purchases\Http\Controllers\PurchaseOrderController;
 use Modules\Purchases\Http\Controllers\SupplierController;
+use Modules\Purchases\Http\Controllers\SupplierDataReportController;
 use Modules\Purchases\Services\PurchasesSelect2Service;
 
 Route::middleware('auth')
@@ -154,4 +155,18 @@ Route::middleware('auth')
             Route::put('/{purchaseOrder}', 'update')->middleware('can:purchase_orders.edit')->name('update');
             Route::delete('/{purchaseOrder}', 'destroy')->middleware('can:purchase_orders.delete')->name('destroy');
         });
+    });
+
+Route::middleware('auth')
+    ->prefix('admin/reports/suppliers')
+    ->as('admin.reports.suppliers.')
+    ->controller(SupplierDataReportController::class)
+    ->group(function (): void {
+        Route::get('/', 'index')->middleware('can:reports.suppliers.view')->name('index');
+        Route::get('/data', 'data')->middleware('can:reports.suppliers.view')->name('data');
+        Route::get('/filter-options/accounts', 'filterAccounts')->middleware('can:reports.suppliers.view')->name('filter-options.accounts');
+        Route::get('/filter-options/account-groups', 'filterAccountGroups')->middleware('can:reports.suppliers.view')->name('filter-options.account-groups');
+        Route::get('/export/excel', 'exportExcel')->middleware('can:reports.suppliers.export')->name('export.excel');
+        Route::get('/export/csv', 'exportCsv')->middleware('can:reports.suppliers.export')->name('export.csv');
+        Route::get('/export/pdf', 'exportPdf')->middleware('can:reports.suppliers.pdf')->name('export.pdf');
     });

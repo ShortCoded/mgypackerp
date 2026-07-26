@@ -44,13 +44,11 @@
     }
 
     function numberValue(value) {
-        const parsed = parseFloat(String(value || '').replace(/,/g, ''));
-
-        return Number.isFinite(parsed) ? parsed : 0;
+        return window.AppNumbers.number(value, 0);
     }
 
     function formatAmount(value) {
-        return (Math.round((Number(value) || 0) * 10000) / 10000).toString();
+        return window.AppNumbers.format((Math.round(numberValue(value) * 10000) / 10000).toString());
     }
 
     function initSelect2($form) {
@@ -170,7 +168,7 @@
         return '' +
             '<tr class="js-cheque-line" data-index="' + index + '">' +
             '<td><select class="form-select js-select2-ajax js-cheque-account" name="lines[' + index + '][account_doc_num]" data-url="' + accountUrl + '" data-placeholder="' + accountPlaceholder + '" data-allow-clear="true"></select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.account_doc_num"></div></td>' +
-            '<td><input class="form-control text-end js-cheque-line-amount" name="lines[' + index + '][amount]" type="number" min="0.0001" step="0.0001" dir="ltr"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>' +
+            '<td><input class="form-control text-end js-cheque-line-amount" name="lines[' + index + '][amount]" type="text" inputmode="decimal" min="0.0001" step="0.0001" dir="ltr" data-numeric-input data-numeric-scale="4" data-numeric-min="0.0001"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>' +
             '<td><input class="form-control" name="lines[' + index + '][description]"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.description"></div></td>' +
             '<td><input class="form-control" name="lines[' + index + '][notes]"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.notes"></div></td>' +
             '<td class="text-center"><button class="btn btn-link text-600 p-0 me-2 js-cheque-duplicate-line" type="button" title="' + duplicateTitle + '" data-bs-title="' + duplicateTitle + '"><span class="fas fa-copy"></span></button><button class="btn btn-link text-danger p-0 js-cheque-remove-line" type="button" title="' + deleteTitle + '" data-bs-title="' + deleteTitle + '"><span class="fas fa-trash-alt"></span></button></td>' +
@@ -200,6 +198,7 @@
 
             $form.find('.js-cheque-lines tbody').append($row);
             initAccountSelects($row);
+            window.AppNumbers.refresh($row[0]);
         });
 
         $form.off('click.chequeRemoveLine').on('click.chequeRemoveLine', '.js-cheque-remove-line', function () {
@@ -228,6 +227,7 @@
             $row.find('[name$="[description]"]').val($source.find('[name$="[description]"]').val());
             $row.find('[name$="[notes]"]').val($source.find('[name$="[notes]"]').val());
             initAccountSelects($row);
+            window.AppNumbers.refresh($row[0]);
             updateTotals($form);
         });
 
@@ -307,6 +307,7 @@
             resetForm.find('#party_name').val('');
             resetForm.find('.js-cheque-lines tbody').html(lineTemplate(resetForm, 0));
             initSelect2(resetForm);
+            window.AppNumbers.refresh(resetForm[0]);
             updatePartyFields(resetForm);
             updateTotals(resetForm);
         });

@@ -9,6 +9,7 @@ use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Models\ItemLookup;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\ItemLookupDefinition;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Yajra\DataTables\Facades\DataTables;
@@ -20,6 +21,7 @@ class ItemLookupDataTable
     public function __construct(
         private readonly DataTableSearchService $searchService,
         private readonly OperatingCompanyContextService $companyContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request, ItemLookupDefinition $definition): JsonResponse
@@ -172,9 +174,7 @@ class ItemLookupDataTable
 
     private function displayDecimal(mixed $value): string
     {
-        $formatted = number_format((float) $value, 6, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.');
+        return $this->numbers->format($value);
     }
 
     private function supportsEquivalence(ItemLookupDefinition $definition): bool

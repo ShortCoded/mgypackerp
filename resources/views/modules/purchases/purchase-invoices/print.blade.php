@@ -2,7 +2,7 @@
 
 @php
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $formatAmount = fn ($amount, $scale = 4) => rtrim(rtrim(number_format((float) $amount, $scale, '.', ''), '0'), '.') ?: '0';
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
 @endphp
 
 @section('title', __('purchase_invoices.print_title', ['doc' => $record->doc_num]))
@@ -94,11 +94,11 @@
                                 <td>{{ $line->line_number }}</td>
                                 <td>{{ trim(implode(' / ', array_filter([$line->product?->doc_num, $line->product?->name]))) }}</td>
                                 <td>{{ trim(implode(' / ', array_filter([$line->unit?->doc_num, $line->unit?->name]))) }}</td>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($line->quantity) }}</td>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($line->unit_price) }}</td>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($line->discount_amount) }}</td>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($line->tax_amount) }}</td>
-                                <td class="text-end fw-semibold" dir="ltr">{{ $formatAmount($line->total_after_tax) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($line->quantity) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount) }}</td>
+                                <td class="text-end fw-semibold" dir="ltr">{{ $numbers->format($line->total_after_tax) }}</td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -122,7 +122,7 @@
                                 @forelse($record->paymentSchedules as $schedule)
                                     <tr>
                                         <td dir="ltr">{{ $schedule->due_date ? $dates->formatDate($schedule->due_date, '') : __('common.empty_value') }}</td>
-                                        <td class="text-end" dir="ltr">{{ $formatAmount($schedule->amount) }}</td>
+                                        <td class="text-end" dir="ltr">{{ $numbers->format($schedule->amount) }}</td>
                                         <td>{{ __('purchase_invoices.source_types.'.$schedule->payment_source_type) }}</td>
                                         <td>{{ $schedule->cashVoucher?->doc_num ?: __('common.empty_value') }}</td>
                                     </tr>
@@ -141,31 +141,31 @@
                         <tbody>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.subtotal') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->subtotal_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->subtotal_amount) }}</td>
                             </tr>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.line_discounts') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->line_discount_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->line_discount_amount) }}</td>
                             </tr>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.header_discount') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->header_discount_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td>
                             </tr>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.tax') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->tax_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->tax_amount) }}</td>
                             </tr>
                             <tr class="fw-bold">
                                 <th>{{ __('purchase_invoices.totals.net_total') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->total_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->total_amount) }}</td>
                             </tr>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.paid') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->paid_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->paid_amount) }}</td>
                             </tr>
                             <tr>
                                 <th>{{ __('purchase_invoices.totals.remaining') }}</th>
-                                <td class="text-end" dir="ltr">{{ $formatAmount($record->remaining_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->remaining_amount) }}</td>
                             </tr>
                         </tbody>
                     </table>

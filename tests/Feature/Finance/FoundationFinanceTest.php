@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
@@ -21,6 +22,8 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\Finance\Models\OpeningBalanceLine;
+use Modules\Finance\Services\OpeningBalanceService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -287,15 +290,15 @@ test('Currency CRUD index uses the lookup table foundation and lives under finan
 
     $menu = app(MenuService::class)->getMenu($actor);
     $basicData = collect($menu)->firstWhere('label', 'basic_data');
-    $finance = collect($menu)->firstWhere('label', 'finance');
+    $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
 
-    $financeChildren = collect($finance['children'] ?? [])->pluck('label')->all();
+    $accountingChildren = collect($accountingCosting['children'] ?? [])->pluck('label')->all();
 
     expect(collect($basicData['children'] ?? [])->pluck('label')->all())->not->toContain('currencies')
-        ->and($financeChildren[0] ?? null)->toBe('currencies');
+        ->and($accountingChildren)->toContain('currencies');
 });
 
-test('Finance menu and currency breadcrumbs are localized in Arabic and English', function (): void {
+test('Accounting and costing menu and currency breadcrumbs are localized in Arabic and English', function (): void {
     $actor = financeActor([
         'currencies.view',
         'currencies.create',
@@ -310,13 +313,13 @@ test('Finance menu and currency breadcrumbs are localized in Arabic and English'
     $this->actingAs($actor)
         ->get(route('admin.currencies.index'))
         ->assertOk()
-        ->assertSee('المالية')
+        ->assertSee('الحسابات والتكاليف')
         ->assertSee('العملات')
         ->assertSee('حسابات البنوك')
         ->assertSee('الخزائن')
         ->assertSee('الأرصدة الافتتاحية')
         ->assertSee('رمز العملة')
-        ->assertDontSee('Finance')
+        ->assertDontSee('Accounting & Costing')
         ->assertDontSee('Currencies')
         ->assertDontSee('Bank Accounts')
         ->assertDontSee('Cashboxes')
@@ -339,7 +342,7 @@ test('Finance menu and currency breadcrumbs are localized in Arabic and English'
     $this->actingAs($actor)
         ->get(route('admin.currencies.index'))
         ->assertOk()
-        ->assertSee('Finance')
+        ->assertSee('Accounting & Costing')
         ->assertSee('Currencies')
         ->assertSee('Bank Accounts')
         ->assertSee('Cashboxes')
@@ -445,6 +448,55 @@ test('Currency create uppercases code and setting a main currency unsets the pre
     expect($response['data']['doc_num'])->toBeString()
         ->and(Currency::query()->where('code', 'USD')->where('is_main', true)->exists())->toBeTrue()
         ->and(Currency::query()->where('code', 'EGP')->where('is_main', true)->exists())->toBeFalse();
+});
+
+test('Currency minor unit factor uses strict grouped numeric input and grouped presentation', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['currencies.view', 'currencies.create', 'currencies.edit']);
+
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.currencies.store'), [
+            'name' => 'Grouped Minor Unit Currency',
+            'code' => 'gmu',
+            'minor_unit_name' => 'Subunit',
+            'minor_unit_factor' => '1,000',
+            'is_main' => false,
+            'status' => 'active',
+            'submit_action' => 'save_edit',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->json('data.doc_num');
+
+    $currency = Currency::query()->where('doc_num', $docNum)->firstOrFail();
+
+    expect($currency->minor_unit_factor)->toBe(1000);
+
+    $this->actingAs($actor)
+        ->get(route('admin.currencies.edit', $currency->doc_num))
+        ->assertOk()
+        ->assertSee('data-numeric-input', false)
+        ->assertSee('inputmode="numeric"', false)
+        ->assertSee('value="1,000"', false);
+
+    $rows = $this->actingAs($actor)
+        ->getJson(route('admin.currencies.data'))
+        ->assertOk()
+        ->json('data');
+    $row = collect($rows)->first(fn (array $candidate): bool => str_contains((string) ($candidate['code'] ?? ''), 'GMU'));
+
+    expect($row)->not->toBeNull()
+        ->and($row['minor_unit_factor'])->toContain('1,000');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.currencies.store'), [
+            'name' => 'Malformed Minor Unit Currency',
+            'code' => 'badg',
+            'minor_unit_factor' => '1,2,3',
+            'status' => 'active',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['minor_unit_factor']);
 });
 
 test('Currency document number update returns old and new doc num data for URL refresh', function (): void {
@@ -2040,9 +2092,9 @@ test('OpeningBalance show page displays persisted totals and clean exchange rate
             __('opening_balances.attributes.document_status'),
             __('opening_balances.statuses.draft'),
             __('opening_balances.attributes.total_debit'),
-            '3276',
+            '3,276',
             __('opening_balances.attributes.total_credit'),
-            '3276',
+            '3,276',
         ], false)
         ->assertDontSee(__('opening_balances.attributes.balance_difference'), false)
         ->assertSee(__('common.sections.audit_information'))
@@ -2262,4 +2314,70 @@ test('finance datatables do not expose internal ids', function (): void {
     $this->actingAs($actor)->getJson(route('admin.finance.bank-accounts.data'))->assertOk()->assertJsonMissingPath('data.0.id');
     $this->actingAs($actor)->getJson(route('admin.finance.cashboxes.data'))->assertOk()->assertJsonMissingPath('data.0.id');
     $this->actingAs($actor)->getJson(route('admin.finance.opening-balances.data'))->assertOk()->assertJsonMissingPath('data.0.id');
+});
+
+test('OpeningBalance lines keep maximum accepted decimal precision before persistence', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['opening_balances.create']);
+    $company = financeCompany();
+    $branch = financeBranch($company);
+    $period = financePeriod();
+    financeSelectOperatingContext($company, $branch, $period);
+    $currency = Currency::query()->where('company_id', $company->getKey())->where('is_main', true)->firstOrFail();
+    $accounts = Account::query()
+        ->forCompany($company->getKey())
+        ->where('is_postable', true)
+        ->where('is_group', false)
+        ->limit(2)
+        ->get();
+    $capturedLines = [];
+
+    OpeningBalanceLine::creating(function (OpeningBalanceLine $line) use (&$capturedLines): void {
+        $capturedLines[] = $line->getAttributes();
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.finance.opening-balances.store'), [
+            'document_date' => $period->from_date->toDateString(),
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => '1',
+            'lines' => [
+                [
+                    'account_doc_num' => $accounts[0]->doc_num,
+                    'transaction_type' => 'debit',
+                    'amount' => '99,999,999,999,999.9999',
+                ],
+                [
+                    'account_doc_num' => $accounts[1]->doc_num,
+                    'transaction_type' => 'credit',
+                    'amount' => '99,999,999,999,999.9999',
+                ],
+            ],
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedLines)->toHaveCount(2)
+        ->and($capturedLines[0]['debit_amount'])->toBe('99999999999999.9999')
+        ->and($capturedLines[0]['credit_amount'])->toBe('0.0000')
+        ->and($capturedLines[1]['debit_amount'])->toBe('0.0000')
+        ->and($capturedLines[1]['credit_amount'])->toBe('99999999999999.9999');
+
+    $creditLine = new OpeningBalanceLine;
+    $creditLine->setRawAttributes([
+        'debit_amount' => null,
+        'credit_amount' => '1250.5000',
+        'description' => null,
+    ]);
+    $creditLine->setRelation('account', $accounts[1]);
+    $comparisonRecord = new OpeningBalance;
+    $comparisonRecord->setRelation('lines', new Collection([$creditLine]));
+    $linesChanged = new ReflectionMethod(OpeningBalanceService::class, 'linesChanged');
+
+    expect($linesChanged->invoke(app(OpeningBalanceService::class), $comparisonRecord, [[
+        'account_doc_num' => $accounts[1]->doc_num,
+        'transaction_type' => 'credit',
+        'amount' => '1,250.5',
+        'description' => null,
+    ]]))->toBeFalse();
 });

@@ -26,8 +26,10 @@ class UpdateProductDocumentNumberSettingsRequest extends FormRequest
     {
         $routeName = (string) ($this->route()?->getName() ?? '');
 
-        return str_starts_with($routeName, 'admin.raw-materials.')
-            ? 'raw_materials'
-            : 'products';
+        return match (true) {
+            str_starts_with($routeName, 'admin.raw-materials.') => 'raw_materials',
+            str_starts_with($routeName, 'admin.packaging-materials.') => 'packaging_materials',
+            default => 'products',
+        };
     }
 }

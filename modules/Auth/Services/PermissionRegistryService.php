@@ -4,8 +4,9 @@ namespace Modules\Auth\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
-use Modules\Core\Services\ExpandedScreenRegistry;
+use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\MenuConfigFileOrder;
+use Modules\Core\Services\MenuService;
 use Modules\Core\Services\RequestMemo;
 
 class PermissionRegistryService
@@ -25,7 +26,8 @@ class PermissionRegistryService
     public function __construct(
         private readonly RequestMemo $memo,
         private readonly MenuConfigFileOrder $menuFiles,
-        private readonly ExpandedScreenRegistry $expandedScreens,
+        private readonly ErpUiScreenRegistry $erpUiScreens,
+        private readonly MenuService $menu,
     ) {}
 
     /**
@@ -101,7 +103,8 @@ class PermissionRegistryService
         return $this->memo->remember('permissions.registry.all', function (): array {
             $permissions = array_merge(
                 $this->fromMenus(),
-                $this->expandedScreens->placeholderPermissions(),
+                $this->erpUiScreens->permissions(),
+                $this->erpUiScreens->legacyPlaceholderPermissions(),
             );
 
             $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');
@@ -121,7 +124,10 @@ class PermissionRegistryService
     public function formAssignablePermissions(): array
     {
         return $this->memo->remember('permissions.registry.form_assignable', function (): array {
-            $permissions = $this->expandedScreens->placeholderPermissions();
+            $permissions = array_merge(
+                $this->erpUiScreens->permissions(),
+                $this->erpUiScreens->legacyPlaceholderPermissions(),
+            );
 
             foreach ($this->menuConfigFiles() as $file) {
                 $items = require $file;
@@ -389,6 +395,12 @@ class PermissionRegistryService
             if (trans()->has($actionKey)) {
                 return __($actionKey);
             }
+
+            $shellActionKey = "erp_ui_shell.permission_actions.{$action}";
+
+            if (trans()->has($shellActionKey)) {
+                return __($shellActionKey);
+            }
         }
 
         $translated = $this->translatedPermissionLabel($permission);
@@ -528,17 +540,7 @@ class PermissionRegistryService
      */
     private function menuItems(): array
     {
-        $items = [];
-
-        foreach ($this->menuConfigFiles() as $file) {
-            $moduleItems = require $file;
-
-            if (is_array($moduleItems)) {
-                $items = array_merge($items, $moduleItems);
-            }
-        }
-
-        return array_merge($items, $this->expandedScreens->placeholderMenuItems());
+        return $this->menu->permissionStructure();
     }
 
     /**

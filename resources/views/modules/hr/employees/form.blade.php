@@ -797,21 +797,25 @@
                             <div class="col-md-6 col-xl">
                                 <x-forms.label for="hr-employee-exchange-rate" :label="__('hr.employees.attributes.exchange_rate')" required />
                                 @if ($isView)
-                                    <x-forms.view-field for="hr-employee-exchange-rate" :value="$fieldValue('exchange_rate', $defaults['exchange_rate'] ?? '')" />
+                                    <x-forms.view-field for="hr-employee-exchange-rate" :value="$fieldValue('exchange_rate', $defaults['exchange_rate'] ?? '')" numeric dir="ltr" />
                                 @else
-                                    <input id="hr-employee-exchange-rate" name="exchange_rate" type="number" min="0" step="0.000001" class="text-center form-control js-hr-employee-exchange-rate" value="{{ old('exchange_rate', $fieldValue('exchange_rate', $defaults['exchange_rate'] ?? '')) }}" required>
+                                    <x-forms.numeric-input id="hr-employee-exchange-rate" name="exchange_rate" :value="old('exchange_rate', $fieldValue('exchange_rate', $defaults['exchange_rate'] ?? ''))" :scale="6" min="0.000001" step="0.000001" class="text-center js-hr-employee-exchange-rate" required />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="exchange_rate"></div>
                             </div>
 
                             @foreach ($payAmountFields as $basis => $fieldName)
-                                @php $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName); @endphp
+                                @php
+                                    $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName);
+                                    $payAmountScale = $fieldName === 'basic_salary' ? 2 : 4;
+                                    $payAmountStep = $fieldName === 'basic_salary' ? '0.01' : '0.0001';
+                                @endphp
                                 <div class="col-md-6 col-xl js-hr-pay-amount-field" data-pay-basis="{{ $basis }}">
                                     <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
                                     @if ($isView)
-                                        <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" />
+                                        <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" numeric dir="ltr" />
                                     @else
-                                        <input id="{{ $inputId }}" name="{{ $fieldName }}" type="number" min="0" step="0.01" class="text-center form-control js-hr-pay-amount-input" value="{{ $fieldValue($fieldName) }}">
+                                        <x-forms.numeric-input :id="$inputId" :name="$fieldName" :value="$fieldValue($fieldName)" :scale="$payAmountScale" min="0" :step="$payAmountStep" class="text-center js-hr-pay-amount-input" />
                                     @endif
                                     <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                                 </div>
@@ -941,7 +945,15 @@
                                                     <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.expires_at"></div>
                                                 </td>
                                                 <td>
-                                                    <input name="documents[{{ $documentIndex }}][alert_before_expiry_days]" type="number" min="0" step="1" class="form-control" value="{{ $document->alert_before_expiry_days }}">
+                                                    <x-forms.numeric-input
+                                                        :name="'documents['.$documentIndex.'][alert_before_expiry_days]'"
+                                                        :value="$document->alert_before_expiry_days"
+                                                        :scale="0"
+                                                        min="0"
+                                                        max="3650"
+                                                        step="1"
+                                                        class="text-center"
+                                                    />
                                                     <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.alert_before_expiry_days"></div>
                                                 </td>
                                                 <td>
@@ -1008,7 +1020,14 @@
                                         <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.expires_at"></div>
                                     </td>
                                     <td>
-                                        <input name="documents[__INDEX__][alert_before_expiry_days]" type="number" min="0" step="1" class="form-control">
+                                        <x-forms.numeric-input
+                                            name="documents[__INDEX__][alert_before_expiry_days]"
+                                            :scale="0"
+                                            min="0"
+                                            max="3650"
+                                            step="1"
+                                            class="text-center"
+                                        />
                                         <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.alert_before_expiry_days"></div>
                                     </td>
                                     <td>

@@ -11,11 +11,12 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Finance\Models\BankAccount;
-use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cashbox;
+use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
@@ -31,6 +32,7 @@ class PurchaseInvoiceService
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly CashVoucherService $cashVouchers,
         private readonly JournalEntryService $journalEntries,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -333,7 +335,7 @@ class PurchaseInvoiceService
             'supplier_invoice_number' => $data['supplier_invoice_number'] ?? null,
             'supplier_invoice_date' => $data['supplier_invoice_date'] ?? null,
             'currency_id' => $currency?->getKey(),
-            'exchange_rate' => number_format((float) ($data['exchange_rate'] ?? 1), 6, '.', ''),
+            'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
             'payment_type' => $data['payment_type'] ?? PurchaseInvoice::PaymentTypeCredit,
             'payment_source_type' => $data['payment_source_type'] ?? null,
             'cashbox_id' => $cashbox?->getKey(),
@@ -434,7 +436,7 @@ class PurchaseInvoiceService
                 'financial_period_id' => $context['financial_period_id'],
                 'line_number' => $index + 1,
                 'due_date' => $row['due_date'],
-                'amount' => number_format((float) ($row['amount'] ?? 0), 4, '.', ''),
+                'amount' => $this->numbers->normalizeToScale($row['amount'] ?? 0, 4) ?? '0.0000',
                 'payment_source_type' => $sourceType,
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),

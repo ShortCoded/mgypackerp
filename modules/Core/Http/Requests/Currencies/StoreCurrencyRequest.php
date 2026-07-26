@@ -5,11 +5,14 @@ namespace Modules\Core\Http\Requests\Currencies;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 class StoreCurrencyRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'currencies.clone' : 'currencies.create');
@@ -17,6 +20,8 @@ class StoreCurrencyRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput(['minor_unit_factor']);
+
         $this->merge([
             'name' => trim((string) $this->input('name')),
             'code' => strtoupper(trim((string) $this->input('code'))),

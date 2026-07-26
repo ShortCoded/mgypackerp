@@ -85,7 +85,7 @@
                             <div class="d-flex justify-content-between gap-3">
                                 <div>
                                     <p class="mb-1 text-600 small">{{ $kpi['title'] }}</p>
-                                    <h3 class="mb-1">{{ $kpi['value'] }}</h3>
+                                    <h3 class="mb-1 dt-number-value" dir="ltr">{{ $kpi['value'] }}</h3>
                                     <p class="mb-0 small text-600">{{ $kpi['meta'] }}</p>
                                 </div>
                                 <div class="text-{{ $kpi['color'] }}">

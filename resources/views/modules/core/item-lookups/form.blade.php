@@ -5,13 +5,6 @@
     $isEdit = $mode === 'edit';
     $isClone = $mode === 'clone';
     $isItemUnits = $definition->key === 'item_units';
-    $formatDecimal = static function (mixed $value): string {
-        if ($value === null || $value === '') {
-            return '';
-        }
-
-        return rtrim(rtrim(number_format((float) $value, 6, '.', ''), '0'), '.');
-    };
     $title = match ($mode) {
         'edit' => __($definition->translationKey . '.edit'),
         'view' => __($definition->translationKey . '.view'),
@@ -26,7 +19,7 @@
     : "";
     $documentNumberValue = old('doc_number', ($isEdit || $isView) ? $record?->doc_number : '');
     $equivalentUnit = $isItemUnits ? $record?->equivalentUnit : null;
-    $equivalentValue = old('equivalent_value', $isItemUnits ? $formatDecimal($record?->equivalent_value) : '');
+    $equivalentValue = old('equivalent_value', $isItemUnits ? $record?->equivalent_value : '');
     $equivalentUnitDocNum = old('equivalent_unit_doc_num', $equivalentUnit?->doc_num ?? '');
     $equivalentUnitLabel = $equivalentUnit ? trim(implode(' / ', array_filter([$equivalentUnit->doc_num, $equivalentUnit->name]))) : '';
     $equivalentUnitExtraParams = $isEdit ? ['exclude_doc_num' => '#item-lookup-current-doc-num'] : [];
@@ -38,7 +31,7 @@
     ];
 
     if ($isItemUnits) {
-        $originalRecordData['equivalent_value'] = $formatDecimal($record?->equivalent_value);
+        $originalRecordData['equivalent_value'] = $record?->equivalent_value;
         $originalRecordData['equivalent_unit_doc_num'] = $equivalentUnit?->doc_num ?? '';
     }
 
@@ -122,9 +115,18 @@
                         <div class="col-md-4 col-lg-3">
                             <label class="form-label" for="equivalent_value">{{ __('item_units.fields.equivalent_value') }}</label>
                             @if ($isView)
-                                <x-forms.view-field for="equivalent_value" :value="$formatDecimal($record?->equivalent_value)" />
+                                <x-forms.view-field for="equivalent_value" :value="$record?->equivalent_value" input-class="text-end" dir="ltr" numeric />
                             @else
-                                <input id="equivalent_value" name="equivalent_value" type="number" min="0" step="0.000001" inputmode="decimal" class="form-control" value="{{ $equivalentValue }}">
+                                <x-forms.numeric-input
+                                    id="equivalent_value"
+                                    name="equivalent_value"
+                                    :value="$equivalentValue"
+                                    :scale="6"
+                                    :allow-negative="false"
+                                    min="0.000001"
+                                    step="0.000001"
+                                    class="text-end"
+                                />
                             @endif
                             <div class="invalid-feedback" data-error-for="equivalent_value"></div>
                         </div>

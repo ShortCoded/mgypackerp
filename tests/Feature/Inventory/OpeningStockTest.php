@@ -623,6 +623,7 @@ test('product select2 searches barcode returns image url unit metadata and safe 
         'unit' => $unit,
         'name' => 'Barcode Item',
         'barcode' => 'SCAN-OPEN-1',
+        'reorder_point' => '1250.5000',
         'image_path' => 'products/opening-stock.jpg',
     ]);
 
@@ -645,6 +646,7 @@ test('product select2 searches barcode returns image url unit metadata and safe 
 
     expect($details['doc_num'])->toBe($product->doc_num)
         ->and($details['barcode'])->toBe('SCAN-OPEN-1')
+        ->and($details['reorder_point'])->toBe('1,250.5')
         ->and($details)->not->toHaveKeys(['id', 'company_id']);
 });
 

@@ -9,6 +9,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Inventory\Models\OpeningStock;
@@ -21,6 +22,7 @@ class OpeningStockService
         private readonly CrudAuditService $audit,
         private readonly OperatingContextService $operatingContext,
         private readonly ProductImageResolver $productImages,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -234,7 +236,7 @@ class OpeningStockService
                 'line_no' => $index + 1,
                 'product_id' => $product->getKey(),
                 'product_snapshot' => $snapshot,
-                'quantity' => number_format((float) ($line['quantity'] ?? 0), 4, '.', ''),
+                'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
                 'notes' => $line['notes'] ?? null,
             ];
 

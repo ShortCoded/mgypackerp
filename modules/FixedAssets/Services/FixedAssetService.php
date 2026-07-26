@@ -18,6 +18,7 @@ use Modules\Core\Services\ArchiveFileUsageService;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -34,6 +35,7 @@ class FixedAssetService
         private readonly FixedAssetDepreciationCalculator $depreciationCalculator,
         private readonly FilePickerService $filePicker,
         private readonly ArchiveFileUsageService $fileUsages,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -178,21 +180,28 @@ class FixedAssetService
     private function values(array $data, int $companyId, Account $linkedAccount, Account $parentAccount): array
     {
         $root = $this->accounts->rootAccount(BusinessPartnerAccountService::FixedAsset);
-        $purchaseValue = $this->nullableFloat($data['purchase_value'] ?? null);
+        $purchaseValueDecimal = $this->numbers->normalizeToScale($data['purchase_value'] ?? null, 4);
+        $purchaseValue = $this->nullableFloat($purchaseValueDecimal);
         $isDepreciable = (bool) ($data['is_depreciable'] ?? true);
-        $salvageValue = $isDepreciable ? ($this->nullableFloat($data['salvage_value'] ?? null) ?? 0.0) : 0.0;
-        $previousDepreciation = $isDepreciable ? ($this->nullableFloat($data['previous_depreciation'] ?? null) ?? 0.0) : 0.0;
+        $salvageValueDecimal = $isDepreciable
+            ? ($this->numbers->normalizeToScale($data['salvage_value'] ?? null, 4) ?? '0.0000')
+            : '0.0000';
+        $previousDepreciationDecimal = $isDepreciable
+            ? ($this->numbers->normalizeToScale($data['previous_depreciation'] ?? null, 4) ?? '0.0000')
+            : '0.0000';
+        $previousDepreciation = (float) $previousDepreciationDecimal;
+        $hasPreviousDepreciation = ! $this->numbers->equivalent($previousDepreciationDecimal, 0);
         $entryType = (string) ($data['entry_type'] ?? FixedAsset::EntryTypeNewAsset);
         $currency = $this->modelByDocNum(Currency::class, $companyId, $data['currency_doc_num'] ?? null);
         $exchangeRate = $currency?->is_main
-            ? 1.0
-            : $this->nullableFloat($data['exchange_rate'] ?? null);
+            ? '1.000000'
+            : $this->numbers->normalizeToScale($data['exchange_rate'] ?? null, 6);
         $depreciationMethod = $isDepreciable
             ? (trim((string) ($data['depreciation_method'] ?? '')) ?: null)
             : null;
         [$usefulLife, $annualDepreciationRate, $expectedUsageUnits] = $this->depreciationValues($data, $isDepreciable, $depreciationMethod);
         $branchId = $this->idByDocNum(Branch::class, $companyId, $data['branch_doc_num'] ?? null);
-        $previousDepreciationUntilDate = $isDepreciable && $previousDepreciation > 0
+        $previousDepreciationUntilDate = $isDepreciable && $hasPreviousDepreciation
             ? ($data['previous_depreciation_until_date'] ?? null)
             : null;
 
@@ -214,22 +223,22 @@ class FixedAssetService
             'purchase_date' => $data['purchase_date'] ?? null,
             'acquisition_date' => $data['acquisition_date'] ?? null,
             'operation_date' => $data['operation_date'] ?? null,
-            'purchase_value' => $purchaseValue === null ? null : number_format($purchaseValue, 4, '.', ''),
-            'salvage_value' => number_format($salvageValue, 4, '.', ''),
-            'exchange_rate' => $exchangeRate === null ? null : number_format($exchangeRate, 6, '.', ''),
-            'previous_depreciation' => number_format($previousDepreciation, 4, '.', ''),
+            'purchase_value' => $purchaseValueDecimal,
+            'salvage_value' => $salvageValueDecimal,
+            'exchange_rate' => $exchangeRate,
+            'previous_depreciation' => $previousDepreciationDecimal,
             'previous_depreciation_until_date' => $previousDepreciationUntilDate,
             'depreciation_start_date' => $this->depreciationStartDate(
                 $isDepreciable,
                 $entryType,
                 $data['operation_date'] ?? null,
-                $previousDepreciation,
+                $hasPreviousDepreciation,
                 $previousDepreciationUntilDate,
             ),
             'net_value' => $purchaseValue === null ? null : number_format($purchaseValue - $previousDepreciation, 4, '.', ''),
-            'annual_depreciation_rate' => $annualDepreciationRate === null ? null : number_format($annualDepreciationRate, 4, '.', ''),
-            'expected_usage_units' => $expectedUsageUnits === null ? null : number_format($expectedUsageUnits, 4, '.', ''),
-            'useful_life' => $usefulLife === null ? null : number_format($usefulLife, 2, '.', ''),
+            'annual_depreciation_rate' => $annualDepreciationRate,
+            'expected_usage_units' => $expectedUsageUnits,
+            'useful_life' => $usefulLife,
             'is_depreciable' => $isDepreciable,
             'depreciation_method' => $depreciationMethod,
             'location_address' => $data['location_address'] ?? null,
@@ -352,7 +361,7 @@ class FixedAssetService
     }
 
     /**
-     * @return array{0: float|null, 1: float|null, 2: float|null}
+     * @return array{0: string|null, 1: string|null, 2: string|null}
      */
     private function depreciationValues(array $data, bool $isDepreciable, ?string $method): array
     {
@@ -360,20 +369,50 @@ class FixedAssetService
             return [null, null, null];
         }
 
-        $usefulLife = $this->nullableFloat($data['useful_life'] ?? null);
-        $annualDepreciationRate = $this->nullableFloat($data['annual_depreciation_rate'] ?? null);
-        $expectedUsageUnits = $this->nullableFloat($data['expected_usage_units'] ?? null);
+        $usefulLifeInput = $this->numbers->normalizeToScale($data['useful_life'] ?? null, 2);
+        $annualDepreciationRateInput = $this->numbers->normalizeToScale($data['annual_depreciation_rate'] ?? null, 4);
+        $expectedUsageUnitsInput = $this->numbers->normalizeToScale($data['expected_usage_units'] ?? null, 4);
+        [$usefulLife, $annualDepreciationRate, $expectedUsageUnits] = $this->depreciationCalculator->normalizedMethodInputs(
+            (string) $method,
+            $this->nullableFloat($usefulLifeInput),
+            $this->nullableFloat($annualDepreciationRateInput),
+            $this->nullableFloat($expectedUsageUnitsInput),
+        );
 
-        return $this->depreciationCalculator->normalizedMethodInputs((string) $method, $usefulLife, $annualDepreciationRate, $expectedUsageUnits);
+        $usesDirectUsefulLife = in_array($method, [
+            FixedAsset::DepreciationMethodStraightLine,
+            FixedAsset::DepreciationMethodDoubleDecliningBalance,
+            FixedAsset::DepreciationMethodSumOfYearsDigits,
+        ], true);
+        $usesDirectAnnualRate = in_array($method, [
+            FixedAsset::DepreciationMethodStraightLine,
+            FixedAsset::DepreciationMethodDecliningBalance,
+        ], true);
+
+        return [
+            $usefulLife === null
+                ? null
+                : ($usesDirectUsefulLife && $usefulLifeInput !== null
+                    ? $usefulLifeInput
+                    : number_format($usefulLife, 2, '.', '')),
+            $annualDepreciationRate === null
+                ? null
+                : ($usesDirectAnnualRate && $annualDepreciationRateInput !== null
+                    ? $annualDepreciationRateInput
+                    : number_format($annualDepreciationRate, 4, '.', '')),
+            $expectedUsageUnits === null
+                ? null
+                : ($expectedUsageUnitsInput ?? number_format($expectedUsageUnits, 4, '.', '')),
+        ];
     }
 
-    private function depreciationStartDate(bool $isDepreciable, string $entryType, ?string $operationDate, float $previousDepreciation, ?string $previousDepreciationUntilDate): ?string
+    private function depreciationStartDate(bool $isDepreciable, string $entryType, ?string $operationDate, bool $hasPreviousDepreciation, ?string $previousDepreciationUntilDate): ?string
     {
         if (! $isDepreciable) {
             return null;
         }
 
-        if ($entryType === FixedAsset::EntryTypeOpeningAsset && $previousDepreciation > 0 && $previousDepreciationUntilDate) {
+        if ($entryType === FixedAsset::EntryTypeOpeningAsset && $hasPreviousDepreciation && $previousDepreciationUntilDate) {
             return Carbon::parse($previousDepreciationUntilDate)->addDay()->toDateString();
         }
 

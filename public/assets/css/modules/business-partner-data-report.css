@@ -1,0 +1,127 @@
+.business-partner-data-report,
+.business-partner-data-report .report-filter-card,
+.business-partner-data-report .report-table-card,
+.business-partner-data-report .report-filter-actions,
+.business-partner-data-report .report-filter-field,
+.business-partner-data-report .report-filter-buttons {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.business-partner-data-report .report-filter-card .input-group,
+.business-partner-data-report .report-filter-card .report-filter-field > .form-control,
+.business-partner-data-report .report-filter-card .report-filter-field > .form-select,
+.business-partner-data-report .report-filter-card .select2-container {
+  max-width: 100%;
+  min-width: 0;
+  width: 100% !important;
+}
+
+.business-partner-data-report .report-date-input-group > .form-control,
+.business-partner-data-report .report-date-input-group .flatpickr-wrapper,
+.business-partner-data-report .report-date-input-group .erp-date-picker-wrapper {
+  flex: 1 1 auto;
+  max-width: 100%;
+  min-width: 0;
+  width: 1%;
+}
+
+.business-partner-data-report .report-date-input-group .flatpickr-wrapper,
+.business-partner-data-report .report-date-input-group .erp-date-picker-wrapper {
+  display: block;
+}
+
+.business-partner-data-report .report-date-input-group .flatpickr-wrapper > .form-control,
+.business-partner-data-report .report-date-input-group .erp-date-picker-wrapper > .form-control {
+  width: 100% !important;
+}
+
+.business-partner-data-report .business-partner-filter-group-heading {
+  align-items: center;
+  border-top: 1px solid var(--falcon-border-color);
+  color: var(--falcon-gray-700);
+  display: flex;
+  font-size: .74rem;
+  font-weight: 600;
+  gap: .5rem;
+  margin-top: .25rem;
+  padding-top: .35rem;
+}
+
+.business-partner-data-report .business-partner-filter-group-heading.is-first {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.business-partner-data-report .report-table-card .erp-datatable-scroll,
+.business-partner-data-report .report-table-card div.dataTables_wrapper,
+.business-partner-data-report .report-table-card .dt-container {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.business-partner-data-report .report-table-card .erp-datatable-scroll {
+  overflow-x: auto;
+}
+
+.business-partner-data-report .report-table-card .erp-datatable {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+.business-partner-data-report .report-table-card div.dataTables_wrapper > .row,
+.business-partner-data-report .report-table-card .dt-container > .row {
+  margin-inline: 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.business-partner-data-report .report-table-card div.dataTables_wrapper div.dataTables_length label,
+.business-partner-data-report .report-table-card div.dataTables_wrapper div.dataTables_filter label,
+.business-partner-data-report .report-table-card .dt-container .dt-length label,
+.business-partner-data-report .report-table-card .dt-container .dt-search label {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 0;
+}
+
+.business-partner-data-report .report-table-card div.dataTables_wrapper div.dataTables_filter input,
+.business-partner-data-report .report-table-card div.dataTables_wrapper div.dataTables_length select,
+.business-partner-data-report .report-table-card .dt-container .dt-search input,
+.business-partner-data-report .report-table-card .dt-container .dt-length select {
+  margin-inline-start: 0;
+  max-width: 100%;
+}
+
+.business-partner-data-report .report-table-card .dt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  justify-content: center;
+}
+
+.business-partner-data-report .erp-datatable tbody td.dt-ellipsis {
+  max-width: clamp(8rem, 18vw, 16rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.business-partner-data-report table.dataTable > tbody > tr.child ul.dtr-details {
+  width: 100%;
+}
+
+@media (max-width: 575.98px) {
+  .business-partner-data-report .report-filter-actions > .dropdown,
+  .business-partner-data-report .report-filter-actions > .btn,
+  .business-partner-data-report .report-filter-buttons > .btn {
+    flex: 1 1 100%;
+  }
+
+  .business-partner-data-report .report-filter-actions > .dropdown > .btn {
+    width: 100%;
+  }
+}

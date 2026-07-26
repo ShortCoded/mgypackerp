@@ -3,6 +3,8 @@
 return [
     'apply_filter' => 'تطبيق الفلتر',
     'apply_filters' => 'تطبيق الفلاتر',
+    'active_filters' => 'الفلاتر النشطة',
+    'all_records' => 'كل السجلات',
     'company' => 'الشركة',
     'details' => 'التفاصيل',
     'details_load_failed' => 'تعذر تحميل تفاصيل التقرير.',
@@ -13,6 +15,7 @@ return [
     'filters' => 'الفلاتر',
     'from_date' => 'من تاريخ',
     'generated_by' => 'تم الإنشاء بواسطة',
+    'generated_at' => 'تاريخ ووقت الإنشاء',
     'no_data' => 'لا توجد بيانات',
     'page' => 'صفحة',
     'pdf_limited' => 'تم تحديد ملف PDF بأول 500 سجل مطابق. استخدم الفلاتر لتقرير أضيق.',

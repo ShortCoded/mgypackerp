@@ -3,6 +3,7 @@
 @php
     use Illuminate\Support\Str;
     use Modules\Core\Services\DateFormatService;
+    use Modules\Core\Services\NumericFormatService;
     use Modules\Core\Services\ProductComponentUnitOptionsService;
     use Modules\Purchases\Models\PurchaseInvoice;
 
@@ -17,8 +18,8 @@
         default => __('purchase_invoices.create'),
     };
     $dates = app(DateFormatService::class);
+    $numbers = app(NumericFormatService::class);
     $unitOptions = app(ProductComponentUnitOptionsService::class);
-    $formatAmount = fn ($amount, $scale = 4) => rtrim(rtrim(number_format((float) $amount, $scale, '.', ''), '0'), '.') ?: '0';
     $dateValue = fn ($field, $default = null) => old($field, $default ? $dates->formatDate($default, '') : '');
     $plainDate = fn ($date) => $date ? $dates->formatDate($date, '') : '';
     $value = fn ($field, $default = '') => old($field, $isCreateLike && $mode !== 'clone' ? $default : ($record?->{$field} ?? $default));
@@ -57,7 +58,7 @@
 
     $lineRows = old('lines');
     if (! is_array($lineRows)) {
-        $lineRows = $record?->lines?->map(function ($line) use ($isCreateLike, $mode, $unitOptions, $formatAmount): array {
+        $lineRows = $record?->lines?->map(function ($line) use ($isCreateLike, $mode, $unitOptions, $numbers): array {
             $product = $line->product;
             $unit = $line->unit;
             $productSnapshot = is_array($line->product_snapshot) ? $line->product_snapshot : [];
@@ -76,15 +77,15 @@
                 'unit_doc_num' => $unit?->doc_num ?? $productSnapshot['unit_doc_num'] ?? null,
                 'unit_label' => $unitLabel,
                 'unit_options' => $product ? $unitOptions->options($product) : [],
-                'quantity' => $formatAmount($line->quantity),
-                'unit_price' => $formatAmount($line->unit_price),
+                'quantity' => $numbers->format($line->quantity),
+                'unit_price' => $numbers->format($line->unit_price),
                 'discount_type' => $line->discount_type ?: 'fixed',
-                'discount_value' => $formatAmount($line->discount_value),
-                'tax_rate' => $formatAmount($line->tax_rate),
-                'subtotal_amount' => $formatAmount($line->subtotal_amount),
-                'discount_amount' => $formatAmount($line->discount_amount),
-                'tax_amount' => $formatAmount($line->tax_amount),
-                'total_after_tax' => $formatAmount($line->total_after_tax),
+                'discount_value' => $numbers->format($line->discount_value),
+                'tax_rate' => $numbers->format($line->tax_rate),
+                'subtotal_amount' => $numbers->format($line->subtotal_amount),
+                'discount_amount' => $numbers->format($line->discount_amount),
+                'tax_amount' => $numbers->format($line->tax_amount),
+                'total_after_tax' => $numbers->format($line->total_after_tax),
                 'notes' => $line->notes,
             ];
         })->values()->all() ?? [];
@@ -112,7 +113,7 @@
 
     $scheduleRows = old('payment_schedules');
     if (! is_array($scheduleRows)) {
-        $scheduleRows = $record?->paymentSchedules?->map(function ($schedule) use ($isCreateLike, $mode, $dates, $formatAmount): array {
+        $scheduleRows = $record?->paymentSchedules?->map(function ($schedule) use ($isCreateLike, $mode, $dates, $numbers): array {
             $cashboxLabel = $schedule->cashbox ? trim(implode(' / ', array_filter([$schedule->cashbox->doc_num, $schedule->cashbox->name]))) : null;
             $bankLabel = $schedule->bankAccount ? trim(implode(' / ', array_filter([$schedule->bankAccount->doc_num, $schedule->bankAccount->bank_name, $schedule->bankAccount->account_name]))) : null;
             $voucher = $schedule->cashVoucher;
@@ -120,7 +121,7 @@
             return [
                 'public_id' => $isCreateLike || $mode === 'clone' ? null : $schedule->public_id,
                 'due_date' => $schedule->due_date ? $dates->formatDate($schedule->due_date, '') : null,
-                'amount' => $formatAmount($schedule->amount),
+                'amount' => $numbers->format($schedule->amount),
                 'payment_source_type' => $schedule->payment_source_type,
                 'cashbox_doc_num' => $schedule->cashbox?->doc_num,
                 'cashbox_label' => $cashboxLabel,
@@ -346,9 +347,9 @@
                         <div class="col-md-3">
                             <x-forms.label for="exchange_rate" :label="__('purchase_invoices.attributes.exchange_rate')" required />
                             @if($isReadonly)
-                                <x-forms.view-field for="exchange_rate" :value="$formatAmount($value('exchange_rate', 1), 6)" input-class="text-center" dir="ltr" />
+                                <x-forms.view-field for="exchange_rate" :value="$numbers->format($value('exchange_rate', 1))" input-class="text-center" dir="ltr" />
                             @else
-                                <input class="form-control text-center" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ old('exchange_rate', $formatAmount($record?->exchange_rate ?? 1, 6)) }}" dir="ltr" required>
+                                <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                         </div>
@@ -424,9 +425,9 @@
                         <div class="col-md-3">
                             <label class="form-label" for="header_discount_value">{{ __('purchase_invoices.attributes.header_discount_value') }}</label>
                             @if($isReadonly)
-                                <x-forms.view-field for="header_discount_value" :value="$formatAmount($value('header_discount_value', 0))" input-class="text-end" dir="ltr" />
+                                <x-forms.view-field for="header_discount_value" :value="$numbers->format($value('header_discount_value', 0))" input-class="text-end" dir="ltr" />
                             @else
-                                <input class="form-control text-end js-purchase-invoice-header-discount-value" id="header_discount_value" name="header_discount_value" type="number" min="0" step="0.0001" value="{{ old('header_discount_value', $formatAmount($record?->header_discount_value ?? 0)) }}" dir="ltr">
+                                <x-forms.numeric-input class="text-end js-purchase-invoice-header-discount-value" id="header_discount_value" name="header_discount_value" :value="old('header_discount_value', $record?->header_discount_value ?? 0)" :scale="4" min="0" step="0.0001" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="header_discount_value"></div>
                         </div>
@@ -521,17 +522,17 @@
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['quantity'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control text-end js-purchase-invoice-line-number js-purchase-invoice-quantity" name="lines[{{ $index }}][quantity]" type="number" min="0.0001" step="0.0001" value="{{ $line['quantity'] ?? '' }}" dir="ltr" required>
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                             @endif
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['unit_price'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" name="lines[{{ $index }}][unit_price]" type="number" min="0" step="0.0001" value="{{ $line['unit_price'] ?? '' }}" dir="ltr" required>
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                             @endif
                                         </td>
@@ -548,24 +549,24 @@
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['discount_value'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['discount_value'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control text-end js-purchase-invoice-line-number js-purchase-invoice-discount-value" name="lines[{{ $index }}][discount_value]" type="number" min="0" step="0.0001" value="{{ $line['discount_value'] ?? '0' }}" dir="ltr">
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-discount-value" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.discount_value"></div>
                                             @endif
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($line['tax_rate'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['tax_rate'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control text-end js-purchase-invoice-line-number js-purchase-invoice-tax-rate" name="lines[{{ $index }}][tax_rate]" type="number" min="0" max="100" step="0.0001" value="{{ $line['tax_rate'] ?? '0' }}" dir="ltr">
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-tax-rate" :name="'lines['.$index.'][tax_rate]'" :value="$line['tax_rate'] ?? 0" :scale="4" min="0" max="100" step="0.0001" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.tax_rate"></div>
                                             @endif
                                         </td>
-                                        <td class="text-end js-purchase-invoice-line-subtotal" dir="ltr">{{ $line['subtotal_amount'] ?? '0' }}</td>
-                                        <td class="text-end js-purchase-invoice-line-discount" dir="ltr">{{ $line['discount_amount'] ?? '0' }}</td>
-                                        <td class="text-end js-purchase-invoice-line-tax" dir="ltr">{{ $line['tax_amount'] ?? '0' }}</td>
-                                        <td class="text-end js-purchase-invoice-line-total fw-semibold" dir="ltr">{{ $line['total_after_tax'] ?? '0' }}</td>
+                                        <td class="text-end js-purchase-invoice-line-subtotal" dir="ltr">{{ $numbers->format($line['subtotal_amount'] ?? 0) }}</td>
+                                        <td class="text-end js-purchase-invoice-line-discount" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</td>
+                                        <td class="text-end js-purchase-invoice-line-tax" dir="ltr">{{ $numbers->format($line['tax_amount'] ?? 0) }}</td>
+                                        <td class="text-end js-purchase-invoice-line-total fw-semibold" dir="ltr">{{ $numbers->format($line['total_after_tax'] ?? 0) }}</td>
                                         <td>
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
@@ -602,35 +603,35 @@
                                     <tbody>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.subtotal') }}</th>
-                                            <td class="text-end js-purchase-invoice-subtotal" dir="ltr">{{ $formatAmount($record?->subtotal_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-subtotal" dir="ltr">{{ $numbers->format($record?->subtotal_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.line_discounts') }}</th>
-                                            <td class="text-end js-purchase-invoice-line-discounts" dir="ltr">{{ $formatAmount($record?->line_discount_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-line-discounts" dir="ltr">{{ $numbers->format($record?->line_discount_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.header_discount') }}</th>
-                                            <td class="text-end js-purchase-invoice-header-discount" dir="ltr">{{ $formatAmount($record?->header_discount_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-header-discount" dir="ltr">{{ $numbers->format($record?->header_discount_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.taxable') }}</th>
-                                            <td class="text-end js-purchase-invoice-taxable" dir="ltr">{{ $formatAmount($record?->taxable_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-taxable" dir="ltr">{{ $numbers->format($record?->taxable_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.tax') }}</th>
-                                            <td class="text-end js-purchase-invoice-tax" dir="ltr">{{ $formatAmount($record?->tax_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-tax" dir="ltr">{{ $numbers->format($record?->tax_amount ?? 0) }}</td>
                                         </tr>
                                         <tr class="fw-bold">
                                             <th>{{ __('purchase_invoices.totals.net_total') }}</th>
-                                            <td class="text-end js-purchase-invoice-total" dir="ltr">{{ $formatAmount($record?->total_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-total" dir="ltr">{{ $numbers->format($record?->total_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.paid') }}</th>
-                                            <td class="text-end js-purchase-invoice-paid" dir="ltr">{{ $formatAmount($record?->paid_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-paid" dir="ltr">{{ $numbers->format($record?->paid_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.remaining') }}</th>
-                                            <td class="text-end js-purchase-invoice-remaining" dir="ltr">{{ $formatAmount($record?->remaining_amount ?? 0) }}</td>
+                                            <td class="text-end js-purchase-invoice-remaining" dir="ltr">{{ $numbers->format($record?->remaining_amount ?? 0) }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -684,9 +685,9 @@
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $formatAmount($schedule['amount'] ?? 0) }}</div>
+                                                <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['amount'] ?? 0) }}</div>
                                             @else
-                                                <input class="form-control form-control-sm text-end js-purchase-invoice-schedule-amount" name="payment_schedules[{{ $index }}][amount]" type="number" min="0.0001" step="0.0001" value="{{ $schedule['amount'] ?? '' }}" dir="ltr">
+                                                <x-forms.numeric-input class="form-control-sm text-end js-purchase-invoice-schedule-amount" :name="'payment_schedules['.$index.'][amount]'" :value="$schedule['amount'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.amount"></div>
                                             @endif
                                         </td>

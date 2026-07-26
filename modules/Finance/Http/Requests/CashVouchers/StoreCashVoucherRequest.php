@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
@@ -14,6 +15,8 @@ use Modules\Finance\Models\CashVoucher;
 
 class StoreCashVoucherRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         $action = $this->filled('clone_source_token') ? 'clone' : 'create';
@@ -23,12 +26,18 @@ class StoreCashVoucherRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'amount',
+            'lines.*.amount',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn ($line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'account_doc_num' => isset($line['account_doc_num']) ? trim((string) $line['account_doc_num']) : null,
-                'amount' => isset($line['amount']) ? str_replace(',', '', (string) $line['amount']) : null,
+                'amount' => isset($line['amount']) ? trim((string) $line['amount']) : null,
                 'description' => isset($line['description']) ? trim((string) $line['description']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
             ])
@@ -40,8 +49,8 @@ class StoreCashVoucherRequest extends FormRequest
             'cashbox_doc_num' => $this->filled('cashbox_doc_num') ? trim((string) $this->input('cashbox_doc_num')) : null,
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
             'voucher_date' => $this->filled('voucher_date') ? trim((string) $this->input('voucher_date')) : null,
-            'exchange_rate' => $this->filled('exchange_rate') ? str_replace(',', '', (string) $this->input('exchange_rate')) : 1,
-            'amount' => $this->filled('amount') ? str_replace(',', '', (string) $this->input('amount')) : null,
+            'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : 1,
+            'amount' => $this->filled('amount') ? trim((string) $this->input('amount')) : null,
             'person_name' => $this->filled('person_name') ? trim((string) $this->input('person_name')) : null,
             'person_national_id' => $this->filled('person_national_id') ? trim((string) $this->input('person_national_id')) : null,
             'person_phone' => $this->filled('person_phone') ? trim((string) $this->input('person_phone')) : null,
@@ -84,8 +93,8 @@ class StoreCashVoucherRequest extends FormRequest
                         ->where('status', 'active')
                         ->whereNull('deleted_at')),
             ],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'amount' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
+            'amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'person_name' => ['required', 'string', 'max:255'],
             'person_national_id' => ['nullable', 'string', 'max:50'],
             'person_phone' => ['nullable', 'string', 'max:50'],
@@ -100,7 +109,7 @@ class StoreCashVoucherRequest extends FormRequest
                         ->where('company_id', $this->input('company_id'))
                         ->whereNull('deleted_at')),
             ],
-            'lines.*.amount' => ['required', 'numeric', 'gt:0'],
+            'lines.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
@@ -319,7 +328,7 @@ class StoreCashVoucherRequest extends FormRequest
 
     private function toUnits(mixed $value): int
     {
-        $value = trim(str_replace(',', '', (string) $value));
+        $value = trim((string) $value);
         $negative = str_starts_with($value, '-');
         $value = ltrim($value, '-');
         [$whole, $fraction] = array_pad(explode('.', $value, 2), 2, '');

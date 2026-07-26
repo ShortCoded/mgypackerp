@@ -138,8 +138,8 @@
             return 'align-middle white-space-nowrap dt-date';
         }
 
-        if (['debit_amount', 'credit_amount', 'amount', 'exchange_rate', 'distributed_amount', 'remaining_amount', 'source_amount', 'target_amount'].indexOf(column) !== -1) {
-            return 'align-middle white-space-nowrap text-end';
+        if (['debit_amount', 'credit_amount', 'total_debit', 'total_credit', 'amount', 'exchange_rate', 'distributed_amount', 'remaining_amount', 'source_amount', 'target_amount'].indexOf(column) !== -1) {
+            return 'align-middle white-space-nowrap dt-number text-end';
         }
 
         return 'align-middle white-space-nowrap dt-text dt-ellipsis';

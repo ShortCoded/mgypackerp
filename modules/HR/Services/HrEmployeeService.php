@@ -17,6 +17,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Events\HrEmployeeCreated;
 use Modules\HR\Models\HrBiometricDevice;
@@ -89,6 +90,7 @@ class HrEmployeeService
     public function __construct(
         private readonly DocumentNumberService $documentNumberService,
         private readonly CrudAuditService $crudAudit,
+        private readonly NumericFormatService $numericFormatter,
     ) {}
 
     /**
@@ -379,7 +381,8 @@ class HrEmployeeService
 
             $values[$field] = match ($field) {
                 'full_name' => $this->normalizeString((string) $data[$field]),
-                'basic_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate' => $this->normalizeNullableDecimal($data[$field] ?? null),
+                'basic_salary' => $this->normalizeNullableDecimal($data[$field] ?? null, 2),
+                'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate' => $this->normalizeNullableDecimal($data[$field] ?? null, 4),
                 'exchange_rate' => $this->normalizeNullableDecimal($data[$field] ?? null, 6),
                 'graduation_year', 'allow_late_minutes', 'allow_early_leave_minutes' => $this->normalizeNullableNumber($data[$field] ?? null),
                 'attendance_tracking_enabled', 'overtime_enabled' => (bool) ($data[$field] ?? false),
@@ -645,7 +648,7 @@ class HrEmployeeService
         $changes = [];
 
         foreach ($values as $field => $value) {
-            if ($this->comparable($model->getAttribute($field)) !== $this->comparable($value)) {
+            if ($this->comparable($field, $model->getAttribute($field)) !== $this->comparable($field, $value)) {
                 $changes[$field] = [
                     'old' => $model->getAttribute($field),
                     'new' => $value,
@@ -665,7 +668,7 @@ class HrEmployeeService
         $changes = [];
 
         foreach ($newValues as $field => $newValue) {
-            if ($this->comparable($employee->getAttribute($field)) === $this->comparable($newValue)) {
+            if ($this->comparable($field, $employee->getAttribute($field)) === $this->comparable($field, $newValue)) {
                 continue;
             }
 
@@ -691,7 +694,7 @@ class HrEmployeeService
         $fields = [];
 
         foreach ($newValues as $field => $newValue) {
-            if ($this->comparable($employee->getAttribute($field)) !== $this->comparable($newValue)) {
+            if ($this->comparable($field, $employee->getAttribute($field)) !== $this->comparable($field, $newValue)) {
                 $fields[] = $field;
             }
         }
@@ -699,13 +702,25 @@ class HrEmployeeService
         return $fields;
     }
 
-    private function comparable(mixed $value): string
+    private function comparable(string $field, mixed $value): string
     {
         if ($value instanceof DateTimeInterface) {
             return $value->format('Y-m-d');
         }
 
-        return is_numeric($value) ? (string) (float) $value : trim((string) $value);
+        if (in_array($field, [
+            'basic_salary',
+            'exchange_rate',
+            'weekly_wage',
+            'daily_wage',
+            'hourly_wage',
+            'shift_wage',
+            'piece_rate',
+        ], true)) {
+            return $this->numericFormatter->normalize($value) ?? '';
+        }
+
+        return trim((string) $value);
     }
 
     private function normalizeString(string $value): string
@@ -729,13 +744,13 @@ class HrEmployeeService
         return (int) $value;
     }
 
-    private function normalizeNullableDecimal(mixed $value, int $precision = 2): ?float
+    private function normalizeNullableDecimal(mixed $value, int $precision): ?string
     {
         if ($value === null || trim((string) $value) === '') {
             return null;
         }
 
-        return round((float) str_replace(',', '', (string) $value), $precision);
+        return $this->numericFormatter->normalizeToScale($value, $precision);
     }
 
     private function ensureEmployeeCanBeRestored(HrEmployee $employee): void

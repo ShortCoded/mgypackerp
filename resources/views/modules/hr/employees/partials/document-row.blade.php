@@ -1,5 +1,6 @@
 @php
     $settings = app(\Modules\Core\Services\SettingService::class);
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $fileSize = $document->size ? number_format(((int) $document->size) / 1024, 1).' KB' : __('common.empty_value');
     $documentType = $document->documentType?->name
         ?: (($document->document_type ?: null) ? __('hr.employees.documents.types.' . ($document->document_type ?: 'other')) : __('common.empty_value'));
@@ -13,7 +14,7 @@
     <td class="white-space-nowrap">{{ $settings->formatDate($document->issue_date, '') }}</td>
     <td class="white-space-nowrap">{{ $fileSize }}</td>
     <td class="white-space-nowrap">{{ $settings->formatDate($document->expires_at, '') }}</td>
-    <td class="white-space-nowrap">{{ $document->alert_before_expiry_days ?? __('common.empty_value') }}</td>
+    <td class="white-space-nowrap text-end" dir="ltr">{{ $document->alert_before_expiry_days === null ? __('common.empty_value') : $numbers->format($document->alert_before_expiry_days) }}</td>
     <td>{{ $document->notes ?: __('common.empty_value') }}</td>
     <td class="white-space-nowrap text-end">
         @can('hr.employees.documents.view')

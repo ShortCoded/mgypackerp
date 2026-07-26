@@ -2,14 +2,18 @@
 
 namespace Modules\Core\Services\Reports;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\Select2ResponseService;
 
 class ProductDataReport
@@ -24,11 +28,15 @@ class ProductDataReport
 
     public const ItemScopeRawMaterials = 'raw_materials';
 
+    public const ItemScopePackagingMaterials = 'packaging_materials';
+
     public function __construct(
         private readonly OperatingCompanyContextService $companyContext,
         private readonly DataTableSearchService $searchService,
         private readonly Select2ResponseService $select2,
         private readonly DateFormatService $dates,
+        private readonly NumericFormatService $numbers,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     /**
@@ -97,6 +105,10 @@ class ProductDataReport
                 'component_equivalent_units.name as component_equivalent_unit_name',
                 DB::raw('COALESCE(component_units.doc_num, component_product_units.doc_num) as component_unit_doc_num'),
                 DB::raw('COALESCE(component_units.name, component_product_units.name) as component_unit_name'),
+            ])
+            ->withCasts([
+                'component_quantity' => 'decimal:8',
+                'component_equivalent_value' => 'decimal:6',
             ])
             ->withCount('components');
 
@@ -236,18 +248,61 @@ class ProductDataReport
      */
     public function map(Product $row, array $filters = []): array
     {
+        $display = $this->row($row);
+
         if ($this->mode($filters) === self::ModeDetailed) {
             return [
-                (string) $row->doc_num,
-                (string) $row->name,
+                $display['doc_num'],
+                $display['name'],
+                $display['item_classification'],
+                $display['component_doc_num'],
+                $display['component_name'],
+                $display['component_classification'],
+                $display['component_quantity'],
+                $display['component_unit'],
+                $display['component_equivalent'],
+                $display['component_notes'],
+            ];
+        }
+
+        return [
+            $display['doc_num'],
+            $display['name'],
+            $display['item_classification'],
+            $display['barcode'],
+            $display['unit'],
+            $display['category'],
+            $display['group'],
+            $display['model'],
+            $display['size'],
+            $display['color'],
+            $display['decal'],
+            $display['origin_country'],
+            $display['reorder_point'],
+            $display['equivalent'],
+            $display['status'],
+            $display['components_count'],
+            $display['created_at'],
+        ];
+    }
+
+    /**
+     * @return list<mixed>
+     */
+    public function exportMap(Product $row, array $filters = []): array
+    {
+        if ($this->mode($filters) === self::ModeDetailed) {
+            return [
+                $this->plainText($row->doc_num),
+                $this->plainText($row->name),
                 $this->classificationLabel($row->item_classification),
-                (string) ($row->component_doc_num ?? ''),
-                (string) ($row->component_name ?? ''),
+                $this->plainText($row->component_doc_num),
+                $this->plainText($row->component_name),
                 $this->classificationLabel($row->component_classification ?? null),
-                $row->component_quantity === null ? null : (float) $row->component_quantity,
+                $this->canonicalDecimal($row->component_quantity ?? null),
                 $this->lookupLabel($row->component_unit_doc_num ?? null, $row->component_unit_name ?? null),
-                $this->equivalentLabel($row->component_equivalent_value ?? null, $row->component_equivalent_unit_doc_num ?? null, $row->component_equivalent_unit_name ?? null),
-                (string) ($row->component_notes ?? ''),
+                $this->canonicalEquivalentLabel($row->component_equivalent_value ?? null, $row->component_equivalent_unit_doc_num ?? null, $row->component_equivalent_unit_name ?? null),
+                $this->plainText($row->component_notes),
             ];
         }
 
@@ -266,8 +321,8 @@ class ProductDataReport
             $display['color'],
             $display['decal'],
             $display['origin_country'],
-            $row->reorder_point === null ? null : (float) $row->reorder_point,
-            $row->equivalent_value === null ? '' : $display['equivalent'],
+            $this->canonicalDecimal($row->reorder_point ?? null),
+            $this->canonicalEquivalentLabel($row->equivalent_value ?? null, $row->equivalent_unit_doc_num ?? null, $row->equivalent_unit_name ?? null),
             $display['status'],
             (int) ($row->components_count ?? 0),
             $display['created_at'],
@@ -280,10 +335,10 @@ class ProductDataReport
     public function row(Product $row): array
     {
         return [
-            'doc_num' => (string) $row->doc_num,
-            'name' => (string) $row->name,
+            'doc_num' => $this->plainText($row->doc_num),
+            'name' => $this->plainText($row->name),
             'item_classification' => $this->classificationLabel($row->item_classification),
-            'barcode' => (string) ($row->barcode ?? ''),
+            'barcode' => $this->plainText($row->barcode),
             'unit' => $this->lookupLabel($row->unit_doc_num ?? null, $row->unit_name ?? null),
             'category' => $this->lookupLabel($row->category_doc_num ?? null, $row->category_name ?? null),
             'group' => $this->lookupLabel($row->group_doc_num ?? null, $row->group_name ?? null),
@@ -292,17 +347,17 @@ class ProductDataReport
             'color' => $this->lookupLabel($row->color_doc_num ?? null, $row->color_name ?? null),
             'decal' => $this->lookupLabel($row->decal_doc_num ?? null, $row->decal_name ?? null),
             'origin_country' => $this->lookupLabel($row->origin_country_doc_num ?? null, $row->origin_country_name ?? null),
-            'reorder_point' => $this->quantityLabel($row->reorder_point ?? null, 4),
+            'reorder_point' => $this->quantityLabel($row->reorder_point ?? null),
             'equivalent' => $this->equivalentLabel($row->equivalent_value ?? null, $row->equivalent_unit_doc_num ?? null, $row->equivalent_unit_name ?? null),
             'status' => $this->statusLabel($row),
-            'components_count' => (int) ($row->components_count ?? 0),
-            'component_doc_num' => (string) ($row->component_doc_num ?? ''),
-            'component_name' => (string) ($row->component_name ?? ''),
+            'components_count' => $this->numbers->format((int) ($row->components_count ?? 0)),
+            'component_doc_num' => $this->plainText($row->component_doc_num),
+            'component_name' => $this->plainText($row->component_name),
             'component_classification' => $this->classificationLabel($row->component_classification ?? null),
-            'component_quantity' => $this->quantityLabel($row->component_quantity ?? null, 8),
+            'component_quantity' => $this->quantityLabel($row->component_quantity ?? null),
             'component_unit' => $this->lookupLabel($row->component_unit_doc_num ?? null, $row->component_unit_name ?? null),
             'component_equivalent' => $this->equivalentLabel($row->component_equivalent_value ?? null, $row->component_equivalent_unit_doc_num ?? null, $row->component_equivalent_unit_name ?? null),
-            'component_notes' => (string) ($row->component_notes ?? ''),
+            'component_notes' => $this->plainText($row->component_notes),
             'created_at' => $this->dates->formatDateTime($row->created_at, ''),
         ];
     }
@@ -373,8 +428,9 @@ class ProductDataReport
     public function classificationOptions(array $filters = []): array
     {
         $classifications = match ($this->itemScope($filters)) {
-            self::ItemScopeProducts => Product::nonRawItemClassifications(),
+            self::ItemScopeProducts => Product::productItemClassifications(),
             self::ItemScopeRawMaterials => [Product::ClassificationRawMaterial],
+            self::ItemScopePackagingMaterials => [Product::ClassificationPackaging],
             default => Product::itemClassifications(),
         };
 
@@ -404,7 +460,7 @@ class ProductDataReport
     {
         $scope = $this->stringFilter($filters['item_scope'] ?? null);
 
-        return in_array($scope, [self::ItemScopeAll, self::ItemScopeProducts, self::ItemScopeRawMaterials], true)
+        return in_array($scope, [self::ItemScopeAll, self::ItemScopeProducts, self::ItemScopeRawMaterials, self::ItemScopePackagingMaterials], true)
             ? $scope
             : self::ItemScopeAll;
     }
@@ -422,8 +478,28 @@ class ProductDataReport
         };
 
         $query = $this->companyContext->applyCompanyScope($query, 'products');
+        $scope = $this->itemScope($filters);
+        $user = request()->user();
 
-        return $this->applyItemScope($query, $this->itemScope($filters));
+        if ($user instanceof User) {
+            if ($scope === self::ItemScopeAll) {
+                $query = $this->applyCombinedVisibility($query, $user);
+            } else {
+                $query = $this->visibility->applyToEloquent($query, $user, $scope);
+            }
+        }
+
+        return $this->applyItemScope($query, $scope);
+    }
+
+    /** @param Builder<Product> $query @return Builder<Product> */
+    private function applyCombinedVisibility(Builder $query, User $user): Builder
+    {
+        return $this->visibility->applyAnyScreenToEloquent($query, $user, [
+            self::ItemScopeProducts,
+            self::ItemScopeRawMaterials,
+            self::ItemScopePackagingMaterials,
+        ]);
     }
 
     /**
@@ -684,6 +760,9 @@ class ProductDataReport
         $companyId = $this->companyContext->requireCompanyId($request);
         $selectedDocNum = $request->string('selected_doc_num')->trim()->toString();
         $search = $request->input('q', $request->input('term'));
+        $scope = $onlyComponents
+            ? self::ItemScopeAll
+            : $this->itemScope(['item_scope' => $request->input('item_scope')]);
         $query = Product::query()
             ->active()
             ->forCompany($companyId)
@@ -701,10 +780,18 @@ class ProductDataReport
             ->orderBy('products.name')
             ->orderBy('products.doc_number');
 
+        $user = $request->user();
+
+        if ($user instanceof User) {
+            $query = $scope === self::ItemScopeAll
+                ? $this->applyCombinedVisibility($query, $user)
+                : $this->visibility->applyToEloquent($query, $user, $scope);
+        }
+
         if ($onlyComponents) {
             $query->whereHas('usedInComponents', fn (Builder $query): Builder => $query->where('product_components.company_id', $companyId));
         } else {
-            $this->applyItemScope($query, $this->itemScope(['item_scope' => $request->input('item_scope')]));
+            $this->applyItemScope($query, $scope);
         }
 
         if ($selectedDocNum !== '') {
@@ -790,7 +877,16 @@ class ProductDataReport
 
     private function lookupLabel(mixed $docNum, mixed $name): string
     {
-        return trim(implode(' / ', array_filter([(string) $docNum, (string) $name])));
+        return trim(implode(' / ', array_filter([$this->plainText($docNum), $this->plainText($name)])));
+    }
+
+    private function plainText(mixed $value): string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return '';
+        }
+
+        return Str::squish(strip_tags(html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
     }
 
     private function classificationLabel(mixed $classification): string
@@ -824,20 +920,41 @@ class ProductDataReport
         }
 
         return trim(implode(' ', array_filter([
-            $this->quantityLabel($value, 6),
+            $this->quantityLabel($value),
             $this->lookupLabel($unitDocNum, $unitName),
         ])));
     }
 
-    private function quantityLabel(mixed $value, int $precision): string
+    private function quantityLabel(mixed $value): string
     {
         if ($value === null || trim((string) $value) === '') {
             return '';
         }
 
-        $formatted = number_format((float) $value, $precision, '.', '');
+        return $this->numbers->format($value);
+    }
 
-        return rtrim(rtrim($formatted, '0'), '.') ?: '0';
+    private function canonicalDecimal(mixed $value): ?string
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        return $this->numbers->normalize($value);
+    }
+
+    private function canonicalEquivalentLabel(mixed $value, mixed $unitDocNum, mixed $unitName): string
+    {
+        $decimal = $this->canonicalDecimal($value);
+
+        if ($decimal === null) {
+            return '';
+        }
+
+        return trim(implode(' ', array_filter([
+            $decimal,
+            $this->lookupLabel($unitDocNum, $unitName),
+        ])));
     }
 
     private function stringFilter(mixed $value): ?string
@@ -858,8 +975,9 @@ class ProductDataReport
         }
 
         return match ($scope) {
-            self::ItemScopeProducts => in_array($classification, Product::nonRawItemClassifications(), true),
+            self::ItemScopeProducts => in_array($classification, Product::productItemClassifications(), true),
             self::ItemScopeRawMaterials => $classification === Product::ClassificationRawMaterial,
+            self::ItemScopePackagingMaterials => $classification === Product::ClassificationPackaging,
             default => true,
         };
     }
@@ -871,8 +989,9 @@ class ProductDataReport
     private function applyItemScope(Builder $query, string $scope): Builder
     {
         return match ($scope) {
-            self::ItemScopeProducts => $query->withoutRawMaterials(),
+            self::ItemScopeProducts => $query->productItems(),
             self::ItemScopeRawMaterials => $query->rawMaterials(),
+            self::ItemScopePackagingMaterials => $query->packagingMaterials(),
             default => $query,
         };
     }

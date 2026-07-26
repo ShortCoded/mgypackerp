@@ -2,6 +2,7 @@
 
 @php
     use Modules\Core\Services\FilePickerService;
+    use Modules\Core\Services\NumericFormatService;
     use Modules\Core\Services\OperatingCompanyContextService;
     use Modules\FixedAssets\Services\FixedAssetImageResolver;
 
@@ -11,6 +12,7 @@
     $title = __("fixed_assets.{$mode}");
     $fixedAssetClass = \Modules\FixedAssets\Models\FixedAsset::class;
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
+    $numbers = app(NumericFormatService::class);
     $formatDate = fn ($date) => $dateFormatService->formatDate($date, '');
     $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $linkedAccount = $record?->account;
@@ -24,23 +26,16 @@
     $hallOption = $record?->branchHall ? ['id' => $record->branchHall->public_uuid, 'text' => $record->branchHall->name] : null;
     $costCenterOption = $record?->costCenter ? ['id' => $record->costCenter->doc_num, 'text' => $record->costCenter->codeNameLabel()] : null;
     $currencyOption = $record?->currency ? ['id' => $record->currency->doc_num, 'text' => trim(implode(' / ', array_filter([$record->currency->code, $record->currency->name])))] : ($defaults['currency_option'] ?? null);
-    $formatNumber = function ($number, int $precision = 6): string {
-        if ($number === null || $number === '') {
-            return '';
-        }
-
-        return rtrim(rtrim(number_format((float) $number, $precision, '.', ''), '0'), '.') ?: '0';
-    };
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $dateValue = fn ($field) => old($field, $record?->{$field} ? $formatDate($record->{$field}) : ($field === 'asset_date' ? ($defaults['asset_date'] ?? '') : ''));
-    $numericValue = fn ($field, $precision = 6, $default = '') => old($field, null) !== null ? old($field) : $formatNumber($record?->{$field} ?? $default, $precision);
+    $numericValue = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $entryTypeValue = old('entry_type', $record?->entry_type ?? $fixedAssetClass::EntryTypeNewAsset);
     $isDepreciableValue = old('is_depreciable', ($record?->is_depreciable ?? true) ? '1' : '0');
     $isDepreciableSelected = (string) $isDepreciableValue === '1';
     $depreciationMethodValue = old('depreciation_method', $record?->depreciation_method ?? ($isDepreciableSelected ? $fixedAssetClass::DepreciationMethodStraightLine : ''));
-    $usefulLifeValue = $numericValue('useful_life', 6);
-    $annualDepreciationRateValue = $numericValue('annual_depreciation_rate', 6);
-    $expectedUsageUnitsValue = $numericValue('expected_usage_units', 4);
+    $usefulLifeValue = $numericValue('useful_life');
+    $annualDepreciationRateValue = $numericValue('annual_depreciation_rate');
+    $expectedUsageUnitsValue = $numericValue('expected_usage_units');
     $requiresUsefulLife = $isDepreciableSelected
         && in_array($depreciationMethodValue, [
             $fixedAssetClass::DepreciationMethodStraightLine,
@@ -51,7 +46,8 @@
     $requiresAnnualDepreciationRate = $isDepreciableSelected && $depreciationMethodValue === $fixedAssetClass::DepreciationMethodDecliningBalance;
     $requiresExpectedUsageUnits = $isDepreciableSelected && $depreciationMethodValue === $fixedAssetClass::DepreciationMethodUnitsOfProduction;
     $previousDepreciationRaw = old('previous_depreciation', $record?->previous_depreciation ?? '');
-    $previousDepreciationNumeric = (float) str_replace(',', '', (string) $previousDepreciationRaw);
+    $normalizedPreviousDepreciation = $numbers->normalizeForValidation($previousDepreciationRaw);
+    $previousDepreciationNumeric = is_numeric($normalizedPreviousDepreciation) ? (float) $normalizedPreviousDepreciation : 0.0;
     $hasPreviousDepreciation = $previousDepreciationNumeric > 0;
     $selectedImagePublicId = ! $isView ? trim((string) old('image_archive_file_doc_num', '')) : '';
     $removeImageRequested = ! $isView && filter_var(old('remove_image', false), FILTER_VALIDATE_BOOL);
@@ -358,9 +354,9 @@
                             <div class="col-md-4">
                                 <x-forms.label for="purchase_value" :label="__('fixed_assets.attributes.purchase_value')" required />
                                 @if($isView)
-                                    <x-forms.view-field for="purchase_value" :value="$numericValue('purchase_value', 4)" input-class="text-center" />
+                                    <x-forms.view-field for="purchase_value" :value="$numbers->format($numericValue('purchase_value'))" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-money" id="purchase_value" name="purchase_value" type="number" min="0" step="0.0001" value="{{ $numericValue('purchase_value', 4) }}" required>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-money" id="purchase_value" name="purchase_value" :value="$numericValue('purchase_value')" :scale="4" min="0.0001" step="0.0001" required />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="purchase_value"></div>
                             </div>
@@ -380,9 +376,9 @@
                             <div class="col-md-4">
                                 <x-forms.label for="exchange_rate" :label="__('fixed_assets.attributes.exchange_rate')" required />
                                 @if($isView)
-                                    <x-forms.view-field for="exchange_rate" :value="$numericValue('exchange_rate', 6)" input-class="text-center" />
+                                    <x-forms.view-field for="exchange_rate" :value="$numbers->format($numericValue('exchange_rate', $defaults['exchange_rate'] ?? ''))" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-exchange-rate" id="exchange_rate" name="exchange_rate" type="number" min="0" step="0.000001" value="{{ $numericValue('exchange_rate', 6, $defaults['exchange_rate'] ?? '') }}" required>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-exchange-rate" id="exchange_rate" name="exchange_rate" :value="$numericValue('exchange_rate', $defaults['exchange_rate'] ?? '')" :scale="6" min="0.000001" step="0.000001" required />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="exchange_rate"></div>
                             </div>
@@ -423,9 +419,9 @@
                                     <span @class(['text-danger ms-1 js-depreciable-required-marker', 'd-none' => ! $isDepreciableSelected])>*</span>
                                 </label>
                                 @if($isView)
-                                    <x-forms.view-field for="salvage_value" :value="$numericValue('salvage_value', 4, 0)" input-class="text-center" />
+                                    <x-forms.view-field for="salvage_value" :value="$numbers->format($numericValue('salvage_value', 0))" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-money js-fixed-asset-depreciation-control js-fixed-asset-salvage-value" id="salvage_value" name="salvage_value" type="number" min="0" step="0.0001" value="{{ $numericValue('salvage_value', 4, 0) }}" @required($isDepreciableSelected) @disabled(! $isDepreciableSelected)>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-money js-fixed-asset-depreciation-control js-fixed-asset-salvage-value" id="salvage_value" name="salvage_value" :value="$numericValue('salvage_value', 0)" :scale="4" min="0" step="0.0001" :required="$isDepreciableSelected" :disabled="! $isDepreciableSelected" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="salvage_value"></div>
                             </div>
@@ -436,9 +432,9 @@
                                     <span @class(['text-danger ms-1 js-opening-asset-required-marker', 'd-none' => ! $isDepreciableSelected || $entryTypeValue !== $fixedAssetClass::EntryTypeOpeningAsset])>*</span>
                                 </label>
                                 @if($isView)
-                                    <x-forms.view-field for="previous_depreciation" :value="$numericValue('previous_depreciation', 4)" input-class="text-center" />
+                                    <x-forms.view-field for="previous_depreciation" :value="$numbers->format($numericValue('previous_depreciation'))" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-money js-fixed-asset-depreciation-control js-fixed-asset-previous-depreciation" id="previous_depreciation" name="previous_depreciation" type="number" min="0" step="0.0001" value="{{ $numericValue('previous_depreciation', 4) }}" @required($isDepreciableSelected && $entryTypeValue === $fixedAssetClass::EntryTypeOpeningAsset) @disabled(! $isDepreciableSelected)>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-money js-fixed-asset-depreciation-control js-fixed-asset-previous-depreciation" id="previous_depreciation" name="previous_depreciation" :value="$numericValue('previous_depreciation')" :scale="4" min="0" step="0.0001" :required="$isDepreciableSelected && $entryTypeValue === $fixedAssetClass::EntryTypeOpeningAsset" :disabled="! $isDepreciableSelected" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="previous_depreciation"></div>
                             </div>
@@ -458,7 +454,7 @@
 
                             <div class="col-md-4">
                                 <label class="form-label" for="net_value">{{ __('fixed_assets.attributes.net_value') }}</label>
-                                <input class="text-center form-control js-fixed-asset-net-value" id="net_value" type="text" value="{{ $numericValue('net_value', 4) }}" readonly>
+                                <input class="text-center form-control js-fixed-asset-net-value" id="net_value" type="text" value="{{ $numbers->format($numericValue('net_value')) }}" dir="ltr" readonly>
                             </div>
 
                             @if($isView)
@@ -478,7 +474,7 @@
                                 @if($isView)
                                     <x-forms.view-field for="useful_life" :value="$usefulLifeValue" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-useful-life js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="useful_life" name="useful_life" type="number" min="0" step="0.01" value="{{ $usefulLifeValue }}" @required($requiresUsefulLife) @disabled(! $isDepreciableSelected || ! in_array($depreciationMethodValue, [$fixedAssetClass::DepreciationMethodStraightLine, $fixedAssetClass::DepreciationMethodDoubleDecliningBalance, $fixedAssetClass::DepreciationMethodSumOfYearsDigits], true))>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-useful-life js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="useful_life" name="useful_life" :value="$usefulLifeValue" :scale="2" min="0.01" step="0.01" :required="$requiresUsefulLife" :disabled="! $isDepreciableSelected || ! in_array($depreciationMethodValue, [$fixedAssetClass::DepreciationMethodStraightLine, $fixedAssetClass::DepreciationMethodDoubleDecliningBalance, $fixedAssetClass::DepreciationMethodSumOfYearsDigits], true)" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="useful_life"></div>
                             </div>
@@ -494,7 +490,7 @@
                                 @if($isView)
                                     <x-forms.view-field for="annual_depreciation_rate" :value="$annualDepreciationRateValue" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-depreciation-rate js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="annual_depreciation_rate" name="annual_depreciation_rate" type="number" min="0" max="100" step="0.0001" value="{{ $annualDepreciationRateValue }}" @required($requiresAnnualDepreciationRate) @disabled(! $isDepreciableSelected || ! in_array($depreciationMethodValue, [$fixedAssetClass::DepreciationMethodStraightLine, $fixedAssetClass::DepreciationMethodDecliningBalance], true))>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-depreciation-rate js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="annual_depreciation_rate" name="annual_depreciation_rate" :value="$annualDepreciationRateValue" :scale="4" min="0.0001" max="100" step="0.0001" :required="$requiresAnnualDepreciationRate" :disabled="! $isDepreciableSelected || ! in_array($depreciationMethodValue, [$fixedAssetClass::DepreciationMethodStraightLine, $fixedAssetClass::DepreciationMethodDecliningBalance], true)" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="annual_depreciation_rate"></div>
                             </div>
@@ -510,7 +506,7 @@
                                 @if($isView)
                                     <x-forms.view-field for="expected_usage_units" :value="$expectedUsageUnitsValue" input-class="text-center" />
                                 @else
-                                    <input class="text-center form-control js-fixed-asset-usage-units js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="expected_usage_units" name="expected_usage_units" type="number" min="0" step="0.0001" value="{{ $expectedUsageUnitsValue }}" @required($requiresExpectedUsageUnits) @disabled(! $isDepreciableSelected || $depreciationMethodValue !== $fixedAssetClass::DepreciationMethodUnitsOfProduction)>
+                                    <x-forms.numeric-input class="text-center js-fixed-asset-usage-units js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="expected_usage_units" name="expected_usage_units" :value="$expectedUsageUnitsValue" :scale="4" min="0.0001" step="0.0001" :required="$requiresExpectedUsageUnits" :disabled="! $isDepreciableSelected || $depreciationMethodValue !== $fixedAssetClass::DepreciationMethodUnitsOfProduction" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="expected_usage_units"></div>
                             </div>

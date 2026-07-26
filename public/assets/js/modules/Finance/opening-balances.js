@@ -69,10 +69,10 @@
     }
 
     function formatAmount(value) {
-        const numeric = Number(value) || 0;
-        const rounded = Math.round((numeric + Number.EPSILON) * 1000) / 1000;
+        const numeric = window.AppNumbers.number(value, 0);
+        const rounded = Math.round((numeric + Number.EPSILON) * 10000) / 10000;
 
-        return rounded.toFixed(3).replace(/\.?0+$/, '') || '0';
+        return window.AppNumbers.format(rounded.toFixed(4).replace(/\.?0+$/, '') || '0');
     }
 
     function isAltShortcut(event, codes, keyCodes, legacyKeys) {
@@ -132,7 +132,7 @@
             '<tr class="js-opening-balance-line" data-index="' + index + '">',
             '<td>' + hiddenFields + '<select class="form-select js-opening-balance-account" name="lines[' + index + '][account_doc_num]" data-url="' + escapeHtml(accountUrl) + '" data-placeholder="' + escapeHtml(trans('select_account', 'Select Account')) + '" required>' + accountOption + '</select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.account_doc_num"></div></td>',
             '<td><select class="form-select js-opening-balance-type" name="lines[' + index + '][transaction_type]" required><option value=""></option><option value="debit"' + (type === 'debit' ? ' selected' : '') + '>' + escapeHtml(trans('debit', 'Debit')) + '</option><option value="credit"' + (type === 'credit' ? ' selected' : '') + '>' + escapeHtml(trans('credit', 'Credit')) + '</option></select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.transaction_type"></div></td>',
-            '<td><input class="form-control text-end js-opening-balance-amount" name="lines[' + index + '][amount]" type="number" min="0.0001" step="0.0001" value="' + escapeHtml(amount) + '" dir="ltr" required><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>',
+            '<td><input class="form-control text-end js-opening-balance-amount" name="lines[' + index + '][amount]" type="text" inputmode="decimal" min="0.0001" step="0.0001" value="' + escapeHtml(amount) + '" dir="ltr" data-numeric-input data-numeric-scale="4" data-numeric-min="0.0001" required><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>',
             '<td><input class="form-control" name="lines[' + index + '][description]" value="' + escapeHtml(description) + '"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.description"></div></td>',
             '<td class="text-center"><button class="btn btn-link text-600 p-0 me-2 js-opening-balance-duplicate-line" type="button" title="' + escapeHtml(trans('duplicate_line_title', 'Duplicate current row (Alt + D)')) + '" data-bs-title="' + escapeHtml(trans('duplicate_line_title', 'Duplicate current row (Alt + D)')) + '"><span class="fas fa-copy"></span></button><button class="btn btn-link text-danger p-0 js-opening-balance-remove-line" type="button" title="' + escapeHtml(trans('delete_line_title', 'Delete current row (Alt + Delete)')) + '" data-bs-title="' + escapeHtml(trans('delete_line_title', 'Delete current row (Alt + Delete)')) + '"><span class="fas fa-trash-alt"></span></button></td>',
             '</tr>'
@@ -174,7 +174,7 @@
         $form.find('.js-opening-balance-line').each(function () {
             const $row = $(this);
             const type = String($row.find('.js-opening-balance-type').val() || '').toLowerCase();
-            const amount = parseFloat($row.find('.js-opening-balance-amount').val()) || 0;
+            const amount = window.AppNumbers.number($row.find('.js-opening-balance-amount').val(), 0);
 
             if (type === 'debit') {
                 totalDebit += amount;
@@ -290,6 +290,7 @@
 
             renumberLines($form);
             initSelect2($row.find('.js-opening-balance-account'));
+            window.AppNumbers.refresh($row[0]);
             calculateTotals($form);
             if (focusMode === 'account') {
                 focusAccountField($row);

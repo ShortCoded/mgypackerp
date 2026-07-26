@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
@@ -21,6 +22,7 @@ class UnpricedInventoryReceiptsDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -112,8 +114,8 @@ class UnpricedInventoryReceiptsDataTable
             ->addColumn('hall', fn (UnpricedInventoryReceipt $record): string => $this->ellipsisText($record->hall_name ?: __('common.empty_value')))
             ->addColumn('store', fn (UnpricedInventoryReceipt $record): string => $this->ellipsisText($record->store_name ?: __('common.empty_value')))
             ->addColumn('supplier_reference', fn (UnpricedInventoryReceipt $record): string => $this->ellipsisText($this->supplierReference($record)))
-            ->addColumn('lines_count', fn (UnpricedInventoryReceipt $record): string => $this->plainText((string) ((int) $record->lines_count)))
-            ->addColumn('total_quantity', fn (UnpricedInventoryReceipt $record): string => $this->plainText($this->formatQuantity($record->total_quantity)))
+            ->addColumn('lines_count', fn (UnpricedInventoryReceipt $record): string => $this->plainText($this->numbers->format($record->lines_count)))
+            ->addColumn('total_quantity', fn (UnpricedInventoryReceipt $record): string => $this->plainText($this->numbers->format($record->total_quantity)))
             ->addColumn('status', fn (UnpricedInventoryReceipt $record): string => view('modules.inventory.unpriced-inventory-receipts.partials.state', ['record' => $record, 'type' => 'status'])->render())
             ->addColumn('pricing_status', fn (UnpricedInventoryReceipt $record): string => view('modules.inventory.unpriced-inventory-receipts.partials.state', ['record' => $record, 'type' => 'pricing'])->render())
             ->editColumn('approved_by', fn (UnpricedInventoryReceipt $record): string => $this->ellipsisText($record->approved_by_name ?: __('common.empty_value')))
@@ -238,10 +240,5 @@ class UnpricedInventoryReceiptsDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatQuantity(mixed $value): string
-    {
-        return rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.') ?: '0';
     }
 }

@@ -14,6 +14,7 @@ class ItemLookupService
         private readonly DocumentNumberService $documentNumberService,
         private readonly CrudAuditService $crudAudit,
         private readonly OperatingCompanyContextService $companyContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     /**
@@ -75,7 +76,7 @@ class ItemLookupService
                     continue;
                 }
 
-                if ($this->valuesAreDifferent($record->{$field} ?? null, $newValues[$field])) {
+                if ($this->valuesAreDifferent($field, $record->{$field} ?? null, $newValues[$field])) {
                     $changedFields[] = $field;
                     $changes[$this->changeLogField($field)] = [
                         'old' => $this->changeLogValue($field, $record->{$field} ?? null),
@@ -188,11 +189,7 @@ class ItemLookupService
 
     private function normalizeNullableDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 6, '.', '');
+        return $this->numbers->normalizeToScale($value, 6);
     }
 
     private function normalizeNullableInteger(mixed $value): ?int
@@ -219,8 +216,12 @@ class ItemLookupService
         return $fields;
     }
 
-    private function valuesAreDifferent(mixed $oldValue, mixed $newValue): bool
+    private function valuesAreDifferent(string $field, mixed $oldValue, mixed $newValue): bool
     {
+        if ($field === 'equivalent_value') {
+            return ! $this->numbers->equivalent($oldValue, $newValue);
+        }
+
         return $this->comparableValue($oldValue) !== $this->comparableValue($newValue);
     }
 
@@ -265,13 +266,7 @@ class ItemLookupService
 
     private function displayDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        $formatted = number_format((float) $value, 6, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.');
+        return $value === null || $value === '' ? null : $this->numbers->format($value);
     }
 
     private function ensureRecordCanBeRestored(ItemLookupDefinition $definition, ItemLookup $record): void

@@ -11,6 +11,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Inventory\Models\OpeningStock;
@@ -25,6 +26,7 @@ class OpeningStockPricingService
         private readonly CrudAuditService $audit,
         private readonly OperatingContextService $operatingContext,
         private readonly ProductImageResolver $productImages,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -153,7 +155,9 @@ class OpeningStockPricingService
         $branch = $this->branchByDocNum($context['company_id'], $data['branch_doc_num'] ?? null);
         $openingStock = $this->openingStockByDocNum($context, $branch, $data['opening_stock_doc_num'] ?? null);
         $currency = $this->currencyByDocNum($context['company_id'], $data['currency_doc_num'] ?? null);
-        $exchangeRate = $currency?->is_main ? 1 : (float) ($data['exchange_rate'] ?? 1);
+        $exchangeRate = $currency?->is_main
+            ? '1.000000'
+            : ($this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000');
 
         return [
             'company_id' => $context['company_id'],
@@ -162,7 +166,7 @@ class OpeningStockPricingService
             'branch_hall_id' => $this->branchHallId($branch, $data['branch_hall_uuid'] ?? null),
             'opening_stock_id' => $openingStock?->getKey(),
             'currency_id' => $currency?->getKey(),
-            'exchange_rate' => number_format($exchangeRate, 6, '.', ''),
+            'exchange_rate' => $exchangeRate,
             'document_date' => $data['document_date'],
             'notes' => $data['notes'] ?? null,
             'is_closed' => true,
@@ -199,8 +203,10 @@ class OpeningStockPricingService
                 continue;
             }
 
-            $unitPrice = (float) ($line['unit_price'] ?? 0);
-            $quantity = (float) $openingLine->quantity;
+            $unitPriceValue = $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000';
+            $quantityValue = $this->numbers->normalizeToScale($openingLine->quantity, 4) ?? '0.0000';
+            $unitPrice = (float) $unitPriceValue;
+            $quantity = (float) $quantityValue;
             $lineTotal = round($quantity * $unitPrice, 4);
             $totalAmount += $lineTotal;
             $pricingPublicId = trim((string) ($line['public_id'] ?? ''));
@@ -215,8 +221,8 @@ class OpeningStockPricingService
                 'opening_stock_line_id' => $openingLine->getKey(),
                 'product_id' => $openingLine->product_id,
                 'product_snapshot' => $snapshot,
-                'quantity' => number_format($quantity, 4, '.', ''),
-                'unit_price' => number_format($unitPrice, 4, '.', ''),
+                'quantity' => $quantityValue,
+                'unit_price' => $unitPriceValue,
                 'line_total' => number_format($lineTotal, 4, '.', ''),
                 'notes' => $line['notes'] ?? null,
             ];

@@ -11,11 +11,11 @@
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
 </td>
 <td>
-    <input class="form-control text-center js-quotation-calc" name="lines[__INDEX__][quantity]" type="number" min="0" step="0.0001" value="1" dir="ltr">
+    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][quantity]" value="1" :scale="4" min="0" step="0.0001" />
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
 </td>
 <td>
-    <input class="form-control text-center js-quotation-calc" name="lines[__INDEX__][unit_price]" type="number" min="0" step="0.0001" value="" dir="ltr">
+    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][unit_price]" value="" :scale="4" min="0" step="0.0001" />
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
 </td>
 <td>
@@ -25,11 +25,11 @@
             <option value="fixed">{{ __('quotations.discount_types.fixed') }}</option>
             <option value="percentage">{{ __('quotations.discount_types.percentage') }}</option>
         </select>
-        <input class="form-control text-center js-quotation-calc" name="lines[__INDEX__][discount_value]" type="number" min="0" step="0.0001" value="0" dir="ltr">
+        <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][discount_value]" value="0" :scale="4" min="0" step="0.0001" />
     </div>
 </td>
 <td>
-    <input class="form-control text-center js-quotation-calc" name="lines[__INDEX__][tax_rate]" type="number" min="0" max="100" step="0.0001" value="0" dir="ltr">
+    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][tax_rate]" value="0" :scale="4" min="0" max="100" step="0.0001" />
 </td>
 <td class="text-center">
     <span class="js-quotation-line-total" dir="ltr">0</span>

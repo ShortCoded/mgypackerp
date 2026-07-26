@@ -35,6 +35,9 @@ class ItemLookupSelect2Controller extends Controller
             || (bool) $user?->can('raw_materials.view')
             || (bool) $user?->can('raw_materials.create')
             || (bool) $user?->can('raw_materials.edit')
+            || (bool) $user?->can('packaging_materials.view')
+            || (bool) $user?->can('packaging_materials.create')
+            || (bool) $user?->can('packaging_materials.edit')
             || ($permissionPrefix === 'production.identifier_types' && (
                 (bool) $user?->can('production.identifiers.view')
                 || (bool) $user?->can('production.identifiers.create')

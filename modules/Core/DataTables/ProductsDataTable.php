@@ -8,8 +8,10 @@ use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\SettingService;
 use Yajra\DataTables\Facades\DataTables;
 
@@ -21,6 +23,8 @@ class ProductsDataTable
         private readonly DataTableSearchService $searchService,
         private readonly OperatingCompanyContextService $companyContext,
         private readonly ProductImageResolver $productImages,
+        private readonly ScreenDataVisibilityService $visibility,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request, string $context = Product::ContextProducts): JsonResponse
@@ -30,8 +34,12 @@ class ProductsDataTable
         $permissionPrefix = $this->permissionPrefix($context);
         $trashFilter = $this->trashFilter($request, $permissionPrefix);
         $canView = (bool) $request->user()?->can("{$permissionPrefix}.view");
-        $query = $this->baseQuery($trashFilter, $context)
-            ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
+        $query = $this->baseQuery($trashFilter, $context);
+        if ($request->user()) {
+            $query = $this->visibility->applyToEloquent($query, $request->user(), $permissionPrefix);
+        }
+
+        $query->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
             ->leftJoin('item_categories', 'item_categories.id', '=', 'products.item_category_id')
             ->leftJoin('item_groups', 'item_groups.id', '=', 'products.item_group_id')
             ->leftJoin('item_colors', 'item_colors.id', '=', 'products.item_color_id')
@@ -171,7 +179,11 @@ class ProductsDataTable
 
     private function permissionPrefix(string $context): string
     {
-        return $context === Product::ContextRawMaterials ? 'raw_materials' : 'products';
+        return match ($context) {
+            Product::ContextRawMaterials => 'raw_materials',
+            Product::ContextPackagingMaterials => 'packaging_materials',
+            default => 'products',
+        };
     }
 
     private function docNumColumn(Product $product, bool $canView, string $context): string
@@ -188,9 +200,18 @@ class ProductsDataTable
 
         return sprintf(
             '<a class="fw-semibold dt-code-value" dir="ltr" href="%s">%s</a>',
-            e(route($context === Product::ContextRawMaterials ? 'admin.raw-materials.show' : 'admin.products.show', $docNum)),
+            e(route($this->routeName($context, 'show'), $docNum)),
             e($docNum),
         );
+    }
+
+    private function routeName(string $context, string $action): string
+    {
+        return match ($context) {
+            Product::ContextRawMaterials => 'admin.raw-materials.'.$action,
+            Product::ContextPackagingMaterials => 'admin.packaging-materials.'.$action,
+            default => 'admin.products.'.$action,
+        };
     }
 
     private function lookupLabel(?string $docNum, ?string $name): string
@@ -238,13 +259,7 @@ class ProductsDataTable
 
     private function formattedQuantity(mixed $value): string
     {
-        if ($value === null || $value === '') {
-            return '';
-        }
-
-        $formatted = number_format((float) $value, 4, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.') ?: '0';
+        return $this->numbers->format($value);
     }
 
     private function booleanBadge(bool $value): string

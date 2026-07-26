@@ -11,6 +11,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -138,7 +139,6 @@ test('product components schema and routes use public identifiers', function () 
 test('can add raw material component and unit is derived from raw material product', function () {
     $actor = productComponentActor(['products.view', 'products.edit']);
     $unit = productComponentUnit($this->componentCompany, 11, 'Square Meter');
-    $untrustedUnit = productComponentUnit($this->componentCompany, 111, 'Untrusted Unit');
     $product = productComponentProduct($this->componentCompany, [
         'doc_number' => 1,
         'doc_num' => 'Product-00001',
@@ -155,7 +155,7 @@ test('can add raw material component and unit is derived from raw material produ
     $payload = $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $rawMaterial->doc_num,
-            'unit_id' => $untrustedUnit->getKey(),
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '2.5000',
             'notes' => 'For one unit',
         ])
@@ -171,17 +171,254 @@ test('can add raw material component and unit is derived from raw material produ
         ->and($payload['component_product_doc_num'])->toBe($rawMaterial->doc_num)
         ->and($payload['unit'])->toContain('Square Meter')
         ->and($component->unit_id)->toBe($unit->getKey())
-        ->and((string) $component->quantity)->toBe('2.5000');
+        ->and((string) $component->quantity)->toBe('2.50000000');
 
     $list = $this->actingAs($actor)
         ->getJson(route('admin.products.components.index', $product->doc_num))
         ->assertOk()
         ->json();
 
-    expect(json_encode($list, JSON_THROW_ON_ERROR))
-        ->toContain($component->public_id)
-        ->toContain('Raw Board')
-        ->not->toContain('"id"');
+    expect($list['data'][0] ?? [])
+        ->toHaveKey('public_id')
+        ->toHaveKey('raw_material')
+        ->not->toHaveKey('id')
+        ->and($list['data'][0]['public_id'] ?? null)->toBe($component->public_id);
+});
+
+test('component quantities preserve eight-place precision and strictly normalize grouped input', function () {
+    $actor = productComponentActor(['products.view', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 113, 'Precision Unit');
+    $product = productComponentProduct($this->componentCompany, [
+        'doc_number' => 113,
+        'doc_num' => 'Product-00113',
+        'name' => 'Precision Product',
+    ]);
+    $rawMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 114,
+        'doc_num' => 'Product-00114',
+        'name' => 'Precision Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+
+    $tiny = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '0.0004582',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.quantity', '0.0004582')
+        ->assertJsonPath('data.quantity_raw', '0.00045820')
+        ->json('data');
+
+    expect((string) ProductComponent::query()->where('public_id', $tiny['public_id'])->value('quantity'))
+        ->toBe('0.00045820');
+
+    $grouped = $this->actingAs($actor)
+        ->putJson(route('admin.products.components.update', [$product->doc_num, $tiny['public_id']]), [
+            'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '1,250.5',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.quantity', '1,250.5')
+        ->assertJsonPath('data.quantity_raw', '1250.50000000')
+        ->json('data');
+
+    expect((string) ProductComponent::query()->where('public_id', $grouped['public_id'])->value('quantity'))
+        ->toBe('1250.50000000');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.components.update', [$product->doc_num, $tiny['public_id']]), [
+            'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '1,2,3',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['quantity']);
+});
+
+test('standalone percentage components ignore malformed derived values', function () {
+    $actor = productComponentActor(['products.view', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 115, 'Kilogram');
+    $product = productComponentProduct($this->componentCompany, [
+        'doc_number' => 115,
+        'doc_num' => 'Product-00115',
+        'name' => 'Standalone Percentage Product',
+    ]);
+    $baseMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 116,
+        'doc_num' => 'Product-00116',
+        'name' => 'Standalone Base Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $dependentMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 117,
+        'doc_num' => 'Product-00117',
+        'name' => 'Standalone Dependent Material',
+        'item_classification' => Product::ClassificationPackaging,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $base = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $baseMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => '100',
+            'input_source' => ProductComponent::InputWeight,
+        ])
+        ->assertOk()
+        ->json('data');
+    $dependent = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $dependentMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationPercentage,
+            'quantity' => ['stale-weight'],
+            'percentage' => '2',
+            'reference_component_key' => $base['public_id'],
+            'input_source' => ProductComponent::InputPercentage,
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.quantity_raw', '2.00000000')
+        ->assertJsonPath('data.percentage_raw', '2.00000000')
+        ->json('data');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.components.update', [$product->doc_num, $dependent['public_id']]), [
+            'component_product_doc_num' => $dependentMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationPercentage,
+            'quantity' => '10',
+            'percentage' => ['stale-percentage'],
+            'reference_component_key' => $base['public_id'],
+            'input_source' => ProductComponent::InputWeight,
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.quantity_raw', '10.00000000')
+        ->assertJsonPath('data.percentage_raw', '10.00000000');
+
+    $component = ProductComponent::query()
+        ->where('public_id', $dependent['public_id'])
+        ->firstOrFail();
+
+    expect((string) $component->quantity)->toBe('10.00000000')
+        ->and((string) $component->percentage)->toBe('10.00000000');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $dependentMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationPercentage,
+            'percentage' => '2',
+            'reference_component_key' => $base['public_id'],
+            'input_source' => ['forged-source'],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['input_source']);
+});
+
+test('standalone direct components preserve unitless materials without weakening unit requirements', function () {
+    $actor = productComponentActor(['products.view', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 118, 'Kilogram');
+    $product = productComponentProduct($this->componentCompany, [
+        'doc_number' => 118,
+        'doc_num' => 'Product-00118',
+        'name' => 'Unit Requirement Product',
+    ]);
+    $unitBearingMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 119,
+        'doc_num' => 'Product-00119',
+        'name' => 'Unit Bearing Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $unitlessMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 120,
+        'doc_num' => 'Product-00120',
+        'name' => 'Legacy Unitless Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+    ]);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $unitBearingMaterial->doc_num,
+            'unit_doc_num' => '',
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => '1',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['unit_doc_num']);
+
+    $unitless = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $unitlessMaterial->doc_num,
+            'unit_doc_num' => '',
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => '1',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.unit_doc_num', null)
+        ->json('data');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.components.update', [$product->doc_num, $unitless['public_id']]), [
+            'component_product_doc_num' => $unitlessMaterial->doc_num,
+            'unit_doc_num' => '',
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => '2',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.quantity_raw', '2.00000000')
+        ->assertJsonPath('data.unit_doc_num', null);
+
+    expect(ProductComponent::query()
+        ->where('public_id', $unitless['public_id'])
+        ->value('unit_id'))->toBeNull();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $unitlessMaterial->doc_num,
+            'unit_doc_num' => '',
+            'calculation_method' => ProductComponent::CalculationPercentage,
+            'percentage' => '10',
+            'reference_component_key' => $unitless['public_id'],
+            'input_source' => ProductComponent::InputPercentage,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['unit_doc_num']);
+});
+
+test('can add packaging material component and unit is derived from packaging material', function () {
+    $actor = productComponentActor(['products.view', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 112, 'Roll');
+    $product = productComponentProduct($this->componentCompany, [
+        'doc_number' => 3,
+        'doc_num' => 'Product-00003',
+        'name' => 'Finished Container',
+    ]);
+    $packagingMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 4,
+        'doc_num' => 'Product-00004',
+        'name' => 'Packaging Film',
+        'item_classification' => Product::ClassificationPackaging,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+
+    $payload = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $packagingMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '1.2500',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->json('data');
+
+    expect(ProductComponent::query()->where('public_id', $payload['public_id'])->value('component_product_id'))
+        ->toBe($packagingMaterial->getKey());
 });
 
 test('product component grid renders display-only unit centered quantity and duplicate action', function () {
@@ -208,9 +445,13 @@ test('product component grid renders display-only unit centered quantity and dup
         ->get(route('admin.products.create'))
         ->assertOk()
         ->assertSee('data-component-unit-display', false)
-        ->assertSee('aria-readonly="true"', false)
+        ->assertSee('js-product-component-unit', false)
+        ->assertSee('disabled', false)
         ->assertSee('<th class="text-center" style="width: 14%">'.__('products.components.quantity').'</th>', false)
         ->assertSee('form-control text-center js-product-component-quantity', false)
+        ->assertSee('name="components[__INDEX__][quantity]"', false)
+        ->assertSee('data-numeric-input', false)
+        ->assertSee('data-numeric-scale="8"', false)
         ->assertSee('js-product-component-duplicate-row', false)
         ->assertSee(__('products.components.duplicate_row_shortcut'))
         ->assertSee(__('products.components.delete_row_shortcut'))
@@ -234,7 +475,7 @@ test('product component grid renders display-only unit centered quantity and dup
         ->assertDontSee('js-product-component-remove-row', false);
 });
 
-test('component validation blocks duplicates cross-company deleted non-raw self and non-positive quantity', function () {
+test('component validation allows distinct duplicate lines and blocks cross-company deleted non-raw self and non-positive quantity', function () {
     $actor = productComponentActor(['products.edit']);
     $companyA = $this->componentCompany;
     $unit = productComponentUnit($companyA, 12, 'Meter');
@@ -259,6 +500,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertOk();
@@ -266,14 +508,20 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['component_product_doc_num']);
+        ->assertOk();
+
+    expect(ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->where('component_product_id', $rawMaterial->getKey())
+        ->count())->toBe(2);
 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $otherProduct->doc_num), [
             'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertOk();
@@ -281,6 +529,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $product->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertUnprocessable()
@@ -289,6 +538,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $nonRaw->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertUnprocessable()
@@ -297,6 +547,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $deletedRaw->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertUnprocessable()
@@ -305,6 +556,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '0',
         ])
         ->assertUnprocessable()
@@ -323,6 +575,7 @@ test('component validation blocks duplicates cross-company deleted non-raw self 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
             'component_product_doc_num' => $otherCompanyRaw->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
         ->assertUnprocessable()
@@ -359,6 +612,7 @@ test('can update and delete product component by public id only', function () {
     $this->actingAs($actor)
         ->putJson(route('admin.products.components.update', [$product->doc_num, $component->public_id]), [
             'component_product_doc_num' => $rawMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
             'quantity' => '3.7500',
             'notes' => 'Updated quantity',
         ])
@@ -366,7 +620,7 @@ test('can update and delete product component by public id only', function () {
         ->assertJsonPath('success', true)
         ->assertJsonMissingPath('data.id');
 
-    expect((string) $component->refresh()->quantity)->toBe('3.7500')
+    expect((string) $component->refresh()->quantity)->toBe('3.75000000')
         ->and($component->notes)->toBe('Updated quantity');
 
     $this->actingAs($actor)
@@ -377,10 +631,12 @@ test('can update and delete product component by public id only', function () {
     expect(ProductComponent::withTrashed()->where('public_id', $component->public_id)->first()?->trashed())->toBeTrue();
 });
 
-test('raw material select2 returns only active raw products for current company', function () {
+test('material select2 returns active raw and packaging materials for the current company', function () {
     $actor = productComponentActor(['products.view']);
     $unit = productComponentUnit($this->componentCompany, 15, 'Linear Meter');
     $master = productComponentProduct($this->componentCompany, ['doc_number' => 12, 'doc_num' => 'Product-00012', 'name' => 'Master Product']);
+    Storage::disk('public')->put('products/images/raw-visible-fabric.webp', 'raw material image');
+
     $rawMaterial = productComponentProduct($this->componentCompany, [
         'doc_number' => 13,
         'doc_num' => 'Product-00013',
@@ -394,6 +650,13 @@ test('raw material select2 returns only active raw products for current company'
         'doc_num' => 'Product-00017',
         'name' => 'Raw Plain Fabric',
         'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $packagingMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 18,
+        'doc_num' => 'Product-00018',
+        'name' => 'Packaging Visible Fabric Film',
+        'item_classification' => Product::ClassificationPackaging,
         'item_unit_id' => $unit->getKey(),
     ]);
     productComponentProduct($this->componentCompany, [
@@ -410,11 +673,23 @@ test('raw material select2 returns only active raw products for current company'
     $deletedRaw->delete();
 
     $otherCompany = productComponentOperatingContext($this);
+    $foreignEquivalentUnit = productComponentUnit($otherCompany, 19, 'Foreign Equivalent Unit');
     productComponentProduct($otherCompany, [
         'doc_number' => 16,
         'doc_num' => 'Product-00016',
         'name' => 'Other Company Raw Fabric',
         'item_classification' => Product::ClassificationRawMaterial,
+    ]);
+    $deletedEquivalentUnit = productComponentUnit($this->componentCompany, 20, 'Deleted Equivalent Unit');
+    $deletedEquivalentUnit->delete();
+
+    $rawMaterial->update([
+        'equivalent_value' => '1000',
+        'equivalent_unit_id' => $foreignEquivalentUnit->getKey(),
+    ]);
+    $plainRawMaterial->update([
+        'equivalent_value' => '1000',
+        'equivalent_unit_id' => $deletedEquivalentUnit->getKey(),
     ]);
 
     $this->withSession([
@@ -433,6 +708,7 @@ test('raw material select2 returns only active raw products for current company'
     $results = collect($payload['results'] ?? []);
     $imageResult = $results->firstWhere('id', $rawMaterial->doc_num);
     $plainResult = $results->firstWhere('id', $plainRawMaterial->doc_num);
+    $packagingResult = $results->firstWhere('id', $packagingMaterial->doc_num);
     $expectedImageUrl = Storage::disk('public')->url('products/images/raw-visible-fabric.webp');
     $json = json_encode($payload, JSON_THROW_ON_ERROR);
 
@@ -448,6 +724,8 @@ test('raw material select2 returns only active raw products for current company'
         ->and($imageResult['text'])->toContain($rawMaterial->doc_num)
         ->and($imageResult['text'])->toContain('Raw Visible Fabric')
         ->and($imageResult['unit_text'])->toContain('Linear Meter')
+        ->and($imageResult['unit_options'])->toHaveCount(1)
+        ->and($imageResult['unit_options'][0]['id'])->toBe((string) $unit->doc_num)
         ->and($imageResult['imageUrl'])->toBe($expectedImageUrl)
         ->and($imageResult)->not->toHaveKey('image_path');
 
@@ -455,16 +733,31 @@ test('raw material select2 returns only active raw products for current company'
         ->toBeArray()
         ->and($plainResult['imageUrl'])->toBeNull();
 
+    expect($packagingResult)
+        ->toBeArray()
+        ->and($packagingResult['text'])->toContain('Packaging Visible Fabric Film')
+        ->and($packagingResult['unit_text'])->toContain('Linear Meter');
+
     expect($json)
         ->toContain($rawMaterial->doc_num)
         ->toContain('Raw Visible Fabric')
         ->toContain('Linear Meter')
         ->toContain($plainRawMaterial->doc_num)
+        ->toContain($packagingMaterial->doc_num)
         ->not->toContain('Finished Hidden Product')
         ->not->toContain('Deleted Raw Fabric')
         ->not->toContain('Other Company Raw Fabric')
+        ->not->toContain('Foreign Equivalent Unit')
+        ->not->toContain('Deleted Equivalent Unit')
         ->not->toContain('image_path')
         ->not->toContain($master->doc_num);
+
+    expect(app(ProductComponentUnitOptionsService::class)->options($rawMaterial->fresh()))
+        ->toHaveCount(1)
+        ->and(app(ProductComponentUnitOptionsService::class)->options($plainRawMaterial->fresh()))
+        ->toHaveCount(1)
+        ->and(app(ProductComponentUnitOptionsService::class)->options($packagingMaterial->fresh()))
+        ->toHaveCount(1);
 
     $selectedPayload = $this->actingAs($actor)
         ->getJson(route('admin.select2.raw-material-products', [
@@ -487,7 +780,7 @@ test('product component selector and validation do not use legacy product type',
     $form = file_get_contents(base_path('resources/views/modules/core/products/form.blade.php'));
 
     expect($selector)
-        ->toContain('Product::ClassificationRawMaterial')
+        ->toContain('->materialItems()')
         ->toContain('imageUrl')
         ->not->toContain('product_type')
         ->and($validation)

@@ -2,8 +2,7 @@
 
 @php
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $formatQuantity = fn ($value) => rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.') ?: '0';
-    $formatAmount = fn ($value) => rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
 @endphp
 
 @section('title', __('purchase_orders.print_title', ['doc' => $record->doc_num]))
@@ -63,7 +62,7 @@
             </div>
             <div class="col-4">
                 <strong>{{ __('purchase_orders.attributes.exchange_rate') }}</strong>
-                <div>{{ $formatAmount($record->exchange_rate) }}</div>
+                <div dir="ltr">{{ $numbers->format($record->exchange_rate) }}</div>
             </div>
             <div class="col-4">
                 <strong>{{ __('purchase_orders.attributes.expected_delivery_date') }}</strong>
@@ -99,22 +98,22 @@
                         <td>{{ $line->line_number }}</td>
                         <td>{{ trim(implode(' / ', array_filter([$snapshot['doc_num'] ?? $line->product?->doc_num, $snapshot['name'] ?? $line->product?->name]))) }}</td>
                         <td>{{ $snapshot['unit_label'] ?? trim(implode(' / ', array_filter([$line->unit?->doc_num, $line->unit?->name]))) }}</td>
-                        <td class="text-end">{{ $formatQuantity($line->ordered_quantity) }}</td>
-                        <td class="text-end">{{ $formatAmount($line->unit_price) }}</td>
-                        <td class="text-end">{{ $formatAmount($line->line_total) }}</td>
-                        <td class="text-end">{{ $formatQuantity($line->received_quantity) }}</td>
-                        <td class="text-end">{{ $formatQuantity($line->remaining_quantity) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->ordered_quantity) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->line_total) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->received_quantity) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->remaining_quantity) }}</td>
                     </tr>
                 @endforeach
             </tbody>
             <tfoot>
                 <tr>
                     <th colspan="3">{{ __('purchase_orders.totals.net_total') }}</th>
-                    <th class="text-end">{{ $formatQuantity($record->total_ordered_quantity) }}</th>
+                    <th class="text-end" dir="ltr">{{ $numbers->format($record->total_ordered_quantity) }}</th>
                     <th></th>
-                    <th class="text-end">{{ $formatAmount($record->total_amount) }}</th>
-                    <th class="text-end">{{ $formatQuantity($record->total_received_quantity) }}</th>
-                    <th class="text-end">{{ $formatQuantity($record->total_remaining_quantity) }}</th>
+                    <th class="text-end" dir="ltr">{{ $numbers->format($record->total_amount) }}</th>
+                    <th class="text-end" dir="ltr">{{ $numbers->format($record->total_received_quantity) }}</th>
+                    <th class="text-end" dir="ltr">{{ $numbers->format($record->total_remaining_quantity) }}</th>
                 </tr>
             </tfoot>
         </table>

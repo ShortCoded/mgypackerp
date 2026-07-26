@@ -9,6 +9,7 @@ use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Models\HrArea;
 use Modules\HR\Models\HrCity;
@@ -26,6 +27,7 @@ class CustomerService
         private readonly BusinessPartnerAccountService $accounts,
         private readonly CustomerAccountingSyncService $accountingSync,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -306,7 +308,7 @@ class CustomerService
             $result[] = [
                 'currency_id' => (int) $currencyId,
                 'currency_doc_num' => $currencyDocNum,
-                'credit_limit' => number_format((float) $amount, 4, '.', ''),
+                'credit_limit' => $this->numbers->normalizeToScale($amount, 4) ?? '0.0000',
                 'notes' => trim((string) ($row['notes'] ?? '')) ?: null,
             ];
         }
@@ -332,7 +334,7 @@ class CustomerService
             ->get(['currency_id', 'credit_limit', 'notes'])
             ->map(fn (CustomerCreditLimit $limit): array => [
                 'currency_id' => (int) $limit->currency_id,
-                'credit_limit' => number_format((float) $limit->credit_limit, 4, '.', ''),
+                'credit_limit' => $this->numbers->normalizeToScale($limit->credit_limit, 4) ?? '0.0000',
                 'notes' => $limit->notes,
             ])
             ->sortBy('currency_id')

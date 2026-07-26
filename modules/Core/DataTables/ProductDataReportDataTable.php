@@ -4,6 +4,7 @@ namespace Modules\Core\DataTables;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\Reports\ProductDataReport;
@@ -134,12 +135,16 @@ class ProductDataReportDataTable
 
     private function text(mixed $value): string
     {
-        return trim((string) ($value ?? ''));
+        if (! is_string($value) && ! is_numeric($value)) {
+            return '';
+        }
+
+        return Str::squish(strip_tags(html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
     }
 
     private function classificationBadge(mixed $classification, mixed $label): string
     {
-        $label = trim((string) $label);
+        $label = $this->text($label);
 
         if ($label === '') {
             return '';
@@ -159,7 +164,7 @@ class ProductDataReportDataTable
 
     private function statusBadge(Product $product, mixed $label): string
     {
-        $label = trim((string) $label);
+        $label = $this->text($label);
 
         if ($label === '') {
             return '';

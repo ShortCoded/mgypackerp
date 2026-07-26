@@ -1,5 +1,6 @@
 @php
     $rows = collect($rows ?? [])->filter(fn ($row) => is_array($row))->values();
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
 @endphp
 
 <div class="business-partner-credit-limits-panel w-100">
@@ -38,9 +39,9 @@
                     </td>
                     <td class="text-center">
                         @if($isView)
-                            <span class="d-block text-center">{{ $row['credit_limit'] ?? __('common.empty_value') }}</span>
+                            <span class="d-block text-center" dir="ltr">{{ isset($row['credit_limit']) && $row['credit_limit'] !== '' ? $numbers->format($row['credit_limit']) : __('common.empty_value') }}</span>
                         @else
-                            <input class="form-control text-center" name="credit_limits[{{ $index }}][credit_limit]" type="number" min="0" step="0.01" inputmode="decimal" value="{{ $row['credit_limit'] ?? '' }}" dir="ltr">
+                            <x-forms.numeric-input class="text-center" :name="'credit_limits['.$index.'][credit_limit]'" :value="$row['credit_limit'] ?? ''" :scale="4" min="0" step="0.0001" />
                             <div class="invalid-feedback d-block" data-error-for="credit_limits.{{ $index }}.credit_limit"></div>
                         @endif
                     </td>
@@ -82,7 +83,7 @@
                 <div class="invalid-feedback d-block" data-error-for="credit_limits.__INDEX__.currency_doc_num"></div>
             </td>
             <td class="text-center">
-                <input class="form-control text-center" name="credit_limits[__INDEX__][credit_limit]" type="number" min="0" step="0.01" inputmode="decimal" dir="ltr">
+                <x-forms.numeric-input class="text-center" name="credit_limits[__INDEX__][credit_limit]" :scale="4" min="0" step="0.0001" />
                 <div class="invalid-feedback d-block" data-error-for="credit_limits.__INDEX__.credit_limit"></div>
             </td>
             <td>

@@ -2,13 +2,18 @@
 
 namespace Modules\Finance\Services;
 
+use Modules\Core\Services\NumericFormatService;
+
 class FinanceAmountService
 {
+    public function __construct(
+        private readonly NumericFormatService $numbers,
+    ) {}
+
     public function normalize(mixed $value, int $scale = 4): string
     {
-        $numeric = is_numeric($value) ? (float) $value : 0.0;
-
-        return number_format($numeric, $scale, '.', '');
+        return $this->numbers->normalizeToScale($value, $scale)
+            ?? $this->numbers->normalizeToScale(0, $scale);
     }
 
     public function multiply(mixed $left, mixed $right, int $scale = 4): string

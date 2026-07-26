@@ -31,6 +31,14 @@
         </a>
     @endif
 
+    @if ($user?->doc_num && ! $isTrashed)
+        @can('screen_data_visibility_rules.view')
+            <a class="btn btn-falcon-info btn-sm" href="{{ route('admin.screen-data-visibility-rules.index', ['user' => $user->doc_num]) }}">
+                <span class="fas fa-user-shield me-1"></span>{{ __('screen_data_visibility_rules.menu_title') }}
+            </a>
+        @endcan
+    @endif
+
     @if ($isView && $user)
         @if (! $isTrashed && $canEdit)
             <a class="btn btn-primary btn-sm" href="{{ route('admin.users.edit', $user->doc_num) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">

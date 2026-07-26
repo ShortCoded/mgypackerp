@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Purchases\Models\PurchaseOrder;
@@ -19,6 +20,7 @@ class PurchaseOrdersDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -102,8 +104,8 @@ class PurchaseOrdersDataTable
             ->addColumn('supplier', fn (PurchaseOrder $record): string => $this->ellipsisText(trim(implode(' / ', array_filter([$record->supplier_doc_num, $record->supplier_name])))))
             ->addColumn('branch_store', fn (PurchaseOrder $record): string => $this->ellipsisText($record->store_name ?: __('common.empty_value')))
             ->addColumn('currency', fn (PurchaseOrder $record): string => $this->ellipsisText(trim(implode(' / ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->editColumn('total_ordered_quantity', fn (PurchaseOrder $record): string => $this->plainText($this->formatQuantity((float) $record->total_ordered_quantity)))
-            ->editColumn('total_amount', fn (PurchaseOrder $record): string => $this->plainText($this->formatAmount((float) $record->total_amount)))
+            ->editColumn('total_ordered_quantity', fn (PurchaseOrder $record): string => $this->plainText($this->numbers->format($record->total_ordered_quantity)))
+            ->editColumn('total_amount', fn (PurchaseOrder $record): string => $this->plainText($this->numbers->format($record->total_amount)))
             ->editColumn('expected_delivery_date', fn (PurchaseOrder $record): string => $this->plainText($record->expected_delivery_date?->format($dateFormat) ?? ''))
             ->editColumn('status', fn (PurchaseOrder $record): string => view('modules.purchases.purchase-orders.partials.status', ['record' => $record])->render())
             ->addColumn('created_by', fn (PurchaseOrder $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
@@ -164,15 +166,5 @@ class PurchaseOrdersDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatQuantity(float $quantity): string
-    {
-        return rtrim(rtrim(number_format($quantity, 8, '.', ''), '0'), '.') ?: '0';
-    }
-
-    private function formatAmount(float $amount): string
-    {
-        return rtrim(rtrim(number_format($amount, 4, '.', ''), '0'), '.') ?: '0';
     }
 }

@@ -1,14 +1,22 @@
 @extends('layouts.app')
 
 @php
-    $isRawMaterialsContext = $isRawMaterialsContext ?? false;
-    $resourceTitle = $isRawMaterialsContext ? __('products.raw_materials.title') : __('products.title');
-    $resourceSelectedLabel = $isRawMaterialsContext ? __('products.raw_materials.bulk_action') : __('products.bulk_action');
-    $resourceSelectAllLabel = $isRawMaterialsContext ? __('products.raw_materials.select_all') : __('products.select_all');
-    $resourceNameLabel = $isRawMaterialsContext ? __('products.raw_materials.attributes.name') : __('products.attributes.name');
-    $resourceMessagesRoot = $isRawMaterialsContext ? 'products.raw_materials.messages' : 'products.messages';
-    $documentNumberSettingsRoot = $isRawMaterialsContext ? 'products.raw_materials.document_number_settings' : 'products.document_number_settings';
-    $permissionPrefix = $isRawMaterialsContext ? 'raw_materials' : 'products';
+    $resourceRoot = match ($productContext ?? \Modules\Core\Models\Product::ContextProducts) {
+        \Modules\Core\Models\Product::ContextRawMaterials => 'products.raw_materials',
+        \Modules\Core\Models\Product::ContextPackagingMaterials => 'products.packaging_materials',
+        default => 'products',
+    };
+    $permissionPrefix = match ($productContext ?? \Modules\Core\Models\Product::ContextProducts) {
+        \Modules\Core\Models\Product::ContextRawMaterials => 'raw_materials',
+        \Modules\Core\Models\Product::ContextPackagingMaterials => 'packaging_materials',
+        default => 'products',
+    };
+    $resourceTitle = __($resourceRoot.'.title');
+    $resourceSelectedLabel = __($resourceRoot.'.bulk_action');
+    $resourceSelectAllLabel = __($resourceRoot.'.select_all');
+    $resourceNameLabel = __($resourceRoot.'.attributes.name');
+    $resourceMessagesRoot = $resourceRoot.'.messages';
+    $documentNumberSettingsRoot = $resourceRoot.'.document_number_settings';
     $routes = $routes ?? [
         'create' => route('admin.products.create'),
         'data' => route('admin.products.data'),

@@ -18,6 +18,8 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
 use Modules\Inventory\Models\OpeningStockPricing;
+use Modules\Inventory\Models\OpeningStockPricingLine;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -456,4 +458,63 @@ test('closed opening stock pricing cannot be edited or deleted but can be cloned
     $script = file_get_contents(public_path('assets/js/modules/Inventory/opening-stock-pricings.js'));
 
     expect($script)->toContain('dblclick.openingStockPricingsEditRow');
+});
+
+test('opening stock pricing preserves accepted exchange rate and unit price precision before persistence', function (): void {
+    $context = openingStockPricingContext($this);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $currency = openingStockPricingCurrency($context['company'], false);
+    $product = openingStockPricingProduct($context['company']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 71);
+    $line = $openingStock->lines()->firstOrFail();
+    $capturedExchangeRate = null;
+    $capturedUnitPrice = null;
+
+    OpeningStockPricing::creating(function (OpeningStockPricing $pricing) use (&$capturedExchangeRate): void {
+        $capturedExchangeRate = $pricing->getAttributes()['exchange_rate'] ?? null;
+    });
+    OpeningStockPricingLine::creating(function (OpeningStockPricingLine $pricingLine) use (&$capturedUnitPrice): void {
+        $capturedUnitPrice = $pricingLine->getAttributes()['unit_price'] ?? null;
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency, [
+            'exchange_rate' => '999,999,999,999.999999',
+            'lines' => [[
+                'opening_stock_line_public_id' => $line->public_id,
+                'unit_price' => '12,345,678,901.2345',
+            ]],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedExchangeRate)->toBe('999999999999.999999')
+        ->and($capturedUnitPrice)->toBe('12345678901.2345');
+});
+
+test('unpriced inventory receipt preserves maximum accepted quantity precision before persistence', function (): void {
+    $context = openingStockPricingContext($this);
+    $actor = openingStockPricingActor(['inventory.unpriced_inventory_receipts.create']);
+    $product = openingStockPricingProduct($context['company']);
+    $capturedQuantity = null;
+
+    UnpricedInventoryReceiptLine::creating(function (UnpricedInventoryReceiptLine $line) use (&$capturedQuantity): void {
+        $capturedQuantity = $line->getAttributes()['quantity'] ?? null;
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.inventory.unpriced-inventory-receipts.store'), [
+            'document_date' => '2026-03-01',
+            'branch_doc_num' => $context['branch']->doc_num,
+            'lines' => [[
+                'product_doc_num' => $product->doc_num,
+                'unit_doc_num' => $product->unit?->doc_num,
+                'quantity' => '999,999,999,999.99999999',
+            ]],
+            'submit_action' => 'save',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedQuantity)->toBe('999999999999.99999999');
 });

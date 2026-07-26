@@ -5,7 +5,7 @@
     $isReadonly = $mode === 'view' || (! $isCreateLike && ($isLocked ?? false));
     $title = __('fund_transfers.'.$mode);
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
-    $formatAmount = fn ($amount, $scale = 4) => rtrim(rtrim(number_format((float) $amount, $scale, '.', ''), '0'), '.') ?: '0';
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $value = fn($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $dateValue = old('transfer_date', $record?->transfer_date ? $dateFormatService->formatDate($record->transfer_date, '') : $dateFormatService->formatDate(now(), ''));
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
@@ -157,9 +157,9 @@
                 <div class="col-md-3">
                     <x-forms.label for="source_amount" :label="__('fund_transfers.attributes.source_amount')" required />
                     @if($isReadonly)
-                        <x-forms.view-field for="source_amount" :value="$formatAmount($value('source_amount', 0))" input-class="text-end" dir="ltr" />
+                        <x-forms.view-field for="source_amount" :value="$numbers->format($value('source_amount', 0))" input-class="text-end" dir="ltr" />
                     @else
-                        <input class="form-control text-end js-fund-transfer-source-amount" id="source_amount" name="source_amount" type="number" min="0.0001" step="0.0001" value="{{ $value('source_amount') }}" dir="ltr" required>
+                        <x-forms.numeric-input class="text-end js-fund-transfer-source-amount" id="source_amount" name="source_amount" :value="$value('source_amount')" :scale="4" min="0.0001" step="0.0001" required />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="source_amount"></div>
                 </div>
@@ -225,9 +225,9 @@
                 <div class="col-md-3">
                     <x-forms.label for="target_amount" :label="__('fund_transfers.attributes.target_amount')" required />
                     @if($isReadonly)
-                        <x-forms.view-field for="target_amount" :value="$formatAmount($value('target_amount', 0))" input-class="text-end" dir="ltr" />
+                        <x-forms.view-field for="target_amount" :value="$numbers->format($value('target_amount', 0))" input-class="text-end" dir="ltr" />
                     @else
-                        <input class="form-control text-end js-fund-transfer-target-amount" id="target_amount" name="target_amount" type="number" min="0.0001" step="0.0001" value="{{ $value('target_amount') }}" dir="ltr" required>
+                        <x-forms.numeric-input class="text-end js-fund-transfer-target-amount" id="target_amount" name="target_amount" :value="$value('target_amount')" :scale="4" min="0.0001" step="0.0001" required />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="target_amount"></div>
                 </div>
@@ -237,9 +237,9 @@
                 <div class="col-md-3">
                     <x-forms.label for="exchange_rate" :label="__('fund_transfers.attributes.exchange_rate')" required />
                     @if($isReadonly)
-                        <x-forms.view-field for="exchange_rate" :value="$formatAmount($value('exchange_rate', 1), 6)" input-class="text-center" dir="ltr" />
+                        <x-forms.view-field for="exchange_rate" :value="$numbers->format($value('exchange_rate', 1))" input-class="text-center" dir="ltr" />
                     @else
-                        <input class="form-control text-center js-fund-transfer-exchange-rate" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ $value('exchange_rate', 1) }}" dir="ltr" required>
+                        <x-forms.numeric-input class="text-center js-fund-transfer-exchange-rate" id="exchange_rate" name="exchange_rate" :value="$value('exchange_rate', 1)" :scale="6" min="0.000001" step="0.000001" required />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                 </div>

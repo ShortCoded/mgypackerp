@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\Currency;
@@ -19,6 +20,8 @@ use Modules\Inventory\Services\OpeningStockPricingService;
 
 class StoreOpeningStockPricingRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'inventory.opening_stock_pricings.clone' : 'inventory.opening_stock_pricings.create');
@@ -26,13 +29,18 @@ class StoreOpeningStockPricingRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'lines.*.unit_price',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn (mixed $line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'public_id' => isset($line['public_id']) ? trim((string) $line['public_id']) : null,
                 'opening_stock_line_public_id' => isset($line['opening_stock_line_public_id']) ? trim((string) $line['opening_stock_line_public_id']) : null,
-                'unit_price' => isset($line['unit_price']) ? str_replace(',', '', (string) $line['unit_price']) : null,
+                'unit_price' => isset($line['unit_price']) ? trim((string) $line['unit_price']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
                 '_delete' => filter_var($line['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
@@ -47,7 +55,7 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'branch_hall_uuid' => $this->filled('branch_hall_uuid') ? trim((string) $this->input('branch_hall_uuid')) : null,
             'opening_stock_doc_num' => $this->filled('opening_stock_doc_num') ? trim((string) $this->input('opening_stock_doc_num')) : null,
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
-            'exchange_rate' => $this->filled('exchange_rate') ? str_replace(',', '', (string) $this->input('exchange_rate')) : null,
+            'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : null,
             'notes' => $this->filled('notes') ? trim((string) $this->input('notes')) : null,
             'lines' => $lines,
         ]);
@@ -77,12 +85,12 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'branch_hall_uuid' => ['nullable', 'string'],
             'opening_stock_doc_num' => ['required', 'string'],
             'currency_doc_num' => ['required', 'string'],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array'],
             'lines.*.public_id' => ['nullable', 'string'],
             'lines.*.opening_stock_line_public_id' => ['nullable', 'string'],
-            'lines.*.unit_price' => ['nullable', 'numeric'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,11}(?:\.\d{1,4})?$/D'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],

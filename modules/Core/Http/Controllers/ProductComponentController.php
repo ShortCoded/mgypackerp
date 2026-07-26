@@ -11,9 +11,11 @@ use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
-use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductComponentService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
+use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Throwable;
 
 class ProductComponentController extends Controller
@@ -22,6 +24,8 @@ class ProductComponentController extends Controller
         private readonly ProductComponentService $components,
         private readonly ActivityLogger $activityLogger,
         private readonly OperatingCompanyContextService $companyContext,
+        private readonly NumericFormatService $numbers,
+        private readonly ProductComponentUnitConversionService $unitConversions,
     ) {}
 
     public function index(Request $request, string $product): JsonResponse
@@ -30,7 +34,7 @@ class ProductComponentController extends Controller
         $components = ProductComponent::query()
             ->forCompany((int) $product->company_id)
             ->where('product_id', $product->getKey())
-            ->with(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit'])
+            ->with(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent'])
             ->orderBy('created_at')
             ->get()
             ->map(fn (ProductComponent $component): array => $this->componentPayload($component))
@@ -108,13 +112,24 @@ class ProductComponentController extends Controller
 
         return [
             'public_id' => $component->public_id,
+            'client_key' => $component->public_id,
             'component_product_doc_num' => $componentProduct?->doc_num,
             'raw_material' => $this->productLabel($componentProduct),
             'unit' => $this->unitLabel($unit),
             'unit_doc_num' => $unit?->doc_num,
             'unit_options' => $componentProduct instanceof Product ? app(ProductComponentUnitOptionsService::class)->options($componentProduct) : [],
+            'unit_conversion_edges' => $componentProduct instanceof Product
+                ? $this->unitConversions->productEdges($componentProduct)
+                : [],
+            'calculation_method' => $component->calculation_method,
             'quantity' => $this->formattedQuantity($component->quantity),
             'quantity_raw' => (string) $component->quantity,
+            'percentage' => $component->percentage === null ? null : $this->formattedQuantity($component->percentage),
+            'percentage_raw' => $component->percentage === null ? null : (string) $component->percentage,
+            'reference_component_key' => $component->referenceComponent?->public_id,
+            'input_source' => $component->calculation_method === ProductComponent::CalculationPercentage
+                ? ProductComponent::InputPercentage
+                : ProductComponent::InputWeight,
             'notes' => $component->notes,
         ];
     }
@@ -129,7 +144,7 @@ class ProductComponentController extends Controller
 
         return $query
             ->forCompany($this->companyContext->requireCompanyId($request))
-            ->withoutRawMaterials()
+            ->productItems()
             ->where('doc_num', $docNum)
             ->firstOrFail();
     }
@@ -163,9 +178,7 @@ class ProductComponentController extends Controller
 
     private function formattedQuantity(mixed $value): string
     {
-        $formatted = number_format((float) $value, 8, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.') ?: '0';
+        return $this->numbers->format($value);
     }
 
     /**

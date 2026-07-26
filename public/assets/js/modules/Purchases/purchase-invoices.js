@@ -155,15 +155,13 @@
   }
 
   function number(value) {
-    const parsed = parseFloat(String(value || '0').replace(/,/g, ''));
-
-    return Number.isFinite(parsed) ? parsed : 0;
+    return window.AppNumbers.number(value, 0);
   }
 
   function formatAmount(value) {
     const fixed = (Math.round((number(value) + Number.EPSILON) * 10000) / 10000).toFixed(4);
 
-    return fixed.replace(/\.?0+$/, '') || '0';
+    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
   }
 
   function discountAmount(type, value, base) {
@@ -213,7 +211,7 @@
     }
 
     if (['total_amount', 'paid_amount', 'remaining_amount'].indexOf(column) !== -1) {
-      return 'align-middle white-space-nowrap text-end';
+      return 'align-middle white-space-nowrap dt-number text-end';
     }
 
     return 'align-middle white-space-nowrap dt-text dt-ellipsis';
@@ -614,6 +612,7 @@
     cleanSelect2($row);
     initSelect2($row);
     initDatePickers($row);
+    window.AppNumbers.refresh($row[0]);
     updateScheduleSource($row);
   }
 

@@ -48,6 +48,7 @@ class ExpandedDashboardService
     public function __construct(
         private readonly OperatingContextService $operatingContext,
         private readonly DateFormatService $dates,
+        private readonly NumericFormatService $numericFormatter,
     ) {}
 
     /**
@@ -1173,12 +1174,12 @@ class ExpandedDashboardService
 
     private function formatCount(int $value): string
     {
-        return number_format($value);
+        return $this->numericFormatter->format($value);
     }
 
     private function formatAmount(mixed $value): string
     {
-        return number_format((float) $value, 2);
+        return $this->numericFormatter->format($value);
     }
 
     private function currencyLabel(mixed $code, mixed $name): string

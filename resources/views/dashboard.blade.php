@@ -138,7 +138,7 @@
                                     <div class="min-w-0">
                                         <p class="mb-1 fw-semibold text-600 dashboard-kpi-category">{{ $metric['category'] }}</p>
                                         <p class="mb-1 small text-600">{{ $metric['title'] }}</p>
-                                        <div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value">{{ $metric['value'] }}</div>
+                                        <div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">{{ $metric['value'] }}</div>
                                         <p class="mb-0 small text-600">{{ $metric['meta'] }}</p>
                                     </div>
                                     <div class="text-{{ $metric['color'] }} plastics-dashboard-icon" aria-hidden="true">

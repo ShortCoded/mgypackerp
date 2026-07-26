@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\Models\Quotation;
@@ -18,6 +19,7 @@ class QuotationsDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -78,7 +80,7 @@ class QuotationsDataTable
             ->addColumn('current_revision', fn (Quotation $record): string => $this->plainText($record->current_revision_code ?: __('common.empty_value')))
             ->editColumn('status', fn (Quotation $record): string => view('modules.sales.quotations.partials.status', ['status' => $record->status])->render())
             ->addColumn('currency', fn (Quotation $record): string => $this->ellipsisText(trim(implode(' / ', array_filter([$record->currency_code, $record->currency_name]))) ?: __('common.empty_value')))
-            ->addColumn('total', fn (Quotation $record): string => '<span dir="ltr">'.e(number_format((float) $record->current_revision_total, 2)).'</span>')
+            ->addColumn('total', fn (Quotation $record): string => $this->plainText($this->numbers->format($record->current_revision_total)))
             ->editColumn('quotation_date', fn (Quotation $record): string => $this->plainText($record->quotation_date?->format($dateFormat) ?? ''))
             ->editColumn('valid_until', fn (Quotation $record): string => $this->plainText($record->valid_until?->format($dateFormat) ?? __('common.empty_value')))
             ->editColumn('created_by', fn (Quotation $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))

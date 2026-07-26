@@ -102,7 +102,11 @@
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('common.fields.document_number') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text dt-ellipsis">{{ __('common.fields.name') }}</th>
                                     @foreach ($definition->tableColumns as $column)
-                                        <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text dt-ellipsis">{{ __('hr.foundation.attributes.' . $column['name']) }}</th>
+                                        <th @class([
+                                            'text-900 sort pe-1 align-middle white-space-nowrap',
+                                            'dt-number text-end' => in_array($column['type'] ?? null, ['number', 'decimal'], true),
+                                            'dt-text dt-ellipsis' => ! in_array($column['type'] ?? null, ['number', 'decimal'], true),
+                                        ])>{{ __('hr.foundation.attributes.' . $column['name']) }}</th>
                                     @endforeach
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text dt-ellipsis">{{ __('common.fields.created_by') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-date">{{ __('common.fields.created_at') }}</th>

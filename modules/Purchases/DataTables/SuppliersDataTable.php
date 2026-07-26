@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\SettingService;
 use Modules\Purchases\Models\Supplier;
 use Yajra\DataTables\Facades\DataTables;
@@ -19,6 +20,7 @@ class SuppliersDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -31,6 +33,9 @@ class SuppliersDataTable
         };
 
         $query = $this->companies->applyCompanyScope($query, 'suppliers', $request);
+        if ($request->user()) {
+            $query = $this->visibility->applyToEloquent($query, $request->user(), 'suppliers');
+        }
 
         $query->leftJoin('accounts', 'accounts.id', '=', 'suppliers.account_id')
             ->leftJoin('users as created_users', 'created_users.id', '=', 'suppliers.created_by')

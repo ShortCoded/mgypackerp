@@ -3,6 +3,7 @@
 namespace Modules\Core\Services;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -42,6 +43,8 @@ class PlasticsDashboardService
     public function __construct(
         private readonly OperatingContextService $operatingContext,
         private readonly DateFormatService $dates,
+        private readonly NumericFormatService $numbers,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     /**
@@ -99,30 +102,30 @@ class PlasticsDashboardService
         $companyId = (int) $context['company_id'];
 
         if ($this->can($user, 'products.view')) {
-            $nonRawProducts = Product::query()
-                ->forCompany($companyId)
-                ->withoutRawMaterials()
+            $products = $this->productQuery($user, 'products', $companyId)
+                ->productItems()
                 ->where('status', 'active')
                 ->count();
-            $withComponents = Product::query()
-                ->forCompany($companyId)
-                ->withoutRawMaterials()
+            $withComponents = $this->productQuery($user, 'products', $companyId)
+                ->productItems()
                 ->where('status', 'active')
                 ->whereHas('components')
                 ->count();
-            $withoutComponents = Product::query()
-                ->forCompany($companyId)
-                ->withoutRawMaterials()
+            $withoutComponents = $this->productQuery($user, 'products', $companyId)
+                ->productItems()
                 ->where('status', 'active')
                 ->whereDoesntHave('components')
                 ->count();
             $componentLines = $this->tableExists('product_components')
-                ? ProductComponent::query()->forCompany($companyId)->count()
+                ? ProductComponent::query()
+                    ->forCompany($companyId)
+                    ->whereIn('product_id', $this->productQuery($user, 'products', $companyId)->select('products.id'))
+                    ->count()
                 : 0;
 
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.products.title'),
-                $nonRawProducts,
+                $products,
                 __('dashboard.plastics.metrics.products.meta'),
                 'box',
                 'primary',
@@ -160,8 +163,7 @@ class PlasticsDashboardService
         }
 
         if ($this->can($user, 'raw_materials.view')) {
-            $rawMaterials = Product::query()
-                ->forCompany($companyId)
+            $rawMaterials = $this->productQuery($user, 'raw_materials', $companyId)
                 ->rawMaterials()
                 ->where('status', 'active')
                 ->count();
@@ -175,8 +177,41 @@ class PlasticsDashboardService
                 $this->routeUrl('admin.raw-materials.index'),
             );
 
-            $this->appendRawMaterialUnitChart($dashboard, $companyId);
+            $this->appendMaterialUnitChart(
+                $dashboard,
+                $companyId,
+                $user,
+                Product::ContextRawMaterials,
+                'dashboard-raw-material-units',
+                'dashboard.plastics.charts.raw_material_units',
+            );
             $this->appendQuickAction($dashboard, $user, 'raw_materials.create', 'admin.raw-materials.create', __('dashboard.plastics.quick_actions.raw_material'), 'plus');
+        }
+
+        if ($this->can($user, 'packaging_materials.view')) {
+            $packagingMaterials = $this->productQuery($user, 'packaging_materials', $companyId)
+                ->packagingMaterials()
+                ->where('status', 'active')
+                ->count();
+
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.packaging_materials.title'),
+                $packagingMaterials,
+                __('dashboard.plastics.metrics.packaging_materials.meta'),
+                'boxes',
+                'info',
+                $this->routeUrl('admin.packaging-materials.index'),
+            );
+
+            $this->appendMaterialUnitChart(
+                $dashboard,
+                $companyId,
+                $user,
+                Product::ContextPackagingMaterials,
+                'dashboard-packaging-material-units',
+                'dashboard.plastics.charts.packaging_material_units',
+            );
+            $this->appendQuickAction($dashboard, $user, 'packaging_materials.create', 'admin.packaging-materials.create', __('dashboard.plastics.quick_actions.packaging_material'), 'plus');
         }
 
         if ($items !== []) {
@@ -189,9 +224,8 @@ class PlasticsDashboardService
      */
     private function appendProductCharts(array &$dashboard, int $companyId, User $user, int $withComponents, int $withoutComponents): void
     {
-        $typeRows = Product::query()
-            ->forCompany($companyId)
-            ->withoutRawMaterials()
+        $typeRows = $this->productQuery($user, 'products', $companyId)
+            ->productItems()
             ->where('status', 'active')
             ->select('item_classification', DB::raw('COUNT(*) as aggregate'))
             ->groupBy('item_classification')
@@ -208,8 +242,7 @@ class PlasticsDashboardService
             ->all();
 
         if ($this->can($user, 'raw_materials.view')) {
-            $rawCount = Product::query()
-                ->forCompany($companyId)
+            $rawCount = $this->productQuery($user, 'raw_materials', $companyId)
                 ->rawMaterials()
                 ->where('status', 'active')
                 ->count();
@@ -218,6 +251,20 @@ class PlasticsDashboardService
                 $typeData[] = [
                     'name' => __('products.classifications.raw_material'),
                     'value' => $rawCount,
+                ];
+            }
+        }
+
+        if ($this->can($user, 'packaging_materials.view')) {
+            $packagingCount = $this->productQuery($user, 'packaging_materials', $companyId)
+                ->packagingMaterials()
+                ->where('status', 'active')
+                ->count();
+
+            if ($packagingCount > 0) {
+                $typeData[] = [
+                    'name' => __('products.classifications.packaging'),
+                    'value' => $packagingCount,
                 ];
             }
         }
@@ -245,17 +292,22 @@ class PlasticsDashboardService
     /**
      * @param  array<string, mixed>  $dashboard
      */
-    private function appendRawMaterialUnitChart(array &$dashboard, int $companyId): void
-    {
+    private function appendMaterialUnitChart(
+        array &$dashboard,
+        int $companyId,
+        User $user,
+        string $context,
+        string $chartId,
+        string $chartTitle,
+    ): void {
         if (! $this->tableExists('item_units')) {
             return;
         }
 
         $unspecifiedLabel = __('dashboard.plastics.chart_labels.unspecified');
 
-        $rows = Product::query()
-            ->forCompany($companyId)
-            ->rawMaterials()
+        $rows = $this->productQuery($user, $context, $companyId)
+            ->forProductContext($context)
             ->where('products.status', 'active')
             ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
             ->selectRaw('item_units.name as label, COUNT(*) as aggregate')
@@ -275,8 +327,8 @@ class PlasticsDashboardService
 
         if ($data !== []) {
             $dashboard['charts'][] = $this->pieChart(
-                'dashboard-raw-material-units',
-                __('dashboard.plastics.charts.raw_material_units'),
+                $chartId,
+                __($chartTitle),
                 $data,
             );
         }
@@ -294,7 +346,7 @@ class PlasticsDashboardService
         if ($this->can($user, 'suppliers.view') && $this->tableExists('suppliers')) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.suppliers.title'),
-                $this->activeCompanyCount('suppliers', $context),
+                $this->activeCompanyCount('suppliers', $context, $user, 'suppliers'),
                 __('dashboard.plastics.metrics.suppliers.meta'),
                 'truck',
                 'secondary',
@@ -303,7 +355,7 @@ class PlasticsDashboardService
         }
 
         if ($this->can($user, 'purchase_invoices.view') && $this->tableExists('purchase_invoices')) {
-            $query = $this->contextQuery('purchase_invoices', $context)
+            $query = $this->restrictedContextQuery('purchase_invoices', $context, $user, 'purchase_invoices')
                 ->whereBetween('invoice_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
             $count = (clone $query)->count();
             $unpaid = (clone $query)->whereIn('payment_status', ['unpaid', 'partially_paid'])->count();
@@ -319,7 +371,7 @@ class PlasticsDashboardService
         }
 
         if ($this->can($user, 'purchase_orders.view') && $this->tableExists('purchase_orders')) {
-            $query = $this->contextQuery('purchase_orders', $context)
+            $query = $this->restrictedContextQuery('purchase_orders', $context, $user, 'purchase_orders')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
             $count = (clone $query)->count();
             $draft = (clone $query)->where('status', 'draft')->count();
@@ -349,7 +401,7 @@ class PlasticsDashboardService
         $items = [];
 
         if ($this->can($user, 'inventory.unpriced_inventory_receipts.view') && $this->tableExists('unpriced_inventory_receipts')) {
-            $query = $this->contextQuery('unpriced_inventory_receipts', $context)
+            $query = $this->restrictedContextQuery('unpriced_inventory_receipts', $context, $user, 'unpriced_inventory_receipts')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
             $awaitingPricing = (clone $query)
                 ->where('pricing_status', 'unpriced')
@@ -394,7 +446,7 @@ class PlasticsDashboardService
         }
 
         if ($this->can($user, 'inventory.opening_stocks.view') && $this->tableExists('inventory_opening_stocks')) {
-            $query = $this->contextQuery('inventory_opening_stocks', $context)
+            $query = $this->restrictedContextQuery('inventory_opening_stocks', $context, $user, 'opening_stocks')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
             $approved = (clone $query)->where('status', 'approved')->count();
 
@@ -425,7 +477,7 @@ class PlasticsDashboardService
         if ($this->can($user, 'customers.view') && $this->tableExists('customers')) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.customers.title'),
-                $this->activeCompanyCount('customers', $context),
+                $this->activeCompanyCount('customers', $context, $user, 'customers'),
                 __('dashboard.plastics.metrics.customers.meta'),
                 'user-tie',
                 'primary',
@@ -434,7 +486,7 @@ class PlasticsDashboardService
         }
 
         if ($this->can($user, 'quotations.view') && $this->tableExists('quotations')) {
-            $query = $this->contextQuery('quotations', $context, branch: false, financialPeriod: false)
+            $query = $this->restrictedContextQuery('quotations', $context, $user, 'quotations', branch: false, financialPeriod: false)
                 ->whereBetween('quotation_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
             $accepted = (clone $query)->where('status', 'accepted')->count();
 
@@ -539,15 +591,40 @@ class PlasticsDashboardService
         }
     }
 
-    private function activeCompanyCount(string $table, array $context): int
+    private function activeCompanyCount(string $table, array $context, User $user, string $screenKey): int
     {
-        $query = $this->contextQuery($table, $context, branch: false, financialPeriod: false);
+        $query = $this->restrictedContextQuery($table, $context, $user, $screenKey, branch: false, financialPeriod: false);
 
         if ($this->hasColumn($table, 'status')) {
             $query->where('status', 'active');
         }
 
         return $query->count();
+    }
+
+    /** @return Builder<Product> */
+    private function productQuery(User $user, string $screenKey, int $companyId): Builder
+    {
+        return $this->visibility->applyToEloquent(
+            Product::query()->forCompany($companyId),
+            $user,
+            $screenKey,
+        );
+    }
+
+    private function restrictedContextQuery(
+        string $table,
+        array $context,
+        User $user,
+        string $screenKey,
+        bool $branch = true,
+        bool $financialPeriod = true,
+    ): QueryBuilder {
+        return $this->visibility->applyToQuery(
+            $this->contextQuery($table, $context, $branch, $financialPeriod),
+            $user,
+            $screenKey,
+        );
     }
 
     private function taskQueryForUser(User $user): QueryBuilder
@@ -756,6 +833,6 @@ class PlasticsDashboardService
 
     private function formatCount(int $value): string
     {
-        return number_format($value);
+        return $this->numbers->format($value);
     }
 }

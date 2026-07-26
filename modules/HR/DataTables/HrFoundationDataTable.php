@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Services\HrFoundationDefinition;
@@ -19,6 +20,7 @@ class HrFoundationDataTable
 
     public function __construct(
         private readonly DataTableSearchService $searchService,
+        private readonly NumericFormatService $numericFormatter,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -32,7 +34,7 @@ class HrFoundationDataTable
             ->leftJoin('users as updated_users', 'updated_users.id', '=', "{$definition->table}.updated_by")
             ->select($this->selectColumns($definition));
 
-        return DataTables::eloquent($query)
+        $dataTable = DataTables::eloquent($query)
             ->filter(function ($query) use ($request, $definition): void {
                 $search = $request->input('search.value');
                 $terms = $this->searchService->terms(is_string($search) ? $search : null);
@@ -64,7 +66,25 @@ class HrFoundationDataTable
             ->orderColumn('created_by', 'created_users.name $1')
             ->orderColumn('created_at', "{$definition->table}.created_at $1")
             ->orderColumn('updated_by', 'updated_users.name $1')
-            ->orderColumn('updated_at', "{$definition->table}.updated_at $1")
+            ->orderColumn('updated_at', "{$definition->table}.updated_at $1");
+
+        foreach ($definition->tableColumns as $column) {
+            if (! in_array($column['type'] ?? null, ['number', 'decimal'], true)) {
+                continue;
+            }
+
+            $columnName = (string) $column['name'];
+            $dataTable
+                ->editColumn(
+                    $columnName,
+                    fn (HrFoundationModel $record): string => $this->plainText(
+                        $this->numericFormatter->format($record->getAttribute($columnName))
+                    ),
+                )
+                ->orderColumn($columnName, "{$definition->table}.{$columnName} $1");
+        }
+
+        return $dataTable
             ->removeColumn('id')
             ->rawColumns(['checkbox', 'doc_num', 'name', 'status', 'created_by', 'updated_by', 'actions'])
             ->toJson();

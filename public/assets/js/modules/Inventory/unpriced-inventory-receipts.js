@@ -331,6 +331,7 @@
     syncProductInfoButton($row);
     renumberLines($form);
     initSelect2($row[0]);
+    window.AppNumbers.refresh($row[0]);
 
     if (shouldFocus !== false) {
       focusProduct($row);
@@ -410,7 +411,7 @@
     }
 
     if (['lines_count', 'total_quantity'].indexOf(column) !== -1) {
-      return 'align-middle white-space-nowrap text-center';
+      return 'align-middle white-space-nowrap dt-number text-center';
     }
 
     return 'align-middle white-space-nowrap dt-text dt-ellipsis';

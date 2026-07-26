@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\OpeningBalance;
 
@@ -17,6 +18,7 @@ class OpeningBalanceService
         private readonly DocumentNumberService $documents,
         private readonly CrudAuditService $audit,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -142,7 +144,9 @@ class OpeningBalanceService
             'financial_period_id' => $context['financial_period_id'],
             'currency_id' => $currency?->getKey(),
             'document_date' => $data['document_date'],
-            'exchange_rate' => $currency?->is_main ? 1 : ($data['exchange_rate'] ?? 1),
+            'exchange_rate' => $currency?->is_main
+                ? '1.000000'
+                : ($this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000'),
             'description' => $data['description'] ?? null,
             'notes' => $data['notes'] ?? null,
             'status' => OpeningBalance::StatusDraft,
@@ -175,14 +179,14 @@ class OpeningBalanceService
                 ->where('company_id', $record->company_id)
                 ->where('doc_num', $line['account_doc_num'])
                 ->value('id');
-            $amount = (float) ($line['amount'] ?? 0);
+            $amount = $this->numbers->normalizeToScale($line['amount'] ?? 0, 4) ?? '0.0000';
             $type = (string) ($line['transaction_type'] ?? '');
 
             $record->lines()->create([
                 'line_no' => $index + 1,
                 'account_id' => $accountId,
-                'debit_amount' => $type === 'debit' ? $amount : 0,
-                'credit_amount' => $type === 'credit' ? $amount : 0,
+                'debit_amount' => $type === 'debit' ? $amount : '0.0000',
+                'credit_amount' => $type === 'credit' ? $amount : '0.0000',
                 'description' => $line['description'] ?? null,
                 'customer_id' => $line['customer_id'] ?? null,
                 'supplier_id' => $line['supplier_id'] ?? null,
@@ -200,17 +204,23 @@ class OpeningBalanceService
     private function linesChanged(OpeningBalance $record, array $lines): bool
     {
         $record->loadMissing('lines.account');
-        $existing = $record->lines->map(fn ($line): array => [
-            'account_doc_num' => $line->account?->doc_num,
-            'transaction_type' => ((float) $line->debit_amount) > 0 ? 'debit' : 'credit',
-            'amount' => (string) (((float) $line->debit_amount) > 0 ? $line->debit_amount : $line->credit_amount),
-            'description' => $line->description,
-        ])->values()->all();
+        $existing = $record->lines->map(function ($line): array {
+            $normalizedDebit = $this->numbers->normalize($line->debit_amount);
+            $isDebit = $normalizedDebit !== null && ! $this->numbers->equivalent($normalizedDebit, 0);
+            $amount = $isDebit ? $line->debit_amount : $line->credit_amount;
+
+            return [
+                'account_doc_num' => $line->account?->doc_num,
+                'transaction_type' => $isDebit ? 'debit' : 'credit',
+                'amount' => $this->numbers->normalizeToScale($amount, 4) ?? '0.0000',
+                'description' => $line->description,
+            ];
+        })->values()->all();
 
         $incoming = collect($lines)->map(fn (array $line): array => [
             'account_doc_num' => $line['account_doc_num'] ?? null,
             'transaction_type' => $line['transaction_type'] ?? null,
-            'amount' => number_format((float) ($line['amount'] ?? 0), 4, '.', ''),
+            'amount' => $this->numbers->normalizeToScale($line['amount'] ?? 0, 4) ?? '0.0000',
             'description' => $line['description'] ?? null,
         ])->values()->all();
 

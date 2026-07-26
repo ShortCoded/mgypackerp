@@ -2,6 +2,7 @@
 
 namespace Modules\Inventory\Services;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Modules\Core\Models\Branch;
@@ -11,9 +12,11 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
@@ -25,9 +28,11 @@ class InventorySelect2Service
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
         private readonly Select2ResponseService $select2,
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly ProductImageResolver $productImages,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     public function branchHalls(Request $request): array
@@ -86,7 +91,7 @@ class InventorySelect2Service
         $context = $this->operatingContext->snapshot($request);
         $companyId = $context['company_id'];
         $selectedDocNum = $request->string('selected_doc_num')->trim()->toString();
-        $query = $this->productQuery($companyId);
+        $query = $this->productQuery($companyId, $request->user());
 
         if ($selectedDocNum !== '') {
             $selected = (clone $query)->where('products.doc_num', $selectedDocNum)->first();
@@ -123,7 +128,7 @@ class InventorySelect2Service
 
     public function productDetails(Request $request, string $productDocNum): ?array
     {
-        $product = $this->productQuery($this->operatingContext->snapshot($request)['company_id'])
+        $product = $this->productQuery($this->operatingContext->snapshot($request)['company_id'], $request->user())
             ->where('products.doc_num', $productDocNum)
             ->first();
 
@@ -345,14 +350,19 @@ class InventorySelect2Service
         ];
     }
 
-    private function productQuery(?int $companyId): Builder
+    private function productQuery(?int $companyId, ?User $user): Builder
     {
-        return Product::query()
+        $query = Product::query()
             ->with('mainImageUsage.file')
             ->active()
             ->nonService()
-            ->when($companyId, fn ($query) => $query->forCompany($companyId), fn ($query) => $query->whereRaw('1 = 0'))
-            ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
+            ->when($companyId, fn ($query) => $query->forCompany($companyId), fn ($query) => $query->whereRaw('1 = 0'));
+
+        if ($user instanceof User) {
+            $query = $this->visibility->applyAnyScreenToEloquent($query, $user, [Product::ContextProducts, Product::ContextRawMaterials, Product::ContextPackagingMaterials]);
+        }
+
+        return $query->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
             ->leftJoin('item_categories', 'item_categories.id', '=', 'products.item_category_id')
             ->leftJoin('item_groups', 'item_groups.id', '=', 'products.item_group_id')
             ->leftJoin('item_models', 'item_models.id', '=', 'products.item_model_id')
@@ -624,7 +634,7 @@ class InventorySelect2Service
             return null;
         }
 
-        return rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
+        return $this->numbers->format($value);
     }
 
     private function empty(): array

@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\FinancialPeriod;
@@ -19,6 +20,8 @@ use Modules\Purchases\Models\Supplier;
 
 class StorePurchaseOrderRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can('purchase_orders.create');
@@ -26,6 +29,12 @@ class StorePurchaseOrderRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'lines.*.ordered_quantity',
+            'lines.*.unit_price',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
 
         $this->merge([
@@ -74,7 +83,7 @@ class StorePurchaseOrderRequest extends FormRequest
                     $fail(__('purchase_orders.messages.document_date_invalid'));
                 }
             }],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'expected_delivery_date' => ['nullable', function (string $attribute, mixed $value, Closure $fail): void {
                 if ($value !== null && $value !== '' && ! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
                     $fail(__('purchase_orders.messages.expected_delivery_date_invalid'));
@@ -91,8 +100,8 @@ class StorePurchaseOrderRequest extends FormRequest
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'lines.*.unit_doc_num' => ['required', 'string'],
-            'lines.*.ordered_quantity' => ['required', 'numeric', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'lines.*.ordered_quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,12}(?:\.\d{1,8})?$/D', 'gt:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
         ];
@@ -310,7 +319,7 @@ class StorePurchaseOrderRequest extends FormRequest
 
     private function decimalValue(mixed $value): ?string
     {
-        $value = trim(str_replace(',', '', (string) ($value ?? '')));
+        $value = trim((string) ($value ?? ''));
 
         if ($value === '') {
             return null;

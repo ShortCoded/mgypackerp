@@ -5,6 +5,7 @@ namespace Modules\Purchases\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
@@ -15,6 +16,8 @@ use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 
 class StorePurchaseInvoiceRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         $action = $this->filled('clone_source_token') ? 'clone' : 'create';
@@ -24,6 +27,16 @@ class StorePurchaseInvoiceRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'header_discount_value',
+            'lines.*.quantity',
+            'lines.*.unit_price',
+            'lines.*.discount_value',
+            'lines.*.tax_rate',
+            'payment_schedules.*.amount',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $financialPeriodDocNum = $this->filled('financial_period_doc_num')
             ? trim((string) $this->input('financial_period_doc_num'))
@@ -87,7 +100,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 Rule::exists('currencies', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'payment_type' => ['required', Rule::in([PurchaseInvoice::PaymentTypeCash, PurchaseInvoice::PaymentTypeCredit, PurchaseInvoice::PaymentTypePartial])],
             'payment_source_type' => ['nullable', Rule::in([PurchaseInvoice::SourceCashbox, PurchaseInvoice::SourceBank])],
             'cashbox_doc_num' => [
@@ -103,7 +116,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
-            'header_discount_value' => ['nullable', 'numeric', 'min:0'],
+            'header_discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'notes' => ['nullable', 'string'],
             'internal_notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
@@ -115,11 +128,11 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'lines.*.unit_doc_num' => ['required', 'string'],
-            'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'lines.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
-            'lines.*.discount_value' => ['nullable', 'numeric', 'min:0'],
-            'lines.*.tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
             'lines.*.notes' => ['nullable', 'string'],
             'payment_schedules' => ['nullable', 'array'],
             'payment_schedules.*.public_id' => ['nullable', 'string'],
@@ -128,7 +141,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     $fail(__('purchase_invoices.messages.due_date_invalid'));
                 }
             }],
-            'payment_schedules.*.amount' => ['required', 'numeric', 'gt:0'],
+            'payment_schedules.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'payment_schedules.*.payment_source_type' => ['required', Rule::in([PurchaseInvoice::SourceScheduled, PurchaseInvoice::SourceCashbox, PurchaseInvoice::SourceBank])],
             'payment_schedules.*.cashbox_doc_num' => [
                 'nullable',
@@ -412,7 +425,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
 
     private function decimalValue(mixed $value): ?string
     {
-        $value = trim(str_replace(',', '', (string) ($value ?? '')));
+        $value = trim((string) ($value ?? ''));
 
         return $value === '' ? null : $value;
     }

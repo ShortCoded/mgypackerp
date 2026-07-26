@@ -179,6 +179,7 @@ $productPermissionLabels = [];
 foreach ([
     'products' => ['المنتجات', 'المنتج'],
     'raw_materials' => ['الخامات', 'الخامة'],
+    'packaging_materials' => ['مواد التعبئة والتغليف', 'مادة التعبئة والتغليف'],
 ] as $prefix => [$plural, $singular]) {
     $productPermissionLabels["{$prefix}.view"] = "عرض {$plural}";
     $productPermissionLabels["{$prefix}.create"] = "إنشاء {$plural}";
@@ -195,6 +196,12 @@ $reportPermissionLabels = [
     'reports.products_data.view' => 'عرض تقرير بيانات المنتجات والخامات',
     'reports.products_data.export' => 'تصدير تقرير بيانات المنتجات والخامات',
     'reports.products_data.pdf' => 'تصدير PDF لتقرير بيانات المنتجات والخامات',
+    'reports.customers.view' => 'عرض تقرير العملاء',
+    'reports.customers.export' => 'تصدير تقرير العملاء',
+    'reports.customers.pdf' => 'تصدير PDF لتقرير العملاء',
+    'reports.suppliers.view' => 'عرض تقرير الموردين',
+    'reports.suppliers.export' => 'تصدير تقرير الموردين',
+    'reports.suppliers.pdf' => 'تصدير PDF لتقرير الموردين',
 ];
 
 $accountPermissionLabels = [
@@ -471,4 +478,12 @@ return [
     'users.roles.manage' => 'إدارة مجموعات المستخدمين',
     'users.view' => 'عرض المستخدمين',
     'users.view_trashed' => 'عرض المستخدمين المحذوفين',
+    'screen_data_visibility_rules.view' => 'عرض سياسات رؤية البيانات',
+    'screen_data_visibility_rules.create' => 'إنشاء سياسات رؤية البيانات',
+    'screen_data_visibility_rules.edit' => 'تعديل سياسات رؤية البيانات',
+    'screen_data_visibility_rules.clone' => 'نسخ سياسات رؤية البيانات',
+    'screen_data_visibility_rules.delete' => 'حذف سياسات رؤية البيانات',
+    'screen_data_visibility_rules.view_trashed' => 'عرض سياسات رؤية البيانات المحذوفة',
+    'screen_data_visibility_rules.restore' => 'استعادة سياسات رؤية البيانات',
+    'screen_data_visibility_rules.bypass' => 'تجاوز قيود رؤية البيانات',
 ];

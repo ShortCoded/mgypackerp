@@ -11,6 +11,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
@@ -27,6 +28,7 @@ class PurchaseOrderService
         private readonly PurchaseOrderCalculationService $calculator,
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly ProductImageResolver $productImages,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -329,7 +331,7 @@ class PurchaseOrderService
             'supplier_id' => $supplier->getKey(),
             'currency_id' => $currency?->getKey(),
             'document_date' => $data['document_date'],
-            'exchange_rate' => number_format((float) ($data['exchange_rate'] ?? 1), 6, '.', ''),
+            'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
             'expected_delivery_date' => $data['expected_delivery_date'] ?? null,
             'supplier_reference' => $data['supplier_reference'] ?? null,
             'notes' => $data['notes'] ?? null,

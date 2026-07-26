@@ -5,8 +5,7 @@
     $isReadonly = $mode === 'view' || ($record?->trashed() ?? false) || (! $isCreateLike && ($isLocked ?? false));
     $title = __("inventory.opening_stock_pricings.{$mode}");
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
-    $formatAmount = fn ($value) => rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
-    $formatRate = fn ($value) => rtrim(rtrim(number_format((float) $value, 6, '.', ''), '0'), '.') ?: '0';
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $selectedBranchDocNum = old('branch_doc_num', $branchOption['id'] ?? '');
@@ -203,9 +202,9 @@
                     <div class="col-md-4">
                         <x-forms.label for="exchange_rate" :label="__('inventory.opening_stock_pricings.attributes.exchange_rate')" required />
                         @if($isReadonly)
-                            <x-forms.view-field for="exchange_rate" :value="$formatRate($exchangeRate)" input-class="text-center" dir="ltr" />
+                            <x-forms.view-field for="exchange_rate" :value="$numbers->format($exchangeRate)" input-class="text-center" dir="ltr" />
                         @else
-                            <input class="form-control text-center js-opening-stock-pricing-exchange-rate" id="exchange_rate" name="exchange_rate" type="number" min="0.000001" step="0.000001" value="{{ $exchangeRate }}" dir="ltr" required>
+                            <x-forms.numeric-input class="text-center js-opening-stock-pricing-exchange-rate" id="exchange_rate" name="exchange_rate" :value="$exchangeRate" :scale="6" min="0.000001" step="0.000001" required />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                     </div>
@@ -287,16 +286,16 @@
                                         @endif
                                     </td>
                                     <td><div class="opening-stock-pricing-unit-display js-opening-stock-pricing-unit text-700" data-unit-display>{{ $line['unit'] ?? '' }}</div></td>
-                                    <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-quantity" type="text" value="{{ $line['quantity'] ?? '' }}" dir="ltr" readonly></td>
+                                    <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-quantity" type="text" value="{{ $numbers->format($line['quantity'] ?? null) }}" dir="ltr" readonly></td>
                                     <td class="text-center">
                                         @if($isReadonly)
-                                            <div class="form-control-plaintext text-center" dir="ltr">{{ $formatAmount($line['unit_price'] ?? 0) }}</div>
+                                            <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                         @else
-                                            <input class="form-control text-center js-opening-stock-pricing-unit-price" name="lines[{{ $index }}][unit_price]" type="number" min="0.0001" step="0.0001" value="{{ $line['unit_price'] ?? '' }}" dir="ltr">
+                                            <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                         @endif
                                     </td>
-                                    <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-line-total" type="text" value="{{ $line['line_total'] ?? '' }}" dir="ltr" readonly></td>
+                                    <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-line-total" type="text" value="{{ $numbers->format($line['line_total'] ?? null) }}" dir="ltr" readonly></td>
                                     <td>
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
@@ -327,7 +326,7 @@
                         <tfoot class="bg-100">
                             <tr>
                                 <th colspan="4" class="text-end">{{ __('inventory.opening_stock_pricings.attributes.total_amount') }}</th>
-                                <th class="text-center"><span class="js-opening-stock-pricing-total-amount" dir="ltr">{{ $formatAmount(old('total_amount', $record?->total_amount ?? 0)) }}</span></th>
+                                <th class="text-center"><span class="js-opening-stock-pricing-total-amount" dir="ltr">{{ $numbers->format(old('total_amount', $record?->total_amount ?? 0)) }}</span></th>
                                 <th colspan="{{ $isReadonly ? 1 : 2 }}"></th>
                             </tr>
                         </tfoot>
@@ -385,7 +384,7 @@
                 <td><div class="opening-stock-pricing-unit-display js-opening-stock-pricing-unit text-700" data-unit-display></div></td>
                 <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-quantity" type="text" value="" dir="ltr" readonly></td>
                 <td class="text-center">
-                    <input class="form-control text-center js-opening-stock-pricing-unit-price" name="lines[__INDEX__][unit_price]" type="number" min="0.0001" step="0.0001" value="" dir="ltr">
+                    <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" name="lines[__INDEX__][unit_price]" :scale="4" min="0.0001" step="0.0001" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
                 </td>
                 <td class="text-center"><input class="form-control-plaintext text-center js-opening-stock-pricing-line-total" type="text" value="" dir="ltr" readonly></td>

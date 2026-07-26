@@ -2,8 +2,16 @@
     use Modules\Core\Models\Product;
 
     $productContext = $productContext ?? Product::ContextProducts;
-    $routePrefix = $productContext === Product::ContextRawMaterials ? 'admin.raw-materials.' : 'admin.products.';
-    $permissionPrefix = $productContext === Product::ContextRawMaterials ? 'raw_materials' : 'products';
+    $routePrefix = match ($productContext) {
+        Product::ContextRawMaterials => 'admin.raw-materials.',
+        Product::ContextPackagingMaterials => 'admin.packaging-materials.',
+        default => 'admin.products.',
+    };
+    $permissionPrefix = match ($productContext) {
+        Product::ContextRawMaterials => 'raw_materials',
+        Product::ContextPackagingMaterials => 'packaging_materials',
+        default => 'products',
+    };
     $canList = auth()->user()?->can($permissionPrefix.'.view');
     $canSave = ! $isView;
     $canView = auth()->user()?->can($permissionPrefix.'.view');

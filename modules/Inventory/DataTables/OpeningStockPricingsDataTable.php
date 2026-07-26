@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Inventory\Models\OpeningStockPricing;
@@ -20,6 +21,7 @@ class OpeningStockPricingsDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -91,10 +93,10 @@ class OpeningStockPricingsDataTable
             ->addColumn('hall', fn (OpeningStockPricing $record): string => $this->ellipsisText($record->hall_name ?: __('common.empty_value')))
             ->addColumn('opening_stock_doc_num', fn (OpeningStockPricing $record): string => $this->plainText($this->openingStockDocumentLabel($record, $dateFormat)))
             ->addColumn('currency', fn (OpeningStockPricing $record): string => $this->plainText(trim(implode(' / ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->editColumn('exchange_rate', fn (OpeningStockPricing $record): string => $this->plainText($this->formatNumber($record->exchange_rate, 6)))
-            ->addColumn('total_amount', fn (OpeningStockPricing $record): string => $this->plainText(trim($this->formatNumber($record->total_amount).' '.($record->currency_code ?: ''))))
+            ->editColumn('exchange_rate', fn (OpeningStockPricing $record): string => $this->plainText($this->numbers->format($record->exchange_rate)))
+            ->addColumn('total_amount', fn (OpeningStockPricing $record): string => $this->plainText(trim($this->numbers->format($record->total_amount).' '.($record->currency_code ?: ''))))
             ->addColumn('status', fn (OpeningStockPricing $record): string => view('modules.inventory.opening-stock-pricings.partials.state', ['record' => $record])->render())
-            ->addColumn('lines_count', fn (OpeningStockPricing $record): string => $this->plainText((string) ((int) $record->lines_count)))
+            ->addColumn('lines_count', fn (OpeningStockPricing $record): string => $this->plainText($this->numbers->format($record->lines_count)))
             ->editColumn('created_by', fn (OpeningStockPricing $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
             ->editColumn('created_at', fn (OpeningStockPricing $record): string => $this->plainText($record->created_at?->format($dateTimeFormat) ?? ''))
             ->editColumn('updated_by', fn (OpeningStockPricing $record): string => $this->ellipsisText($record->updated_by_name ?: __('common.empty_value')))
@@ -165,10 +167,5 @@ class OpeningStockPricingsDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatNumber(mixed $value, int $precision = 4): string
-    {
-        return rtrim(rtrim(number_format((float) $value, $precision, '.', ''), '0'), '.') ?: '0';
     }
 }

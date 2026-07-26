@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -20,6 +21,7 @@ class FixedAssetsDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -176,7 +178,7 @@ class FixedAssetsDataTable
 
     private function moneyText(mixed $value, mixed $currencyCode): string
     {
-        $amount = $this->formatNumber($value, 4);
+        $amount = $this->numbers->format($value);
 
         if ($amount === '') {
             return __('common.empty_value');
@@ -200,15 +202,6 @@ class FixedAssetsDataTable
     private function dateTimeText(mixed $date, string $dateTimeFormat): string
     {
         return $date?->format($dateTimeFormat) ?? __('common.empty_value');
-    }
-
-    private function formatNumber(mixed $value, int $precision): string
-    {
-        if ($value === null || trim((string) $value) === '') {
-            return '';
-        }
-
-        return rtrim(rtrim(number_format((float) $value, $precision, '.', ''), '0'), '.') ?: '0';
     }
 
     private function trashFilter(Request $request): string

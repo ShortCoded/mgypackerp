@@ -105,6 +105,12 @@
         const current = currentFormData($form);
 
         return Object.keys(current).some(function (field) {
+            const $input = $form.find('[name="' + field + '"]').first();
+
+            if ($input.is('[data-numeric-input]') && window.AppNumbers && typeof window.AppNumbers.same === 'function') {
+                return !window.AppNumbers.same(original[field], current[field]);
+            }
+
             return String(original[field] || '') !== String(current[field] || '');
         });
     }
@@ -357,11 +363,14 @@
 
         const dynamicColumns = (window.hrFoundationDataTableColumns || []).map(function (column) {
             const name = String(column.name || '');
+            const isNumeric = ['number', 'decimal'].indexOf(String(column.type || '')) !== -1;
 
             return {
                 data: name,
                 name: name,
-                className: 'align-middle white-space-nowrap dt-text dt-ellipsis'
+                className: isNumeric
+                    ? 'align-middle white-space-nowrap dt-number text-end'
+                    : 'align-middle white-space-nowrap dt-text dt-ellipsis'
             };
         });
         const columns = [

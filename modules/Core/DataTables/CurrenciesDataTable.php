@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Yajra\DataTables\Facades\DataTables;
@@ -18,6 +19,7 @@ class CurrenciesDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numericFormatter,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -48,7 +50,7 @@ class CurrenciesDataTable
             ->editColumn('name', fn (Currency $currency): string => $this->ellipsisText($currency->name))
             ->editColumn('code', fn (Currency $currency): string => '<span class="dt-code-value" dir="ltr">'.e($currency->code).'</span>')
             ->editColumn('minor_unit_name', fn (Currency $currency): string => $this->ellipsisText($currency->minor_unit_name))
-            ->editColumn('minor_unit_factor', fn (Currency $currency): string => '<span class="dt-number-value" dir="ltr">'.e((string) $currency->minor_unit_factor).'</span>')
+            ->editColumn('minor_unit_factor', fn (Currency $currency): string => '<span class="dt-number-value" dir="ltr">'.e($this->numericFormatter->format($currency->minor_unit_factor)).'</span>')
             ->editColumn('is_main', fn (Currency $currency): string => $this->badge($currency->is_main ? __('common.actions.yes') : __('common.actions.no'), $currency->is_main ? 'success' : 'secondary'))
             ->editColumn('status', fn (Currency $currency): string => $this->badge(__("currencies.statuses.{$currency->status}"), $currency->status === 'active' ? 'success' : 'secondary'))
             ->addColumn('created_by', fn (Currency $currency): string => $this->ellipsisText($currency->created_by_name))

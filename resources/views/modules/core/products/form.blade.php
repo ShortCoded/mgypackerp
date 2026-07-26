@@ -8,7 +8,13 @@
 
     $record = $product ?? null;
     $isRawMaterialsContext = $isRawMaterialsContext ?? false;
-    $showComponentsTab = ! $isRawMaterialsContext;
+    $isMaterialContext = $isMaterialContext ?? $isRawMaterialsContext;
+    $resourceRoot = match ($productContext ?? Product::ContextProducts) {
+        Product::ContextRawMaterials => 'products.raw_materials',
+        Product::ContextPackagingMaterials => 'products.packaging_materials',
+        default => 'products',
+    };
+    $showComponentsTab = ! $isMaterialContext;
     $routes = $routes ?? [
         'index' => route('admin.products.index'),
         'create' => route('admin.products.create'),
@@ -18,20 +24,21 @@
     $isClone = $mode === 'clone';
     $isCreate = in_array($mode, ['create', 'clone'], true);
     $title = match ($mode) {
-        'edit' => $isRawMaterialsContext ? __('products.raw_materials.edit') : __('products.edit'),
-        'view' => $isRawMaterialsContext ? __('products.raw_materials.view') : __('products.view'),
-        'clone' => $isRawMaterialsContext ? __('products.raw_materials.titles.clone') : __('products.titles.clone'),
-        default => $isRawMaterialsContext ? __('products.raw_materials.create') : __('products.create'),
+        'edit' => __($resourceRoot.'.edit'),
+        'view' => __($resourceRoot.'.view'),
+        'clone' => __($resourceRoot.'.titles.clone'),
+        default => __($resourceRoot.'.create'),
     };
-    $resourceMessagesRoot = $isRawMaterialsContext ? 'products.raw_materials.messages' : 'products.messages';
-    $resourceNameLabel = $isRawMaterialsContext ? __('products.raw_materials.attributes.name') : __('products.attributes.name');
+    $resourceMessagesRoot = $resourceRoot.'.messages';
+    $resourceNameLabel = __($resourceRoot.'.attributes.name');
     $useOldInput = ! $isView && (($errors ?? null)?->any() || ($isCreate && session()->has('_old_input')));
     $fieldValue = fn (string $field, mixed $default = '') => $useOldInput ? old($field, $record?->{$field} ?? $default) : ($record?->{$field} ?? $default);
     $documentNumberValue = $useOldInput ? old('doc_number', ! $isCreate ? $record?->doc_number : '') : (! $isCreate ? $record?->doc_number : '');
-    $classificationValue = $isRawMaterialsContext ? Product::ClassificationRawMaterial : $fieldValue('item_classification', Product::ClassificationFinishedProduct);
-    $classificationOptions = $isRawMaterialsContext
-        ? [Product::ClassificationRawMaterial]
-        : Product::nonRawItemClassifications();
+    $contextClassification = Product::classificationForContext($productContext ?? Product::ContextProducts);
+    $classificationValue = $contextClassification ?? $fieldValue('item_classification', Product::ClassificationFinishedProduct);
+    $classificationOptions = $contextClassification === null
+        ? Product::productItemClassifications()
+        : [$contextClassification];
     $statusValue = $fieldValue('status', 'active');
     $barcodeValue = $fieldValue('barcode');
     $reorderPointValue = $fieldValue('reorder_point', null);
@@ -138,21 +145,14 @@
         'option' => $lookupOptions['equivalent_unit'] ?? null,
         'url' => route('admin.select2.item-units'),
     ];
-    $formatEquivalenceDecimal = static function (mixed $value): string {
-        if ($value === null || $value === '') {
-            return '';
-        }
-
-        if (! is_numeric($value)) {
-            return (string) $value;
-        }
-
-        $formatted = number_format((float) $value, 6, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.') ?: '0';
-    };
-    $equivalentValue = $formatEquivalenceDecimal($fieldValue('equivalent_value', null));
+    $equivalentValue = $fieldValue('equivalent_value', null);
     $componentReadonly = $isView || ($record?->trashed() ?? false);
+    $componentInitialRows = $componentRows ?? [];
+    if (! $isView && $useOldInput) {
+        $oldComponentRows = old('components', $componentInitialRows);
+        $componentInitialRows = is_array($oldComponentRows) ? array_values($oldComponentRows) : $componentInitialRows;
+    }
+    $componentUnitConversionEdges = $componentUnitConversionEdges ?? [];
 @endphp
 
 @section('title', $title)
@@ -230,13 +230,30 @@
             vertical-align: middle;
         }
 
+        .product-form-card .product-components-table {
+            min-width: 82rem;
+        }
+
         .product-form-card .product-components-table .dt-actions {
             width: 1%;
             white-space: nowrap;
         }
 
-        .product-form-card .product-components-table .select2-container {
+        .product-form-card .product-components-table .js-product-component-raw-material + .select2-container {
             min-width: 14rem;
+        }
+
+        .product-form-card .product-components-table .js-product-component-reference + .select2-container {
+            min-width: 12rem;
+        }
+
+        .product-form-card .product-component-calculation-state {
+            min-height: 1.25rem;
+        }
+
+        .product-form-card .product-component-calculated-field {
+            background-color: rgba(44, 123, 229, .08);
+            box-shadow: inset 0 0 0 1px rgba(44, 123, 229, .18);
         }
 
         .product-form-card .product-components-table [data-component-unit-display] {
@@ -244,11 +261,15 @@
             min-height: calc(1.5em + .625rem + 2px);
             background-color: var(--falcon-100, #f9fafd);
         }
+
+        .product-form-card .product-components-total {
+            border-top: 1px solid var(--falcon-border-color, #d8e2ef);
+        }
     </style>
 @endpush
 
 @section('content')
-    <form id="product-form" action="{{ $action }}" method="POST" data-mode="{{ $mode }}" data-product-context="{{ $isRawMaterialsContext ? Product::ContextRawMaterials : Product::ContextProducts }}" data-default-classification="{{ $classificationValue }}" novalidate>
+    <form id="product-form" action="{{ $action }}" method="POST" data-mode="{{ $mode }}" data-product-context="{{ $productContext ?? Product::ContextProducts }}" data-default-classification="{{ $classificationValue }}" novalidate>
         @csrf
         @if ($method !== 'POST')
             @method($method)
@@ -257,8 +278,8 @@
         @if (! empty($cloneSourceToken))
             <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
         @endif
-        @if ($isRawMaterialsContext && ! $isView)
-            <input type="hidden" name="item_classification" value="{{ Product::ClassificationRawMaterial }}">
+        @if ($isMaterialContext && ! $isView)
+            <input type="hidden" name="item_classification" value="{{ $contextClassification }}">
         @endif
 
         <div class="mb-3 card product-form-card">
@@ -318,7 +339,7 @@
                                 <div class="invalid-feedback" data-error-for="name"></div>
                             </div>
 
-                            @unless ($isRawMaterialsContext)
+                            @unless ($isMaterialContext)
                                 <div class="{{ $showsDocumentNumberColumn ? 'col-md-4 col-lg-3' : 'col-md-4' }}">
                                     <x-forms.label for="item_classification" :label="__('products.attributes.item_classification')" required />
                                     @if ($isView)
@@ -347,9 +368,18 @@
                             <div class="col-md-4">
                                 <label class="form-label" for="reorder_point">{{ __('products.attributes.reorder_point') }}</label>
                                 @if ($isView)
-                                    <x-forms.view-field for="reorder_point" :value="$reorderPointValue" input-class="text-end" />
+                                    <x-forms.view-field for="reorder_point" :value="$reorderPointValue" input-class="text-end" dir="ltr" numeric />
                                 @else
-                                    <input class="form-control text-end" id="reorder_point" name="reorder_point" type="number" min="0" step="0.0001" value="{{ $reorderPointValue }}">
+                                    <x-forms.numeric-input
+                                        id="reorder_point"
+                                        name="reorder_point"
+                                        :value="$reorderPointValue"
+                                        :scale="4"
+                                        :allow-negative="false"
+                                        min="0"
+                                        step="0.0001"
+                                        class="text-end"
+                                    />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="reorder_point"></div>
                             </div>
@@ -401,9 +431,18 @@
                                             <div class="col-md-4">
                                                 <label class="form-label" for="equivalent_value">{{ __('products.attributes.equivalent_value') }}</label>
                                                 @if ($isView)
-                                                    <x-forms.view-field for="equivalent_value" :value="$equivalentValue" input-class="text-end" />
+                                                    <x-forms.view-field for="equivalent_value" :value="$equivalentValue" input-class="text-end" dir="ltr" numeric />
                                                 @else
-                                                    <input class="form-control text-end" id="equivalent_value" name="equivalent_value" type="number" min="0.000001" step="0.000001" value="{{ $equivalentValue }}">
+                                                    <x-forms.numeric-input
+                                                        id="equivalent_value"
+                                                        name="equivalent_value"
+                                                        :value="$equivalentValue"
+                                                        :scale="6"
+                                                        :allow-negative="false"
+                                                        min="0.000001"
+                                                        step="0.000001"
+                                                        class="text-end"
+                                                    />
                                                 @endif
                                                 <div class="invalid-feedback d-block" data-error-for="equivalent_value"></div>
                                             </div>
@@ -512,6 +551,14 @@
                                 <div class="product-options-panel">
                                     <div class="row g-2">
                                         @foreach (['cost_as_inventory', 'is_displayable'] as $booleanField)
+                                            @php
+                                                $booleanDefault = $record
+                                                    ? (bool) $record->{$booleanField}
+                                                    : true;
+                                                $booleanChecked = $useOldInput
+                                                    ? filter_var(old($booleanField, $booleanDefault), FILTER_VALIDATE_BOOL)
+                                                    : $booleanDefault;
+                                            @endphp
                                             <div class="col-md-6">
                                                 <div class="product-option-item">
                                                     <div class="product-option-copy">
@@ -525,7 +572,7 @@
                                                     @else
                                                         <input type="hidden" name="{{ $booleanField }}" value="0">
                                                         <div class="form-check form-switch mb-0">
-                                                            <input class="form-check-input" id="{{ $booleanField }}" name="{{ $booleanField }}" type="checkbox" value="1" aria-label="{{ __('products.attributes.' . $booleanField) }}" @checked(old($booleanField, $record?->{$booleanField} ?? ($booleanField === 'is_displayable')))>
+                                                            <input class="form-check-input" id="{{ $booleanField }}" name="{{ $booleanField }}" type="checkbox" value="1" aria-label="{{ __('products.attributes.' . $booleanField) }}" @checked($booleanChecked)>
                                                         </div>
                                                     @endif
                                                 </div>
@@ -581,9 +628,11 @@
                                     <table class="table table-sm table-hover align-middle product-components-table mb-0">
                                         <thead class="bg-100 text-900">
                                             <tr>
-                                                <th style="width: 38%">{{ __('products.components.component_item') }}</th>
-                                                <th style="width: 18%">{{ __('products.components.unit') }}</th>
+                                                <th style="width: 24%">{{ __('products.components.component_item') }}</th>
+                                                <th style="width: 11%">{{ __('products.components.unit') }}</th>
+                                                <th style="width: 11%">{{ __('products.components.calculation_method') }}</th>
                                                 <th class="text-center" style="width: 14%">{{ __('products.components.quantity') }}</th>
+                                                <th style="width: 25%">{{ __('products.components.calculation') }}</th>
                                                 <th>{{ __('products.components.notes') }}</th>
                                                 @unless ($componentReadonly)
                                                     <th class="dt-actions text-center" style="width: 76px">{{ __('common.fields.actions') }}</th>
@@ -598,10 +647,15 @@
                                     <template id="product-component-row-template">
                                         <tr class="js-product-component-row" data-component-index="__INDEX__">
                                             <td>
+                                                <input type="hidden" data-component-field="client_key" name="components[__INDEX__][client_key]" value="">
                                                 <input type="hidden" data-component-field="public_id" name="components[__INDEX__][public_id]" value="">
                                                 <input type="hidden" data-component-field="_delete" name="components[__INDEX__][_delete]" value="0">
+                                                <input type="hidden" data-component-field="input_source" name="components[__INDEX__][input_source]" value="weight">
                                                 <select class="form-select js-select2-ajax js-product-component-raw-material" name="components[__INDEX__][component_product_doc_num]" data-component-field="component_product_doc_num" data-url="{{ $rawMaterialSelectUrl }}" data-placeholder="{{ __('products.components.select_component_item') }}" data-allow-clear="true" data-template="product-image"></select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.component_product_doc_num"></div>
+                                                <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.client_key"></div>
+                                                <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.public_id"></div>
+                                                <div class="invalid-feedback d-block" data-error-for="components.__INDEX__._delete"></div>
                                             </td>
                                             <td>
                                                 <select class="form-select js-product-component-unit" name="components[__INDEX__][unit_doc_num]" data-component-field="unit_doc_num" data-placeholder="{{ __('common.placeholders.select') }}" disabled>
@@ -609,9 +663,51 @@
                                                 </select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.unit_doc_num"></div>
                                             </td>
+                                            <td>
+                                                <select class="form-select js-product-component-calculation-method" name="components[__INDEX__][calculation_method]" data-component-field="calculation_method">
+                                                    <option value="direct">{{ __('products.components.direct') }}</option>
+                                                    <option value="percentage">{{ __('products.components.percentage') }}</option>
+                                                </select>
+                                                <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.calculation_method"></div>
+                                                <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.input_source"></div>
+                                            </td>
                                             <td class="text-center">
-                                                <input class="form-control text-center js-product-component-quantity" name="components[__INDEX__][quantity]" data-component-field="quantity" type="number" min="0.00000001" step="0.00000001" value="" dir="ltr">
+                                                <x-forms.numeric-input
+                                                    name="components[__INDEX__][quantity]"
+                                                    value=""
+                                                    :scale="8"
+                                                    :allow-negative="false"
+                                                    min="0.00000001"
+                                                    step="0.00000001"
+                                                    class="text-center js-product-component-quantity"
+                                                    data-component-field="quantity"
+                                                />
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.quantity"></div>
+                                            </td>
+                                            <td>
+                                                <div class="js-product-component-percentage-fields d-none">
+                                                    <label class="form-label small mb-1">{{ __('products.components.reference_component') }}</label>
+                                                    <select class="form-select js-select2-local js-product-component-reference mb-2" name="components[__INDEX__][reference_component_key]" data-component-field="reference_component_key" data-placeholder="{{ __('products.components.select_reference_component') }}" data-allow-clear="true">
+                                                        <option value="">{{ __('products.components.select_reference_component') }}</option>
+                                                    </select>
+                                                    <label class="form-label small mb-1">{{ __('products.components.percentage_value') }}</label>
+                                                    <div class="input-group input-group-sm">
+                                                        <x-forms.numeric-input
+                                                            name="components[__INDEX__][percentage]"
+                                                            value=""
+                                                            :scale="8"
+                                                            :allow-negative="false"
+                                                            min="0.00000001"
+                                                            step="0.00000001"
+                                                            class="text-end js-product-component-percentage"
+                                                            data-component-field="percentage"
+                                                        />
+                                                        <span class="input-group-text">%</span>
+                                                    </div>
+                                                    <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.reference_component_key"></div>
+                                                    <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.percentage"></div>
+                                                </div>
+                                                <div class="small mt-1 text-600 product-component-calculation-state js-product-component-calculation-state" aria-live="polite"></div>
                                             </td>
                                             <td>
                                                 <input class="form-control js-product-component-notes" name="components[__INDEX__][notes]" data-component-field="notes" type="text" value="">
@@ -630,6 +726,8 @@
                                         </tr>
                                     </template>
                                 @endunless
+
+                                <div class="product-components-total fw-semibold text-end mt-3 pt-3" data-components-total aria-live="polite"></div>
                             </div>
                         </div>
                     @endif
@@ -702,12 +800,33 @@
         'componentQuantityGreaterThanZero' => __('products.components.quantity_gt_zero'),
         'componentDuplicateRowTitle' => __('products.components.duplicate_row_shortcut'),
         'componentDeleteRowTitle' => __('products.components.delete_row_shortcut'),
+        'componentDirect' => __('products.components.direct'),
+        'componentPercentage' => __('products.components.percentage'),
+        'componentDirectFormula' => __('products.components.direct_formula'),
+        'componentFormulaTemplate' => __('products.components.formula_template'),
+        'componentLineLabel' => __('products.components.line_label'),
+        'componentLineOnlyLabel' => __('products.components.line_only_label'),
+        'componentReferenceMissing' => __('products.components.reference_missing'),
+        'componentReferenceSelf' => __('products.components.reference_self'),
+        'componentReferenceCycle' => __('products.components.reference_cycle'),
+        'componentReferenceWeightUnavailable' => __('products.components.reference_weight_unavailable'),
+        'componentIncompatibleUnits' => __('products.components.incompatible_units'),
+        'componentCalculationIncomplete' => __('products.components.calculation_incomplete'),
+        'componentCalculatedWeightTitle' => __('products.components.calculated_weight_title'),
+        'componentCalculatedPercentageTitle' => __('products.components.calculated_percentage_title'),
+        'componentDeleteReferenced' => __('products.components.delete_referenced'),
+        'componentTotalTemplate' => __('products.components.total_template'),
+        'componentTotalIncomplete' => __('products.components.total_incomplete'),
+        'componentTotalUnavailable' => __('products.components.total_unavailable'),
+        'componentClientValidationFailed' => __('products.components.client_validation_failed'),
+        'componentUnknownReference' => __('products.components.unknown_reference'),
     ];
 @endphp
 @push('scripts')
     <script>
         window.coreProductsMessages = @json($coreProductsMessages);
-        window.coreProductInitialComponents = @json($componentRows ?? []);
+        window.coreProductInitialComponents = @json($componentInitialRows);
+        window.coreProductUnitConversionEdges = @json($componentUnitConversionEdges);
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/file-picker.js') }}"></script>

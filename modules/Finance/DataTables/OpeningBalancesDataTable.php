@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Models\OpeningBalance;
@@ -19,6 +20,7 @@ class OpeningBalancesDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -74,8 +76,8 @@ class OpeningBalancesDataTable
             ->editColumn('doc_num', fn (OpeningBalance $record): string => '<a class="fw-semibold dt-code-value" href="'.e(route('admin.finance.opening-balances.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
             ->editColumn('document_date', fn (OpeningBalance $record): string => $this->plainText($record->document_date?->format($dateFormat) ?? ''))
             ->addColumn('currency', fn (OpeningBalance $record): string => $this->plainText(trim(implode(' — ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->addColumn('total_debit', fn (OpeningBalance $record): string => $this->plainText($this->formatAmount((float) $record->total_debit)))
-            ->addColumn('total_credit', fn (OpeningBalance $record): string => $this->plainText($this->formatAmount((float) $record->total_credit)))
+            ->addColumn('total_debit', fn (OpeningBalance $record): string => $this->plainText($this->numbers->format($record->total_debit)))
+            ->addColumn('total_credit', fn (OpeningBalance $record): string => $this->plainText($this->numbers->format($record->total_credit)))
             ->addColumn('state', fn (OpeningBalance $record): string => view('modules.finance.opening-balances.partials.state', ['record' => $record])->render())
             ->editColumn('created_by', fn (OpeningBalance $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
             ->editColumn('created_at', fn (OpeningBalance $record): string => $this->plainText($record->created_at?->format($dateTimeFormat) ?? ''))
@@ -131,10 +133,5 @@ class OpeningBalancesDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatAmount(float $amount): string
-    {
-        return rtrim(rtrim(number_format($amount, 3, '.', ''), '0'), '.') ?: '0';
     }
 }

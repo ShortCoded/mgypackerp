@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
@@ -20,6 +21,8 @@ use Modules\Purchases\Models\Supplier;
 
 class StoreUnpricedInventoryReceiptRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can('inventory.unpriced_inventory_receipts.create');
@@ -27,6 +30,10 @@ class StoreUnpricedInventoryReceiptRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'lines.*.quantity',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn (mixed $line): bool => is_array($line))
@@ -91,7 +98,7 @@ class StoreUnpricedInventoryReceiptRequest extends FormRequest
             'lines.*.public_id' => ['nullable', 'string'],
             'lines.*.product_doc_num' => ['nullable', 'string'],
             'lines.*.unit_doc_num' => ['nullable', 'string'],
-            'lines.*.quantity' => ['nullable', 'numeric'],
+            'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,12}(?:\.\d{1,8})?$/D'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],
@@ -318,7 +325,7 @@ class StoreUnpricedInventoryReceiptRequest extends FormRequest
 
     private function normalizeDecimalInput(mixed $value): ?string
     {
-        $value = trim(str_replace(',', '', (string) $value));
+        $value = trim((string) $value);
 
         if ($value === '') {
             return null;

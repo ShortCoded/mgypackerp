@@ -21,6 +21,7 @@
 <script src="{{ $erpAsset->url('vendors/flatpickr/flatpickr.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/select2/select2.full.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/datatables-defaults.js') }}"></script>
+<script src="{{ $erpAsset->url('assets/js/modules/Core/numeric-input.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/client-context.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/alerts.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/page-cache-guard.js') }}"></script>
@@ -36,6 +37,7 @@
             'globalSearchTitle' => __('common.shortcuts.global_search'),
             'tableSearchTitle' => __('common.shortcuts.table_search'),
         ];
+        $appNumericInputMessages = __('common.numeric_input');
         $appSelect2 = [
             'perPage' => (int) config('select2.pagination.per_page', 25),
             'delay' => (int) config('select2.delay', 250),
@@ -145,6 +147,7 @@
     <script>
         window.AppSession = @json($appSession);
         window.AppShortcuts = @json($appShortcuts);
+        window.AppNumericInputMessages = @json($appNumericInputMessages);
         window.AppSelect2 = @json($appSelect2);
         window.AppDatePicker = @json($appDatePicker);
         window.AppArchive = @json($appArchive);

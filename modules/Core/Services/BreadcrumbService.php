@@ -8,9 +8,7 @@ use Illuminate\Support\Str;
 class BreadcrumbService
 {
     public function __construct(
-        private readonly RequestMemo $memo,
-        private readonly MenuConfigFileOrder $menuFiles,
-        private readonly ExpandedScreenRegistry $expandedScreens,
+        private readonly MenuService $menu,
     ) {}
 
     /**
@@ -104,7 +102,7 @@ class BreadcrumbService
             return true;
         }
 
-        $patterns = $item['active'] ?? [];
+        $patterns = $item['active_patterns'] ?? $item['active'] ?? [];
 
         if (! is_array($patterns)) {
             return false;
@@ -166,23 +164,6 @@ class BreadcrumbService
      */
     private function loadMenu(): array
     {
-        $phaseMode = config('erp.phase_mode', 'legacy') === 'expanded' ? 'expanded' : 'legacy';
-
-        return $this->memo->remember("menu.config.raw.{$phaseMode}", function () use ($phaseMode): array {
-            if ($phaseMode === 'expanded') {
-                return $this->expandedScreens->menuItems();
-            }
-
-            $items = [];
-            foreach ($this->menuFiles->files() as $file) {
-                $moduleItems = require $file;
-
-                if (is_array($moduleItems)) {
-                    $items = array_merge($items, $moduleItems);
-                }
-            }
-
-            return $items;
-        });
+        return $this->menu->structure();
     }
 }

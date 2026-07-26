@@ -1,7 +1,8 @@
 @foreach ($items as $item)
     @php
         $hasChildren = count($item['children']) > 0;
-        $menuId = 'top-dropdown-menu-' . \Illuminate\Support\Str::slug($item['label']) . '-' . substr(md5($item['text'] . $loop->index), 0, 8);
+        $itemPath = [...($menuPath ?? []), $item['label'].'-'.$loop->index];
+        $menuId = 'top-dropdown-menu-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
     @endphp
 
     @if ($hasChildren)
@@ -10,11 +11,11 @@
                 {{ $item['text'] }}
             </a>
             <div class="dropdown-menu border-0 shadow-sm" aria-labelledby="{{ $menuId }}">
-                @include('layouts.partials.menu.top-dropdown-items', ['items' => $item['children']])
+                @include('layouts.partials.menu.top-dropdown-items', ['items' => $item['children'], 'menuPath' => $itemPath])
             </div>
         </div>
     @else
-        <a class="dropdown-item link-600 fw-medium {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}">
+        <a class="dropdown-item fw-medium {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}">
             {{ $item['text'] }}
         </a>
     @endif

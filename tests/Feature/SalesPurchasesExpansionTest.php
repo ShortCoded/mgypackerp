@@ -840,3 +840,28 @@ test('Seeder creates customer and supplier roots per company without breaking Ba
         }
     }
 });
+
+test('Customer credit limit keeps maximum accepted precision before persistence', function (): void {
+    $context = salesPurchasesContext();
+    $actor = salesPurchasesActor(['customers.create']);
+    $currency = Currency::query()->where('company_id', $context['company']->getKey())->firstOrFail();
+    $capturedCreditLimit = null;
+
+    CustomerCreditLimit::creating(function (CustomerCreditLimit $creditLimit) use (&$capturedCreditLimit): void {
+        $capturedCreditLimit = $creditLimit->getAttributes()['credit_limit'] ?? null;
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.customers.store'), [
+            'name' => 'Maximum Precision Customer',
+            'status' => 'active',
+            'credit_limits' => [[
+                'currency_doc_num' => $currency->doc_num,
+                'credit_limit' => '99,999,999,999,999.9999',
+            ]],
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedCreditLimit)->toBe('99999999999999.9999');
+});

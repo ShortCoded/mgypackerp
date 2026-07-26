@@ -5,7 +5,7 @@
     $isReadonly = $mode === 'view' || (! $isCreateLike && ($isLocked ?? false));
     $title = __("inventory.unpriced_inventory_receipts.{$mode}");
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
-    $formatQuantity = fn ($value) => rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.') ?: '0';
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $selectedBranchDocNum = old('branch_doc_num', $branchOption['id'] ?? '');
@@ -322,9 +322,9 @@
                                     </td>
                                     <td class="text-center">
                                         @if($isReadonly)
-                                            <div class="form-control-plaintext text-center" dir="ltr">{{ $formatQuantity($line['quantity'] ?? 0) }}</div>
+                                            <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                         @else
-                                            <input class="form-control text-center js-unpriced-inventory-receipt-quantity" name="lines[{{ $index }}][quantity]" type="text" inputmode="decimal" value="{{ $line['quantity'] ?? '' }}" dir="ltr">
+                                            <x-forms.numeric-input class="text-center js-unpriced-inventory-receipt-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="8" min="0.00000001" step="0.00000001" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                         @endif
                                     </td>
@@ -460,7 +460,7 @@
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
                 </td>
                 <td class="text-center">
-                    <input class="form-control text-center js-unpriced-inventory-receipt-quantity" name="lines[__INDEX__][quantity]" type="text" inputmode="decimal" value="" dir="ltr">
+                    <x-forms.numeric-input class="text-center js-unpriced-inventory-receipt-quantity" name="lines[__INDEX__][quantity]" :scale="8" min="0.00000001" step="0.00000001" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
                 </td>
                 <td>

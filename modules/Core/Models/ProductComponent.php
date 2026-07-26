@@ -6,12 +6,21 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
 class ProductComponent extends Model
 {
     use SoftDeletes;
+
+    public const CalculationDirect = 'direct';
+
+    public const CalculationPercentage = 'percentage';
+
+    public const InputWeight = 'weight';
+
+    public const InputPercentage = 'percentage';
 
     /**
      * @var list<string>
@@ -22,12 +31,44 @@ class ProductComponent extends Model
         'product_id',
         'component_product_id',
         'unit_id',
+        'calculation_method',
         'quantity',
+        'percentage',
+        'reference_component_id',
         'notes',
         'created_by',
         'updated_by',
         'deleted_by',
     ];
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'calculation_method' => self::CalculationDirect,
+    ];
+
+    /**
+     * @return list<string>
+     */
+    public static function calculationMethods(): array
+    {
+        return [
+            self::CalculationDirect,
+            self::CalculationPercentage,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function inputSources(): array
+    {
+        return [
+            self::InputWeight,
+            self::InputPercentage,
+        ];
+    }
 
     protected static function booted(): void
     {
@@ -45,6 +86,7 @@ class ProductComponent extends Model
     {
         return [
             'quantity' => 'decimal:8',
+            'percentage' => 'decimal:8',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
@@ -86,6 +128,22 @@ class ProductComponent extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class, 'unit_id');
+    }
+
+    /**
+     * @return BelongsTo<ProductComponent, $this>
+     */
+    public function referenceComponent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'reference_component_id');
+    }
+
+    /**
+     * @return HasMany<ProductComponent, $this>
+     */
+    public function dependentComponents(): HasMany
+    {
+        return $this->hasMany(self::class, 'reference_component_id');
     }
 
     /**

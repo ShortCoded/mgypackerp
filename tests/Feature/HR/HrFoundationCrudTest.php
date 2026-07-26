@@ -5,7 +5,9 @@ use Illuminate\Support\Facades\Route;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Services\PermissionRegistryService;
+use Modules\HR\Models\HrGrade;
 use Modules\HR\Models\HrInsuranceOffice;
+use Modules\HR\Models\HrShift;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -77,6 +79,102 @@ test('current HR foundation permissions are discovered and obsolete HR foundatio
         ->not->toContain('hr.cost_centers.view')
         ->not->toContain('hr.work_locations.view')
         ->not->toContain('hr.contract_types.view');
+});
+
+test('shift break minutes and grade rank use grouped integer presentation and schema bounds', function () {
+    $actor = hrFoundationActor([
+        ...hrFoundationPermissions('hr.shifts'),
+        ...hrFoundationPermissions('hr.grades'),
+    ]);
+
+    $this->actingAs($actor)
+        ->get(route('admin.hr.shifts.create'))
+        ->assertOk()
+        ->assertSee('name="break_minutes"', false)
+        ->assertSee('data-numeric-input', false)
+        ->assertSee('data-numeric-scale="0"', false)
+        ->assertSee('data-numeric-min="0"', false)
+        ->assertSee('data-numeric-max="65535"', false);
+
+    $this->postJson(route('admin.hr.shifts.store'), [
+        'name' => 'Maximum Break Shift',
+        'start_time' => '08:00',
+        'end_time' => '16:00',
+        'break_minutes' => '65,535',
+        'crosses_midnight' => false,
+        'status' => 'active',
+    ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $shift = HrShift::query()->where('name', 'Maximum Break Shift')->firstOrFail();
+
+    expect($shift->break_minutes)->toBe(65535);
+
+    $this->get(route('admin.hr.shifts.show', $shift->doc_num))
+        ->assertOk()
+        ->assertSee('value="65,535"', false)
+        ->assertSee('dir="ltr"', false);
+
+    $shiftRow = $this->getJson(route('admin.hr.shifts.data', [
+        'draw' => 1,
+        'start' => 0,
+        'length' => 10,
+    ]))
+        ->assertOk()
+        ->json('data.0');
+
+    expect($shiftRow['break_minutes'] ?? null)->toBe('65,535');
+
+    $this->postJson(route('admin.hr.shifts.store'), [
+        'name' => 'Out Of Range Break Shift',
+        'break_minutes' => '65,536',
+        'status' => 'active',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['break_minutes']);
+
+    $this->get(route('admin.hr.grades.create'))
+        ->assertOk()
+        ->assertSee('name="rank"', false)
+        ->assertSee('data-numeric-input', false)
+        ->assertSee('data-numeric-max="65535"', false);
+
+    $this->postJson(route('admin.hr.grades.store'), [
+        'name' => 'Maximum Rank Grade',
+        'code' => 'MAX-RANK',
+        'rank' => '65,535',
+        'status' => 'active',
+    ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $grade = HrGrade::query()->where('name', 'Maximum Rank Grade')->firstOrFail();
+
+    expect($grade->rank)->toBe(65535);
+
+    $this->get(route('admin.hr.grades.show', $grade->doc_num))
+        ->assertOk()
+        ->assertSee('value="65,535"', false);
+
+    $gradeRow = $this->getJson(route('admin.hr.grades.data', [
+        'draw' => 1,
+        'start' => 0,
+        'length' => 10,
+    ]))
+        ->assertOk()
+        ->json('data.0');
+
+    expect($gradeRow['rank'] ?? null)->toBe('65,535');
+
+    $this->postJson(route('admin.hr.grades.store'), [
+        'name' => 'Malformed Rank Grade',
+        'code' => 'BAD-RANK',
+        'rank' => '1,2,3',
+        'status' => 'active',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['rank']);
 });
 
 test('HrInsuranceOffice crud stores validates deletes restores and hides internal ids', function () {

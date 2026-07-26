@@ -2,9 +2,9 @@
 
 return [
     [
-        'label' => 'fixed_assets',
-        'title' => 'Fixed Assets',
-        'icon' => 'building',
+        'label' => 'accounting_costing',
+        'title' => 'Accounting & Costing',
+        'icon' => 'calculator',
         'route' => null,
         'permission' => null,
         'keywords' => ['fixed assets', 'assets', 'register', 'الأصول الثابتة', 'دليل الأصول'],

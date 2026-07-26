@@ -52,7 +52,9 @@ class ProductComponentUnitOptionsService
         $product->loadMissing(['unit', 'equivalentUnit']);
 
         return collect([$product->unit, $product->equivalentUnit])
-            ->filter(fn (mixed $unit): bool => $unit instanceof ItemUnit)
+            ->filter(fn (mixed $unit): bool => $unit instanceof ItemUnit
+                && ! $unit->trashed()
+                && (int) $unit->company_id === (int) $product->company_id)
             ->unique(fn (ItemUnit $unit): int => (int) $unit->getKey())
             ->map(fn (ItemUnit $unit): array => $this->option($unit))
             ->values()

@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
@@ -17,6 +18,8 @@ use Modules\Sales\Models\Customer;
 
 class StoreChequeRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         $action = $this->filled('clone_source_token') ? 'clone' : 'create';
@@ -26,12 +29,18 @@ class StoreChequeRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'amount',
+            'lines.*.amount',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn ($line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'account_doc_num' => isset($line['account_doc_num']) ? trim((string) $line['account_doc_num']) : null,
-                'amount' => isset($line['amount']) ? str_replace(',', '', (string) $line['amount']) : null,
+                'amount' => isset($line['amount']) ? trim((string) $line['amount']) : null,
                 'description' => isset($line['description']) ? trim((string) $line['description']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
             ])
@@ -51,8 +60,8 @@ class StoreChequeRequest extends FormRequest
             'party_doc_num' => $this->filled('party_doc_num') ? trim((string) $this->input('party_doc_num')) : null,
             'party_name' => $this->filled('party_name') ? trim((string) $this->input('party_name')) : null,
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
-            'exchange_rate' => $this->filled('exchange_rate') ? str_replace(',', '', (string) $this->input('exchange_rate')) : 1,
-            'amount' => $this->filled('amount') ? str_replace(',', '', (string) $this->input('amount')) : null,
+            'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : 1,
+            'amount' => $this->filled('amount') ? trim((string) $this->input('amount')) : null,
             'reason' => $this->filled('reason') ? trim((string) $this->input('reason')) : null,
             'description' => $this->filled('description') ? trim((string) $this->input('description')) : null,
             'lines' => $lines,
@@ -91,8 +100,8 @@ class StoreChequeRequest extends FormRequest
                         ->where('status', 'active')
                         ->whereNull('deleted_at')),
             ],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'amount' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
+            'amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'reason' => ['required', 'string', 'max:1000'],
             'description' => ['nullable', 'string'],
             'lines' => ['nullable', 'array'],
@@ -105,7 +114,7 @@ class StoreChequeRequest extends FormRequest
                         ->where('company_id', $this->input('company_id'))
                         ->whereNull('deleted_at')),
             ],
-            'lines.*.amount' => ['required_with:lines.*.account_doc_num', 'nullable', 'numeric', 'gt:0'],
+            'lines.*.amount' => ['required_with:lines.*.account_doc_num', 'nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', Rule::in(['save', 'save_new'])],

@@ -2,34 +2,67 @@
 
 namespace Modules\Core\Http\Requests\Concerns;
 
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 
 trait ValidatesProductComponentPayload
 {
+    use NormalizesNumericInput;
+
     /**
      * @return array<string, mixed>
      */
     protected function componentRules(): array
     {
+        $calculationMethod = $this->componentStringValue(
+            $this->input('calculation_method', ProductComponent::CalculationDirect),
+        )
+            ?: ProductComponent::CalculationDirect;
+        $inputSource = $this->componentAuthoritativeInputSource(
+            $calculationMethod,
+            $this->input('input_source'),
+            $this->input('quantity'),
+            $this->input('percentage'),
+        );
+        $quantityRules = $inputSource === ProductComponent::InputWeight
+            ? ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/']
+            : ['exclude'];
+        $percentageRules = $calculationMethod === ProductComponent::CalculationPercentage
+            && $inputSource === ProductComponent::InputPercentage
+                ? ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/']
+                : ['exclude'];
+
         return [
             'component_product_doc_num' => ['required', 'string'],
-            'unit_doc_num' => ['required', 'string'],
-            'quantity' => ['required', 'numeric', 'gt:0', 'max:9999999999.99999999', 'regex:/^(?:\d+|\d*\.\d{1,8})$/'],
+            'unit_doc_num' => ['nullable', 'string'],
+            'calculation_method' => ['required', 'string', Rule::in(ProductComponent::calculationMethods())],
+            'quantity' => $quantityRules,
+            'percentage' => $percentageRules,
+            'reference_component_key' => ['nullable', 'uuid'],
+            'input_source' => ['nullable', 'string', Rule::in(ProductComponent::inputSources())],
             'notes' => ['nullable', 'string'],
         ];
     }
 
     protected function prepareComponentForValidation(): void
     {
-        foreach (['component_product_doc_num', 'unit_doc_num', 'quantity', 'notes'] as $field) {
+        $this->normalizeNumericInput(['quantity', 'percentage']);
+
+        foreach (['component_product_doc_num', 'unit_doc_num', 'calculation_method', 'quantity', 'percentage', 'reference_component_key', 'input_source', 'notes'] as $field) {
             if ($this->has($field)) {
-                $this->merge([$field => trim((string) $this->input($field))]);
+                $value = $this->input($field);
+                $this->merge([$field => is_string($value) ? trim($value) : $value]);
             }
+        }
+
+        if (! $this->filled('calculation_method')) {
+            $this->merge(['calculation_method' => ProductComponent::CalculationDirect]);
         }
     }
 
@@ -54,24 +87,35 @@ trait ValidatesProductComponentPayload
             return;
         }
 
-        if (! $validator->errors()->has('unit_doc_num')
-            && ! $this->componentUnitIsValidForProduct($componentProduct, $this->input('unit_doc_num'))
+        $calculationMethod = $this->componentStringValue(
+            $this->input('calculation_method', ProductComponent::CalculationDirect),
+        );
+        $unitDocNum = $this->componentStringValue($this->input('unit_doc_num'));
+
+        if ($unitDocNum === '' && $this->componentUnitIsRequired($componentProduct, $calculationMethod)) {
+            $validator->errors()->add('unit_doc_num', __('products.components.unit_required'));
+        } elseif ($unitDocNum !== ''
+            && ! $validator->errors()->has('unit_doc_num')
+            && ! $this->componentUnitIsValidForProduct($componentProduct, $unitDocNum)
         ) {
             $validator->errors()->add('unit_doc_num', __('products.components.invalid_unit'));
         }
 
-        $duplicateQuery = ProductComponent::query()
-            ->where('product_id', $product->getKey())
-            ->where('component_product_id', $componentProduct->getKey());
+        if ($calculationMethod === ProductComponent::CalculationPercentage) {
+            if (! $this->filled('reference_component_key')) {
+                $validator->errors()->add('reference_component_key', __('products.components.reference_required'));
+            }
 
-        $component = $this->componentRecord();
-
-        if ($component instanceof ProductComponent) {
-            $duplicateQuery->whereKeyNot($component->getKey());
-        }
-
-        if ($duplicateQuery->exists()) {
-            $validator->errors()->add('component_product_doc_num', __('products.components.duplicate'));
+            if (! $validator->errors()->has('input_source')
+                && $this->componentAuthoritativeInputSource(
+                    $calculationMethod,
+                    $this->input('input_source'),
+                    $this->input('quantity'),
+                    $this->input('percentage'),
+                ) === null
+            ) {
+                $validator->errors()->add('input_source', __('products.components.input_source_required'));
+            }
         }
     }
 
@@ -85,10 +129,26 @@ trait ValidatesProductComponentPayload
         $unit = $componentProduct instanceof Product
             ? $this->componentUnitRecord($componentProduct, $data['unit_doc_num'] ?? null)
             : null;
+        $calculationMethod = trim((string) ($data['calculation_method'] ?? ProductComponent::CalculationDirect))
+            ?: ProductComponent::CalculationDirect;
+        $inputSource = $this->componentAuthoritativeInputSource(
+            $calculationMethod,
+            $data['input_source'] ?? null,
+            $this->input('quantity'),
+            $this->input('percentage'),
+        );
 
         $data['component_product_id'] = $componentProduct?->getKey();
         $data['unit_id'] = $unit?->getKey();
-        $data['quantity'] = number_format((float) $data['quantity'], 8, '.', '');
+        $data['calculation_method'] = $calculationMethod;
+        $data['quantity'] = $inputSource === ProductComponent::InputWeight
+            ? app(NumericFormatService::class)->normalizeToScale($data['quantity'] ?? null, 8)
+            : null;
+        $data['percentage'] = $calculationMethod === ProductComponent::CalculationPercentage
+            && $inputSource === ProductComponent::InputPercentage
+                ? app(NumericFormatService::class)->normalizeToScale($data['percentage'] ?? null, 8)
+                : null;
+        $data['input_source'] = $inputSource;
         $data['notes'] = $this->blankToNull($data['notes'] ?? null);
 
         unset($data['component_product_doc_num'], $data['unit_doc_num']);
@@ -104,7 +164,10 @@ trait ValidatesProductComponentPayload
         return [
             'component_product_doc_num' => __('products.components.component_item'),
             'unit_doc_num' => __('products.components.unit'),
+            'calculation_method' => __('products.components.calculation_method'),
             'quantity' => __('products.components.quantity'),
+            'percentage' => __('products.components.percentage'),
+            'reference_component_key' => __('products.components.reference_component'),
             'notes' => __('products.components.notes'),
         ];
     }
@@ -118,9 +181,14 @@ trait ValidatesProductComponentPayload
             'component_product_doc_num.required' => __('products.components.component_item_required'),
             'unit_doc_num.required' => __('products.components.unit_required'),
             'quantity.required' => __('products.components.quantity_required'),
+            'quantity.required_if' => __('products.components.quantity_required'),
             'quantity.numeric' => __('products.components.quantity_gt_zero'),
             'quantity.gt' => __('products.components.quantity_gt_zero'),
             'quantity.regex' => __('products.components.quantity_precision'),
+            'percentage.required' => __('products.components.percentage_required'),
+            'percentage.numeric' => __('products.components.percentage_gt_zero'),
+            'percentage.gt' => __('products.components.percentage_gt_zero'),
+            'percentage.regex' => __('products.components.percentage_precision'),
         ];
     }
 
@@ -134,7 +202,7 @@ trait ValidatesProductComponentPayload
 
         return Product::query()
             ->forCompany($this->companyId())
-            ->withoutRawMaterials()
+            ->productItems()
             ->where('doc_num', $docNum)
             ->first();
     }
@@ -167,7 +235,7 @@ trait ValidatesProductComponentPayload
             ->forCompany($this->companyId())
             ->active()
             ->with(['unit', 'equivalentUnit'])
-            ->rawMaterials()
+            ->materialItems()
             ->where('doc_num', $docNum)
             ->first();
     }
@@ -182,6 +250,50 @@ trait ValidatesProductComponentPayload
     {
         return app(ProductComponentUnitOptionsService::class)
             ->unitIsValidForProduct($componentProduct, $unitDocNum, $this->companyId());
+    }
+
+    private function componentUnitIsRequired(Product $componentProduct, string $calculationMethod): bool
+    {
+        return $calculationMethod === ProductComponent::CalculationPercentage
+            || app(ProductComponentUnitOptionsService::class)->options($componentProduct) !== [];
+    }
+
+    private function componentAuthoritativeInputSource(
+        string $calculationMethod,
+        mixed $inputSource,
+        mixed $quantity,
+        mixed $percentage,
+    ): ?string {
+        if ($calculationMethod === ProductComponent::CalculationDirect) {
+            return ProductComponent::InputWeight;
+        }
+
+        $inputSource = $this->componentStringValue($inputSource);
+
+        if (in_array($inputSource, ProductComponent::inputSources(), true)) {
+            return $inputSource;
+        }
+
+        $hasQuantity = $this->componentCalculationValueIsPresent($quantity);
+        $hasPercentage = $this->componentCalculationValueIsPresent($percentage);
+
+        if ($hasQuantity === $hasPercentage) {
+            return null;
+        }
+
+        return $hasQuantity
+            ? ProductComponent::InputWeight
+            : ProductComponent::InputPercentage;
+    }
+
+    private function componentCalculationValueIsPresent(mixed $value): bool
+    {
+        return $value !== null && (! is_string($value) || trim($value) !== '');
+    }
+
+    private function componentStringValue(mixed $value): string
+    {
+        return is_string($value) ? trim($value) : '';
     }
 
     private function companyId(): int

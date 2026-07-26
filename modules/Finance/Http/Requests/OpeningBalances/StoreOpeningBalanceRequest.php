@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
@@ -14,6 +15,8 @@ use Modules\Finance\Models\OpeningBalance;
 
 class StoreOpeningBalanceRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'opening_balances.clone' : 'opening_balances.create');
@@ -21,13 +24,18 @@ class StoreOpeningBalanceRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'lines.*.amount',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn ($line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'account_doc_num' => isset($line['account_doc_num']) ? trim((string) $line['account_doc_num']) : null,
                 'transaction_type' => isset($line['transaction_type']) ? trim((string) $line['transaction_type']) : null,
-                'amount' => isset($line['amount']) ? str_replace(',', '', (string) $line['amount']) : null,
+                'amount' => isset($line['amount']) ? trim((string) $line['amount']) : null,
                 'description' => isset($line['description']) ? trim((string) $line['description']) : null,
             ])
             ->values()
@@ -38,7 +46,7 @@ class StoreOpeningBalanceRequest extends FormRequest
             'financial_period_id' => $context['financial_period_id'],
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
             'document_date' => $this->filled('document_date') ? trim((string) $this->input('document_date')) : null,
-            'exchange_rate' => $this->filled('exchange_rate') ? str_replace(',', '', (string) $this->input('exchange_rate')) : 1,
+            'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : 1,
             'description' => $this->filled('description') ? trim((string) $this->input('description')) : null,
             'notes' => $this->filled('notes') ? trim((string) $this->input('notes')) : null,
             'lines' => $lines,
@@ -73,7 +81,7 @@ class StoreOpeningBalanceRequest extends FormRequest
                         ->where('company_id', $this->input('company_id'))
                         ->whereNull('deleted_at')),
             ],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
+            'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'description' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
@@ -86,7 +94,7 @@ class StoreOpeningBalanceRequest extends FormRequest
                         ->whereNull('deleted_at')),
             ],
             'lines.*.transaction_type' => ['required', Rule::in(['debit', 'credit'])],
-            'lines.*.amount' => ['required', 'numeric', 'gt:0'],
+            'lines.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.description' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
             'clone_source_token' => ['nullable', 'string'],

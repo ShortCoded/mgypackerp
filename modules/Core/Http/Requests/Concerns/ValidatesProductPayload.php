@@ -3,6 +3,7 @@
 namespace Modules\Core\Http\Requests\Concerns;
 
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Exists;
 use Illuminate\Validation\Validator;
@@ -21,12 +22,15 @@ use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\ArchiveFileUsageService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductDocumentNumberSettingsService;
 
 trait ValidatesProductPayload
 {
+    use NormalizesNumericInput;
+
     /**
      * @return array<string, mixed>
      */
@@ -49,9 +53,9 @@ trait ValidatesProductPayload
                     ->withoutTrashed(),
             ],
             'item_classification' => ['required', 'string', Rule::in($this->allowedClassificationsForContext())],
-            'reorder_point' => ['nullable', 'numeric', 'min:0'],
+            'reorder_point' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/'],
             'item_unit_doc_num' => ['nullable', 'string', $this->activeLookupExistsRule('item_units', $companyId)],
-            'equivalent_value' => ['nullable', 'numeric', 'gt:0'],
+            'equivalent_value' => ['nullable', 'numeric', 'gt:0', 'regex:/^(?:\d{1,12}|\d{0,12}\.\d{1,6})$/'],
             'equivalent_unit_doc_num' => ['nullable', 'string', $this->activeLookupExistsRule('item_units', $companyId)],
             'item_size_doc_num' => ['nullable', 'string', $this->activeLookupExistsRule('item_sizes', $companyId)],
             'item_color_doc_num' => ['nullable', 'string', $this->activeLookupExistsRule('item_colors', $companyId)],
@@ -66,9 +70,14 @@ trait ValidatesProductPayload
             'notes' => ['nullable', 'string'],
             'components' => ['nullable', 'array'],
             'components.*.public_id' => ['nullable', 'string'],
+            'components.*.client_key' => ['nullable', 'uuid'],
             'components.*.component_product_doc_num' => ['nullable', 'string'],
             'components.*.unit_doc_num' => ['nullable', 'string'],
-            'components.*.quantity' => ['nullable', 'numeric', 'gt:0'],
+            'components.*.calculation_method' => ['nullable', 'string', Rule::in(ProductComponent::calculationMethods())],
+            'components.*.quantity' => ['nullable'],
+            'components.*.percentage' => ['nullable'],
+            'components.*.reference_component_key' => ['nullable', 'uuid'],
+            'components.*.input_source' => ['nullable', 'string', Rule::in(ProductComponent::inputSources())],
             'components.*.notes' => ['nullable', 'string'],
             'components.*._delete' => ['nullable', 'boolean'],
         ];
@@ -90,6 +99,13 @@ trait ValidatesProductPayload
 
     protected function prepareProductForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'reorder_point',
+            'equivalent_value',
+            'components.*.quantity',
+            'components.*.percentage',
+        ]);
+
         if ($this->has('name')) {
             $this->merge(['name' => trim((string) $this->input('name'))]);
         }
@@ -105,8 +121,8 @@ trait ValidatesProductPayload
             $this->merge(['equivalent_value' => $equivalentValue === '' ? null : $equivalentValue]);
         }
 
-        if ($this->productContext() === Product::ContextRawMaterials) {
-            $this->merge(['item_classification' => Product::ClassificationRawMaterial]);
+        if (Product::isMaterialContext($this->productContext())) {
+            $this->merge(['item_classification' => Product::classificationForContext($this->productContext())]);
             $this->request->remove('components');
         }
 
@@ -122,12 +138,29 @@ trait ValidatesProductPayload
                     continue;
                 }
 
+                $publicId = $this->trimComponentInputValue($component['public_id'] ?? '');
+                $clientKey = $this->trimComponentInputValue($component['client_key'] ?? $publicId);
+                $componentProductDocNum = $this->trimComponentInputValue($component['component_product_doc_num'] ?? '');
+                $unitDocNum = $this->trimComponentInputValue($component['unit_doc_num'] ?? '');
+                $calculationMethod = $this->trimComponentInputValue(
+                    $component['calculation_method'] ?? ProductComponent::CalculationDirect,
+                );
+                $referenceComponentKey = $this->trimComponentInputValue($component['reference_component_key'] ?? '');
+                $inputSource = $this->trimComponentInputValue($component['input_source'] ?? '');
+
                 $component = [
-                    'public_id' => trim((string) ($component['public_id'] ?? '')) ?: null,
-                    'component_product_doc_num' => trim((string) ($component['component_product_doc_num'] ?? '')) ?: null,
-                    'unit_doc_num' => trim((string) ($component['unit_doc_num'] ?? '')) ?: null,
-                    'quantity' => trim((string) ($component['quantity'] ?? '')),
-                    'notes' => trim((string) ($component['notes'] ?? '')),
+                    'public_id' => $publicId === '' ? null : $publicId,
+                    'client_key' => $clientKey === '' ? null : $clientKey,
+                    'component_product_doc_num' => $componentProductDocNum === '' ? null : $componentProductDocNum,
+                    'unit_doc_num' => $unitDocNum === '' ? null : $unitDocNum,
+                    'calculation_method' => $calculationMethod === '' || $calculationMethod === null
+                        ? ProductComponent::CalculationDirect
+                        : $calculationMethod,
+                    'quantity' => $this->trimComponentInputValue($component['quantity'] ?? ''),
+                    'percentage' => $this->trimComponentInputValue($component['percentage'] ?? ''),
+                    'reference_component_key' => $referenceComponentKey === '' ? null : $referenceComponentKey,
+                    'input_source' => $inputSource === '' ? null : $inputSource,
+                    'notes' => $this->trimComponentInputValue($component['notes'] ?? ''),
                     '_delete' => filter_var($component['_delete'] ?? false, FILTER_VALIDATE_BOOL),
                 ];
 
@@ -135,6 +168,7 @@ trait ValidatesProductPayload
                     continue;
                 }
 
+                $component['client_key'] ??= (string) Str::uuid();
                 $components[$index] = $component;
             }
 
@@ -169,17 +203,16 @@ trait ValidatesProductPayload
 
     protected function validateProductComponents(Validator $validator): void
     {
-        if ($this->productContext() === Product::ContextRawMaterials || $validator->errors()->has('components')) {
+        if (Product::isMaterialContext($this->productContext()) || $validator->errors()->has('components')) {
             return;
         }
 
         $components = $this->componentPayload();
         $product = $this->productRecord();
-        $submittedDocNums = [];
 
         foreach ($components as $index => $component) {
             $delete = (bool) ($component['_delete'] ?? false);
-            $publicId = trim((string) ($component['public_id'] ?? '')) ?: null;
+            $publicId = $this->componentStringValue($component['public_id'] ?? null) ?: null;
 
             if ($publicId !== null && $product instanceof Product && ! ($this->componentRecord($product, $publicId) instanceof ProductComponent)) {
                 $validator->errors()->add("components.{$index}.public_id", __('products.components.not_available'));
@@ -191,22 +224,51 @@ trait ValidatesProductPayload
                 continue;
             }
 
-            $docNum = trim((string) ($component['component_product_doc_num'] ?? ''));
-            $unitDocNum = trim((string) ($component['unit_doc_num'] ?? ''));
-            $quantity = trim((string) ($component['quantity'] ?? ''));
+            $docNum = $this->componentStringValue($component['component_product_doc_num'] ?? null);
+            $unitDocNum = $this->componentStringValue($component['unit_doc_num'] ?? null);
+            $quantity = $component['quantity'] ?? '';
+            $percentage = $component['percentage'] ?? '';
+            $method = $this->componentStringValue(
+                $component['calculation_method'] ?? ProductComponent::CalculationDirect,
+            );
+            $inputSource = $this->componentStringValue($component['input_source'] ?? null);
 
             if ($docNum === '') {
                 $validator->errors()->add("components.{$index}.component_product_doc_num", __('products.components.component_item_required'));
             }
 
-            if ($docNum !== '' && $unitDocNum === '') {
-                $validator->errors()->add("components.{$index}.unit_doc_num", __('products.components.unit_required'));
-            }
+            if ($method === ProductComponent::CalculationDirect) {
+                $this->validateComponentCalculationValue(
+                    $validator,
+                    $index,
+                    'quantity',
+                    $quantity,
+                );
+            } elseif ($method === ProductComponent::CalculationPercentage) {
+                if (blank($component['reference_component_key'] ?? null)) {
+                    $validator->errors()->add("components.{$index}.reference_component_key", __('products.components.reference_required'));
+                }
 
-            if ($quantity === '') {
-                $validator->errors()->add("components.{$index}.quantity", __('products.components.quantity_required'));
-            } elseif ((! is_numeric($quantity) || (float) $quantity <= 0) && ! $validator->errors()->has("components.{$index}.quantity")) {
-                $validator->errors()->add("components.{$index}.quantity", __('products.components.quantity_gt_zero'));
+                $authoritativeSource = $this->componentAuthoritativeInputSource(
+                    $method,
+                    $inputSource,
+                    $quantity,
+                    $percentage,
+                );
+
+                if ($authoritativeSource === null) {
+                    $validator->errors()->add("components.{$index}.input_source", __('products.components.input_source_required'));
+                } else {
+                    $field = $authoritativeSource === ProductComponent::InputWeight
+                        ? 'quantity'
+                        : 'percentage';
+                    $this->validateComponentCalculationValue(
+                        $validator,
+                        $index,
+                        $field,
+                        $field === 'quantity' ? $quantity : $percentage,
+                    );
+                }
             }
 
             if ($docNum === '') {
@@ -227,20 +289,10 @@ trait ValidatesProductPayload
                 continue;
             }
 
-            if ($unitDocNum !== '' && ! $this->componentUnitIsValidForProduct($componentProduct, $unitDocNum)) {
+            if ($unitDocNum === '' && $this->componentUnitIsRequired($componentProduct, $method)) {
+                $validator->errors()->add("components.{$index}.unit_doc_num", __('products.components.unit_required'));
+            } elseif ($unitDocNum !== '' && ! $this->componentUnitIsValidForProduct($componentProduct, $unitDocNum)) {
                 $validator->errors()->add("components.{$index}.unit_doc_num", __('products.components.invalid_unit'));
-            }
-
-            if (isset($submittedDocNums[$docNum])) {
-                $validator->errors()->add("components.{$index}.component_product_doc_num", __('products.components.duplicate'));
-
-                continue;
-            }
-
-            $submittedDocNums[$docNum] = true;
-
-            if ($product instanceof Product && $this->componentDuplicateExists($product, $componentProduct, $publicId)) {
-                $validator->errors()->add("components.{$index}.component_product_doc_num", __('products.components.duplicate'));
             }
         }
     }
@@ -278,16 +330,24 @@ trait ValidatesProductPayload
 
     protected function validateProductClassificationContext(Validator $validator): void
     {
-        if ($this->productContext() === Product::ContextRawMaterials) {
-            if ($this->input('item_classification') !== Product::ClassificationRawMaterial && ! $validator->errors()->has('item_classification')) {
-                $validator->errors()->add('item_classification', __('products.validation.raw_material_context_required'));
+        $contextClassification = Product::classificationForContext($this->productContext());
+
+        if ($contextClassification !== null) {
+            if ($this->input('item_classification') !== $contextClassification && ! $validator->errors()->has('item_classification')) {
+                $validator->errors()->add('item_classification', __($this->productContext() === Product::ContextRawMaterials
+                    ? 'products.validation.raw_material_context_required'
+                    : 'products.validation.packaging_material_context_required'));
             }
 
             return;
         }
 
-        if ($this->input('item_classification') === Product::ClassificationRawMaterial && ! $validator->errors()->has('item_classification')) {
-            $validator->errors()->add('item_classification', __('products.validation.raw_material_not_allowed_in_products'));
+        if (in_array($this->input('item_classification'), Product::materialClassifications(), true) && ! $validator->errors()->has('item_classification')) {
+            $message = $this->input('item_classification') === Product::ClassificationRawMaterial
+                ? 'products.validation.raw_material_not_allowed_in_products'
+                : 'products.validation.packaging_material_not_allowed_in_products';
+
+            $validator->errors()->add('item_classification', __($message));
         }
     }
 
@@ -341,8 +401,8 @@ trait ValidatesProductPayload
      */
     protected function normalizedProductData(array $data): array
     {
-        if ($this->productContext() === Product::ContextRawMaterials) {
-            $data['item_classification'] = Product::ClassificationRawMaterial;
+        if (Product::isMaterialContext($this->productContext())) {
+            $data['item_classification'] = Product::classificationForContext($this->productContext());
             unset($data['components']);
         }
 
@@ -364,8 +424,10 @@ trait ValidatesProductPayload
         $data['item_category_id'] = $this->lookupId(ItemCategory::class, $data['item_category_doc_num'] ?? null);
         $data['item_group_id'] = $this->lookupId(ItemGroup::class, $data['item_group_doc_num'] ?? null);
 
-        if (array_key_exists('components', $data)) {
+        if (array_key_exists('components', $data) && is_array($data['components'])) {
             $data['components'] = $this->normalizedComponents($data['components']);
+        } elseif (array_key_exists('components', $data)) {
+            unset($data['components']);
         }
 
         if ($data['item_unit_id'] === null) {
@@ -388,7 +450,9 @@ trait ValidatesProductPayload
         );
 
         foreach (['cost_as_inventory', 'is_displayable'] as $field) {
-            $data[$field] = $this->boolean($field);
+            if ($this->has($field)) {
+                $data[$field] = $this->boolean($field);
+            }
         }
 
         if (array_key_exists('image_archive_file_doc_num', $data)) {
@@ -421,12 +485,17 @@ trait ValidatesProductPayload
             'doc_number.regex' => __('products.validation.doc_number_numeric'),
             'doc_number.unique' => __('products.validation.doc_number_unique'),
             'barcode.unique' => __('products.validation.barcode_unique'),
+            'reorder_point.regex' => __('products.validation.reorder_point_precision'),
             'equivalent_value.numeric' => __('products.validation.equivalent_value_numeric'),
             'equivalent_value.gt' => __('products.validation.equivalent_value_gt_zero'),
+            'equivalent_value.regex' => __('products.validation.equivalent_value_precision'),
             'equivalent_unit_doc_num.exists' => __('products.validation.equivalent_unit_exists'),
             'components.*.quantity.numeric' => __('products.components.quantity_gt_zero'),
             'components.*.quantity.gt' => __('products.components.quantity_gt_zero'),
             'components.*.quantity.regex' => __('products.components.quantity_precision'),
+            'components.*.percentage.numeric' => __('products.components.percentage_gt_zero'),
+            'components.*.percentage.gt' => __('products.components.percentage_gt_zero'),
+            'components.*.percentage.regex' => __('products.components.percentage_precision'),
         ];
     }
 
@@ -524,32 +593,36 @@ trait ValidatesProductPayload
             return false;
         }
 
-        return $this->productContext() === Product::ContextRawMaterials
-            ? $record->isRawMaterial()
-            : ! $record->isRawMaterial();
+        return Product::contextForClassification($record->item_classification) === $this->productContext();
     }
 
     private function productContext(): string
     {
         $routeName = (string) ($this->route()?->getName() ?? '');
 
-        return str_starts_with($routeName, 'admin.raw-materials.')
-            ? Product::ContextRawMaterials
-            : Product::ContextProducts;
+        return match (true) {
+            str_starts_with($routeName, 'admin.raw-materials.') => Product::ContextRawMaterials,
+            str_starts_with($routeName, 'admin.packaging-materials.') => Product::ContextPackagingMaterials,
+            default => Product::ContextProducts,
+        };
     }
 
     private function documentNumberKey(): string
     {
-        return $this->productContext() === Product::ContextRawMaterials
-            ? ProductDocumentNumberSettingsService::RawMaterialsKey
-            : ProductDocumentNumberSettingsService::ProductsKey;
+        return match ($this->productContext()) {
+            Product::ContextRawMaterials => ProductDocumentNumberSettingsService::RawMaterialsKey,
+            Product::ContextPackagingMaterials => ProductDocumentNumberSettingsService::PackagingMaterialsKey,
+            default => ProductDocumentNumberSettingsService::ProductsKey,
+        };
     }
 
     private function permissionPrefix(): string
     {
-        return $this->productContext() === Product::ContextRawMaterials
-            ? 'raw_materials'
-            : 'products';
+        return match ($this->productContext()) {
+            Product::ContextRawMaterials => 'raw_materials',
+            Product::ContextPackagingMaterials => 'packaging_materials',
+            default => 'products',
+        };
     }
 
     /**
@@ -557,21 +630,23 @@ trait ValidatesProductPayload
      */
     private function allowedClassificationsForContext(): array
     {
-        return $this->productContext() === Product::ContextRawMaterials
-            ? [Product::ClassificationRawMaterial]
-            : Product::itemClassifications();
+        return Product::classificationForContext($this->productContext()) !== null
+            ? [Product::classificationForContext($this->productContext())]
+            : Product::productItemClassifications();
     }
 
     private function applyDocumentNumberContext(QueryBuilder $query): QueryBuilder
     {
-        if ($this->productContext() === Product::ContextRawMaterials) {
-            return $query->where('item_classification', Product::ClassificationRawMaterial);
+        $classification = Product::classificationForContext($this->productContext());
+
+        if ($classification !== null) {
+            return $query->where('item_classification', $classification);
         }
 
         return $query->where(function (QueryBuilder $query): void {
             $query
                 ->whereNull('item_classification')
-                ->orWhere('item_classification', '<>', Product::ClassificationRawMaterial);
+                ->orWhereNotIn('item_classification', Product::materialClassifications());
         });
     }
 
@@ -609,12 +684,37 @@ trait ValidatesProductPayload
             $unit = $componentProduct instanceof Product && ! $delete
                 ? $this->componentUnitRecord($componentProduct, $unitDocNum)
                 : null;
+            $calculationMethod = trim((string) ($component['calculation_method'] ?? ProductComponent::CalculationDirect))
+                ?: ProductComponent::CalculationDirect;
+            $inputSource = $delete
+                ? null
+                : $this->componentAuthoritativeInputSource(
+                    $calculationMethod,
+                    $component['input_source'] ?? null,
+                    $component['quantity'] ?? null,
+                    $component['percentage'] ?? null,
+                );
+            $quantity = ! $delete && $inputSource === ProductComponent::InputWeight
+                ? $this->normalizeNullableComponentQuantity($component['quantity'] ?? null)
+                : null;
+            $percentage = ! $delete
+                && $calculationMethod === ProductComponent::CalculationPercentage
+                && $inputSource === ProductComponent::InputPercentage
+                    ? $this->normalizeNullableComponentQuantity($component['percentage'] ?? null)
+                    : null;
 
             $normalized[] = [
                 'public_id' => $this->blankToNull($component['public_id'] ?? null),
+                'client_key' => $this->blankToNull($component['client_key'] ?? null)
+                    ?? $this->blankToNull($component['public_id'] ?? null)
+                    ?? (string) Str::uuid(),
                 'component_product_id' => $componentProduct?->getKey(),
                 'unit_id' => $unit?->getKey(),
-                'quantity' => $delete ? null : $this->normalizeNullableComponentQuantity($component['quantity'] ?? null),
+                'calculation_method' => $calculationMethod,
+                'quantity' => $quantity,
+                'percentage' => $percentage,
+                'reference_component_key' => $this->blankToNull($component['reference_component_key'] ?? null),
+                'input_source' => $inputSource,
                 'notes' => $this->blankToNull($component['notes'] ?? null),
                 '_delete' => $delete,
             ];
@@ -635,7 +735,7 @@ trait ValidatesProductPayload
             ->forCompany($this->companyId())
             ->active()
             ->with(['unit', 'equivalentUnit'])
-            ->rawMaterials()
+            ->materialItems()
             ->where('doc_num', $docNum)
             ->first();
     }
@@ -652,6 +752,89 @@ trait ValidatesProductPayload
             ->unitIsValidForProduct($componentProduct, $unitDocNum, $this->companyId());
     }
 
+    private function componentUnitIsRequired(Product $componentProduct, string $calculationMethod): bool
+    {
+        return $calculationMethod === ProductComponent::CalculationPercentage
+            || app(ProductComponentUnitOptionsService::class)->options($componentProduct) !== [];
+    }
+
+    private function componentAuthoritativeInputSource(
+        string $calculationMethod,
+        mixed $inputSource,
+        mixed $quantity,
+        mixed $percentage,
+    ): ?string {
+        if ($calculationMethod === ProductComponent::CalculationDirect) {
+            return ProductComponent::InputWeight;
+        }
+
+        $inputSource = $this->componentStringValue($inputSource);
+
+        if (in_array($inputSource, ProductComponent::inputSources(), true)) {
+            return $inputSource;
+        }
+
+        $hasQuantity = $this->componentCalculationValueIsPresent($quantity);
+        $hasPercentage = $this->componentCalculationValueIsPresent($percentage);
+
+        if ($hasQuantity === $hasPercentage) {
+            return null;
+        }
+
+        return $hasQuantity
+            ? ProductComponent::InputWeight
+            : ProductComponent::InputPercentage;
+    }
+
+    private function componentCalculationValueIsPresent(mixed $value): bool
+    {
+        return $value !== null && (! is_string($value) || trim($value) !== '');
+    }
+
+    private function trimComponentInputValue(mixed $value): mixed
+    {
+        return is_string($value) ? trim($value) : $value;
+    }
+
+    private function componentStringValue(mixed $value): string
+    {
+        return is_string($value) ? trim($value) : '';
+    }
+
+    private function validateComponentCalculationValue(
+        Validator $validator,
+        int|string $index,
+        string $field,
+        mixed $value,
+    ): void {
+        $valueValidator = validator(
+            ['value' => $value],
+            ['value' => ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/']],
+            [
+                'value.required' => __($field === 'quantity'
+                    ? 'products.components.quantity_required'
+                    : 'products.components.percentage_required'),
+                'value.numeric' => __($field === 'quantity'
+                    ? 'products.components.quantity_gt_zero'
+                    : 'products.components.percentage_gt_zero'),
+                'value.gt' => __($field === 'quantity'
+                    ? 'products.components.quantity_gt_zero'
+                    : 'products.components.percentage_gt_zero'),
+                'value.regex' => __($field === 'quantity'
+                    ? 'products.components.quantity_precision'
+                    : 'products.components.percentage_precision'),
+            ],
+        );
+
+        if (! $valueValidator->fails()) {
+            return;
+        }
+
+        foreach ($valueValidator->errors()->get('value') as $message) {
+            $validator->errors()->add("components.{$index}.{$field}", $message);
+        }
+    }
+
     private function componentRecord(Product $product, string $publicId): ?ProductComponent
     {
         return ProductComponent::query()
@@ -661,33 +844,26 @@ trait ValidatesProductPayload
             ->first();
     }
 
-    private function componentDuplicateExists(Product $product, Product $componentProduct, ?string $publicId): bool
-    {
-        $query = ProductComponent::query()
-            ->where('product_id', $product->getKey())
-            ->where('component_product_id', $componentProduct->getKey());
-
-        if ($publicId !== null) {
-            $component = $this->componentRecord($product, $publicId);
-
-            if ($component instanceof ProductComponent) {
-                $query->whereKeyNot($component->getKey());
-            }
-        }
-
-        return $query->exists();
-    }
-
     /**
      * @param  array<string, mixed>  $component
      */
     private function emptyNewComponentRow(array $component): bool
     {
+        $calculationMethod = $component['calculation_method'] ?? ProductComponent::CalculationDirect;
+        $inputSource = $component['input_source'] ?? null;
+
         return blank($component['public_id'] ?? null)
             && blank($component['component_product_doc_num'] ?? null)
             && blank($component['unit_doc_num'] ?? null)
             && blank($component['quantity'] ?? null)
+            && blank($component['percentage'] ?? null)
+            && blank($component['reference_component_key'] ?? null)
             && blank($component['notes'] ?? null)
+            && is_string($calculationMethod)
+            && in_array(trim($calculationMethod), ['', ProductComponent::CalculationDirect], true)
+            && ($inputSource === null
+                || (is_string($inputSource)
+                    && in_array(trim($inputSource), ['', ProductComponent::InputWeight], true)))
             && ! filter_var($component['_delete'] ?? false, FILTER_VALIDATE_BOOL);
     }
 
@@ -698,29 +874,17 @@ trait ValidatesProductPayload
 
     private function normalizeNullableDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 4, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 4);
     }
 
     private function normalizeNullableComponentQuantity(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 8, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 8);
     }
 
     private function normalizeNullableEquivalenceDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 6, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 6);
     }
 
     private function activeLookupExistsRule(string $table, int $companyId): Exists

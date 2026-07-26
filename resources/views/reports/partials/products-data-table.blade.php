@@ -5,6 +5,10 @@
     </div>
 @endif
 
+@php
+    $numericColumnIndexes = ($mode ?? 'summary') === 'detailed' ? [6] : [12, 15];
+@endphp
+
 <table class="report-table products-data-report-table {{ ($mode ?? 'summary') === 'detailed' ? 'products-data-report-table-detailed' : 'products-data-report-table-summary' }}">
     <thead>
         <tr>
@@ -16,8 +20,8 @@
     <tbody>
         @forelse ($rows as $row)
             <tr>
-                @foreach ($row as $cell)
-                    <td>{{ $cell }}</td>
+                @foreach ($row as $columnIndex => $cell)
+                    <td @class(['report-number' => in_array($columnIndex, $numericColumnIndexes, true)]) @if (in_array($columnIndex, $numericColumnIndexes, true)) dir="ltr" @endif>{{ $cell }}</td>
                 @endforeach
             </tr>
         @empty
@@ -60,6 +64,12 @@
     .products-data-report-table-detailed th,
     .products-data-report-table-detailed td {
         font-size: 8px;
+    }
+
+    .products-data-report-table .report-number {
+        direction: ltr;
+        font-variant-numeric: tabular-nums;
+        unicode-bidi: isolate;
     }
 
 </style>

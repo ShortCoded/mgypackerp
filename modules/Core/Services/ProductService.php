@@ -53,6 +53,8 @@ class ProductService
         private readonly OperatingCompanyContextService $companyContext,
         private readonly FilePickerService $filePicker,
         private readonly ArchiveFileUsageService $fileUsages,
+        private readonly NumericFormatService $numbers,
+        private readonly ProductBomService $bom,
     ) {}
 
     /**
@@ -71,6 +73,10 @@ class ProductService
             $values = $this->normalizedValues($data);
             $selectedImageFile = null;
 
+            if ($cloneSource instanceof Product && ! array_key_exists('cost_as_inventory', $data)) {
+                $values['cost_as_inventory'] = (bool) $cloneSource->cost_as_inventory;
+            }
+
             if (! empty($data['image_archive_file_doc_num'])) {
                 $selectedImageFile = $this->selectedArchiveImageFile((string) $data['image_archive_file_doc_num'], $companyId);
                 $values['image_path'] = (string) $selectedImageFile->path;
@@ -88,7 +94,7 @@ class ProductService
 
             if (array_key_exists('components', $data)) {
                 $this->syncComponents($record, $data);
-            } elseif ($cloneSource instanceof Product && ! $record->isRawMaterial()) {
+            } elseif ($cloneSource instanceof Product && ! $record->isMaterial()) {
                 $this->cloneComponents($record, $cloneSource);
             }
 
@@ -103,30 +109,7 @@ class ProductService
     private function cloneComponents(Product $record, Product $cloneSource): void
     {
         $this->assertRecordBelongsToCurrentCompany($cloneSource);
-
-        ProductComponent::query()
-            ->where('company_id', $cloneSource->company_id)
-            ->where('product_id', $cloneSource->getKey())
-            ->orderBy('created_at')
-            ->get([
-                'component_product_id',
-                'unit_id',
-                'quantity',
-                'notes',
-            ])
-            ->each(function (ProductComponent $component) use ($record): void {
-                $created = ProductComponent::query()->create([
-                    'company_id' => $record->company_id,
-                    'product_id' => $record->getKey(),
-                    'component_product_id' => $component->component_product_id,
-                    'unit_id' => $component->unit_id,
-                    'quantity' => $this->normalizeNullableComponentQuantity($component->quantity) ?? '0.00000000',
-                    'notes' => $this->normalizeNullableString($component->notes),
-                    'created_by' => auth()->id(),
-                ]);
-
-                $this->crudAudit->clearCreationUpdateAudit($created);
-            });
+        $this->bom->clone($record, $cloneSource);
     }
 
     /**
@@ -166,10 +149,17 @@ class ProductService
                 ];
             }
 
-            $componentChanges = $this->componentChanges($record, $data);
+            if (isset($data['components']) && is_array($data['components'])) {
+                $oldComponents = $this->currentComponents($record);
+                $this->syncComponents($record, $data);
+                $newComponents = $this->currentComponents($record);
 
-            if ($componentChanges !== null) {
-                $changes['components'] = $componentChanges;
+                if ($oldComponents !== $newComponents) {
+                    $changes['components'] = [
+                        'old' => $oldComponents,
+                        'new' => $newComponents,
+                    ];
+                }
             }
 
             $changedFields = collect(array_keys($changes))
@@ -190,7 +180,6 @@ class ProductService
             }
 
             $this->crudAudit->saveUpdate($record, $newValues);
-            $this->syncComponents($record, $data);
 
             if ($selectedImageFile instanceof ArchiveFile) {
                 $this->fileUsages->replaceFileForRecord($selectedImageFile, $record, Product::ImageCollection, Product::MainImageRole);
@@ -276,11 +265,11 @@ class ProductService
             ->where('doc_number', $record->doc_number)
             ->whereKeyNot($record->getKey());
 
-        if ($record->isRawMaterial()) {
-            $query->rawMaterials();
-        } else {
-            $query->withoutRawMaterials();
-        }
+        match (Product::contextForClassification($record->item_classification)) {
+            Product::ContextRawMaterials => $query->rawMaterials(),
+            Product::ContextPackagingMaterials => $query->packagingMaterials(),
+            default => $query->productItems(),
+        };
 
         return $query->exists();
     }
@@ -311,9 +300,11 @@ class ProductService
 
     private function documentNumberKeyForContext(string $context): string
     {
-        return $context === Product::ContextRawMaterials
-            ? ProductDocumentNumberSettingsService::RawMaterialsKey
-            : ProductDocumentNumberSettingsService::ProductsKey;
+        return match ($context) {
+            Product::ContextRawMaterials => ProductDocumentNumberSettingsService::RawMaterialsKey,
+            Product::ContextPackagingMaterials => ProductDocumentNumberSettingsService::PackagingMaterialsKey,
+            default => ProductDocumentNumberSettingsService::ProductsKey,
+        };
     }
 
     /**
@@ -328,10 +319,16 @@ class ProductService
                 return;
             }
 
+            if ($documentKey === ProductDocumentNumberSettingsService::PackagingMaterialsKey) {
+                $query->where('item_classification', Product::ClassificationPackaging);
+
+                return;
+            }
+
             $query->where(function (QueryBuilder $query): void {
                 $query
                     ->whereNull('item_classification')
-                    ->orWhere('item_classification', '<>', Product::ClassificationRawMaterial);
+                    ->orWhereNotIn('item_classification', Product::materialClassifications());
             });
         };
     }
@@ -542,52 +539,17 @@ class ProductService
 
     private function normalizeNullableDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 4, '.', '');
+        return $this->numbers->normalizeToScale($value, 4);
     }
 
     private function normalizeNullableComponentQuantity(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 8, '.', '');
+        return $this->numbers->normalizeToScale($value, 8);
     }
 
     private function normalizeNullableEquivalenceDecimal(mixed $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        return number_format((float) $value, 6, '.', '');
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return array{old: list<array<string, mixed>>, new: list<array<string, mixed>>}|null
-     */
-    private function componentChanges(Product $record, array $data): ?array
-    {
-        if (! array_key_exists('components', $data)) {
-            return null;
-        }
-
-        $old = $this->currentComponents($record);
-        $new = $this->submittedComponents($data);
-
-        if ($old === $new) {
-            return null;
-        }
-
-        return [
-            'old' => $old,
-            'new' => $new,
-        ];
+        return $this->numbers->normalizeToScale($value, 6);
     }
 
     /**
@@ -598,55 +560,7 @@ class ProductService
         if (! array_key_exists('components', $data) || ! is_array($data['components'])) {
             return;
         }
-
-        foreach ($data['components'] as $componentData) {
-            if (! is_array($componentData)) {
-                continue;
-            }
-
-            $publicId = $this->normalizeNullableString($componentData['public_id'] ?? null);
-            $delete = (bool) ($componentData['_delete'] ?? false);
-            $component = $publicId === null ? null : $this->componentByPublicId($record, $publicId);
-
-            if ($delete) {
-                if ($component instanceof ProductComponent && ! $component->trashed()) {
-                    $this->crudAudit->softDelete($component);
-                }
-
-                continue;
-            }
-
-            $values = [
-                'component_product_id' => (int) $componentData['component_product_id'],
-                'unit_id' => $componentData['unit_id'] === null ? null : (int) $componentData['unit_id'],
-                'quantity' => $this->normalizeDecimal($componentData['quantity'] ?? null),
-                'notes' => $this->normalizeNullableString($componentData['notes'] ?? null),
-            ];
-
-            if ($component instanceof ProductComponent) {
-                $this->crudAudit->saveUpdate($component, $values);
-
-                continue;
-            }
-
-            $created = ProductComponent::query()->create([
-                'company_id' => $record->company_id,
-                'product_id' => $record->getKey(),
-                ...$values,
-                'created_by' => auth()->id(),
-            ]);
-
-            $this->crudAudit->clearCreationUpdateAudit($created);
-        }
-    }
-
-    private function componentByPublicId(Product $record, string $publicId): ?ProductComponent
-    {
-        return ProductComponent::query()
-            ->where('company_id', $record->company_id)
-            ->where('product_id', $record->getKey())
-            ->where('public_id', $publicId)
-            ->first();
+        $this->bom->sync($record, $data['components']);
     }
 
     /**
@@ -657,50 +571,22 @@ class ProductService
         return ProductComponent::query()
             ->where('company_id', $record->company_id)
             ->where('product_id', $record->getKey())
-            ->with(['componentProduct', 'unit'])
+            ->with(['componentProduct', 'unit', 'referenceComponent'])
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->map(fn (ProductComponent $component): array => [
                 'public_id' => $component->public_id,
                 'raw_material' => $this->productChangeLabel($component->componentProduct),
                 'unit' => $this->unitChangeLabel($component->unit),
+                'calculation_method' => $component->calculation_method,
                 'quantity' => $this->normalizeDecimal($component->quantity),
+                'percentage' => $component->percentage === null
+                    ? null
+                    : $this->normalizeDecimal($component->percentage),
+                'reference_component' => $component->referenceComponent?->public_id,
                 'notes' => $component->notes,
             ])
-            ->values()
-            ->all();
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return list<array<string, mixed>>
-     */
-    private function submittedComponents(array $data): array
-    {
-        $components = $data['components'] ?? [];
-
-        if (! is_array($components)) {
-            return [];
-        }
-
-        return collect($components)
-            ->filter(fn (mixed $component): bool => is_array($component) && ! (bool) ($component['_delete'] ?? false))
-            ->map(function (array $component): array {
-                $componentProduct = isset($component['component_product_id'])
-                    ? Product::withTrashed()->find($component['component_product_id'])
-                    : null;
-                $unit = isset($component['unit_id'])
-                    ? ItemUnit::withTrashed()->find($component['unit_id'])
-                    : null;
-
-                return [
-                    'public_id' => $this->normalizeNullableString($component['public_id'] ?? null),
-                    'raw_material' => $this->productChangeLabel($componentProduct),
-                    'unit' => $this->unitChangeLabel($unit),
-                    'quantity' => $this->normalizeDecimal($component['quantity'] ?? null),
-                    'notes' => $this->normalizeNullableString($component['notes'] ?? null),
-                ];
-            })
             ->values()
             ->all();
     }

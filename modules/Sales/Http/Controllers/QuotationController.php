@@ -15,6 +15,7 @@ use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\QuotationsDataTable;
@@ -39,6 +40,7 @@ class QuotationController extends Controller
         private readonly QuotationService $service,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly ActivityLogger $activityLogger,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(DocumentNumberSettingsService $settings): View
@@ -486,12 +488,12 @@ class QuotationController extends Controller
                     'description' => $line->description,
                     'unit_doc_num' => $unit?->doc_num,
                     'unit_label' => $unitLabel !== '' ? $unitLabel : null,
-                    'quantity' => $this->formatDecimal($line->quantity),
-                    'unit_price' => $this->formatDecimal($line->unit_price),
+                    'quantity' => $this->numbers->format($line->quantity),
+                    'unit_price' => $this->numbers->format($line->unit_price),
                     'discount_type' => $line->discount_type,
-                    'discount_value' => $this->formatDecimal($line->discount_value),
-                    'tax_rate' => $this->formatDecimal($line->tax_rate),
-                    'line_total' => $this->formatDecimal($line->line_total),
+                    'discount_value' => $this->numbers->format($line->discount_value),
+                    'tax_rate' => $this->numbers->format($line->tax_rate),
+                    'line_total' => $this->numbers->format($line->line_total),
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
@@ -528,8 +530,8 @@ class QuotationController extends Controller
             $rows = $revision?->paymentMilestones?->map(fn (QuotationPaymentMilestone $row): array => [
                 'title' => $row->title,
                 'description' => $row->description,
-                'percentage' => $this->formatDecimal($row->percentage),
-                'amount' => $this->formatDecimal($row->amount),
+                'percentage' => $this->numbers->format($row->percentage),
+                'amount' => $this->numbers->format($row->amount),
                 'due_type' => $row->due_type,
                 'due_date' => $row->due_date ? app(DateFormatService::class)->formatDate($row->due_date, '') : null,
                 'notes' => $row->notes,
@@ -559,11 +561,6 @@ class QuotationController extends Controller
         }
 
         return array_values($rows);
-    }
-
-    private function formatDecimal(mixed $value): string
-    {
-        return rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
     }
 
     /**

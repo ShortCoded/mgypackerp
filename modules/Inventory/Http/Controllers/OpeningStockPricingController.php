@@ -16,6 +16,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Services\FinanceDocumentNumberSettingsService;
@@ -35,6 +36,7 @@ class OpeningStockPricingController extends Controller
         private readonly OpeningStockPricingService $service,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(Request $request, FinanceDocumentNumberSettingsService $settings): View
@@ -307,7 +309,7 @@ class OpeningStockPricingController extends Controller
                     $snapshot['name'] ?? null,
                     $snapshot['barcode'] ?? null,
                     $snapshot['unit_label'] ?? null,
-                    $this->formatNumber($line->quantity),
+                    $this->numbers->format($line->quantity),
                 ])));
 
                 return [
@@ -316,9 +318,9 @@ class OpeningStockPricingController extends Controller
                     'product_label' => $label,
                     'imageUrl' => $snapshot['image_url'] ?? null,
                     'unit' => $snapshot['unit_label'] ?? null,
-                    'quantity' => $this->formatNumber($line->quantity),
-                    'unit_price' => $this->formatNumber($line->unit_price),
-                    'line_total' => $this->formatNumber($line->line_total),
+                    'quantity' => $this->numbers->format($line->quantity),
+                    'unit_price' => $this->numbers->format($line->unit_price),
+                    'line_total' => $this->numbers->format($line->line_total),
                     'notes' => $line->notes,
                     'product_data' => [
                         'imageUrl' => $snapshot['image_url'] ?? null,
@@ -326,7 +328,7 @@ class OpeningStockPricingController extends Controller
                         'name' => $snapshot['name'] ?? null,
                         'barcode' => $snapshot['barcode'] ?? null,
                         'unit' => $snapshot['unit_label'] ?? null,
-                        'quantity' => $this->formatNumber($line->quantity),
+                        'quantity' => $this->numbers->format($line->quantity),
                     ],
                 ];
             })->values()->all() ?? [];
@@ -337,11 +339,6 @@ class OpeningStockPricingController extends Controller
         }
 
         return array_values($lines);
-    }
-
-    private function formatNumber(mixed $value, int $precision = 4): string
-    {
-        return rtrim(rtrim(number_format((float) $value, $precision, '.', ''), '0'), '.') ?: '0';
     }
 
     private function breadcrumbs(string $mode, ?OpeningStockPricing $record): array

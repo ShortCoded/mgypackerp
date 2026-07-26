@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Models\FundTransfer;
@@ -18,6 +19,7 @@ class FundTransfersDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingCompanyContextService $companies,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -91,11 +93,11 @@ class FundTransfersDataTable
             ->editColumn('transfer_date', fn (FundTransfer $record): string => $this->plainText($record->transfer_date?->format($dateFormat) ?? ''))
             ->addColumn('source', fn (FundTransfer $record): string => $this->ellipsisText($this->holderLabel($record, 'source')))
             ->addColumn('source_currency', fn (FundTransfer $record): string => $this->plainText(trim(implode(' — ', array_filter([$record->source_currency_code, $record->source_currency_name])))))
-            ->editColumn('source_amount', fn (FundTransfer $record): string => $this->plainText($this->formatAmount((float) $record->source_amount)))
+            ->editColumn('source_amount', fn (FundTransfer $record): string => $this->plainText($this->numbers->format($record->source_amount)))
             ->addColumn('target', fn (FundTransfer $record): string => $this->ellipsisText($this->holderLabel($record, 'target')))
             ->addColumn('target_currency', fn (FundTransfer $record): string => $this->plainText(trim(implode(' — ', array_filter([$record->target_currency_code, $record->target_currency_name])))))
-            ->editColumn('target_amount', fn (FundTransfer $record): string => $this->plainText($this->formatAmount((float) $record->target_amount)))
-            ->editColumn('exchange_rate', fn (FundTransfer $record): string => $this->plainText($this->formatAmount((float) $record->exchange_rate, 6)))
+            ->editColumn('target_amount', fn (FundTransfer $record): string => $this->plainText($this->numbers->format($record->target_amount)))
+            ->editColumn('exchange_rate', fn (FundTransfer $record): string => $this->plainText($this->numbers->format($record->exchange_rate)))
             ->editColumn('status', fn (FundTransfer $record): string => view('modules.finance.fund-transfers.partials.status', ['record' => $record])->render())
             ->editColumn('reason', fn (FundTransfer $record): string => $this->ellipsisText($record->reason))
             ->addColumn('created_by', fn (FundTransfer $record): string => $this->ellipsisText($record->created_by_name ?: __('common.empty_value')))
@@ -167,10 +169,5 @@ class FundTransfersDataTable
         return $record->isApproved()
             ? __('fund_transfers.messages.approved_edit_forbidden')
             : __('fund_transfers.messages.cancelled_edit_forbidden');
-    }
-
-    private function formatAmount(float $amount, int $scale = 4): string
-    {
-        return rtrim(rtrim(number_format($amount, $scale, '.', ''), '0'), '.') ?: '0';
     }
 }

@@ -121,9 +121,9 @@
                     <div class="col-md-4">
                         <x-forms.label for="currency-minor-unit-factor" :label="__('currencies.attributes.minor_unit_factor')" required />
                         @if ($isView)
-                            <x-forms.view-field for="currency-minor-unit-factor" :value="old('minor_unit_factor', $record?->minor_unit_factor ?? 100)" input-class="text-center" dir="ltr" />
+                            <x-forms.view-field for="currency-minor-unit-factor" :value="old('minor_unit_factor', $record?->minor_unit_factor ?? 100)" input-class="text-center" numeric dir="ltr" />
                         @else
-                            <input id="currency-minor-unit-factor" name="minor_unit_factor" type="number" min="1" step="1" inputmode="numeric" class="text-center form-control" dir="ltr" value="{{ old('minor_unit_factor', $record?->minor_unit_factor ?? 100) }}" required>
+                            <x-forms.numeric-input id="currency-minor-unit-factor" name="minor_unit_factor" :value="old('minor_unit_factor', $record?->minor_unit_factor ?? 100)" :scale="0" min="1" max="1000000" step="1" class="text-center" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="minor_unit_factor"></div>
                     </div>

@@ -55,6 +55,57 @@ body {
   font-family: var(--falcon-font-sans-serif);
 }
 
+#navbarVerticalNav .nav-link-icon,
+#navbarVerticalNav .nav-link-text {
+  color: inherit;
+}
+
+#navbarVerticalNav .nav-link.dropdown-indicator::after {
+  border-color: currentColor;
+}
+
+.navbar-top [data-top-nav-dropdowns] {
+  --erp-navigation-link-color: var(--falcon-navbar-color);
+  --erp-navigation-link-hover-color: var(--falcon-navbar-hover-color);
+  --erp-navigation-link-active-color: var(--falcon-navbar-active-color);
+  --erp-navigation-submenu-color: var(--falcon-dropdown-link-color);
+  --erp-navigation-submenu-hover-color: var(--falcon-dropdown-link-hover-color);
+  --erp-navigation-submenu-active-color: var(--falcon-dropdown-link-active-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] > .nav-item > .nav-link {
+  color: var(--erp-navigation-link-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] > .nav-item > .nav-link:hover,
+.navbar-top [data-top-nav-dropdowns] > .nav-item > .nav-link:focus {
+  color: var(--erp-navigation-link-hover-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] > .nav-item > .nav-link.active,
+.navbar-top [data-top-nav-dropdowns] > .nav-item > .nav-link[aria-expanded="true"] {
+  color: var(--erp-navigation-link-active-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] .dropdown-item,
+.navbar-top [data-top-nav-dropdowns] .dropdown-toggle::after {
+  color: var(--erp-navigation-submenu-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] .dropdown-item:hover,
+.navbar-top [data-top-nav-dropdowns] .dropdown-item:focus,
+.navbar-top [data-top-nav-dropdowns] .dropdown-item:hover::after,
+.navbar-top [data-top-nav-dropdowns] .dropdown-item:focus::after {
+  color: var(--erp-navigation-submenu-hover-color);
+}
+
+.navbar-top [data-top-nav-dropdowns] .dropdown-item.active,
+.navbar-top [data-top-nav-dropdowns] .dropdown-item[aria-expanded="true"],
+.navbar-top [data-top-nav-dropdowns] .dropdown-item.active::after,
+.navbar-top [data-top-nav-dropdowns] .dropdown-item[aria-expanded="true"]::after {
+  color: var(--erp-navigation-submenu-active-color);
+}
+
 .content {
   box-sizing: border-box;
   display: flex;
@@ -218,6 +269,13 @@ body {
 
 .erp-datatable tbody td.dt-number,
 .erp-datatable tbody td.dt-date {
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+  unicode-bidi: isolate;
+}
+
+[data-numeric-input],
+.dt-number-value {
   direction: ltr;
   font-variant-numeric: tabular-nums;
   unicode-bidi: isolate;

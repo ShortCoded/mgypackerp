@@ -28,11 +28,15 @@ return [
         'metrics' => [
             'products' => [
                 'title' => 'المنتجات النشطة',
-                'meta' => 'سجلات المنتجات غير الخام',
+                'meta' => 'سجلات المنتجات فقط',
             ],
             'raw_materials' => [
                 'title' => 'الخامات النشطة',
                 'meta' => 'سجلات الخامات فقط',
+            ],
+            'packaging_materials' => [
+                'title' => 'مواد التعبئة والتغليف النشطة',
+                'meta' => 'سجلات مواد التعبئة والتغليف فقط',
             ],
             'products_with_bom' => [
                 'title' => 'منتجات لها مكونات',
@@ -84,9 +88,10 @@ return [
             ],
         ],
         'charts' => [
-            'product_types' => 'المنتجات والخامات حسب النوع',
+            'product_types' => 'المنتجات والخامات ومواد التعبئة والتغليف حسب النوع',
             'bom_coverage' => 'تغطية مكونات المنتجات',
             'raw_material_units' => 'الخامات حسب الوحدة',
+            'packaging_material_units' => 'مواد التعبئة والتغليف حسب الوحدة',
             'task_status' => 'المهام حسب الحالة',
         ],
         'chart_labels' => [
@@ -111,6 +116,7 @@ return [
         'quick_actions' => [
             'product' => 'منتج',
             'raw_material' => 'خامة',
+            'packaging_material' => 'مادة تعبئة وتغليف',
             'products_report' => 'تقرير بيانات المنتجات',
             'task' => 'مهمة',
         ],

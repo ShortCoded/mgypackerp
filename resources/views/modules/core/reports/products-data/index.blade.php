@@ -89,6 +89,7 @@
                     <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeAll }}">{{ __('product_data_report.item_scopes.all') }}</option>
                     <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeProducts }}">{{ __('product_data_report.item_scopes.products') }}</option>
                     <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeRawMaterials }}">{{ __('product_data_report.item_scopes.raw_materials') }}</option>
+                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopePackagingMaterials }}">{{ __('product_data_report.item_scopes.packaging_materials') }}</option>
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">

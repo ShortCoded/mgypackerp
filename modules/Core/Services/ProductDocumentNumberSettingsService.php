@@ -10,12 +10,15 @@ class ProductDocumentNumberSettingsService
 
     public const RawMaterialsKey = 'raw_materials';
 
+    public const PackagingMaterialsKey = 'packaging_materials';
+
     /**
      * @var list<string>
      */
     private const SupportedKeys = [
         self::ProductsKey,
         self::RawMaterialsKey,
+        self::PackagingMaterialsKey,
     ];
 
     public function __construct(

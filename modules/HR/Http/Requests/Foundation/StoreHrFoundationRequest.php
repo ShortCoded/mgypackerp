@@ -5,6 +5,7 @@ namespace Modules\HR\Http\Requests\Foundation;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Services\HrFoundationDefinition;
@@ -12,6 +13,8 @@ use Modules\HR\Services\HrFoundationRegistry;
 
 class StoreHrFoundationRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         $definition = $this->definition();
@@ -54,6 +57,19 @@ class StoreHrFoundationRequest extends FormRequest
         }
 
         return $rules;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $numericFields = [];
+
+        foreach ($this->definition()->fields as $field) {
+            if (in_array($field['type'] ?? null, ['number', 'decimal'], true)) {
+                $numericFields[] = (string) $field['name'];
+            }
+        }
+
+        $this->normalizeNumericInput($numericFields);
     }
 
     public function withValidator(Validator $validator): void

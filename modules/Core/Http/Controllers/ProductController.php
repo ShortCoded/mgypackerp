@@ -22,7 +22,9 @@ use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\ItemLookupSelect2Service;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductDocumentNumberSettingsService;
 use Modules\Core\Services\ProductImageResolver;
@@ -38,6 +40,8 @@ class ProductController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingCompanyContextService $companyContext,
         private readonly ProductImageResolver $productImages,
+        private readonly NumericFormatService $numbers,
+        private readonly ProductComponentUnitConversionService $unitConversions,
     ) {}
 
     public function index(Request $request, ProductDocumentNumberSettingsService $documentNumberSettings): View
@@ -47,6 +51,7 @@ class ProductController extends Controller
         return view('modules.core.products.index', [
             'productContext' => $context,
             'isRawMaterialsContext' => $this->isRawMaterialsContext($context),
+            'isMaterialContext' => $this->isMaterialContext($context),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($this->routeName($context, 'index')),
             'documentNumberSettings' => $documentNumberSettings->current($this->documentNumberKey($context)),
             'routes' => $this->resourceRoutes($context),
@@ -101,6 +106,12 @@ class ProductController extends Controller
             throw $exception;
         }
 
+        if ($cloneSource instanceof Product) {
+            $request->session()->forget(
+                $this->cloneSourceSessionKey($request->string('clone_source_token')->trim()->toString()),
+            );
+        }
+
         $record = $result['record'];
 
         $this->logActivity($request, $cloneSource instanceof Product ? 'products.clone' : 'products.create', ActivityLogProperties::crudCreated(
@@ -118,6 +129,7 @@ class ProductController extends Controller
                 'doc_num' => $record->doc_num,
                 'doc_number' => $record->doc_number,
                 'image_url' => $this->imageUrl($record),
+                'components' => $this->componentRows('edit', $record, $context),
                 'urls' => $this->recordUrls($record, $context),
             ],
         ]);
@@ -164,6 +176,7 @@ class ProductController extends Controller
                 'doc_number' => $record->doc_number,
                 'doc_num' => $record->doc_num,
                 'image_url' => $this->imageUrl($record),
+                'components' => $this->componentRows('edit', $record, $context),
                 'urls' => $this->recordUrls($record, $context),
             ],
         ]);
@@ -236,6 +249,10 @@ class ProductController extends Controller
     public function image(Request $request, string $product)
     {
         $record = $this->recordByDocNum($request, $product, enforceContext: false);
+        abort_unless(
+            (bool) $request->user()?->can($this->permission(Product::contextForClassification($record->item_classification), 'view')),
+            403,
+        );
         $response = $this->productImages->response($record);
 
         abort_unless($response !== null, 404);
@@ -252,11 +269,12 @@ class ProductController extends Controller
         $settings = app(ProductDocumentNumberSettingsService::class)->current($this->documentNumberKey($context));
         $relationships = ['unit', 'equivalentUnit', 'size', 'color', 'decal', 'itemModel', 'originCountry', 'category', 'group', 'mainImageUsage.file'];
 
-        if (! $this->isRawMaterialsContext($context)) {
+        if (! $this->isMaterialContext($context)) {
             $relationships[] = 'components.componentProduct.unit';
             $relationships[] = 'components.componentProduct.equivalentUnit';
             $relationships[] = 'components.componentProduct.mainImageUsage.file';
             $relationships[] = 'components.unit';
+            $relationships[] = 'components.referenceComponent';
         }
 
         $record?->loadMissing($relationships);
@@ -265,6 +283,7 @@ class ProductController extends Controller
             'mode' => $mode,
             'productContext' => $context,
             'isRawMaterialsContext' => $this->isRawMaterialsContext($context),
+            'isMaterialContext' => $this->isMaterialContext($context),
             'product' => $record,
             'action' => in_array($mode, ['create', 'clone'], true) ? route($this->routeName($context, 'store')) : route($this->routeName($context, 'update'), $record?->doc_num),
             'method' => in_array($mode, ['create', 'clone'], true) ? 'POST' : 'PUT',
@@ -275,6 +294,9 @@ class ProductController extends Controller
             'cloneSourceToken' => $cloneSourceToken,
             'lookupOptions' => $this->lookupOptions($record),
             'componentRows' => $this->componentRows($mode, $record, $context),
+            'componentUnitConversionEdges' => $this->unitConversions->globalEdgesForCompany(
+                $this->companyContext->requireCompanyId(),
+            ),
             'recordNavigation' => $this->recordNavigation($mode, $record, $context),
             'routes' => $this->resourceRoutes($context),
         ]);
@@ -285,12 +307,26 @@ class ProductController extends Controller
      */
     private function componentRows(string $mode, ?Product $record, string $context): array
     {
-        if (! $record instanceof Product || $this->isRawMaterialsContext($context)) {
+        if (! $record instanceof Product || $this->isMaterialContext($context)) {
             return [];
         }
 
-        return $record->components
-            ->map(fn (ProductComponent $component): array => $this->componentPayload($component, forClone: $mode === 'clone'))
+        $components = $record->components->values();
+        $clientKeys = $components->mapWithKeys(fn (ProductComponent $component): array => [
+            (string) $component->public_id => $mode === 'clone'
+                ? (string) Str::uuid()
+                : (string) $component->public_id,
+        ]);
+
+        return $components
+            ->map(fn (ProductComponent $component): array => $this->componentPayload(
+                $component,
+                clientKey: $clientKeys[(string) $component->public_id],
+                referenceKey: $component->referenceComponent instanceof ProductComponent
+                    ? $clientKeys[(string) $component->referenceComponent->public_id]
+                    : null,
+                forClone: $mode === 'clone',
+            ))
             ->values()
             ->all();
     }
@@ -298,21 +334,36 @@ class ProductController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function componentPayload(ProductComponent $component, bool $forClone = false): array
-    {
+    private function componentPayload(
+        ProductComponent $component,
+        string $clientKey,
+        ?string $referenceKey,
+        bool $forClone = false,
+    ): array {
         $componentProduct = $component->componentProduct;
         $unit = $component->unit ?: $componentProduct?->unit;
 
         return [
             'public_id' => $forClone ? '' : $component->public_id,
+            'client_key' => $clientKey,
             'component_product_doc_num' => $componentProduct?->doc_num,
             'raw_material' => $this->componentProductLabel($componentProduct),
             'imageUrl' => $componentProduct instanceof Product ? $this->imageUrl($componentProduct) : null,
             'unit' => $this->componentUnitLabel($unit),
             'unit_doc_num' => $unit?->doc_num,
             'unit_options' => $componentProduct instanceof Product ? app(ProductComponentUnitOptionsService::class)->options($componentProduct) : [],
+            'unit_conversion_edges' => $componentProduct instanceof Product
+                ? $this->unitConversions->productEdges($componentProduct)
+                : [],
+            'calculation_method' => $component->calculation_method,
             'quantity' => $this->formattedQuantity($component->quantity),
             'quantity_raw' => (string) $component->quantity,
+            'percentage' => $component->percentage === null ? null : $this->formattedQuantity($component->percentage),
+            'percentage_raw' => $component->percentage === null ? null : (string) $component->percentage,
+            'reference_component_key' => $referenceKey,
+            'input_source' => $component->calculation_method === ProductComponent::CalculationPercentage
+                ? ProductComponent::InputPercentage
+                : ProductComponent::InputWeight,
             'notes' => $component->notes,
         ];
     }
@@ -392,9 +443,7 @@ class ProductController extends Controller
 
     private function formattedQuantity(mixed $value): string
     {
-        $formatted = number_format((float) $value, 8, '.', '');
-
-        return rtrim(rtrim($formatted, '0'), '.') ?: '0';
+        return $this->numbers->format($value);
     }
 
     /**
@@ -530,7 +579,7 @@ class ProductController extends Controller
             return null;
         }
 
-        $sourceDocNum = (string) $request->session()->pull($this->cloneSourceSessionKey($token), '');
+        $sourceDocNum = (string) $request->session()->get($this->cloneSourceSessionKey($token), '');
 
         if ($sourceDocNum === '') {
             throw ValidationException::withMessages(['name' => $this->resourceText($context, 'messages.clone_not_allowed')]);
@@ -672,9 +721,11 @@ class ProductController extends Controller
     {
         $routeName = (string) ($request->route()?->getName() ?? '');
 
-        return str_starts_with($routeName, 'admin.raw-materials.')
-            ? Product::ContextRawMaterials
-            : Product::ContextProducts;
+        return match (true) {
+            str_starts_with($routeName, 'admin.raw-materials.') => Product::ContextRawMaterials,
+            str_starts_with($routeName, 'admin.packaging-materials.') => Product::ContextPackagingMaterials,
+            default => Product::ContextProducts,
+        };
     }
 
     private function isRawMaterialsContext(string $context): bool
@@ -682,26 +733,45 @@ class ProductController extends Controller
         return $context === Product::ContextRawMaterials;
     }
 
+    private function isMaterialContext(string $context): bool
+    {
+        return in_array($context, [Product::ContextRawMaterials, Product::ContextPackagingMaterials], true);
+    }
+
     private function routeName(string $context, string $action): string
     {
-        return ($this->isRawMaterialsContext($context) ? 'admin.raw-materials.' : 'admin.products.').$action;
+        return match ($context) {
+            Product::ContextRawMaterials => 'admin.raw-materials.'.$action,
+            Product::ContextPackagingMaterials => 'admin.packaging-materials.'.$action,
+            default => 'admin.products.'.$action,
+        };
     }
 
     private function documentNumberKey(string $context): string
     {
-        return $this->isRawMaterialsContext($context)
-            ? ProductDocumentNumberSettingsService::RawMaterialsKey
-            : ProductDocumentNumberSettingsService::ProductsKey;
+        return match ($context) {
+            Product::ContextRawMaterials => ProductDocumentNumberSettingsService::RawMaterialsKey,
+            Product::ContextPackagingMaterials => ProductDocumentNumberSettingsService::PackagingMaterialsKey,
+            default => ProductDocumentNumberSettingsService::ProductsKey,
+        };
     }
 
     private function activityResource(string $context): string
     {
-        return $this->isRawMaterialsContext($context) ? 'raw_materials' : 'products';
+        return match ($context) {
+            Product::ContextRawMaterials => 'raw_materials',
+            Product::ContextPackagingMaterials => 'packaging_materials',
+            default => 'products',
+        };
     }
 
     private function permissionPrefix(string $context): string
     {
-        return $this->isRawMaterialsContext($context) ? 'raw_materials' : 'products';
+        return match ($context) {
+            Product::ContextRawMaterials => 'raw_materials',
+            Product::ContextPackagingMaterials => 'packaging_materials',
+            default => 'products',
+        };
     }
 
     private function permission(string $context, string $action): string
@@ -728,9 +798,11 @@ class ProductController extends Controller
      */
     private function resourceText(string $context, string $key, array $replace = []): string
     {
-        return $this->isRawMaterialsContext($context)
-            ? __("products.raw_materials.{$key}", $replace)
-            : __("products.{$key}", $replace);
+        return match ($context) {
+            Product::ContextRawMaterials => __("products.raw_materials.{$key}", $replace),
+            Product::ContextPackagingMaterials => __("products.packaging_materials.{$key}", $replace),
+            default => __("products.{$key}", $replace),
+        };
     }
 
     /**

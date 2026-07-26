@@ -169,7 +169,7 @@ function fixedAssetsCreditAccount(array $context): Account
         ->firstOrFail();
 }
 
-test('Fixed Assets menu appears after Finance and before Sales with permission control', function (): void {
+test('Fixed Assets appear under Accounting and Costing with permission control', function (): void {
     $this->seed(PermissionSeeder::class);
 
     $context = fixedAssetsContext();
@@ -180,22 +180,21 @@ test('Fixed Assets menu appears after Finance and before Sales with permission c
     $menu = app(MenuService::class)->getMenu($actor);
     $labels = array_column($menu, 'label');
 
-    expect($labels)->toContain('finance')
-        ->toContain('fixed_assets')
+    expect($labels)->toContain('accounting_costing')
         ->toContain('sales')
         ->toContain('purchases')
-        ->and(array_search('finance', $labels, true))->toBeLessThan(array_search('fixed_assets', $labels, true))
-        ->and(array_search('fixed_assets', $labels, true))->toBeLessThan(array_search('sales', $labels, true));
+        ->not->toContain('finance', 'fixed_assets')
+        ->and(array_search('purchases', $labels, true))->toBeLessThan(array_search('accounting_costing', $labels, true));
 
-    $fixedAssets = collect($menu)->firstWhere('label', 'fixed_assets');
-    expect(collect($fixedAssets['children'])->pluck('label')->all())->toContain('fixed_assets_register')
+    $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
+    expect(collect($accountingCosting['children'])->pluck('label')->all())->toContain('fixed_assets_register')
         ->and(app(PermissionRegistryService::class)->all())->toContain('fixed_assets.view');
 
     $blocked = fixedAssetsActor(['customers.view']);
     $this->actingAs($blocked);
     fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
 
-    expect(array_column(app(MenuService::class)->getMenu($blocked), 'label'))->not->toContain('fixed_assets');
+    expect(array_column(app(MenuService::class)->getMenu($blocked), 'label'))->not->toContain('accounting_costing');
 });
 
 test('Fixed Assets table has company and linked account fields', function (): void {
@@ -294,7 +293,7 @@ test('Fixed Asset form trims numeric values and defaults main currency exchange 
 
     expect($html)->toContain('id="exchange_rate"')
         ->toContain('value="1"')
-        ->toContain('value="1000.5"')
+        ->toContain('value="1,000.5"')
         ->toContain('value="100.25"')
         ->toContain('value="900.25"')
         ->not->toContain('1.000000')
@@ -941,7 +940,11 @@ test('Fixed Asset form JavaScript clears inline errors for inputs dates and Sele
         ->toContain('togglePreviousDepreciationDateRequirement')
         ->toContain('handleAssetImagePickerSelection')
         ->toContain('fixed_asset_image')
-        ->toContain('js-fixed-asset-method-field-container');
+        ->toContain('js-fixed-asset-method-field-container')
+        ->toContain('$rate.val(trimNumber(100 / usefulLife, 4))')
+        ->toContain('$usefulLife.val(trimNumber(100 / rate, 2))')
+        ->not->toContain('$rate.val(trimNumber(100 / usefulLife, 6))')
+        ->not->toContain('$usefulLife.val(trimNumber(100 / rate, 6))');
 });
 
 test('Fixed Asset category quick-create and selector stay under the Fixed Assets root', function (): void {
@@ -1196,9 +1199,9 @@ test('Fixed Assets DataTable is company-scoped and returns columns configured by
         ->and($row['currency'])->toContain($context['currency']->code)
         ->not->toContain('<span')
         ->not->toContain('&lt;span')
-        ->and($row['purchase_value'])->toBe('1000 '.$context['currency']->code)
+        ->and($row['purchase_value'])->toBe('1,000 '.$context['currency']->code)
         ->and($row['previous_depreciation'])->toBe('0 '.$context['currency']->code)
-        ->and($row['net_value'])->toBe('1000 '.$context['currency']->code)
+        ->and($row['net_value'])->toBe('1,000 '.$context['currency']->code)
         ->and($row['purchase_value'])->not->toContain('<')
         ->and($row['net_value'])->not->toContain('<')
         ->and(strip_tags($row['created_by']))->toContain($actor->name)
@@ -1228,4 +1231,63 @@ test('Fixed Assets index does not include a visible linked account column', func
 
     expect($html)->not->toContain("'account'")
         ->not->toContain('"account"');
+});
+
+test('Fixed Asset direct decimals keep accepted precision before persistence', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create']);
+    $currency = Currency::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => 98761,
+        'doc_num' => 'Currency-98761',
+        'name' => 'Fixed Asset Precision Currency',
+        'code' => 'FAP',
+        'minor_unit_name' => 'Part',
+        'minor_unit_factor' => 100,
+        'is_main' => false,
+        'status' => 'active',
+    ]);
+    $capturedAttributes = [];
+
+    FixedAsset::creating(function (FixedAsset $asset) use (&$capturedAttributes): void {
+        $capturedAttributes[] = $asset->getAttributes();
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+            'asset_name' => 'Fixed Asset Precision Units',
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => '999,999,999,999.999999',
+            'entry_type' => FixedAsset::EntryTypeOpeningAsset,
+            'purchase_value' => '99,999,999,999,999.9999',
+            'salvage_value' => '11,111,111,111,111.1111',
+            'previous_depreciation' => '22,222,222,222,222.2222',
+            'previous_depreciation_until_date' => $context['period']->from_date->toDateString(),
+            'depreciation_method' => FixedAsset::DepreciationMethodUnitsOfProduction,
+            'useful_life' => '',
+            'annual_depreciation_rate' => '',
+            'expected_usage_units' => '88,888,888,888,888.8888',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+            'asset_name' => 'Fixed Asset Precision Life And Rate',
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => '999,999,999,999.999999',
+            'useful_life' => '3.25',
+            'annual_depreciation_rate' => '30.7692',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($capturedAttributes)->toHaveCount(2)
+        ->and($capturedAttributes[0]['exchange_rate'])->toBe('999999999999.999999')
+        ->and($capturedAttributes[0]['purchase_value'])->toBe('99999999999999.9999')
+        ->and($capturedAttributes[0]['salvage_value'])->toBe('11111111111111.1111')
+        ->and($capturedAttributes[0]['previous_depreciation'])->toBe('22222222222222.2222')
+        ->and($capturedAttributes[0]['expected_usage_units'])->toBe('88888888888888.8888')
+        ->and($capturedAttributes[1]['useful_life'])->toBe('3.25')
+        ->and($capturedAttributes[1]['annual_depreciation_rate'])->toBe('30.7692');
 });

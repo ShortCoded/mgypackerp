@@ -1,10 +1,10 @@
 <?php
 
 return [
-    'title' => 'Products and Raw Materials Data Report',
-    'report_title' => 'Products and Raw Materials Data Report',
+    'title' => 'Products and Materials Data Report',
+    'report_title' => 'Products and Materials Data Report',
     'table_title' => 'Item master data',
-    'filters_hint' => 'Review product and raw-material master data with optional BOM component details.',
+    'filters_hint' => 'Review product, raw-material, and packaging-material master data with optional BOM component details.',
     'actions' => [
         'toggle_filters' => 'Report Filters',
     ],
@@ -20,9 +20,10 @@ return [
         'detailed' => 'Detailed with components',
     ],
     'item_scopes' => [
-        'all' => 'All products and raw materials',
+        'all' => 'All products and materials',
         'products' => 'Products only',
         'raw_materials' => 'Raw materials only',
+        'packaging_materials' => 'Packaging materials only',
     ],
     'record_states' => [
         'active' => 'Active records',
@@ -94,7 +95,7 @@ return [
         'component_doc_num' => 'Component Code',
         'component_name' => 'Component Name',
         'component_classification' => 'Component Type',
-        'component_quantity' => 'Quantity',
+        'component_quantity' => 'Weight',
         'component_unit' => 'Component Unit',
         'component_equivalent' => 'Component Equivalent',
         'component_notes' => 'Notes',

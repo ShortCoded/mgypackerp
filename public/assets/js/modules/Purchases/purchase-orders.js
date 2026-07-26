@@ -18,21 +18,19 @@
   }
 
   function number(value) {
-    const parsed = parseFloat(String(value || '0').replace(/,/g, ''));
-
-    return Number.isFinite(parsed) ? parsed : 0;
+    return window.AppNumbers.number(value, 0);
   }
 
   function formatAmount(value) {
     const fixed = (Math.round((number(value) + Number.EPSILON) * 10000) / 10000).toFixed(4);
 
-    return fixed.replace(/\.?0+$/, '') || '0';
+    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
   }
 
   function formatQuantity(value) {
     const fixed = (Math.round((number(value) + Number.EPSILON) * 100000000) / 100000000).toFixed(8);
 
-    return fixed.replace(/\.?0+$/, '') || '0';
+    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
   }
 
   function showToast(icon, title) {
@@ -201,7 +199,7 @@
     }
 
     if (['total_ordered_quantity', 'total_amount'].indexOf(column) !== -1) {
-      return 'align-middle white-space-nowrap text-end';
+      return 'align-middle white-space-nowrap dt-number text-end';
     }
 
     return 'align-middle white-space-nowrap dt-text dt-ellipsis';

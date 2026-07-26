@@ -5,16 +5,20 @@ namespace Modules\HR\Http\Requests\Employees;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeBiometricMapping;
 
 class StoreHrEmployeeRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     /**
      * @var list<string>
      */
@@ -73,13 +77,13 @@ class StoreHrEmployeeRequest extends FormRequest
             'overtime_enabled' => ['nullable', 'boolean'],
             'pay_basis' => ['required', 'string', Rule::in(['monthly_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'])],
             'payroll_currency_doc_num' => ['required', 'string', Rule::exists('currencies', 'doc_num')->whereNull('deleted_at')],
-            'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'basic_salary' => ['nullable', 'numeric', 'min:0'],
-            'weekly_wage' => ['nullable', 'numeric', 'min:0'],
-            'daily_wage' => ['nullable', 'numeric', 'min:0'],
-            'hourly_wage' => ['nullable', 'numeric', 'min:0'],
-            'shift_wage' => ['nullable', 'numeric', 'min:0'],
-            'piece_rate' => ['nullable', 'numeric', 'min:0'],
+            'exchange_rate' => ['required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,12}|\d{0,12}\.\d{1,6})$/D'],
+            'basic_salary' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'],
+            'weekly_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'daily_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'hourly_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'shift_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'piece_rate' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
             'payment_method' => ['nullable', 'string', Rule::in(['cash', 'bank_transfer', 'wallet', 'other'])],
             'biometric_mappings' => ['nullable', 'array'],
             'biometric_mappings.*.id' => ['nullable', 'integer'],
@@ -142,11 +146,16 @@ class StoreHrEmployeeRequest extends FormRequest
 
         $this->normalizeDocumentDates($dateFormat);
 
-        foreach (['exchange_rate', 'basic_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'] as $field) {
-            if ($this->filled($field)) {
-                $this->merge([$field => str_replace(',', '', (string) $this->input($field))]);
-            }
-        }
+        $this->normalizeNumericInput([
+            'exchange_rate',
+            'basic_salary',
+            'weekly_wage',
+            'daily_wage',
+            'hourly_wage',
+            'shift_wage',
+            'piece_rate',
+            'documents.*.alert_before_expiry_days',
+        ]);
 
         $this->merge([
             'attendance_tracking_enabled' => $this->boolean('attendance_tracking_enabled'),
@@ -210,6 +219,22 @@ class StoreHrEmployeeRequest extends FormRequest
     public function attributes(): array
     {
         return __('hr.employees.attributes');
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'exchange_rate.regex' => __('hr.employees.validation.exchange_rate_precision'),
+            'basic_salary.regex' => __('hr.employees.validation.basic_salary_precision'),
+            'weekly_wage.regex' => __('hr.employees.validation.wage_precision'),
+            'daily_wage.regex' => __('hr.employees.validation.wage_precision'),
+            'hourly_wage.regex' => __('hr.employees.validation.wage_precision'),
+            'shift_wage.regex' => __('hr.employees.validation.wage_precision'),
+            'piece_rate.regex' => __('hr.employees.validation.wage_precision'),
+        ];
     }
 
     private function canControlDocumentNumber(): bool
@@ -283,7 +308,10 @@ class StoreHrEmployeeRequest extends FormRequest
             return;
         }
 
-        if ($currency->is_main && is_numeric($this->input('exchange_rate')) && abs(((float) $this->input('exchange_rate')) - 1.0) > 0.000001) {
+        if ($currency->is_main
+            && app(NumericFormatService::class)->isValid($this->input('exchange_rate'))
+            && ! app(NumericFormatService::class)->equivalent($this->input('exchange_rate'), '1')
+        ) {
             $validator->errors()->add('exchange_rate', __('hr.employees.messages.main_currency_exchange_rate_must_be_one'));
         }
 

@@ -93,7 +93,7 @@ final class HrEnterpriseFoundationDefinitions
                 fields: [
                     ['name' => 'start_time', 'type' => 'time', 'rules' => ['nullable', 'date_format:H:i']],
                     ['name' => 'end_time', 'type' => 'time', 'rules' => ['nullable', 'date_format:H:i']],
-                    ['name' => 'break_minutes', 'type' => 'number', 'rules' => ['required', 'integer', 'min:0'], 'default' => 0],
+                    ['name' => 'break_minutes', 'type' => 'number', 'rules' => ['required', 'integer', 'min:0', 'max:65535'], 'default' => 0, 'scale' => 0, 'min' => 0, 'max' => 65535, 'step' => '1'],
                     ['name' => 'crosses_midnight', 'type' => 'checkbox', 'rules' => ['nullable', 'boolean'], 'default' => false],
                 ],
                 jsNamespace: 'hrShifts',
@@ -135,11 +135,12 @@ final class HrEnterpriseFoundationDefinitions
                 translationKey: 'grades',
                 fields: [
                     ['name' => 'code', 'type' => 'text', 'rules' => ['nullable', 'string', 'max:80'], 'unique' => true],
-                    ['name' => 'rank', 'type' => 'number', 'rules' => ['required', 'integer', 'min:0', 'max:65535'], 'default' => 0],
+                    ['name' => 'rank', 'type' => 'number', 'rules' => ['required', 'integer', 'min:0', 'max:65535'], 'default' => 0, 'scale' => 0, 'min' => 0, 'max' => 65535, 'step' => '1'],
                 ],
                 jsNamespace: 'hrGrades',
                 tableColumns: [
                     ['name' => 'code', 'type' => 'text'],
+                    ['name' => 'rank', 'type' => 'number'],
                     ['name' => 'status', 'type' => 'status'],
                 ],
             ),

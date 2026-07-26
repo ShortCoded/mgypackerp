@@ -2,12 +2,14 @@
 
 namespace Modules\Core\Http\Controllers\Select2;
 
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Core\Services\Select2ResponseService;
 
@@ -18,6 +20,7 @@ class ProductRawMaterialSelect2Controller extends Controller
         private readonly OperatingCompanyContextService $companyContext,
         private readonly Select2ResponseService $select2,
         private readonly ProductImageResolver $productImages,
+        private readonly ProductComponentUnitConversionService $unitConversions,
     ) {}
 
     public function __invoke(Request $request): JsonResponse
@@ -32,9 +35,17 @@ class ProductRawMaterialSelect2Controller extends Controller
             ->with('mainImageUsage.file')
             ->active()
             ->forCompany($companyId)
-            ->where('products.item_classification', Product::ClassificationRawMaterial)
-            ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
-            ->leftJoin('item_units as equivalent_units', 'equivalent_units.id', '=', 'products.equivalent_unit_id')
+            ->materialItems()
+            ->leftJoin('item_units', function (JoinClause $join) use ($companyId): void {
+                $join->on('item_units.id', '=', 'products.item_unit_id')
+                    ->where('item_units.company_id', $companyId)
+                    ->whereNull('item_units.deleted_at');
+            })
+            ->leftJoin('item_units as equivalent_units', function (JoinClause $join) use ($companyId): void {
+                $join->on('equivalent_units.id', '=', 'products.equivalent_unit_id')
+                    ->where('equivalent_units.company_id', $companyId)
+                    ->whereNull('equivalent_units.deleted_at');
+            })
             ->select([
                 'products.id',
                 'products.company_id',
@@ -44,6 +55,7 @@ class ProductRawMaterialSelect2Controller extends Controller
                 'products.barcode',
                 'products.image_path',
                 'products.item_unit_id',
+                'products.equivalent_value',
                 'products.equivalent_unit_id',
                 'item_units.name as unit_name',
                 'item_units.doc_num as unit_doc_num',
@@ -88,7 +100,7 @@ class ProductRawMaterialSelect2Controller extends Controller
     }
 
     /**
-     * @return array{id: string, text: string, unit_text: string, unit_doc_num: string|null, unit_options: list<array{id: string, text: string}>, imageUrl: string|null}
+     * @return array{id: string, text: string, unit_text: string, unit_doc_num: string|null, unit_options: list<array{id: string, text: string}>, unit_conversion_edges: list<array{from: string, to: string, factor: string}>, imageUrl: string|null}
      */
     private function item(Product $product): array
     {
@@ -101,6 +113,7 @@ class ProductRawMaterialSelect2Controller extends Controller
             'unit_text' => $unitText,
             'unit_doc_num' => $product->unit_doc_num ? (string) $product->unit_doc_num : null,
             'unit_options' => $this->unitOptions($product),
+            'unit_conversion_edges' => $this->unitConversions->productEdges($product),
             'imageUrl' => $this->imageUrl($product),
         ];
     }

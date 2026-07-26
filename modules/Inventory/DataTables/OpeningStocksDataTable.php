@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Inventory\Models\OpeningStock;
@@ -20,6 +21,7 @@ class OpeningStocksDataTable
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -98,8 +100,8 @@ class OpeningStocksDataTable
             ->addColumn('branch', fn (OpeningStock $record): string => $this->ellipsisText($record->branch_name))
             ->addColumn('hall', fn (OpeningStock $record): string => $this->ellipsisText($record->hall_name ?: __('common.empty_value')))
             ->addColumn('store', fn (OpeningStock $record): string => $this->ellipsisText($record->store_name ?: __('common.empty_value')))
-            ->addColumn('lines_count', fn (OpeningStock $record): string => $this->plainText((string) ((int) $record->lines_count)))
-            ->addColumn('total_quantity', fn (OpeningStock $record): string => $this->plainText($this->formatQuantity($record->total_quantity)))
+            ->addColumn('lines_count', fn (OpeningStock $record): string => $this->plainText($this->numbers->format($record->lines_count)))
+            ->addColumn('total_quantity', fn (OpeningStock $record): string => $this->plainText($this->numbers->format($record->total_quantity)))
             ->addColumn('document_status', fn (OpeningStock $record): string => view('modules.inventory.opening-stocks.partials.state', ['record' => $record, 'type' => 'document'])->render())
             ->addColumn('approval_status', fn (OpeningStock $record): string => view('modules.inventory.opening-stocks.partials.state', ['record' => $record, 'type' => 'approval'])->render())
             ->editColumn('approved_by', fn (OpeningStock $record): string => $this->ellipsisText($record->approved_by_name ?: __('common.empty_value')))
@@ -163,10 +165,5 @@ class OpeningStocksDataTable
         }
 
         return in_array($request->string('trash_filter')->toString(), ['active', 'trashed', 'all'], true) ? $request->string('trash_filter')->toString() : 'active';
-    }
-
-    private function formatQuantity(mixed $value): string
-    {
-        return rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
     }
 }

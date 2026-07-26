@@ -11,6 +11,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
@@ -26,6 +27,7 @@ class UnpricedInventoryReceiptService
         private readonly OperatingContextService $operatingContext,
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly ProductImageResolver $productImages,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): array
@@ -491,7 +493,7 @@ class UnpricedInventoryReceiptService
 
     private function formatDecimal(mixed $value): string
     {
-        return number_format((float) $value, 8, '.', '');
+        return $this->numbers->normalizeToScale($value, 8) ?? '0.00000000';
     }
 
     private function assertEditable(UnpricedInventoryReceipt $record): void

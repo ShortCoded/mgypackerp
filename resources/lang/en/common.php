@@ -87,6 +87,14 @@ return [
         'whatsapp' => 'WhatsApp',
         'yes' => 'Yes',
     ],
+    'numeric_input' => [
+        'invalid' => 'Enter a valid number using commas only as thousands separators.',
+        'maximum' => 'The value exceeds the allowed maximum.',
+        'minimum' => 'The value is below the allowed minimum.',
+        'negative' => 'Negative values are not allowed.',
+        'precision' => 'The number has too many decimal places.',
+        'step' => 'Enter a value matching the allowed increment.',
+    ],
     'messages' => [
         'confirm_bulk_delete' => 'Delete selected records?',
         'confirm_delete' => 'Delete this record?',

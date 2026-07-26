@@ -1,0 +1,51 @@
+<?php
+
+$screen = static fn (string $slug, string $en, string $ar, string $group = 'configuration', array $extra = []): array => [
+    'key' => 'core_'.str_replace('-', '_', $slug),
+    'slug' => $slug,
+    'title' => ['en' => $en, 'ar' => $ar],
+    'group' => $group,
+    'profile' => 'setup',
+    ...$extra,
+];
+
+return [
+    'module' => 'core',
+    'title' => ['en' => 'Dashboard and Setup', 'ar' => 'لوحة التحكم والإعدادات'],
+    'route_segment' => 'core',
+    'route_name' => 'core',
+    'permission_prefix' => 'core',
+    'menu' => ['label' => 'dashboard_setup', 'title' => ['en' => 'Dashboard and Setup', 'ar' => 'لوحة التحكم والإعدادات'], 'icon' => 'cogs', 'order' => 10],
+    'groups' => [
+        'configuration' => ['title' => ['en' => 'General Configuration', 'ar' => 'الإعدادات العامة'], 'icon' => 'cogs', 'order' => 10],
+        'document_governance' => ['title' => ['en' => 'Documents and Workflows', 'ar' => 'المستندات ومسارات العمل'], 'icon' => 'project-diagram', 'order' => 20],
+        'commercial_policies' => ['title' => ['en' => 'Commercial Policies', 'ar' => 'السياسات التجارية'], 'icon' => 'file-contract', 'order' => 30],
+        'operational_policies' => ['title' => ['en' => 'Operational Policies', 'ar' => 'السياسات التشغيلية'], 'icon' => 'sliders-h', 'order' => 40],
+    ],
+    'screens' => [
+        $screen('erp-general-settings', 'ERP General Settings', 'الإعدادات العامة للنظام'),
+        $screen('company-operational-settings', 'Company Operational Settings', 'إعدادات تشغيل الشركة'),
+        $screen('branch-operational-settings', 'Branch Operational Settings', 'إعدادات تشغيل الفرع'),
+        $screen('financial-period-control', 'Financial Period Control', 'التحكم في الفترات المالية'),
+        $screen('document-sequence-definitions', 'Document Sequence Definitions', 'تعريفات تسلسل المستندات', 'document_governance'),
+        $screen('numbering-policies', 'Numbering Policies', 'سياسات الترقيم', 'document_governance'),
+        $screen('status-definitions', 'Status Definitions', 'تعريفات الحالات', 'document_governance'),
+        $screen('status-transition-rules', 'Status Transition Rules', 'قواعد انتقال الحالات', 'document_governance'),
+        $screen('approval-workflow-definitions', 'Approval Workflow Definitions', 'تعريفات مسارات الاعتماد', 'document_governance'),
+        $screen('notification-rules', 'Notification Rules', 'قواعد الإشعارات', 'document_governance'),
+        $screen('attachment-categories', 'Attachment Categories', 'تصنيفات المرفقات', 'document_governance', ['profile' => 'master']),
+        $screen('document-templates', 'Document Templates', 'قوالب المستندات', 'document_governance'),
+        $screen('print-templates', 'Print Templates', 'قوالب الطباعة', 'document_governance'),
+        $screen('tax-definitions', 'Tax Definitions', 'تعريفات الضرائب', 'commercial_policies', ['profile' => 'master']),
+        $screen('currency-rate-policies', 'Currency Rate Policies', 'سياسات أسعار العملات', 'commercial_policies'),
+        $screen('payment-terms', 'Payment Terms', 'شروط السداد', 'commercial_policies', ['profile' => 'master']),
+        $screen('delivery-terms', 'Delivery Terms', 'شروط التسليم', 'commercial_policies', ['profile' => 'master']),
+        $screen('warranty-terms', 'Warranty Terms', 'شروط الضمان', 'commercial_policies', ['profile' => 'master']),
+        $screen('units-conversion-policies', 'Units and Conversion Policies', 'سياسات الوحدات والتحويل', 'operational_policies'),
+        $screen('product-classification-settings', 'Product Classification Settings', 'إعدادات تصنيف المنتجات', 'operational_policies'),
+        $screen('warehouse-policies', 'Warehouse Policies', 'سياسات المخازن', 'operational_policies'),
+        $screen('production-policies', 'Production Policies', 'سياسات الإنتاج', 'operational_policies'),
+        $screen('quality-policies', 'Quality Policies', 'سياسات الجودة', 'operational_policies'),
+        $screen('maintenance-policies', 'Maintenance Policies', 'سياسات الصيانة', 'operational_policies'),
+    ],
+];

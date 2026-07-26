@@ -179,6 +179,7 @@ $productPermissionLabels = [];
 foreach ([
     'products' => ['Products', 'Product'],
     'raw_materials' => ['Raw Materials', 'Raw Material'],
+    'packaging_materials' => ['Packaging Materials', 'Packaging Material'],
 ] as $prefix => [$plural, $singular]) {
     $productPermissionLabels["{$prefix}.view"] = "View {$plural}";
     $productPermissionLabels["{$prefix}.create"] = "Create {$plural}";
@@ -195,6 +196,12 @@ $reportPermissionLabels = [
     'reports.products_data.view' => 'View Products and Raw Materials Data Report',
     'reports.products_data.export' => 'Export Products and Raw Materials Data Report',
     'reports.products_data.pdf' => 'Export Products and Raw Materials Data Report PDF',
+    'reports.customers.view' => 'View Customers Report',
+    'reports.customers.export' => 'Export Customers Report',
+    'reports.customers.pdf' => 'Export Customers Report PDF',
+    'reports.suppliers.view' => 'View Suppliers Report',
+    'reports.suppliers.export' => 'Export Suppliers Report',
+    'reports.suppliers.pdf' => 'Export Suppliers Report PDF',
 ];
 
 $accountPermissionLabels = [
@@ -471,4 +478,12 @@ return [
     'users.roles.manage' => 'Manage User Groups',
     'users.view' => 'View Users',
     'users.view_trashed' => 'View Deleted Users',
+    'screen_data_visibility_rules.view' => 'View Data Visibility Rules',
+    'screen_data_visibility_rules.create' => 'Create Data Visibility Rules',
+    'screen_data_visibility_rules.edit' => 'Edit Data Visibility Rules',
+    'screen_data_visibility_rules.clone' => 'Clone Data Visibility Rules',
+    'screen_data_visibility_rules.delete' => 'Delete Data Visibility Rules',
+    'screen_data_visibility_rules.view_trashed' => 'View Deleted Data Visibility Rules',
+    'screen_data_visibility_rules.restore' => 'Restore Data Visibility Rules',
+    'screen_data_visibility_rules.bypass' => 'Bypass Data Visibility Restrictions',
 ];

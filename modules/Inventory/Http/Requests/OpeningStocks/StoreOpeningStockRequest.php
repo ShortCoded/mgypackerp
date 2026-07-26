@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
@@ -17,6 +18,8 @@ use Modules\Inventory\Models\OpeningStock;
 
 class StoreOpeningStockRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'inventory.opening_stocks.clone' : 'inventory.opening_stocks.create');
@@ -24,13 +27,17 @@ class StoreOpeningStockRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput([
+            'lines.*.quantity',
+        ]);
+
         $context = app(OperatingContextService::class)->snapshot($this);
         $lines = collect($this->input('lines', []))
             ->filter(fn (mixed $line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'public_id' => isset($line['public_id']) ? trim((string) $line['public_id']) : null,
                 'product_doc_num' => isset($line['product_doc_num']) ? trim((string) $line['product_doc_num']) : null,
-                'quantity' => isset($line['quantity']) ? str_replace(',', '', (string) $line['quantity']) : null,
+                'quantity' => isset($line['quantity']) ? trim((string) $line['quantity']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
                 '_delete' => filter_var($line['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
@@ -76,7 +83,7 @@ class StoreOpeningStockRequest extends FormRequest
             'lines' => ['required', 'array'],
             'lines.*.public_id' => ['nullable', 'string'],
             'lines.*.product_doc_num' => ['nullable', 'string'],
-            'lines.*.quantity' => ['nullable', 'numeric'],
+            'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,11}(?:\.\d{1,4})?$/D'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],

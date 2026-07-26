@@ -17,6 +17,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Core\Services\SettingService;
@@ -36,6 +37,7 @@ class OpeningStockController extends Controller
         private readonly OpeningStockService $service,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingContextService $operatingContext,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(Request $request, FinanceDocumentNumberSettingsService $settings): View
@@ -328,7 +330,7 @@ class OpeningStockController extends Controller
                     'product_label' => $productLabel !== '' ? $productLabel : null,
                     'imageUrl' => $snapshot['image_url'] ?? ($product instanceof Product ? app(ProductImageResolver::class)->url($product) : null),
                     'unit' => $unitLabel,
-                    'quantity' => $this->formatQuantity($line->quantity),
+                    'quantity' => $this->numbers->format($line->quantity),
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
@@ -339,11 +341,6 @@ class OpeningStockController extends Controller
         }
 
         return array_values($lines);
-    }
-
-    private function formatQuantity(mixed $value): string
-    {
-        return rtrim(rtrim(number_format((float) $value, 4, '.', ''), '0'), '.') ?: '0';
     }
 
     /**
