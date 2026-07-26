@@ -232,6 +232,7 @@ class MenuService
             $definition = is_array($definitions[$label] ?? null) ? $definitions[$label] : [];
             $sections[$label] = [
                 'label' => $label,
+                'key' => $label,
                 'title' => Str::headline($label),
                 'icon' => (string) ($definition['icon'] ?? 'folder'),
                 'route' => null,
@@ -239,21 +240,8 @@ class MenuService
                 'active' => [],
                 'keywords' => [],
                 'children' => [],
+                'subgroups' => [],
             ];
-        }
-
-        foreach ($items as $item) {
-            if (($item['label'] ?? null) !== 'human_resources') {
-                continue;
-            }
-
-            if (array_key_exists('hidden', $item)) {
-                $sections['human_resources']['hidden'] = (bool) $item['hidden'];
-            }
-
-            if (array_key_exists('visible', $item)) {
-                $sections['human_resources']['visible'] = (bool) $item['visible'];
-            }
         }
 
         $dashboard = null;
@@ -262,6 +250,7 @@ class MenuService
             $this->distributeItem(
                 item: $item,
                 inheritedSection: null,
+                inheritedSubgroup: null,
                 sections: $sections,
                 dashboard: $dashboard,
             );
@@ -278,8 +267,8 @@ class MenuService
                 continue;
             }
 
-            if (isset($sections[$label]) && $sections[$label]['children'] !== []) {
-                $organized[] = $sections[$label];
+            if (isset($sections[$label]) && ($sections[$label]['children'] !== [] || $sections[$label]['subgroups'] !== [])) {
+                $organized[] = $this->finalizeSection($sections[$label]);
             }
         }
 
@@ -296,6 +285,7 @@ class MenuService
     private function distributeItem(
         array $item,
         ?string $inheritedSection,
+        ?string $inheritedSubgroup,
         array &$sections,
         ?array &$dashboard,
         bool $ancestorHidden = false,
@@ -305,6 +295,9 @@ class MenuService
         $children = is_array($item['children'] ?? null) ? $item['children'] : [];
         $label = is_string($item['label'] ?? null) ? $item['label'] : '';
         $section = $this->sectionFor($label, $children === [], $inheritedSection);
+        $subgroup = $children === []
+            ? $this->leafSubgroupFor($item, $inheritedSubgroup)
+            : $this->containerSubgroupFor($item, $inheritedSubgroup);
         $hidden = $ancestorHidden || (bool) ($item['hidden'] ?? false);
         $visible = $ancestorVisible && (bool) ($item['visible'] ?? ! $hidden);
         $phaseModes = $this->combinedPhaseModes($ancestorPhaseModes, $item);
@@ -318,6 +311,7 @@ class MenuService
                 $this->distributeItem(
                     item: $child,
                     inheritedSection: $section,
+                    inheritedSubgroup: $subgroup,
                     sections: $sections,
                     dashboard: $dashboard,
                     ancestorHidden: $hidden,
@@ -354,16 +348,15 @@ class MenuService
             throw new LogicException("Menu entry [{$label}] targets unknown business domain [{$section}].");
         }
 
-        $sections[$section]['children'][] = $item;
+        $this->appendToSection($sections[$section], $item, $subgroup);
     }
 
     private function sectionFor(string $label, bool $isLeaf, ?string $inheritedSection): ?string
     {
-        $mappingKey = $isLeaf ? 'leaf_sections' : 'container_sections';
-        $mapping = config("menu_sections.{$mappingKey}", []);
+        $leafSections = config('menu_sections.leaf_sections', []);
 
-        if (is_array($mapping) && array_key_exists($label, $mapping)) {
-            return is_string($mapping[$label]) ? $mapping[$label] : null;
+        if ($isLeaf && is_array($leafSections) && array_key_exists($label, $leafSections)) {
+            return is_string($leafSections[$label]) ? $leafSections[$label] : null;
         }
 
         $sourceSections = config('menu_sections.source_sections', []);
@@ -373,6 +366,113 @@ class MenuService
         }
 
         return $inheritedSection;
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function leafSubgroupFor(array $item, ?string $inheritedSubgroup): ?string
+    {
+        $subgroup = $item['subgroup'] ?? null;
+
+        if (is_string($subgroup) && $subgroup !== '') {
+            return $subgroup;
+        }
+
+        $label = is_string($item['label'] ?? null) ? $item['label'] : '';
+        $leafSubgroups = config('menu_sections.leaf_subgroups', []);
+
+        if (is_array($leafSubgroups) && array_key_exists($label, $leafSubgroups)) {
+            return is_string($leafSubgroups[$label]) ? $leafSubgroups[$label] : null;
+        }
+
+        return $inheritedSubgroup;
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function containerSubgroupFor(array $item, ?string $inheritedSubgroup): ?string
+    {
+        $subgroup = $item['subgroup'] ?? null;
+
+        if (is_string($subgroup) && $subgroup !== '') {
+            return $subgroup;
+        }
+
+        $label = is_string($item['label'] ?? null) ? $item['label'] : '';
+        $sourceSubgroups = config('menu_sections.source_subgroups', []);
+
+        if (is_array($sourceSubgroups) && array_key_exists($label, $sourceSubgroups)) {
+            return is_string($sourceSubgroups[$label]) ? $sourceSubgroups[$label] : null;
+        }
+
+        return $inheritedSubgroup;
+    }
+
+    /**
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $item
+     */
+    private function appendToSection(array &$section, array $item, ?string $subgroup): void
+    {
+        if ($subgroup === null || $subgroup === '') {
+            $section['children'][] = $item;
+
+            return;
+        }
+
+        $definitions = config('menu_sections.subgroups', []);
+        $definition = is_array($definitions[$subgroup] ?? null) ? $definitions[$subgroup] : null;
+
+        if ($definition === null) {
+            throw new LogicException("Menu subgroup [{$subgroup}] is not registered.");
+        }
+
+        $domain = is_string($definition['domain'] ?? null) ? $definition['domain'] : null;
+
+        if ($domain !== $section['label']) {
+            throw new LogicException("Menu subgroup [{$subgroup}] does not belong to business domain [{$section['label']}].");
+        }
+
+        if (! isset($section['subgroups'][$subgroup])) {
+            $section['subgroups'][$subgroup] = [
+                'label' => $subgroup,
+                'key' => $subgroup,
+                'title' => Str::headline($subgroup),
+                'icon' => (string) ($definition['icon'] ?? 'folder-open'),
+                'route' => null,
+                'permission' => null,
+                'active' => [],
+                'keywords' => [],
+                'children' => [],
+                'order' => (int) ($definition['order'] ?? 999),
+            ];
+        }
+
+        $section['subgroups'][$subgroup]['children'][] = $item;
+    }
+
+    /**
+     * @param  array<string, mixed>  $section
+     * @return array<string, mixed>
+     */
+    private function finalizeSection(array $section): array
+    {
+        $subgroups = array_values($section['subgroups']);
+
+        usort($subgroups, fn (array $first, array $second): int => [
+            (int) ($first['order'] ?? 999),
+            (string) ($first['key'] ?? ''),
+        ] <=> [
+            (int) ($second['order'] ?? 999),
+            (string) ($second['key'] ?? ''),
+        ]);
+
+        $section['children'] = [...$section['children'], ...$subgroups];
+        unset($section['subgroups']);
+
+        return $section;
     }
 
     /**
@@ -455,10 +555,12 @@ class MenuService
     private function normalizeItem(array $item): array
     {
         $label = (string) ($item['label'] ?? '');
+        $key = is_string($item['key'] ?? null) && $item['key'] !== '' ? $item['key'] : $label;
         $children = $item['children'] ?? [];
         $activePatterns = $item['active_patterns'] ?? $item['active'] ?? [];
 
         $item['label'] = $label;
+        $item['key'] = $key;
         $item['title'] = (string) ($item['title'] ?? Str::headline($label));
         $item['icon'] = (string) ($item['icon'] ?? 'circle');
         $item['icon_class'] = $this->iconClass($item['icon']);

@@ -149,7 +149,7 @@ test('ERP UI shell menu leaves reference registered routes and matching view per
 
     $collectLeaves($registry->menuItems());
 
-    expect($leaves)->toHaveCount(524);
+    expect($leaves)->toHaveCount(502);
 
     $leaves->each(function (array $item): void {
         expect(Route::has($item['route']))->toBeTrue()

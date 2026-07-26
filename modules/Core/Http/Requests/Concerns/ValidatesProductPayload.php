@@ -32,6 +32,11 @@ trait ValidatesProductPayload
     use NormalizesNumericInput;
 
     /**
+     * @var list<int>
+     */
+    private array $resolvedRelatedFinishedProductIds = [];
+
+    /**
      * @return array<string, mixed>
      */
     protected function productRules(): array
@@ -82,6 +87,11 @@ trait ValidatesProductPayload
             'components.*._delete' => ['nullable', 'boolean'],
         ];
 
+        if ($this->productContext() === Product::ContextPackagingMaterials) {
+            $rules['related_finished_product_doc_nums'] = ['nullable', 'array'];
+            $rules['related_finished_product_doc_nums.*'] = ['nullable', 'string', 'max:255'];
+        }
+
         if ($this->canControlDocumentNumber()) {
             $rules['doc_number'] = [
                 'nullable',
@@ -124,6 +134,30 @@ trait ValidatesProductPayload
         if (Product::isMaterialContext($this->productContext())) {
             $this->merge(['item_classification' => Product::classificationForContext($this->productContext())]);
             $this->request->remove('components');
+        }
+
+        if ($this->has('related_finished_product_doc_nums') && is_array($this->input('related_finished_product_doc_nums'))) {
+            $docNums = [];
+            $seen = [];
+
+            foreach ($this->input('related_finished_product_doc_nums') as $docNum) {
+                if (! is_string($docNum)) {
+                    $docNums[] = $docNum;
+
+                    continue;
+                }
+
+                $docNum = trim($docNum);
+
+                if ($docNum === '' || isset($seen[$docNum])) {
+                    continue;
+                }
+
+                $seen[$docNum] = true;
+                $docNums[] = $docNum;
+            }
+
+            $this->merge(['related_finished_product_doc_nums' => $docNums]);
         }
 
         if ($this->filled('image_archive_file_doc_num')) {
@@ -351,6 +385,99 @@ trait ValidatesProductPayload
         }
     }
 
+    protected function validateRelatedFinishedProducts(Validator $validator): void
+    {
+        if ($this->productContext() !== Product::ContextPackagingMaterials
+            || ! is_array($this->input('related_finished_product_doc_nums'))
+            || $this->hasRelatedFinishedProductRuleErrors($validator)
+        ) {
+            return;
+        }
+
+        $docNums = $this->relatedFinishedProductDocNums();
+
+        if ($docNums === []) {
+            $this->resolvedRelatedFinishedProductIds = [];
+
+            return;
+        }
+
+        $companyId = $this->companyId();
+        $existingRelatedProductIds = $this->existingRelatedFinishedProductIds();
+        $currentCompanyProducts = Product::withTrashed()
+            ->forCompany($companyId)
+            ->whereIn('doc_num', $docNums)
+            ->get(['id', 'company_id', 'doc_num', 'item_classification', 'status', 'deleted_at'])
+            ->keyBy('doc_num');
+        $foreignDocNums = Product::withTrashed()
+            ->whereIn('doc_num', $docNums)
+            ->where('company_id', '!=', $companyId)
+            ->pluck('doc_num')
+            ->flip()
+            ->all();
+        $resolvedIds = [];
+
+        foreach ($docNums as $docNum) {
+            /** @var Product|null $product */
+            $product = $currentCompanyProducts->get($docNum);
+
+            if (! $product instanceof Product) {
+                $validator->errors()->add(
+                    'related_finished_product_doc_nums',
+                    isset($foreignDocNums[$docNum])
+                        ? __('products.validation.related_finished_product_company')
+                        : __('products.validation.related_finished_product_not_found'),
+                );
+
+                continue;
+            }
+
+            $isExistingRelation = in_array((int) $product->getKey(), $existingRelatedProductIds, true);
+
+            if ($product->trashed() || $product->status !== 'active') {
+                if ($isExistingRelation) {
+                    $resolvedIds[] = (int) $product->getKey();
+
+                    continue;
+                }
+
+                $validator->errors()->add('related_finished_product_doc_nums', __('products.validation.related_finished_product_unavailable'));
+
+                continue;
+            }
+
+            if (in_array($product->item_classification, Product::materialClassifications(), true)) {
+                if ($isExistingRelation) {
+                    $resolvedIds[] = (int) $product->getKey();
+
+                    continue;
+                }
+
+                $validator->errors()->add('related_finished_product_doc_nums', __('products.validation.related_finished_product_material'));
+
+                continue;
+            }
+
+            if ($product->item_classification !== Product::ClassificationFinishedProduct) {
+                if ($isExistingRelation) {
+                    $resolvedIds[] = (int) $product->getKey();
+
+                    continue;
+                }
+
+                $validator->errors()->add('related_finished_product_doc_nums', __('products.validation.related_finished_product_invalid'));
+
+                continue;
+            }
+
+            $resolvedIds[] = (int) $product->getKey();
+        }
+
+        if (! $validator->errors()->has('related_finished_product_doc_nums')) {
+            $this->resolvedRelatedFinishedProductIds = array_values(array_unique($resolvedIds));
+        }
+    }
+
     protected function validateProductImageSelection(Validator $validator): void
     {
         $publicId = $this->selectedImageFileDocNum();
@@ -406,6 +533,12 @@ trait ValidatesProductPayload
             unset($data['components']);
         }
 
+        if ($this->productContext() === Product::ContextPackagingMaterials
+            && array_key_exists('related_finished_product_doc_nums', $data)
+        ) {
+            $data['related_finished_product_ids'] = $this->resolvedRelatedFinishedProductIds;
+        }
+
         if (! $this->canControlDocumentNumber()) {
             unset($data['doc_number']);
         } elseif (array_key_exists('doc_number', $data) && ($data['doc_number'] === null || $data['doc_number'] === '')) {
@@ -447,6 +580,7 @@ trait ValidatesProductPayload
             $data['item_origin_country_doc_num'],
             $data['item_category_doc_num'],
             $data['item_group_doc_num'],
+            $data['related_finished_product_doc_nums'],
         );
 
         foreach (['cost_as_inventory', 'is_displayable'] as $field) {
@@ -490,6 +624,8 @@ trait ValidatesProductPayload
             'equivalent_value.gt' => __('products.validation.equivalent_value_gt_zero'),
             'equivalent_value.regex' => __('products.validation.equivalent_value_precision'),
             'equivalent_unit_doc_num.exists' => __('products.validation.equivalent_unit_exists'),
+            'related_finished_product_doc_nums.array' => __('products.validation.related_finished_products_array'),
+            'related_finished_product_doc_nums.*.string' => __('products.validation.related_finished_product_not_found'),
             'components.*.quantity.numeric' => __('products.components.quantity_gt_zero'),
             'components.*.quantity.gt' => __('products.components.quantity_gt_zero'),
             'components.*.quantity.regex' => __('products.components.quantity_precision'),
@@ -583,6 +719,60 @@ trait ValidatesProductPayload
             ->forCompany($this->companyId())
             ->where('doc_num', $docNum)
             ->first();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function relatedFinishedProductDocNums(): array
+    {
+        return collect($this->input('related_finished_product_doc_nums', []))
+            ->filter(fn (mixed $docNum): bool => is_string($docNum) && trim($docNum) !== '')
+            ->map(fn (string $docNum): string => trim($docNum))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function existingRelatedFinishedProductIds(): array
+    {
+        $source = $this->productRecord();
+
+        if (! $source instanceof Product && $this->filled('clone_source_token')) {
+            $sourceDocNum = (string) $this->session()->get(
+                'products.clone_sources.'.$this->string('clone_source_token')->trim()->toString(),
+                '',
+            );
+
+            if ($sourceDocNum !== '') {
+                $source = Product::query()
+                    ->forCompany($this->companyId())
+                    ->packagingMaterials()
+                    ->where('doc_num', $sourceDocNum)
+                    ->first();
+            }
+        }
+
+        if (! $source instanceof Product || ! $source->isPackagingMaterial()) {
+            return [];
+        }
+
+        return $source->relatedFinishedProducts()
+            ->withTrashed()
+            ->forCompany($this->companyId())
+            ->pluck('products.id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+    }
+
+    private function hasRelatedFinishedProductRuleErrors(Validator $validator): bool
+    {
+        return collect($validator->errors()->keys())
+            ->contains(fn (string $field): bool => $field === 'related_finished_product_doc_nums'
+                || str_starts_with($field, 'related_finished_product_doc_nums.'));
     }
 
     protected function productRecordMatchesContext(): bool

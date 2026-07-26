@@ -64,6 +64,23 @@ body {
   border-color: currentColor;
 }
 
+#navbarVerticalNav .vertical-menu-level-1 > .vertical-menu-subgroup {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding-inline-start: 1.75rem;
+}
+
+#navbarVerticalNav .vertical-menu-level-2 > .nav-link {
+  font-size: 0.78125rem;
+  padding-inline-start: 2.5rem;
+}
+
+#navbarVerticalNav .nav-link-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .navbar-top [data-top-nav-dropdowns] {
   --erp-navigation-link-color: var(--falcon-navbar-color);
   --erp-navigation-link-hover-color: var(--falcon-navbar-hover-color);

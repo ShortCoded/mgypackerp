@@ -23,6 +23,7 @@
     $isEdit = $mode === 'edit';
     $isClone = $mode === 'clone';
     $isCreate = in_array($mode, ['create', 'clone'], true);
+    $isPackagingMaterialsContext = ($productContext ?? Product::ContextProducts) === Product::ContextPackagingMaterials;
     $title = match ($mode) {
         'edit' => __($resourceRoot.'.edit'),
         'view' => __($resourceRoot.'.view'),
@@ -153,6 +154,7 @@
         $componentInitialRows = is_array($oldComponentRows) ? array_values($oldComponentRows) : $componentInitialRows;
     }
     $componentUnitConversionEdges = $componentUnitConversionEdges ?? [];
+    $relatedFinishedProductOptions = $relatedFinishedProductOptions ?? [];
 @endphp
 
 @section('title', $title)
@@ -354,6 +356,45 @@
                                     <div class="invalid-feedback" data-error-for="item_classification"></div>
                                 </div>
                             @endunless
+
+                            @if ($isPackagingMaterialsContext)
+                                <div class="col-12 js-select2-field">
+                                    <label class="form-label" for="packaging-related-finished-products">{{ __('products.packaging_materials.related_finished_products.label') }}</label>
+                                    @if ($isView)
+                                        <div class="border rounded-2 bg-body-tertiary px-3 py-2">
+                                            @forelse ($relatedFinishedProductOptions as $option)
+                                                <span class="badge rounded-pill badge-subtle-{{ $option['is_stale'] ? 'warning' : 'primary' }} me-1 mb-1">
+                                                    {{ $option['text'] }}
+                                                    @if ($option['is_stale'])
+                                                        <span class="ms-1">({{ __('products.packaging_materials.related_finished_products.unavailable') }})</span>
+                                                    @endif
+                                                </span>
+                                            @empty
+                                                <span class="text-600">—</span>
+                                            @endforelse
+                                        </div>
+                                    @else
+                                        <input type="hidden" name="related_finished_product_doc_nums[]" value="">
+                                        <select class="form-select js-select2-ajax"
+                                            id="packaging-related-finished-products"
+                                            name="related_finished_product_doc_nums[]"
+                                            multiple
+                                            data-url="{{ route('admin.select2.finished-products') }}"
+                                            data-placeholder="{{ __('products.packaging_materials.related_finished_products.placeholder') }}"
+                                            data-no-results="{{ __('products.packaging_materials.related_finished_products.no_results') }}"
+                                            data-allow-clear="true"
+                                            data-template="product-image">
+                                            @foreach ($relatedFinishedProductOptions as $option)
+                                                <option value="{{ $option['id'] }}" selected @if ($option['image_url']) data-image-url="{{ $option['image_url'] }}" @endif>
+                                                    {{ $option['text'] }}@if ($option['is_stale']) — {{ __('products.packaging_materials.related_finished_products.unavailable') }}@endif
+                                                </option>
+                                            @endforeach
+                                        </select>
+                                    @endif
+                                    <div class="form-text">{{ __('products.packaging_materials.related_finished_products.help') }}</div>
+                                    <div class="invalid-feedback d-block" data-error-for="related_finished_product_doc_nums"></div>
+                                </div>
+                            @endif
 
                             <div class="col-md-4">
                                 <label class="form-label" for="barcode">{{ __('products.attributes.barcode') }}</label>

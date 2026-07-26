@@ -139,6 +139,7 @@ class ErpUiScreenRegistry
     public function menuItems(): array
     {
         return $this->collection()
+            ->filter(fn (ErpUiScreenDefinition $screen): bool => $screen->get('menu_visible', true) !== false)
             ->groupBy(fn (ErpUiScreenDefinition $screen): string => (string) $screen->get('menu_label'))
             ->map(function (Collection $moduleScreens): array {
                 /** @var ErpUiScreenDefinition $first */

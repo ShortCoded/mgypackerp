@@ -1,13 +1,14 @@
 @foreach ($items as $item)
     @php
         $hasChildren = count($item['children']) > 0;
-        $itemPath = [...($menuPath ?? []), $item['label'].'-'.$loop->index];
+        $menuDepth = count($menuPath ?? []);
+        $itemPath = [...($menuPath ?? []), $item['key']];
         $menuId = 'vertical-menu-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
     @endphp
 
-    <li class="nav-item">
+    <li class="nav-item vertical-menu-level-{{ $menuDepth }}" data-menu-depth="{{ $menuDepth }}">
         @if ($hasChildren)
-            <a class="nav-link dropdown-indicator {{ $item['active'] ? 'active' : '' }}" href="#{{ $menuId }}" role="button" data-bs-toggle="collapse" aria-expanded="{{ $item['open'] ? 'true' : 'false' }}" aria-controls="{{ $menuId }}">
+            <a class="nav-link dropdown-indicator {{ $menuDepth === 1 ? 'vertical-menu-subgroup' : '' }} {{ $item['active'] ? 'active' : '' }}" href="#{{ $menuId }}" role="button" data-bs-toggle="collapse" aria-expanded="{{ $item['open'] ? 'true' : 'false' }}" aria-controls="{{ $menuId }}">
                 <div class="d-flex align-items-center">
                     <span class="nav-link-icon"><span class="{{ $item['icon_class'] }}"></span></span>
                     <span class="nav-link-text ps-1">{{ $item['text'] }}</span>

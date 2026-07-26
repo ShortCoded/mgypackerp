@@ -354,21 +354,28 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
 
     $basicDataChildLabels = collect($basicData['children'])->pluck('label')->all();
     $toolsChildLabels = collect($tools['children'])->pluck('label')->all();
+    $organizationSetup = collect($basicData['children'])->firstWhere('label', __('menu.organization_setup'));
+    $employeeData = collect($humanResources['children'])->firstWhere('label', __('menu.employee_data'));
+    $hrSetup = collect($humanResources['children'])->firstWhere('label', __('menu.hr_setup'));
+    $workManagement = collect($tools['children'])->firstWhere('label', __('menu.work_management'));
+    $applicationTools = collect($tools['children'])->firstWhere('label', __('menu.application_tools'));
 
     expect($basicDataChildLabels)
-        ->toContain(__('menu.companies'))
-        ->toContain(__('menu.branches'))
-        ->toContain(__('menu.financial_periods'))
+        ->toContain(__('menu.organization_setup'))
         ->not->toContain(__('menu.human_resources'))
         ->not->toContain(__('menu.hr_countries'));
     expect($toolsChildLabels)
-        ->toContain(__('menu.my_board'))
-        ->toContain(__('menu.pwa_settings'));
-    expect(collect($humanResources['children'])->pluck('label')->all())->toBe([
-        __('menu.hr_employees'),
+        ->toContain(__('menu.work_management'))
+        ->toContain(__('menu.application_tools'));
+    expect(collect($organizationSetup['children'])->pluck('label')->all())
+        ->toContain(__('menu.companies'), __('menu.branches'), __('menu.financial_periods'));
+    expect(collect($employeeData['children'])->pluck('label')->all())->toBe([__('menu.hr_employees')]);
+    expect(collect($hrSetup['children'])->pluck('label')->all())->toBe([
         __('menu.hr_departments'),
         __('menu.hr_countries'),
     ]);
+    expect(collect($workManagement['children'])->pluck('label')->all())->toContain(__('menu.my_board'));
+    expect(collect($applicationTools['children'])->pluck('label')->all())->toContain(__('menu.pwa_settings'));
 
     $allPermissions = permissionRegistryPermissionNames($groups);
 
@@ -396,7 +403,8 @@ test('branches and financial periods appear in menu only for permitted users', f
 
     expect($basicData)->not->toBeNull();
 
-    $children = collect($basicData['children'])->pluck('label')->all();
+    $organizationSetup = collect($basicData['children'])->firstWhere('label', 'organization_setup');
+    $children = collect($organizationSetup['children'])->pluck('label')->all();
 
     expect($children)
         ->toContain('companies')

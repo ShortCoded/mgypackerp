@@ -266,6 +266,353 @@ test('packaging material create update and clone always preserve the packaging c
     expect($product->refresh()->item_classification)->toBe(Product::ClassificationFinishedProduct);
 });
 
+test('packaging material finished product selector is isolated and only returns active current-company finished products', function () {
+    Storage::fake('public');
+
+    $actor = packagingMaterialsActor([
+        'packaging_materials.create',
+        'packaging_materials.edit',
+        'packaging_materials.view',
+        'products.create',
+        'products.view',
+        'raw_materials.create',
+    ]);
+    Storage::disk('public')->put('products/images/finished-selector.webp', 'finished product image');
+    $finishedProduct = packagingMaterialsItem(
+        $this->packagingContext['company'],
+        310,
+        Product::ClassificationFinishedProduct,
+        'Selector Finished Chair',
+    );
+    $finishedProduct->update([
+        'barcode' => 'SELECTOR-FINISHED-310',
+        'image_path' => 'products/images/finished-selector.webp',
+    ]);
+    $rawMaterial = packagingMaterialsItem($this->packagingContext['company'], 311, Product::ClassificationRawMaterial, 'Selector Raw Material');
+    $packagingMaterial = packagingMaterialsItem($this->packagingContext['company'], 312, Product::ClassificationPackaging, 'Selector Packaging Material');
+    $semiFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 313, Product::ClassificationSemiFinished, 'Selector Semi Finished Product');
+    $inactiveFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 314, Product::ClassificationFinishedProduct, 'Selector Inactive Finished Product');
+    $inactiveFinishedProduct->update(['status' => 'inactive']);
+    $deletedFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 315, Product::ClassificationFinishedProduct, 'Selector Deleted Finished Product');
+    $deletedFinishedProduct->delete();
+    $otherCompany = Company::factory()->create(['status' => 'active']);
+    $otherCompanyFinishedProduct = packagingMaterialsItem($otherCompany, 316, Product::ClassificationFinishedProduct, 'Selector Other Company Finished Product');
+
+    $packagingForm = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.packaging-materials.create'))
+        ->assertOk()
+        ->assertSee(__('products.packaging_materials.related_finished_products.label'))
+        ->assertSee(__('products.packaging_materials.related_finished_products.placeholder'))
+        ->assertSee(__('products.packaging_materials.related_finished_products.help'))
+        ->assertSee(__('products.packaging_materials.related_finished_products.no_results'))
+        ->assertSee('id="packaging-related-finished-products"', false)
+        ->assertSee('name="related_finished_product_doc_nums[]"', false)
+        ->assertSee(route('admin.select2.finished-products'), false)
+        ->assertSee('data-template="product-image"', false)
+        ->getContent();
+
+    expect($packagingForm)->toContain('multiple');
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.products.create'))
+        ->assertOk()
+        ->assertDontSee('packaging-related-finished-products', false);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.raw-materials.create'))
+        ->assertOk()
+        ->assertDontSee('packaging-related-finished-products', false);
+
+    $payload = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->getJson(route('admin.select2.finished-products', ['q' => 'Selector', 'page' => 1]))
+        ->assertOk()
+        ->json();
+    $resultIds = collect($payload['results'])->pluck('id')->all();
+    $finishedResult = collect($payload['results'])->firstWhere('id', $finishedProduct->doc_num);
+
+    expect($payload['pagination']['more'])->toBeBool()
+        ->and($resultIds)->toContain($finishedProduct->doc_num)
+        ->not->toContain($rawMaterial->doc_num)
+        ->not->toContain($packagingMaterial->doc_num)
+        ->not->toContain($semiFinishedProduct->doc_num)
+        ->not->toContain($inactiveFinishedProduct->doc_num)
+        ->not->toContain($deletedFinishedProduct->doc_num)
+        ->not->toContain($otherCompanyFinishedProduct->doc_num)
+        ->and($finishedResult['text'])->toBe($finishedProduct->doc_num.' — '.$finishedProduct->name)
+        ->and($finishedResult['imageUrl'])->toBe(Storage::disk('public')->url('products/images/finished-selector.webp'));
+
+    $byDocNum = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->getJson(route('admin.select2.finished-products', ['q' => $finishedProduct->doc_num]))
+        ->assertOk()
+        ->json('results');
+
+    expect(collect($byDocNum)->pluck('id')->all())->toContain($finishedProduct->doc_num);
+
+    $preloaded = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->getJson(route('admin.select2.finished-products', [
+            'selected_doc_nums' => [$finishedProduct->doc_num, $rawMaterial->doc_num],
+        ]))
+        ->assertOk()
+        ->json('results');
+
+    expect(collect($preloaded)->pluck('id')->all())
+        ->toContain($finishedProduct->doc_num)
+        ->not->toContain($rawMaterial->doc_num);
+});
+
+test('packaging material finished product relationships validate, synchronize, show, clone, and survive soft deletion', function () {
+    $actor = packagingMaterialsActor([
+        'packaging_materials.create',
+        'packaging_materials.edit',
+        'packaging_materials.clone',
+        'packaging_materials.view',
+        'packaging_materials.delete',
+        'packaging_materials.restore',
+        'packaging_materials.view_trashed',
+        'products.view',
+    ]);
+    $firstFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 320, Product::ClassificationFinishedProduct, 'Related Finished Product One');
+    $secondFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 321, Product::ClassificationFinishedProduct, 'Related Finished Product Two');
+
+    $created = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->postJson(route('admin.packaging-materials.store'), packagingMaterialsPayload([
+            'name' => 'Related Packaging Material',
+            'related_finished_product_doc_nums' => [
+                $firstFinishedProduct->doc_num,
+                $firstFinishedProduct->doc_num,
+                $secondFinishedProduct->doc_num,
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->json('data');
+    $packagingMaterial = Product::query()->where('doc_num', $created['doc_num'])->firstOrFail();
+
+    expect($packagingMaterial->relatedFinishedProducts()->pluck('products.doc_num')->sort()->values()->all())
+        ->toBe([$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num]);
+    $this->assertDatabaseCount('packaging_material_finished_product', 2);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'name' => $packagingMaterial->name,
+            'related_finished_product_doc_nums' => [$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    expect($packagingMaterial->refresh()->relatedFinishedProducts()->pluck('products.doc_num')->sort()->values()->all())
+        ->toBe([$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num]);
+
+    $validationRestoredHtml = $this->actingAs($actor)
+        ->withSession([
+            ...$this->packagingContext['session'],
+            '_old_input' => [
+                'related_finished_product_doc_nums' => [$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num],
+            ],
+        ])
+        ->get(route('admin.packaging-materials.create'))
+        ->assertOk()
+        ->getContent();
+
+    expect($validationRestoredHtml)
+        ->toContain('value="'.$firstFinishedProduct->doc_num.'" selected')
+        ->toContain('value="'.$secondFinishedProduct->doc_num.'" selected');
+
+    $editHtml = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.packaging-materials.edit', $packagingMaterial->doc_num))
+        ->assertOk()
+        ->assertSee($firstFinishedProduct->doc_num)
+        ->assertSee($firstFinishedProduct->name)
+        ->assertSee($secondFinishedProduct->doc_num)
+        ->assertSee($secondFinishedProduct->name)
+        ->getContent();
+
+    expect($editHtml)->toContain('value="'.$firstFinishedProduct->doc_num.'" selected')
+        ->toContain('value="'.$secondFinishedProduct->doc_num.'" selected');
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'related_finished_product_doc_nums' => [$secondFinishedProduct->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($packagingMaterial->refresh()->relatedFinishedProducts()->pluck('products.doc_num')->all())
+        ->toBe([$secondFinishedProduct->doc_num]);
+    $this->assertDatabaseMissing('packaging_material_finished_product', [
+        'packaging_material_id' => $packagingMaterial->getKey(),
+        'finished_product_id' => $firstFinishedProduct->getKey(),
+    ]);
+    expect($firstFinishedProduct->fresh())->not->toBeNull();
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'related_finished_product_doc_nums' => [''],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($packagingMaterial->refresh()->relatedFinishedProducts()->count())->toBe(0)
+        ->and($secondFinishedProduct->fresh())->not->toBeNull();
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'related_finished_product_doc_nums' => [$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.packaging-materials.show', $packagingMaterial->doc_num))
+        ->assertOk()
+        ->assertSee($firstFinishedProduct->doc_num)
+        ->assertSee($firstFinishedProduct->name)
+        ->assertSee($secondFinishedProduct->doc_num)
+        ->assertSee($secondFinishedProduct->name);
+
+    $clone = $this->actingAs($actor)
+        ->withSession([
+            ...$this->packagingContext['session'],
+            'products.clone_sources.related-packaging-material' => $packagingMaterial->doc_num,
+        ])
+        ->postJson(route('admin.packaging-materials.store'), packagingMaterialsPayload([
+            'name' => 'Cloned Related Packaging Material',
+            'clone_source_token' => 'related-packaging-material',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->json('data');
+    $clonedPackagingMaterial = Product::query()->where('doc_num', $clone['doc_num'])->firstOrFail();
+
+    expect($clonedPackagingMaterial->relatedFinishedProducts()->pluck('products.doc_num')->sort()->values()->all())
+        ->toBe([$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num]);
+    expect(Product::query()->whereIn('id', [$firstFinishedProduct->getKey(), $secondFinishedProduct->getKey()])->count())->toBe(2);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->deleteJson(route('admin.packaging-materials.destroy', $packagingMaterial->doc_num))
+        ->assertOk();
+
+    $this->assertDatabaseCount('packaging_material_finished_product', 4);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->patchJson(route('admin.packaging-materials.restore', $packagingMaterial->doc_num))
+        ->assertOk();
+
+    expect($packagingMaterial->fresh()->relatedFinishedProducts()->pluck('products.doc_num')->sort()->values()->all())
+        ->toBe([$firstFinishedProduct->doc_num, $secondFinishedProduct->doc_num]);
+
+    $packagingMaterial->forceDelete();
+
+    $this->assertDatabaseCount('packaging_material_finished_product', 2);
+    $this->assertDatabaseMissing('packaging_material_finished_product', [
+        'packaging_material_id' => $packagingMaterial->getKey(),
+        'finished_product_id' => $firstFinishedProduct->getKey(),
+    ]);
+});
+
+test('packaging material related finished product validation rejects forged values and retains stale existing selections', function () {
+    $actor = packagingMaterialsActor([
+        'packaging_materials.create',
+        'packaging_materials.edit',
+        'packaging_materials.view',
+    ]);
+    $finishedProduct = packagingMaterialsItem($this->packagingContext['company'], 330, Product::ClassificationFinishedProduct, 'Valid Finished Product');
+    $rawMaterial = packagingMaterialsItem($this->packagingContext['company'], 331, Product::ClassificationRawMaterial, 'Forged Raw Material');
+    $packagingMaterialValue = packagingMaterialsItem($this->packagingContext['company'], 332, Product::ClassificationPackaging, 'Forged Packaging Material');
+    $semiFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 333, Product::ClassificationSemiFinished, 'Forged Semi Finished Product');
+    $deletedFinishedProduct = packagingMaterialsItem($this->packagingContext['company'], 334, Product::ClassificationFinishedProduct, 'Deleted Finished Product');
+    $deletedFinishedProduct->delete();
+    $otherCompany = Company::factory()->create(['status' => 'active']);
+    $foreignFinishedProduct = packagingMaterialsItem($otherCompany, 335, Product::ClassificationFinishedProduct, 'Foreign Finished Product');
+
+    foreach ([
+        'not an array' => $finishedProduct->doc_num,
+        'other company' => [$foreignFinishedProduct->doc_num],
+        'raw material' => [$rawMaterial->doc_num],
+        'packaging material' => [$packagingMaterialValue->doc_num],
+        'semi finished product' => [$semiFinishedProduct->doc_num],
+        'deleted product' => [$deletedFinishedProduct->doc_num],
+        'unknown product' => ['Missing-Finished-Product'],
+    ] as $value) {
+        $this->actingAs($actor)
+            ->withSession($this->packagingContext['session'])
+            ->postJson(route('admin.packaging-materials.store'), packagingMaterialsPayload([
+                'name' => 'Invalid Related Packaging '.fake()->uuid(),
+                'related_finished_product_doc_nums' => $value,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('related_finished_product_doc_nums');
+    }
+
+    $packagingMaterial = packagingMaterialsItem($this->packagingContext['company'], 336, Product::ClassificationPackaging, 'Stale Related Packaging Material');
+    $packagingMaterial->relatedFinishedProducts()->attach($finishedProduct->getKey());
+    $finishedProduct->update(['status' => 'inactive']);
+
+    $staleEdit = $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.packaging-materials.edit', $packagingMaterial->doc_num))
+        ->assertOk()
+        ->assertSee($finishedProduct->doc_num)
+        ->assertSee($finishedProduct->name)
+        ->assertSee(__('products.packaging_materials.related_finished_products.unavailable'))
+        ->getContent();
+
+    expect($staleEdit)->toContain('value="'.$finishedProduct->doc_num.'" selected');
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'related_finished_product_doc_nums' => [$finishedProduct->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($packagingMaterial->refresh()->relatedFinishedProducts()->withTrashed()->pluck('products.doc_num')->all())
+        ->toBe([$finishedProduct->doc_num]);
+
+    $finishedProduct->delete();
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->get(route('admin.packaging-materials.edit', $packagingMaterial->doc_num))
+        ->assertOk()
+        ->assertSee($finishedProduct->doc_num)
+        ->assertSee(__('products.packaging_materials.related_finished_products.unavailable'));
+
+    expect($packagingMaterial->fresh()->trashed())->toBeFalse()
+        ->and($packagingMaterial->relatedFinishedProducts()->withTrashed()->pluck('products.doc_num')->all())
+        ->toBe([$finishedProduct->doc_num]);
+
+    $finishedProduct->restore();
+    $finishedProduct->update(['status' => 'active']);
+
+    $this->actingAs($actor)
+        ->withSession($this->packagingContext['session'])
+        ->putJson(route('admin.packaging-materials.update', $packagingMaterial->doc_num), packagingMaterialsPayload([
+            'related_finished_product_doc_nums' => [''],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($packagingMaterial->refresh()->relatedFinishedProducts()->withTrashed()->count())->toBe(0)
+        ->and($finishedProduct->fresh())->not->toBeNull();
+});
+
 test('packaging material soft delete restore and bulk validation retain their context boundary', function () {
     $actor = packagingMaterialsActor([
         'packaging_materials.view',

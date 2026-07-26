@@ -216,14 +216,15 @@
     updateDependencyDisabled($select, dependsOn);
   }
 
-  function language() {
+  function language($select) {
     const messages = defaults.messages || {};
+    const noResults = $select.data('no-results');
 
     return {
       errorLoading: function () { return messages.errorLoading || ''; },
       inputTooShort: function () { return messages.inputTooShort || ''; },
       loadingMore: function () { return messages.loadingMore || ''; },
-      noResults: function () { return messages.noResults || ''; },
+      noResults: function () { return noResults || messages.noResults || ''; },
       searching: function () { return messages.searching || ''; }
     };
   }
@@ -260,7 +261,7 @@
       closeOnSelect: !isMultiple,
       dir: document.documentElement.getAttribute('dir') || 'ltr',
       dropdownParent: dropdownParent($select),
-      language: language(),
+      language: language($select),
       minimumInputLength: minimumInputLength,
       placeholder: $select.data('placeholder') || '',
       theme: 'bootstrap-5',

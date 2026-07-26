@@ -110,7 +110,7 @@ test('item unit index renders through shared item lookup crud', function () {
         ->get(route('admin.item-units.index'))
         ->assertOk()
         ->assertSee(__('item_units.title'))
-        ->assertSee(__('menu.basic_data'))
+        ->assertSee(__('menu.inventory'))
         ->assertSee(route('admin.item-units.data'), false)
         ->assertSee(route('admin.item-units.bulk-delete'), false)
         ->assertSee('js-item-lookup-table', false)
@@ -119,7 +119,7 @@ test('item unit index renders through shared item lookup crud', function () {
         ->assertDontSee('data-id=', false);
 });
 
-test('item lookups are under basic data while product masters are under inventory', function () {
+test('item lookups and product masters are grouped under inventory item data', function () {
     $actor = itemLookupActor([
         'companies.view',
         'products.view',
@@ -139,6 +139,8 @@ test('item lookups are under basic data while product masters are under inventor
     $inventory = collect($menu)->firstWhere('label', 'inventory');
     $basicDataLabels = collect($basicData['children'])->pluck('label')->all();
     $inventoryLabels = collect($inventory['children'])->pluck('label')->all();
+    $itemData = collect($inventory['children'])->firstWhere('label', 'item_data');
+    $itemDataLabels = collect($itemData['children'])->pluck('label')->all();
 
     expect($topLevelLabels)
         ->toContain('basic_data')
@@ -146,8 +148,10 @@ test('item lookups are under basic data while product masters are under inventor
         ->not->toContain('item_data')
         ->and($basicData)->not->toBeNull()
         ->and($inventory)->not->toBeNull()
-        ->and($basicDataLabels)->toBe([
-            'companies',
+        ->and($basicDataLabels)->toBe(['organization_setup'])
+        ->and($inventoryLabels)->toBe(['item_data'])
+        ->and($itemDataLabels)->toBe([
+            'products',
             'item_categories',
             'item_units',
             'item_sizes',
@@ -156,8 +160,7 @@ test('item lookups are under basic data while product masters are under inventor
             'item_models',
             'item_groups',
             'item_origin_countries',
-        ])
-        ->and($inventoryLabels)->toBe(['products']);
+        ]);
 });
 
 test('item lookup routes config and translations are registered', function (string $routePrefix, string $documentKey, string $prefix, string $translationFile, string $menuKey, string $englishMenu, string $arabicMenu) {
@@ -353,7 +356,7 @@ test('item color shared item lookup crud uses public document numbers and shared
         ->get(route('admin.item-colors.index'))
         ->assertOk()
         ->assertSee(__('item_colors.title'))
-        ->assertSee(__('menu.basic_data'))
+        ->assertSee(__('menu.inventory'))
         ->assertSee(route('admin.item-colors.data'), false)
         ->assertSee(route('admin.item-colors.bulk-delete'), false)
         ->assertSee(route('admin.item-colors.document-number-settings.update'), false)

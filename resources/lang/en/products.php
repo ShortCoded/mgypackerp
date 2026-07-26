@@ -72,6 +72,14 @@ return [
         'attributes' => [
             'name' => 'Packaging Material Name',
         ],
+        'related_finished_products' => [
+            'label' => 'Related Finished Products',
+            'placeholder' => 'Select one or more finished products',
+            'help' => 'Select the finished products that use this packaging material.',
+            'no_results' => 'No finished products available',
+            'unavailable' => 'Unavailable',
+            'unavailable_selection' => 'Unavailable selected product (:doc_num)',
+        ],
         'document_number_settings' => [
             'description' => 'Control how new packaging material document numbers are generated.',
             'padding' => 'Padding',
@@ -133,6 +141,7 @@ return [
         'options' => 'Options',
         'status' => 'Status',
         'notes' => 'Notes',
+        'related_finished_product_doc_nums' => 'Related Finished Products',
     ],
     'classifications' => [
         'raw_material' => 'Raw Material',
@@ -333,6 +342,12 @@ return [
         'raw_material_not_allowed_in_products' => 'Raw materials are managed from the Raw Materials screen and cannot be saved as products.',
         'packaging_material_context_required' => 'Create and edit packaging materials from the Packaging Materials screen.',
         'packaging_material_not_allowed_in_products' => 'Packaging materials are managed from the Packaging Materials screen and cannot be saved as products.',
+        'related_finished_products_array' => 'Related finished products must be provided as a list.',
+        'related_finished_product_not_found' => 'A selected finished product does not exist.',
+        'related_finished_product_company' => 'A selected finished product does not belong to the current company.',
+        'related_finished_product_invalid' => 'A selected record is not a valid finished product.',
+        'related_finished_product_material' => 'A raw material or packaging material cannot be selected here.',
+        'related_finished_product_unavailable' => 'A selected finished product is deleted or unavailable.',
         'summary_title' => 'Please review the following errors:',
     ],
 ];

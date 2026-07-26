@@ -98,11 +98,19 @@ class ProductService
                 $this->cloneComponents($record, $cloneSource);
             }
 
+            if ($record->isPackagingMaterial()) {
+                if (array_key_exists('related_finished_product_ids', $data)) {
+                    $this->syncRelatedFinishedProducts($record, $data);
+                } elseif ($cloneSource instanceof Product) {
+                    $this->cloneRelatedFinishedProducts($record, $cloneSource);
+                }
+            }
+
             if ($selectedImageFile instanceof ArchiveFile) {
                 $this->fileUsages->replaceFileForRecord($selectedImageFile, $record, Product::ImageCollection, Product::MainImageRole);
             }
 
-            return ['record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file'])];
+            return ['record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file', 'relatedFinishedProducts'])];
         });
     }
 
@@ -110,6 +118,22 @@ class ProductService
     {
         $this->assertRecordBelongsToCurrentCompany($cloneSource);
         $this->bom->clone($record, $cloneSource);
+    }
+
+    private function cloneRelatedFinishedProducts(Product $record, Product $cloneSource): void
+    {
+        $this->assertRecordBelongsToCurrentCompany($cloneSource);
+
+        $record->relatedFinishedProducts()->sync(
+            $cloneSource->relatedFinishedProducts()
+                ->withTrashed()
+                ->forCompany((int) $record->company_id)
+                ->pluck('products.id')
+                ->map(fn (mixed $id): int => (int) $id)
+                ->unique()
+                ->values()
+                ->all(),
+        );
     }
 
     /**
@@ -162,6 +186,19 @@ class ProductService
                 }
             }
 
+            if ($record->isPackagingMaterial() && array_key_exists('related_finished_product_ids', $data)) {
+                $oldRelatedFinishedProducts = $this->currentRelatedFinishedProducts($record);
+                $this->syncRelatedFinishedProducts($record, $data);
+                $newRelatedFinishedProducts = $this->currentRelatedFinishedProducts($record);
+
+                if ($oldRelatedFinishedProducts !== $newRelatedFinishedProducts) {
+                    $changes['related_finished_products'] = [
+                        'old' => $oldRelatedFinishedProducts,
+                        'new' => $newRelatedFinishedProducts,
+                    ];
+                }
+            }
+
             $changedFields = collect(array_keys($changes))
                 ->map(fn (string $field): string => $field === 'doc_num' ? 'doc_number' : $field)
                 ->unique()
@@ -170,7 +207,7 @@ class ProductService
 
             if ($changedFields === []) {
                 return [
-                    'record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file']),
+                    'record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file', 'relatedFinishedProducts']),
                     'changed' => false,
                     'changed_fields' => [],
                     'changes' => [],
@@ -188,7 +225,7 @@ class ProductService
             }
 
             return [
-                'record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file']),
+                'record' => $record->refresh()->load(['equivalentUnit', 'components', 'mainImageUsage.file', 'relatedFinishedProducts']),
                 'changed' => true,
                 'changed_fields' => $changedFields,
                 'changes' => $changes,
@@ -561,6 +598,43 @@ class ProductService
             return;
         }
         $this->bom->sync($record, $data['components']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function syncRelatedFinishedProducts(Product $record, array $data): void
+    {
+        $ids = collect($data['related_finished_product_ids'] ?? [])
+            ->filter(fn (mixed $id): bool => is_int($id) || (is_string($id) && ctype_digit($id)))
+            ->map(fn (int|string $id): int => (int) $id)
+            ->filter(fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $record->relatedFinishedProducts()->sync($ids);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function currentRelatedFinishedProducts(Product $record): array
+    {
+        return $record->relatedFinishedProducts()
+            ->withTrashed()
+            ->forCompany((int) $record->company_id)
+            ->orderBy('products.doc_number')
+            ->orderBy('products.id')
+            ->get(['products.doc_num', 'products.name'])
+            ->map(fn (Product $product): string => $this->relatedFinishedProductChangeLabel($product))
+            ->values()
+            ->all();
+    }
+
+    private function relatedFinishedProductChangeLabel(Product $product): string
+    {
+        return trim(implode(' — ', array_filter([$product->doc_num, $product->name])));
     }
 
     /**

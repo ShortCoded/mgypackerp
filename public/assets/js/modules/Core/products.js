@@ -1040,6 +1040,7 @@
         $form.find('[name="item_classification"]').val(defaultClassification).trigger('change');
         $form.find('[name="reorder_point"]').val('');
         $form.find('[name="equivalent_value"]').val('');
+        $form.find('[name="related_finished_product_doc_nums[]"]').val(null).trigger('change').trigger('change.select2');
         $form.find('[name="status"]').val('active').trigger('change');
         $form.find('[name="cost_as_inventory"]').prop('checked', true);
         $form.find('[name="is_displayable"]').prop('checked', true);

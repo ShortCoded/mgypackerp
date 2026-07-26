@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
@@ -282,6 +283,32 @@ class Product extends Model
     }
 
     /**
+     * @return BelongsToMany<Product, $this>
+     */
+    public function relatedFinishedProducts(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            self::class,
+            'packaging_material_finished_product',
+            'packaging_material_id',
+            'finished_product_id',
+        )->withTimestamps();
+    }
+
+    /**
+     * @return BelongsToMany<Product, $this>
+     */
+    public function relatedPackagingMaterials(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            self::class,
+            'packaging_material_finished_product',
+            'finished_product_id',
+            'packaging_material_id',
+        )->withTimestamps();
+    }
+
+    /**
      * @return MorphMany<ArchiveFileUsage, $this>
      */
     public function archiveFileUsages(): MorphMany
@@ -357,6 +384,15 @@ class Product extends Model
     public function scopeRawMaterials(Builder $query): Builder
     {
         return $query->where($this->getTable().'.item_classification', self::ClassificationRawMaterial);
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopeFinishedProducts(Builder $query): Builder
+    {
+        return $query->where($this->getTable().'.item_classification', self::ClassificationFinishedProduct);
     }
 
     /**

@@ -1,7 +1,7 @@
 @foreach ($items as $item)
     @php
         $hasChildren = count($item['children']) > 0;
-        $itemPath = [...($menuPath ?? []), $item['label'].'-'.$loop->index];
+        $itemPath = [...($menuPath ?? []), $item['key']];
         $menuId = 'top-menu-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
     @endphp
 

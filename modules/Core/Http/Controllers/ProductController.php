@@ -279,6 +279,19 @@ class ProductController extends Controller
 
         $record?->loadMissing($relationships);
 
+        if ($context === Product::ContextPackagingMaterials && $record instanceof Product) {
+            $record->setRelation(
+                'relatedFinishedProducts',
+                $record->relatedFinishedProducts()
+                    ->withTrashed()
+                    ->forCompany($this->companyContext->requireCompanyId())
+                    ->with('mainImageUsage.file')
+                    ->orderBy('products.doc_number')
+                    ->orderBy('products.id')
+                    ->get(),
+            );
+        }
+
         return view('modules.core.products.form', [
             'mode' => $mode,
             'productContext' => $context,
@@ -293,6 +306,7 @@ class ProductController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record, $context),
             'cloneSourceToken' => $cloneSourceToken,
             'lookupOptions' => $this->lookupOptions($record),
+            'relatedFinishedProductOptions' => $this->relatedFinishedProductOptions($record, $context),
             'componentRows' => $this->componentRows($mode, $record, $context),
             'componentUnitConversionEdges' => $this->unitConversions->globalEdgesForCompany(
                 $this->companyContext->requireCompanyId(),
@@ -464,6 +478,89 @@ class ProductController extends Controller
             'category' => $record?->category ? $select2->item($record->category) : null,
             'group' => $record?->group ? $select2->item($record->group) : null,
         ];
+    }
+
+    /**
+     * @return list<array{id: string, text: string, image_url: string|null, is_stale: bool}>
+     */
+    private function relatedFinishedProductOptions(?Product $record, string $context): array
+    {
+        if ($context !== Product::ContextPackagingMaterials) {
+            return [];
+        }
+
+        $oldInput = session()->get('_old_input', []);
+        $hasOldInput = is_array($oldInput) && array_key_exists('related_finished_product_doc_nums', $oldInput);
+        $docNums = $hasOldInput
+            ? $this->relatedFinishedProductDocNumsFromInput($oldInput['related_finished_product_doc_nums'])
+            : ($record instanceof Product
+                ? $record->relatedFinishedProducts
+                    ->pluck('doc_num')
+                    ->filter()
+                    ->map(fn (mixed $docNum): string => (string) $docNum)
+                    ->values()
+                    ->all()
+                : []);
+
+        if ($docNums === []) {
+            return [];
+        }
+
+        $companyId = $this->companyContext->requireCompanyId();
+        $records = Product::withTrashed()
+            ->forCompany($companyId)
+            ->whereIn('doc_num', $docNums)
+            ->with('mainImageUsage.file')
+            ->get()
+            ->keyBy('doc_num');
+
+        return collect($docNums)
+            ->map(function (string $docNum) use ($records): array {
+                /** @var Product|null $product */
+                $product = $records->get($docNum);
+
+                if (! $product instanceof Product) {
+                    return [
+                        'id' => $docNum,
+                        'text' => __('products.packaging_materials.related_finished_products.unavailable_selection', ['doc_num' => $docNum]),
+                        'image_url' => null,
+                        'is_stale' => true,
+                    ];
+                }
+
+                return [
+                    'id' => (string) $product->doc_num,
+                    'text' => trim(implode(' — ', array_filter([$product->doc_num, $product->name]))),
+                    'image_url' => $this->canViewFinishedProductImages() ? $this->productImages->url($product) : null,
+                    'is_stale' => $product->trashed()
+                        || $product->status !== 'active'
+                        || $product->item_classification !== Product::ClassificationFinishedProduct,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function relatedFinishedProductDocNumsFromInput(mixed $input): array
+    {
+        if (! is_array($input)) {
+            return [];
+        }
+
+        return collect($input)
+            ->filter(fn (mixed $docNum): bool => is_string($docNum) && trim($docNum) !== '')
+            ->map(fn (string $docNum): string => trim($docNum))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function canViewFinishedProductImages(): bool
+    {
+        return (bool) auth()->user()?->can('products.view');
     }
 
     /**

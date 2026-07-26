@@ -29,6 +29,7 @@ use Modules\Core\Http\Controllers\Select2\CompanyLocationSelect2Controller;
 use Modules\Core\Http\Controllers\Select2\CompanyLocationSelectedController;
 use Modules\Core\Http\Controllers\Select2\CompanySelect2Controller;
 use Modules\Core\Http\Controllers\Select2\FinancialPeriodSelect2Controller;
+use Modules\Core\Http\Controllers\Select2\FinishedProductSelect2Controller;
 use Modules\Core\Http\Controllers\Select2\ItemLookupSelect2Controller;
 use Modules\Core\Http\Controllers\Select2\ItemUnitSelect2Controller;
 use Modules\Core\Http\Controllers\Select2\LocationInlineController;
@@ -125,6 +126,8 @@ Route::middleware('auth')
             ->name('select2.component-products');
         Route::get('/select2/raw-material-products', ProductRawMaterialSelect2Controller::class)
             ->name('select2.raw-material-products');
+        Route::get('/select2/finished-products', FinishedProductSelect2Controller::class)
+            ->name('select2.finished-products');
         Route::get('/select2/countries', [CompanyLocationSelect2Controller::class, 'countries'])
             ->name('select2.countries');
         Route::get('/select2/governorates', [CompanyLocationSelect2Controller::class, 'governorates'])

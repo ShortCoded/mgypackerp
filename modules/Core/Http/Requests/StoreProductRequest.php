@@ -40,6 +40,7 @@ class StoreProductRequest extends FormRequest
             $this->validateProductImageSelection($validator);
             $this->validateProductDocumentNumber($validator);
             $this->validateProductComponents($validator);
+            $this->validateRelatedFinishedProducts($validator);
         });
     }
 

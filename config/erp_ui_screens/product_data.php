@@ -1,13 +1,43 @@
 <?php
 
-$screen = static fn (string $slug, string $en, string $ar, string $group = 'classification', string $profile = 'master', array $extra = []): array => [
-    'key' => 'product_data_'.str_replace('-', '_', $slug),
-    'slug' => $slug,
-    'title' => ['en' => $en, 'ar' => $ar],
-    'group' => $group,
-    'profile' => $profile,
-    ...$extra,
+$navigationHiddenKeys = [
+    'product_data_product_types',
+    'product_data_raw_material_types',
+    'product_data_semi_finished_product_types',
+    'product_data_finished_product_types',
+    'product_data_packaging_material_types',
+    'product_data_service_types',
+    'product_data_product_families',
+    'product_data_product_brands',
+    'product_data_product_grades',
+    'product_data_product_specifications',
+    'product_data_product_technical_properties',
+    'product_data_product_units',
+    'product_data_product_equivalent_units',
+    'product_data_product_barcodes',
+    'product_data_product_images',
+    'product_data_product_documents',
+    'product_data_product_packaging_definitions',
+    'product_data_product_storage_requirements',
+    'product_data_product_reorder_policies',
+    'product_data_product_safety_stock_policies',
+    'product_data_product_batch_policies',
+    'product_data_product_shelf_life_policies',
 ];
+
+$screen = static function (string $slug, string $en, string $ar, string $group = 'classification', string $profile = 'master', array $extra = []) use ($navigationHiddenKeys): array {
+    $key = 'product_data_'.str_replace('-', '_', $slug);
+
+    return [
+        'key' => $key,
+        'slug' => $slug,
+        'title' => ['en' => $en, 'ar' => $ar],
+        'group' => $group,
+        'profile' => $profile,
+        'menu_visible' => ! in_array($key, $navigationHiddenKeys, true),
+        ...$extra,
+    ];
+};
 
 return [
     'module' => 'product_data',

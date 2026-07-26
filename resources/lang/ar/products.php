@@ -72,6 +72,14 @@ return [
         'attributes' => [
             'name' => 'اسم مادة التعبئة والتغليف',
         ],
+        'related_finished_products' => [
+            'label' => 'المنتجات التامة المرتبطة',
+            'placeholder' => 'اختر منتجًا تامًا أو أكثر',
+            'help' => 'حدد المنتجات التامة التي تُستخدم لها مادة التعبئة والتغليف.',
+            'no_results' => 'لا توجد منتجات تامة متاحة',
+            'unavailable' => 'غير متاح',
+            'unavailable_selection' => 'المنتج المحدد غير متاح (:doc_num)',
+        ],
         'document_number_settings' => [
             'description' => 'تحكم في طريقة إنشاء أرقام مستندات مواد التعبئة والتغليف الجديدة.',
             'padding' => 'عدد الخانات',
@@ -133,6 +141,7 @@ return [
         'options' => 'الخيارات',
         'status' => 'الحالة',
         'notes' => 'الملاحظات',
+        'related_finished_product_doc_nums' => 'المنتجات التامة المرتبطة',
     ],
     'classifications' => [
         'raw_material' => 'خامة',
@@ -333,6 +342,12 @@ return [
         'raw_material_not_allowed_in_products' => 'تدار الخامات من شاشة الخامات ولا يمكن حفظها كمنتجات.',
         'packaging_material_context_required' => 'يتم إنشاء وتعديل مواد التعبئة والتغليف من شاشة مواد التعبئة والتغليف.',
         'packaging_material_not_allowed_in_products' => 'تدار مواد التعبئة والتغليف من شاشة مواد التعبئة والتغليف ولا يمكن حفظها كمنتجات.',
+        'related_finished_products_array' => 'يجب إرسال المنتجات التامة المرتبطة على هيئة قائمة.',
+        'related_finished_product_not_found' => 'أحد المنتجات التامة المحددة غير موجود.',
+        'related_finished_product_company' => 'أحد المنتجات التامة المحددة لا ينتمي إلى الشركة الحالية.',
+        'related_finished_product_invalid' => 'السجل المحدد ليس منتجًا تامًا صالحًا.',
+        'related_finished_product_material' => 'لا يمكن اختيار خامة أو مادة تعبئة وتغليف هنا.',
+        'related_finished_product_unavailable' => 'أحد المنتجات التامة المحددة محذوف أو غير متاح.',
         'summary_title' => 'يرجى مراجعة الأخطاء التالية:',
     ],
 ];
