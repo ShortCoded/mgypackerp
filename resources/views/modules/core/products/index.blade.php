@@ -112,7 +112,17 @@
             bulk-actions-class="products-bulk-actions-bar"
             :bulk-action-label="$resourceSelectedLabel"
             toolbar-actions-class="products-toolbar-actions"
-        />
+        >
+            @if($permissionPrefix === 'products')
+                @can('products.import')
+                    @can('products.create')
+                        <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.products.import.index') }}">
+                            <span class="fas fa-file-import me-1" aria-hidden="true"></span><span class="d-none d-md-inline">{{ __('excel_imports.actions.import') }}</span>
+                        </a>
+                    @endcan
+                @endcan
+            @endif
+        </x-admin.crud-index-toolbar>
         <div class="card-body p-0">
             <div class="falcon-data-table">
                 <div class="erp-datatable-wrapper">

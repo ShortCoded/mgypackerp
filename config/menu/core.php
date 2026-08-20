@@ -288,6 +288,7 @@ return [
                     'delete' => 'products.delete',
                     'view_trashed' => 'products.view_trashed',
                     'restore' => 'products.restore',
+                    'import' => 'products.import',
                     'document_number_control' => 'products.document_number.control',
                     'document_number_settings_update' => 'products.document_number_settings.update',
                 ],

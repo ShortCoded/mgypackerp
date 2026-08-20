@@ -88,6 +88,13 @@
                             </button>
                         </div>
                     @endcan
+                    @can('fixed_assets.import')
+                        @can('fixed_assets.create')
+                            <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.import.index') }}">
+                                <span class="fas fa-file-import me-1" aria-hidden="true"></span><span class="d-none d-md-inline">{{ __('excel_imports.actions.import') }}</span>
+                            </a>
+                        @endcan
+                    @endcan
                     <x-buttons.add-record :href="route($routePrefix.'.create')" permission="fixed_assets.create" />
                 </div>
             </div>

@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Modules\Core\Http\Controllers\ExcelImportController;
 use Modules\FixedAssets\Http\Controllers\FixedAssetController;
 use Modules\FixedAssets\Services\FixedAssetsSelect2Service;
 
@@ -49,6 +50,20 @@ Route::middleware('auth')
 
             return response()->json($select2->currencies($request));
         })->name('select2.currencies');
+
+        Route::prefix('assets/import')
+            ->name('assets.import.')
+            ->controller(ExcelImportController::class)
+            ->group(function (): void {
+                Route::get('/', 'index')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('index');
+                Route::get('/template', 'template')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('template');
+                Route::post('/upload', 'store')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('store');
+                Route::get('/{batch:public_uuid}', 'show')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('show');
+                Route::get('/{batch:public_uuid}/errors', 'errorWorkbook')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('errors');
+                Route::post('/{batch:public_uuid}/replace', 'replace')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('replace');
+                Route::post('/{batch:public_uuid}/confirm', 'confirm')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('confirm');
+                Route::post('/{batch:public_uuid}/cancel', 'cancel')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('cancel');
+            });
 
         Route::prefix('assets')->name('assets.')->controller(FixedAssetController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:fixed_assets.view')->name('index');

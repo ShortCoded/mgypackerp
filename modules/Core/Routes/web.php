@@ -6,6 +6,7 @@ use Modules\Core\Http\Controllers\CalendarController;
 use Modules\Core\Http\Controllers\ChatController;
 use Modules\Core\Http\Controllers\CompanyController;
 use Modules\Core\Http\Controllers\CurrencyController;
+use Modules\Core\Http\Controllers\ExcelImportController;
 use Modules\Core\Http\Controllers\FileManagerController;
 use Modules\Core\Http\Controllers\FinancialPeriodController;
 use Modules\Core\Http\Controllers\ItemLookupController;
@@ -632,6 +633,20 @@ Route::middleware('auth')
                 Route::delete('/{product}', 'destroy')
                     ->middleware('can:packaging_materials.delete')
                     ->name('destroy');
+            });
+
+        Route::prefix('products/import')
+            ->name('products.import.')
+            ->controller(ExcelImportController::class)
+            ->group(function (): void {
+                Route::get('/', 'index')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('index');
+                Route::get('/template', 'template')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('template');
+                Route::post('/upload', 'store')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('store');
+                Route::get('/{batch:public_uuid}', 'show')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('show');
+                Route::get('/{batch:public_uuid}/errors', 'errorWorkbook')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('errors');
+                Route::post('/{batch:public_uuid}/replace', 'replace')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('replace');
+                Route::post('/{batch:public_uuid}/confirm', 'confirm')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('confirm');
+                Route::post('/{batch:public_uuid}/cancel', 'cancel')->defaults('excelImportModule', 'products')->middleware('can:products.import')->name('cancel');
             });
 
         Route::prefix('products')

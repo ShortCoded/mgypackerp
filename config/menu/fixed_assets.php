@@ -25,6 +25,7 @@ return [
                     'delete' => 'fixed_assets.delete',
                     'view_trashed' => 'fixed_assets.view_trashed',
                     'restore' => 'fixed_assets.restore',
+                    'import' => 'fixed_assets.import',
                     'document_number_control' => 'fixed_assets.document_number.control',
                     'document_number_settings_update' => 'fixed_assets.document_number_settings.update',
                 ],
