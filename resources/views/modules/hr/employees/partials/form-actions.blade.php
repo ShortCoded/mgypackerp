@@ -45,7 +45,7 @@
         @endif
 
         @if ($canRestore)
-            <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-public-uuid="{{ $employee->public_uuid }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->public_uuid) }}">
+            <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-public-uuid="{{ $employee->public_uuid }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->public_uuid) }}" data-redirect-url="{{ route('admin.hr.employees.show', $employee->doc_num) }}">
                 <span class="fas fa-undo me-1"></span>{{ __('hr.trash.restore') }}
             </button>
         @endif

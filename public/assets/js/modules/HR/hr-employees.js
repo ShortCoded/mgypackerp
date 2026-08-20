@@ -903,7 +903,7 @@
                         return;
                     }
 
-                    window.location.reload();
+                    window.location.href = $button.data('redirect-url') || $('[data-shortcut-action="form.back"]').attr('href') || '/';
                 }).fail(function (response) {
                     showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : messages.unexpectedError);
                 }).always(function () {

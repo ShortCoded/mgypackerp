@@ -1374,6 +1374,7 @@ test('HrEmployee routes prefer the active company record and restore collisions 
         ->assertOk()
         ->assertSee('Historical Employee')
         ->assertSee(route('admin.hr.employees.restore', $historical->public_uuid), false)
+        ->assertSee(route('admin.hr.employees.show', $historical->doc_num), false)
         ->assertDontSee(route('admin.hr.employees.restore', $historical->doc_num), false)
         ->assertDontSee('Active Employee');
     $this->withSession($session)
