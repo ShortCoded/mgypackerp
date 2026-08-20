@@ -100,6 +100,10 @@ test('branch create form renders factory and halls labels without refrigerator o
         ->assertDontSee('value="station"', false)
         ->assertSee('Factory')
         ->assertSee('Halls')
+        ->assertSee('name="station_halls[0][name]"', false)
+        ->assertSee('name="branch_stores[0][name]"', false)
+        ->assertSee('js-add-station-hall', false)
+        ->assertSee('js-add-branch-store', false)
         ->assertDontSee('Station Halls')
         ->assertDontSee('Refrigerators')
         ->assertDontSee('branch-refrigerators-tab', false)
@@ -114,6 +118,20 @@ test('branch create form renders factory and halls labels without refrigerator o
         ->assertDontSee('محطة')
         ->assertDontSee('صالات المحطة')
         ->assertDontSee('التلاجات');
+
+    $this->actingAs($actor)
+        ->withSession([
+            'locale' => 'en',
+            '_old_input' => [
+                'type' => 'factory',
+                'station_halls' => [['name' => 'Recovered Hall']],
+                'branch_stores' => [['name' => 'Recovered Store']],
+            ],
+        ])
+        ->get(route('admin.branches.create'))
+        ->assertOk()
+        ->assertSee('value="Recovered Hall"', false)
+        ->assertSee('value="Recovered Store"', false);
 });
 
 test('branch company validation uses human labels in english and arabic', function () {

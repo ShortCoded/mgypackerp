@@ -16,7 +16,8 @@
     $documentNumberValue = old('doc_number', ! $isCreate ? $record?->doc_number : '');
     $branchTypeValue = old('type', $record?->type ?? 'administrative');
     $branchStatusValue = old('status', $record?->status ?? 'active');
-    $storedStationHalls = $record?->type === \Modules\Core\Models\Branch::TypeFactory
+    $storedStationHalls = $record instanceof \Modules\Core\Models\Branch
+        && $record->type === \Modules\Core\Models\Branch::TypeFactory
         ? $record->halls->map(fn ($hall): array => [
             'key' => $hall->public_uuid,
             'name' => $hall->name,
@@ -32,10 +33,12 @@
         ? array_values(array_filter(array_map(fn (array $hall): string => $hall['name'], $stationHallRows), fn (string $hall): bool => $hall !== ''))
         : [];
     $showStationHalls = $branchTypeValue === \Modules\Core\Models\Branch::TypeFactory;
-    $storedBranchStores = $record->stores->map(fn ($store): array => [
-        'key' => $store->public_uuid,
-        'name' => $store->name,
-    ])->values()->all();
+    $storedBranchStores = $record instanceof \Modules\Core\Models\Branch
+        ? $record->stores->map(fn ($store): array => [
+            'key' => $store->public_uuid,
+            'name' => $store->name,
+        ])->values()->all()
+        : [];
     $oldBranchStores = old('branch_stores', $storedBranchStores);
     $branchStoreRows = is_array($oldBranchStores)
         ? array_values(array_map(fn (mixed $store): array => is_array($store)

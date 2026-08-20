@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrFoundationModel;
@@ -18,6 +19,7 @@ class HrSelect2Service
         private readonly Select2ResponseService $select2,
         private readonly HrLookupRegistry $lookups,
         private readonly HrFoundationRegistry $foundation,
+        private readonly OperatingCompanyContextService $companies,
     ) {}
 
     /**
@@ -55,6 +57,15 @@ class HrSelect2Service
             ->where('status', 'active')
             ->orderBy('name')
             ->orderBy('doc_number');
+
+        if ($resource === 'biometric-devices') {
+            $companyId = $this->companies->currentCompanyId($request);
+            $query->when(
+                $companyId,
+                fn (Builder $query, int $companyId): Builder => $query->where('company_id', $companyId),
+                fn (Builder $query): Builder => $query->whereRaw('1 = 0'),
+            );
+        }
 
         $this->applySearch($query, $search, $definition->table);
 

@@ -25,6 +25,9 @@ class StoreHrEmployeeRequest extends FormRequest
     protected array $dateFields = [
         'birth_date',
         'hire_date',
+        'contract_start_date',
+        'contract_end_date',
+        'probation_end_date',
         'start_date',
         'end_date',
     ];
@@ -32,10 +35,10 @@ class StoreHrEmployeeRequest extends FormRequest
     public function authorize(): bool
     {
         if ($this->filled('clone_source_token')) {
-            return (bool) $this->user()?->can('hr.employees.clone');
+            return (bool) $this->user()?->can('hr.employees.clone') && $this->canSubmitDocumentRows();
         }
 
-        return (bool) $this->user()?->can('hr.employees.create');
+        return (bool) $this->user()?->can('hr.employees.create') && $this->canSubmitDocumentRows();
     }
 
     /**
@@ -47,6 +50,7 @@ class StoreHrEmployeeRequest extends FormRequest
             'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new', 'save_clone'])],
             'clone_source_token' => ['nullable', 'string'],
             'full_name' => ['required', 'string', 'max:255'],
+            'employee_code' => ['nullable', 'string', 'max:255', Rule::unique('hr_employees', 'employee_code')->withoutTrashed()],
             'person_type' => ['required', 'string', Rule::in(['fixed_employee', 'regular_labor', 'casual_labor'])],
             'status' => ['required', 'string', Rule::in(['active', 'inactive', 'suspended', 'stopped', 'left'])],
             'gender' => ['nullable', 'string', Rule::in(['male', 'female', 'other'])],
@@ -54,20 +58,27 @@ class StoreHrEmployeeRequest extends FormRequest
             'marital_status' => ['nullable', 'string', Rule::in(['single', 'married', 'divorced', 'widowed'])],
             'national_id' => ['nullable', 'string', 'max:60', $this->uniqueEmployeeRule('national_id')],
             'hire_date' => ['nullable', 'date_format:Y-m-d'],
+            'contract_start_date' => ['nullable', 'date_format:Y-m-d'],
+            'contract_end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:contract_start_date'],
+            'probation_end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:hire_date'],
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
-            'branch_doc_num' => ['nullable', 'string', Rule::exists('branches', 'doc_num')->whereNull('deleted_at')],
+            'branch_doc_num' => ['nullable', 'string', Rule::exists('branches', 'doc_num')->where(fn ($query) => $query->where('company_id', $this->companyId())->where('status', 'active')->whereNull('deleted_at'))],
             'email' => ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'email')->withoutTrashed()],
             'work_email' => ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'work_email')->withoutTrashed()],
+            'personal_email' => ['nullable', 'email:rfc', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'mobile' => ['nullable', 'string', 'max:50'],
             'alternate_phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:1000'],
-            'department_doc_num' => ['nullable', 'string', Rule::exists('hr_departments', 'doc_num')->whereNull('deleted_at')],
-            'section_doc_num' => ['nullable', 'string', Rule::exists('hr_sections', 'doc_num')->whereNull('deleted_at')],
-            'job_doc_num' => ['nullable', 'string', Rule::exists('hr_jobs', 'doc_num')->whereNull('deleted_at')],
-            'employment_type_doc_num' => ['nullable', 'string', Rule::exists('hr_employment_types', 'doc_num')->whereNull('deleted_at')],
-            'default_shift_doc_num' => ['nullable', 'string', Rule::exists('hr_shifts', 'doc_num')->whereNull('deleted_at')],
+            'department_doc_num' => ['nullable', 'string', Rule::exists('hr_departments', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
+            'section_doc_num' => ['nullable', 'string', Rule::exists('hr_sections', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
+            'job_doc_num' => ['nullable', 'string', Rule::exists('hr_jobs', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
+            'employment_type_doc_num' => ['nullable', 'string', Rule::exists('hr_employment_types', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
+            'nationality_doc_num' => ['nullable', 'string', Rule::exists('hr_nationalities', 'doc_num')->whereNull('deleted_at')],
+            'hiring_status_doc_num' => ['nullable', 'string', Rule::exists('hr_hiring_statuses', 'doc_num')->whereNull('deleted_at')],
+            'allowance_doc_num' => ['nullable', 'string', Rule::exists('hr_allowances', 'doc_num')->whereNull('deleted_at')],
+            'default_shift_doc_num' => ['nullable', 'string', Rule::exists('hr_shifts', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'photo_archive_file_doc_num' => ['nullable', 'string'],
             'signature_archive_file_doc_num' => ['nullable', 'string'],
             'attendance_tracking_enabled' => ['nullable', 'boolean'],
@@ -86,16 +97,18 @@ class StoreHrEmployeeRequest extends FormRequest
             'piece_rate' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
             'payment_method' => ['nullable', 'string', Rule::in(['cash', 'bank_transfer', 'wallet', 'other'])],
             'biometric_mappings' => ['nullable', 'array'],
+            'biometric_mappings.*' => ['array:id,device_doc_num,biometric_code,is_active,_delete,notes'],
             'biometric_mappings.*.id' => ['nullable', 'integer'],
-            'biometric_mappings.*.device_doc_num' => ['nullable', 'string', Rule::exists('hr_biometric_devices', 'doc_num')->whereNull('deleted_at')],
+            'biometric_mappings.*.device_doc_num' => ['nullable', 'string', Rule::exists('hr_biometric_devices', 'doc_num')->where(fn ($query) => $query->where('company_id', $this->companyId())->where('status', 'active')->whereNull('deleted_at'))],
             'biometric_mappings.*.biometric_code' => ['nullable', 'string', 'max:120'],
             'biometric_mappings.*.is_active' => ['nullable', 'boolean'],
             'biometric_mappings.*._delete' => ['nullable', 'boolean'],
             'biometric_mappings.*.notes' => ['nullable', 'string'],
             'documents' => ['nullable', 'array'],
+            'documents.*' => ['array:id,_delete,document_type_doc_num,document_number_text,title,archive_file_doc_num,file_label,issue_date,expires_at,alert_before_expiry_days,sort_order,notes'],
             'documents.*.id' => ['nullable', 'integer'],
             'documents.*._delete' => ['nullable', 'boolean'],
-            'documents.*.document_type_doc_num' => ['nullable', 'string', Rule::exists('hr_document_types', 'doc_num')->whereNull('deleted_at')],
+            'documents.*.document_type_doc_num' => ['nullable', 'string', Rule::exists('hr_document_types', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'documents.*.document_number_text' => ['nullable', 'string', 'max:120'],
             'documents.*.title' => ['nullable', 'string', 'max:255'],
             'documents.*.archive_file_doc_num' => ['nullable', 'string'],
@@ -183,6 +196,7 @@ class StoreHrEmployeeRequest extends FormRequest
             $this->validateCurrencyAndPayBasis($validator);
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
+            $this->validateNestedRowOwnership($validator);
         });
     }
 
@@ -256,10 +270,30 @@ class StoreHrEmployeeRequest extends FormRequest
 
     protected function uniqueEmployeeRule(string $column): mixed
     {
-        $rule = Rule::unique('hr_employees', $column)->withoutTrashed();
-        $companyId = $this->companyId();
+        return Rule::unique('hr_employees', $column)->withoutTrashed();
+    }
 
-        return $companyId ? $rule->where('company_id', $companyId) : $rule;
+    protected function canSubmitDocumentRows(): bool
+    {
+        foreach ((array) $this->input('documents', []) as $row) {
+            if (! is_array($row) || (! $this->documentRowHasContent($row) && ! (bool) ($row['_delete'] ?? false))) {
+                continue;
+            }
+
+            if ((bool) ($row['_delete'] ?? false)) {
+                if (! $this->user()?->can('hr.employees.documents.delete')) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (! $this->user()?->can('hr.employees.documents.manage')) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function validateSelectedPhoto(Validator $validator): void
@@ -451,6 +485,27 @@ class StoreHrEmployeeRequest extends FormRequest
                     'attribute' => __('hr.employees.documents.attributes.expires_at'),
                     'date' => __('hr.employees.documents.attributes.issue_date'),
                 ]));
+            }
+        }
+    }
+
+    protected function validateNestedRowOwnership(Validator $validator): void
+    {
+        $employee = $this->route('employee');
+
+        foreach (['biometric_mappings' => 'biometricMappings', 'documents' => 'documents'] as $input => $relationship) {
+            foreach ((array) $this->input($input, []) as $index => $row) {
+                $id = is_array($row) && isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null;
+
+                if ($id === null) {
+                    continue;
+                }
+
+                if (! $employee instanceof HrEmployee || ! $employee->{$relationship}()->withTrashed()->whereKey($id)->exists()) {
+                    $validator->errors()->add("{$input}.{$index}.id", __('validation.exists', [
+                        'attribute' => "{$input}.{$index}.id",
+                    ]));
+                }
             }
         }
     }

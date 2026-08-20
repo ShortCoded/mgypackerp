@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
@@ -12,13 +13,16 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\HR\Models\HrAllowance;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
 use Spatie\Permission\Models\Permission;
@@ -301,6 +305,9 @@ function hrEmployeeFixtures(): array
         'status' => 'active',
     ]);
     $employmentType = HrEmploymentType::query()->create(['doc_number' => 804, 'doc_num' => 'HRT-00804', 'name' => 'Full Time', 'status' => 'active']);
+    $nationality = HrNationality::query()->create(['doc_number' => 811, 'doc_num' => 'HRN-00811', 'name' => 'Egyptian']);
+    $hiringStatus = HrHiringStatus::query()->create(['doc_number' => 812, 'doc_num' => 'HHS-00812', 'name' => 'Appointed']);
+    $allowance = HrAllowance::query()->create(['doc_number' => 813, 'doc_num' => 'HAL-00813', 'name' => 'Transportation']);
     $shift = HrShift::query()->create(['doc_number' => 805, 'doc_num' => 'HSH-00805', 'name' => 'Morning', 'start_time' => '08:00', 'end_time' => '16:00', 'break_minutes' => 30, 'status' => 'active']);
     $device = HrBiometricDevice::query()->create(['doc_number' => 806, 'doc_num' => 'HBD-00806', 'company_id' => $company->getKey(), 'branch_id' => $branch->getKey(), 'name' => 'Main Gate', 'device_uid' => 'GATE-01', 'status' => 'active']);
     $documentType = HrDocumentType::query()->create(['doc_number' => 807, 'doc_num' => 'HDT-00807', 'name' => 'Contract', 'status' => 'active']);
@@ -324,7 +331,7 @@ function hrEmployeeFixtures(): array
         'size_bytes' => 8,
     ]);
 
-    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'shift', 'device', 'documentType', 'archiveFile');
+    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'nationality', 'hiringStatus', 'allowance', 'shift', 'device', 'documentType', 'archiveFile');
 }
 
 function hrOperatingSession(array $fixtures): array
@@ -348,6 +355,9 @@ function hrEmployeePayload(array $fixtures, array $overrides = []): array
         'marital_status' => 'single',
         'national_id' => '29104151234567',
         'hire_date' => '2026-01-01',
+        'contract_start_date' => '2026-01-01',
+        'contract_end_date' => '2026-12-31',
+        'probation_end_date' => '2026-03-31',
         'start_date' => '2026-01-01',
         'end_date' => '2026-12-31',
         'branch_doc_num' => $fixtures['branch']->doc_num,
@@ -355,8 +365,12 @@ function hrEmployeePayload(array $fixtures, array $overrides = []): array
         'section_doc_num' => $fixtures['section']->doc_num,
         'job_doc_num' => $fixtures['job']->doc_num,
         'employment_type_doc_num' => $fixtures['employmentType']->doc_num,
+        'nationality_doc_num' => $fixtures['nationality']->doc_num,
+        'hiring_status_doc_num' => $fixtures['hiringStatus']->doc_num,
+        'allowance_doc_num' => $fixtures['allowance']->doc_num,
         'work_email' => 'nadia.ahmed@company.example.test',
         'email' => 'nadia.ahmed@example.test',
+        'personal_email' => 'nadia.personal@example.test',
         'phone' => '+201000000001',
         'mobile' => '+201000000002',
         'address' => 'Cairo',
@@ -465,6 +479,43 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_countries']);
 });
 
+test('HrEmployee index uses the shared wide table usability contract', function (): void {
+    $actor = hrEmployeeActor(['hr.employees.view']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.hr.employees.index'))
+        ->assertOk()
+        ->assertSee('js-hr-employees-filters', false)
+        ->assertSee('erp-datatable-scroll', false)
+        ->assertSee('erp-datatable-wide', false)
+        ->assertSee('erp-datatable-sticky-columns', false);
+
+    $script = file_get_contents(public_path('assets/js/modules/HR/hr-employees.js'));
+    $sharedScript = file_get_contents(public_path('assets/js/modules/Core/datatables-defaults.js'));
+    $stylesheet = file_get_contents(public_path('assets/css/user.css'));
+
+    expect($script)->toContain(
+        'window.AppDataTables.wideOptions',
+        'const protectedColumns = [0, 1, -1]',
+        "className: 'dt-select no-colvis all",
+        "className: 'dt-code no-colvis all",
+        "className: 'dt-actions no-colvis all",
+    )->not->toContain('responsiveControlTarget')
+        ->and($sharedScript)->toContain(
+            'scrollX: true',
+            'responsive: false',
+            'bindDropdownOverflow',
+        )
+        ->and($stylesheet)->toContain(
+            '.erp-datatable-scroll',
+            'overflow-x: auto',
+            '.erp-datatable.erp-datatable-wide .dt-text',
+            '.erp-datatable.erp-datatable-sticky-columns .dt-select',
+            'inset-inline-start: 3rem',
+            'inset-inline-end: 0',
+        );
+});
+
 test('current and legacy review HR index routes are accessible to admin role and forbidden without permissions', function () {
     $this->seed(PermissionSeeder::class);
 
@@ -488,14 +539,15 @@ test('current and legacy review HR index routes are accessible to admin role and
 
 test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
     $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
     $actor = hrEmployeeActor([
-        'hr.employees.view',
-        'hr.employees.create',
-        'hr.employees.document_number_settings.update',
+        ...hrEmployeePermissions(),
+        'file_manager.view',
         ...hrEmployeeLookupCreatePermissions(),
     ]);
 
     $this->actingAs($actor)
+        ->withSession($session)
         ->get(route('admin.hr.employees.create'))
         ->assertOk()
         ->assertSee(__('hr.employees.sections.basic_info'))
@@ -518,16 +570,16 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertSee(route('admin.hr.document-types.create'), false)
         ->assertSee('data-picker-accept="document"', false)
         ->assertDontSee('profession_doc_num', false)
-        ->assertDontSee('attendance_tracking_enabled', false)
-        ->assertDontSee('default_shift_doc_num', false)
-        ->assertDontSee('allow_late_minutes', false)
-        ->assertDontSee('allow_early_leave_minutes', false)
-        ->assertDontSee('overtime_enabled', false)
+        ->assertSee('attendance_tracking_enabled', false)
+        ->assertSee('default_shift_doc_num', false)
+        ->assertSee('allow_late_minutes', false)
+        ->assertSee('allow_early_leave_minutes', false)
+        ->assertSee('overtime_enabled', false)
         ->assertSee('biometric_mappings[__INDEX__][device_doc_num]', false)
         ->assertSee('hr-biometric-row-template', false)
-        ->assertDontSee(route('admin.hr.select2.foundation', 'shifts'), false)
+        ->assertSee(route('admin.hr.select2.foundation', 'shifts'), false)
         ->assertSee(route('admin.hr.select2.foundation', 'biometric-devices'), false)
-        ->assertDontSee('documents[__INDEX__][document_number_text]', false)
+        ->assertSee('documents[__INDEX__][document_number_text]', false)
         ->assertSee('name="documents[__INDEX__][alert_before_expiry_days]"', false)
         ->assertSee('data-numeric-max="3650"', false)
         ->assertDontSee('dropdown-toggle-split', false)
@@ -535,33 +587,140 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertDontSee('data-target-select=', false)
         ->assertDontSee('data-id=', false);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'departments').'?q=Operations')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'departments').'?q=Operations')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['department']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'sections').'?q=Assembly')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'sections').'?q=Assembly')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['section']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'jobs').'?q=Carpenter')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'jobs').'?q=Carpenter')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['job']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'employment-types').'?q=Full%20Time')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'employment-types').'?q=Full%20Time')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['employmentType']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'shifts').'?q=Morning')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'shifts').'?q=Morning')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['shift']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'biometric-devices').'?q=Main%20Gate')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'biometric-devices').'?q=Main%20Gate')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['device']->doc_num);
 
-    $this->getJson(route('admin.hr.select2.foundation', 'document-types').'?q=Contract')
+    $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'document-types').'?q=Contract')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['documentType']->doc_num);
+});
+
+test('HrEmployee branch Select2 uses the current company context and public branch doc nums', function (): void {
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $actor = hrEmployeeActor(['hr.employees.create', 'hr.employees.edit']);
+    $arabicBranch = Branch::query()->create([
+        'doc_number' => 302,
+        'doc_num' => 'Branch-00302',
+        'company_id' => $fixtures['company']->getKey(),
+        'name' => 'فرع القاهرة الرئيسي',
+        'type' => 'administrative',
+        'status' => 'active',
+    ]);
+    $inactiveBranch = Branch::query()->create([
+        'doc_number' => 303,
+        'doc_num' => 'Branch-00303',
+        'company_id' => $fixtures['company']->getKey(),
+        'name' => 'Inactive HR Branch',
+        'type' => 'administrative',
+        'status' => 'inactive',
+    ]);
+    $deletedBranch = Branch::query()->create([
+        'doc_number' => 304,
+        'doc_num' => 'Branch-00304',
+        'company_id' => $fixtures['company']->getKey(),
+        'name' => 'Deleted HR Branch',
+        'type' => 'administrative',
+        'status' => 'active',
+    ]);
+    $deletedBranch->delete();
+    $foreignCompany = Company::factory()->create([
+        'doc_number' => 202,
+        'doc_num' => 'Company-00202',
+        'name' => 'Foreign HR Select2 Company',
+        'status' => 'active',
+        'is_main' => 2,
+    ]);
+    $foreignBranch = Branch::query()->create([
+        'doc_number' => 305,
+        'doc_num' => 'Branch-00305',
+        'company_id' => $foreignCompany->getKey(),
+        'name' => 'Foreign HR Branch',
+        'type' => 'administrative',
+        'status' => 'active',
+    ]);
+    $branchSelectUrl = route('admin.select2.branches', [
+        'access_scope' => 'operating_scope',
+        'company_doc_num' => $fixtures['company']->doc_num,
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->get(route('admin.hr.employees.create'))
+        ->assertOk()
+        ->assertSee('data-url="'.e($branchSelectUrl).'"', false);
+
+    $englishResponse = $this->withSession($session)
+        ->getJson($branchSelectUrl.'&q=Main%20HR')
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $fixtures['branch']->doc_num)
+        ->assertJsonStructure(['results' => [['id', 'text', 'company_doc_num']], 'pagination' => ['more']]);
+
+    expect($englishResponse->json('results.0.text'))->toContain($fixtures['branch']->name);
+
+    $this->withSession($session)
+        ->getJson($branchSelectUrl.'&q='.urlencode('القاهرة'))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $arabicBranch->doc_num);
+
+    $resultDocNums = collect($this->withSession($session)
+        ->getJson($branchSelectUrl)
+        ->assertOk()
+        ->json('results'))
+        ->pluck('id')
+        ->all();
+
+    expect($resultDocNums)
+        ->toContain($fixtures['branch']->doc_num, $arabicBranch->doc_num)
+        ->not->toContain($inactiveBranch->doc_num, $deletedBranch->doc_num, $foreignBranch->doc_num);
+
+    $this->withSession([
+        ...$session,
+        'locale' => 'ar',
+        '_old_input' => ['branch_doc_num' => $arabicBranch->doc_num],
+    ])
+        ->get(route('admin.hr.employees.create'))
+        ->assertOk()
+        ->assertSee('value="'.$arabicBranch->doc_num.'" selected', false);
+
+    $employee = HrEmployee::query()->create([
+        'doc_number' => 998,
+        'doc_num' => 'Emp-00998',
+        'company_id' => $fixtures['company']->getKey(),
+        'branch_id' => $fixtures['branch']->getKey(),
+        'full_name' => 'Branch Hydration Employee',
+        'name' => 'Branch Hydration Employee',
+        'person_type' => 'fixed_employee',
+        'status' => 'active',
+    ]);
+
+    foreach (['en', 'ar'] as $locale) {
+        $this->withSession([...$session, 'locale' => $locale, '_old_input' => []])
+            ->get(route('admin.hr.employees.edit', $employee->doc_num))
+            ->assertOk()
+            ->assertSee('value="'.$fixtures['branch']->doc_num.'" selected', false);
+    }
 });
 
 test('HrEmployee datatable supports active inactive trashed lookup search ordering and bulk actions', function () {
@@ -621,6 +780,22 @@ test('HrEmployee datatable supports active inactive trashed lookup search orderi
     expect($inactiveJson)->toContain($stoppedEmployee->doc_num)
         ->and($inactiveJson)->not->toContain($activeEmployee->doc_num);
 
+    $structuredPayload = $this->withSession($session)
+        ->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([
+            'trash_filter' => 'all',
+            'status' => 'stopped',
+            'branch_doc_num' => $fixtures['branch']->doc_num,
+            'job_doc_num' => $fixtures['job']->doc_num,
+            'hire_from' => '2026-01-01',
+            'hire_to' => '2026-01-31',
+        ])))
+        ->assertOk()
+        ->json('data');
+
+    $structuredJson = json_encode($structuredPayload, JSON_THROW_ON_ERROR);
+    expect($structuredJson)->toContain($stoppedEmployee->doc_num)
+        ->and($structuredJson)->not->toContain($activeEmployee->doc_num);
+
     $this->withSession($session)
         ->deleteJson(route('admin.hr.employees.destroy', $activeEmployee->doc_num))
         ->assertOk();
@@ -658,7 +833,7 @@ test('HrEmployee datatable supports active inactive trashed lookup search orderi
 
     $this->withSession($session)
         ->patchJson(route('admin.hr.employees.bulk-restore'), [
-            'doc_nums' => [$activeEmployee->doc_num],
+            'public_uuids' => [$activeEmployee->public_uuid],
         ])
         ->assertOk()
         ->assertJsonPath('data.restored', 1);
@@ -781,7 +956,7 @@ test('employee document alert days use grouped input display and canonical integ
     $this->withSession($session)
         ->get(route('admin.hr.employees.show', $employee->doc_num))
         ->assertOk()
-        ->assertSee('<td class="white-space-nowrap text-end" dir="ltr">1,000</td>', false);
+        ->assertSee('dir="ltr">1,000</div>', false);
 
     $this->withSession($session)
         ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
@@ -814,7 +989,7 @@ test('employee document alert days use grouped input display and canonical integ
     $standaloneDocument = $employee->documents()->latest('id')->firstOrFail();
 
     expect($standaloneDocument->alert_before_expiry_days)->toBe(1200)
-        ->and($documentResponse->json('data.row'))->toContain('>1,200</td>');
+        ->and($documentResponse->json('data.row'))->toContain('dir="ltr">1,200</div>');
 
     $this->withSession($session)
         ->postJson(route('admin.hr.employees.documents.store', $employee->doc_num), [
@@ -857,6 +1032,169 @@ test('file picker document mode accepts employee attachment files', function () 
         ->json('data.files');
 
     expect(json_encode($pickerPayload, JSON_THROW_ON_ERROR))->toContain('employee-contract.pdf');
+
+    $this->withSession($session)
+        ->postJson(route('admin.file-manager.picker.files.store'), [
+            'accept' => 'document',
+            'file' => UploadedFile::fake()->create('disguised.pdf', 12, 'application/x-php'),
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['file']);
+});
+
+test('employee nested documents remain idempotent and enforce ownership and permissions', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+        ]))
+        ->assertOk();
+
+    $employee = HrEmployee::query()->firstOrFail();
+    $documentRow = [
+        'document_type_doc_num' => $fixtures['documentType']->doc_num,
+        'document_number_text' => 'CONTRACT-001',
+        'title' => 'Signed Contract',
+        'archive_file_doc_num' => $fixtures['archiveFile']->doc_num,
+        'file_label' => 'Employment Contract',
+        'issue_date' => '2026-01-01',
+        'expires_at' => '2026-12-31',
+        'alert_before_expiry_days' => 30,
+        'notes' => 'Original attachment',
+    ];
+
+    $createdResponse = $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [$documentRow],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $documentId = $createdResponse->json('data.document_row_ids.0');
+    expect($documentId)->toBeInt()
+        ->and($employee->documents()->count())->toBe(1);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [[...$documentRow, 'id' => $documentId]],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    expect($employee->documents()->count())->toBe(1);
+
+    $secondDocumentResponse = $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [
+                [...$documentRow, 'id' => $documentId],
+                [
+                    ...$documentRow,
+                    'document_number_text' => 'CONTRACT-002',
+                    'title' => 'Second Contract Copy',
+                    'sort_order' => 1,
+                ],
+            ],
+        ]))
+        ->assertOk();
+
+    $secondDocumentId = $secondDocumentResponse->json('data.document_row_ids.1');
+    expect($secondDocumentId)->toBeInt()
+        ->and($employee->documents()->count())->toBe(2);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [
+                [...$documentRow, 'id' => $documentId],
+                ['id' => $secondDocumentId, '_delete' => true],
+            ],
+        ]))
+        ->assertOk();
+
+    expect($employee->documents()->count())->toBe(1);
+
+    Storage::disk('public')->put('tests/hr/replacement.pdf', 'replacement');
+    $replacement = ArchiveFile::query()->create([
+        'doc_number' => 902,
+        'doc_num' => 'ARCH-00902',
+        'attachable_type' => (new Company)->getMorphClass(),
+        'attachable_id' => $fixtures['company']->getKey(),
+        'module' => 'hr',
+        'record_type' => 'employee_document',
+        'title' => 'Replacement Contract',
+        'hidden_from_picker' => false,
+        'original_name' => 'replacement.pdf',
+        'stored_name' => 'replacement.pdf',
+        'disk' => 'public',
+        'path' => 'tests/hr/replacement.pdf',
+        'mime_type' => 'application/pdf',
+        'extension' => 'pdf',
+        'size_bytes' => 11,
+    ]);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [[
+                ...$documentRow,
+                'id' => $documentId,
+                'archive_file_doc_num' => $replacement->doc_num,
+                'title' => 'Replacement Contract',
+            ]],
+        ]))
+        ->assertOk();
+
+    expect($employee->documents()->firstOrFail()->archive_file_id)->toBe($replacement->getKey())
+        ->and($employee->documents()->count())->toBe(1);
+
+    $secondEmployee = HrEmployee::query()->create([
+        'doc_number' => 99,
+        'doc_num' => 'Emp-00099',
+        'company_id' => $fixtures['company']->getKey(),
+        'full_name' => 'Second Employee',
+        'name' => 'Second Employee',
+        'person_type' => 'fixed_employee',
+        'status' => 'active',
+    ]);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $secondEmployee->doc_num), hrEmployeePayload($fixtures, [
+            'full_name' => 'Second Employee',
+            'national_id' => '29999999999999',
+            'email' => 'second@example.test',
+            'work_email' => 'second@company.example.test',
+            'biometric_mappings' => [],
+            'documents' => [[...$documentRow, 'id' => $documentId]],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['documents.0.id']);
+
+    $editor = hrEmployeeActor(['hr.employees.edit']);
+    $this->actingAs($editor)
+        ->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [$documentRow],
+        ]))
+        ->assertForbidden();
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [],
+            'documents' => [['id' => $documentId, '_delete' => true]],
+        ]))
+        ->assertOk();
+
+    expect($employee->documents()->count())->toBe(0)
+        ->and($employee->documents()->withTrashed()->count())->toBe(2);
 });
 
 test('HrEmployee crud stores relations by public doc nums manages documents and hides internal ids', function () {
@@ -882,11 +1220,35 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->and($employee->section_id)->toBe($fixtures['section']->getKey())
         ->and($employee->job_id)->toBe($fixtures['job']->getKey())
         ->and($employee->employment_type_id)->toBe($fixtures['employmentType']->getKey())
+        ->and($employee->nationality_id)->toBe($fixtures['nationality']->getKey())
+        ->and($employee->hiring_status_id)->toBe($fixtures['hiringStatus']->getKey())
+        ->and($employee->allowance_id)->toBe($fixtures['allowance']->getKey())
         ->and($employee->default_shift_id)->toBe($fixtures['shift']->getKey())
         ->and($employee->payroll_currency_id)->toBe($fixtures['currency']->getKey())
         ->and($employee->biometricMappings()->count())->toBe(1)
+        ->and($employee->attendance_tracking_enabled)->toBeTrue()
+        ->and($employee->allow_late_minutes)->toBe(10)
+        ->and($employee->allow_early_leave_minutes)->toBe(5)
+        ->and($employee->overtime_enabled)->toBeTrue()
+        ->and($employee->contract_start_date?->toDateString())->toBe('2026-01-01')
+        ->and($employee->contract_end_date?->toDateString())->toBe('2026-12-31')
+        ->and($employee->probation_end_date?->toDateString())->toBe('2026-03-31')
+        ->and($employee->basic_salary)->toBe('12000.00')
         ->and($employee->work_email)->toBe('nadia.ahmed@company.example.test')
-        ->and($employee->email)->toBe('nadia.ahmed@example.test');
+        ->and($employee->email)->toBe('nadia.ahmed@example.test')
+        ->and($employee->personal_email)->toBe('nadia.personal@example.test')
+        ->and($employee->notes)->toBe('Employee profile foundation only.');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.edit', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('value="'.$fixtures['nationality']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['hiringStatus']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['allowance']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['shift']->doc_num.'" selected', false)
+        ->assertSee('name="attendance_tracking_enabled" type="checkbox"', false)
+        ->assertSee('name="overtime_enabled" type="checkbox"', false)
+        ->assertSee('nadia.personal@example.test');
 
     $this->withSession($session)->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([
         'order' => [
@@ -923,6 +1285,14 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         'work_email' => 'another.work@company.example.test',
     ]))->assertUnprocessable();
 
+    $this->withSession($session)->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+        'full_name' => 'Duplicate National ID Employee',
+        'national_id' => '29104151234568',
+        'email' => 'unique.duplicate@example.test',
+        'work_email' => 'unique.duplicate@company.example.test',
+        'biometric_mappings' => [],
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['national_id']);
+
     $this->withSession($session)->postJson(route('admin.hr.employees.documents.store', $employee->doc_num), [
         'document_type_doc_num' => $fixtures['documentType']->doc_num,
         'document_type' => 'contract',
@@ -946,5 +1316,158 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ])->assertForbidden();
 
     $this->actingAs($actor)->withSession($session)->deleteJson(route('admin.hr.employees.destroy', $employee->doc_num))->assertOk();
-    $this->withSession($session)->patchJson(route('admin.hr.employees.restore', $employee->doc_num))->assertOk();
+    $this->withSession($session)->patchJson(route('admin.hr.employees.restore', $employee->public_uuid))->assertOk();
+});
+
+test('HrEmployee routes prefer the active company record and restore collisions remain explicit', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $payload = hrEmployeePayload($fixtures, [
+        'full_name' => 'Historical Employee',
+        'national_id' => '29104150000001',
+        'email' => 'historical.employee@example.test',
+        'work_email' => 'historical.employee@company.example.test',
+        'biometric_mappings' => [],
+        'doc_number' => 41,
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('data.doc_num', 'Emp-00041');
+    $historical = HrEmployee::query()->where('full_name', 'Historical Employee')->firstOrFail();
+    $activityCountBeforeNoOp = DB::table(config('activitylog.table_name', 'activity_log'))->count();
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $historical->doc_num), $payload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    expect(DB::table(config('activitylog.table_name', 'activity_log'))->count())->toBe($activityCountBeforeNoOp);
+
+    $this->withSession($session)
+        ->deleteJson(route('admin.hr.employees.destroy', $historical->doc_num))
+        ->assertOk();
+
+    $activePayload = hrEmployeePayload($fixtures, [
+        'full_name' => 'Active Employee',
+        'national_id' => '29104150000002',
+        'email' => 'active.employee@example.test',
+        'work_email' => 'active.employee@company.example.test',
+        'biometric_mappings' => [],
+        'doc_number' => 41,
+    ]);
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), $activePayload)
+        ->assertOk()
+        ->assertJsonPath('data.doc_num', 'Emp-00041');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.show', 'Emp-00041'))
+        ->assertOk()
+        ->assertSee('Active Employee')
+        ->assertDontSee('Historical Employee');
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.trashed.show', $historical->public_uuid))
+        ->assertOk()
+        ->assertSee('Historical Employee')
+        ->assertSee(route('admin.hr.employees.restore', $historical->public_uuid), false)
+        ->assertDontSee(route('admin.hr.employees.restore', $historical->doc_num), false)
+        ->assertDontSee('Active Employee');
+    $this->withSession($session)
+        ->patchJson(route('admin.hr.employees.restore', $historical->public_uuid))
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('hr.employees.messages.restore_conflict'));
+
+    expect($historical->refresh()->trashed())->toBeTrue();
+});
+
+test('HrEmployee list and branch validation are restricted to the operating company', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $foreignCompanyId = DB::table('companies')->insertGetId([
+        'doc_number' => 9981,
+        'doc_num' => 'Company-09981',
+        'name' => 'Foreign HR Company',
+        'status' => 'active',
+        'is_main' => 2,
+        'country' => 'Egypt',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $foreignCompany = Company::query()->findOrFail($foreignCompanyId);
+    $foreignBranch = Branch::query()->create([
+        'doc_number' => 9981,
+        'doc_num' => 'Branch-09981',
+        'company_id' => $foreignCompany->getKey(),
+        'name' => 'Foreign HR Branch',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $foreignDevice = HrBiometricDevice::query()->create([
+        'doc_number' => 9982,
+        'doc_num' => 'HBD-09982',
+        'company_id' => $foreignCompany->getKey(),
+        'branch_id' => $foreignBranch->getKey(),
+        'name' => 'Foreign Gate',
+        'device_uid' => 'FOREIGN-GATE',
+        'status' => 'active',
+    ]);
+    HrEmployee::query()->create([
+        'doc_number' => 9981,
+        'doc_num' => 'Emp-09981',
+        'company_id' => $foreignCompany->getKey(),
+        'branch_id' => $foreignBranch->getKey(),
+        'full_name' => 'Foreign Company Employee',
+        'name' => 'Foreign Company Employee',
+        'person_type' => 'fixed_employee',
+        'status' => 'active',
+    ]);
+
+    $data = $this->actingAs($actor)
+        ->withSession($session)
+        ->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery()))
+        ->assertOk()
+        ->json('data');
+
+    expect(json_encode($data, JSON_THROW_ON_ERROR))->not->toContain('Foreign Company Employee');
+
+    $deviceOptions = $this->withSession($session)
+        ->getJson(route('admin.hr.select2.foundation', 'biometric-devices').'?q=Gate')
+        ->assertOk()
+        ->json('results');
+
+    expect(json_encode($deviceOptions, JSON_THROW_ON_ERROR))
+        ->toContain($fixtures['device']->doc_num)
+        ->not->toContain($foreignDevice->doc_num);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Invalid Branch Employee',
+            'national_id' => '29104150000003',
+            'email' => 'invalid.branch@example.test',
+            'work_email' => 'invalid.branch@company.example.test',
+            'branch_doc_num' => $foreignBranch->doc_num,
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['branch_doc_num']);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Invalid Biometric Employee',
+            'national_id' => '29104150000004',
+            'email' => 'invalid.biometric@example.test',
+            'work_email' => 'invalid.biometric@company.example.test',
+            'biometric_mappings' => [[
+                'device_doc_num' => $foreignDevice->doc_num,
+                'biometric_code' => 'FOREIGN-001',
+                'is_active' => true,
+            ]],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['biometric_mappings.0.device_doc_num']);
 });

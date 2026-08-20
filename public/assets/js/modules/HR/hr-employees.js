@@ -237,6 +237,25 @@
         $form.data('original', currentFormData($form));
     }
 
+    function applyPersistedDocumentRowIds($form, response) {
+        const data = response && response.data ? response.data : {};
+        const rowIds = data.document_row_ids || {};
+
+        Object.keys(rowIds).forEach(function (index) {
+            const $row = $form.find('.js-hr-document-row[data-document-index="' + index + '"]').first();
+
+            if ($row.length === 0 || $row.find('[name$="[id]"]').length > 0) {
+                return;
+            }
+
+            $('<input>', {
+                type: 'hidden',
+                name: 'documents[' + index + '][id]',
+                value: rowIds[index]
+            }).prependTo($row.find('.card-body').first());
+        });
+    }
+
     function setSelect2Option($select, value, text, extraData) {
         if (!value) {
             $select.val(null).trigger('change');
@@ -429,19 +448,19 @@
             return;
         }
 
-        const dataTableOptions = window.AppDataTables && typeof window.AppDataTables.options === 'function'
-            ? window.AppDataTables.options
+        const dataTableOptions = window.AppDataTables && typeof window.AppDataTables.wideOptions === 'function'
+            ? window.AppDataTables.wideOptions
             : function (options) { return options; };
         const protectedColumns = [0, 1, -1];
-        const responsiveControlTarget = 1;
         const selectedDocNums = new Set();
         const rowCheckboxSelector = 'tbody tr:not(.child) input.js-record-select, tbody tr:not(.child) input.js-hr-employees-row-checkbox';
         const selectAllSelector = '#select_all_records';
         const trashFilterSelector = '#hr_employees_trash_filter';
+        const filterFormSelector = '.js-hr-employees-filters';
         const deletedColumnIndexes = [21, 22];
 
         function checkboxDocNum(checkbox) {
-            return String($(checkbox).data('doc-num') || checkbox.value || '').trim();
+            return String(checkbox.value || '').trim();
         }
 
         function pageCheckboxes(api) {
@@ -558,14 +577,17 @@
             ajax: {
                 url: $table.data('url'),
                 data: function (data) {
+                    $(filterFormSelector).serializeArray().forEach(function (field) {
+                        data[field.name] = field.value;
+                    });
+
                     data.trash_filter = trashFilterValue();
                 }
             },
-            responsive: { details: { type: 'inline', target: responsiveControlTarget } },
             order: [[1, 'desc']],
             columns: [
                 { data: 'checkbox', name: 'checkbox', orderable: false, searchable: false, className: 'dt-select no-colvis all align-middle text-center', responsivePriority: 1, width: '2.25rem' },
-                { data: 'doc_num', name: 'hr_employees.doc_number', className: 'dt-code no-colvis all align-middle white-space-nowrap fw-semi-bold dtr-control', responsivePriority: 2 },
+                { data: 'doc_num', name: 'hr_employees.doc_number', className: 'dt-code no-colvis all align-middle white-space-nowrap fw-semi-bold' },
                 { data: 'avatar', name: 'avatar', orderable: false, searchable: false, className: 'align-middle white-space-nowrap text-center', responsivePriority: 3 },
                 { data: 'full_name', name: 'hr_employees.full_name', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
                 { data: 'national_id', name: 'hr_employees.national_id', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
@@ -591,7 +613,7 @@
             ],
             columnDefs: [
                 { className: 'dt-select no-colvis all', orderable: false, responsivePriority: 1, searchable: false, targets: 0 },
-                { className: 'dt-code no-colvis all dtr-control', responsivePriority: 2, targets: 1 },
+                { className: 'dt-code no-colvis all', targets: 1 },
                 { className: 'dt-actions no-colvis all', orderable: false, responsivePriority: 3, searchable: false, targets: -1 },
                 { responsivePriority: 10, targets: [2, 3] },
                 { responsivePriority: 20, targets: [4, 5, 14] },
@@ -617,6 +639,27 @@
         }));
 
         $(trashFilterSelector).off('change.hrEmployeesTrashFilter').on('change.hrEmployeesTrashFilter', function () {
+            clearSelection(table);
+            toggleDeletedColumns(table);
+            reloadTable();
+        });
+
+        $(filterFormSelector).off('submit.hrEmployeesFilters').on('submit.hrEmployeesFilters', function (event) {
+            event.preventDefault();
+            clearSelection(table);
+            reloadTable();
+        });
+
+        $('.js-hr-employees-filter-clear').off('click.hrEmployeesFilters').on('click.hrEmployeesFilters', function () {
+            const $form = $(this).closest(filterFormSelector);
+
+            if ($form.length === 0) {
+                return;
+            }
+
+            $form.get(0).reset();
+            $form.find('.js-select2-ajax').val(null).trigger('change.select2');
+            $(trashFilterSelector).val('active');
             clearSelection(table);
             toggleDeletedColumns(table);
             reloadTable();
@@ -731,7 +774,7 @@
                     $.ajax({
                         url: $table.data('bulk-restore-url'),
                         method: 'PATCH',
-                        data: { doc_nums: docNums },
+                        data: { public_uuids: docNums },
                         headers: headers()
                     }).done(function (response) {
                         clearSelection(table);
@@ -910,6 +953,7 @@
                 }
 
                 updateUrlsAfterDocNumberChange($form, response);
+                applyPersistedDocumentRowIds($form, response);
                 showToast('success', response.message);
 
                 if (response && response.reset_form) {
@@ -963,6 +1007,7 @@
         $('.js-hr-employees-form').each(function () {
             applyMainCurrencyExchangeRate($(this));
             updatePayAmountFields($(this), false);
+            updateOriginalFormData($(this));
         });
     }
 
@@ -1030,7 +1075,7 @@
 
                     if (row) {
                         $('.js-hr-employee-documents-empty').remove();
-                        $('.js-hr-employee-documents-table tbody').prepend(row);
+                        $('.js-hr-employee-documents-list').prepend(row);
                     }
 
                     $form[0].reset();
@@ -1053,7 +1098,7 @@
             .off('click.hrEmployeeDocumentDelete', '[data-hr-employee-document-delete-url]')
             .on('click.hrEmployeeDocumentDelete', '[data-hr-employee-document-delete-url]', function () {
                 const $button = $(this);
-                const $row = $button.closest('tr');
+                const $row = $button.closest('.js-hr-employee-document-card');
 
                 confirmDialog({
                     title: messages.documentDeleteConfirmTitle,
@@ -1073,8 +1118,8 @@
                     }).done(function (response) {
                         $row.remove();
 
-                        if ($('.js-hr-employee-documents-table tbody tr').length === 0) {
-                            $('.js-hr-employee-documents-table tbody').append('<tr class="js-hr-employee-documents-empty"><td colspan="9" class="text-center text-600 py-4">' + (messages.emptyDocuments || '') + '</td></tr>');
+                        if ($('.js-hr-employee-documents-list .js-hr-employee-document-card').length === 0) {
+                            $('.js-hr-employee-documents-list').append('<div class="border rounded-2 py-4 text-center text-600 js-hr-employee-documents-empty">' + (messages.emptyDocuments || '') + '</div>');
                         }
 
                         showToast('success', response.message);
@@ -1263,8 +1308,8 @@
             .on('file-picker:deleted.hrEmployeePhoto', '.js-product-image-picker-trigger', function (event, payload) {
                 handleEmployeePhotoDeleted(payload);
             })
-            .off('click.hrEmployeePhotoClear', '.js-product-image-remove')
-            .on('click.hrEmployeePhotoClear', '.js-product-image-remove', function (event) {
+            .off('click.hrEmployeePhotoClear', '#hr-employee-photo-picker-field .js-product-image-remove')
+            .on('click.hrEmployeePhotoClear', '#hr-employee-photo-picker-field .js-product-image-remove', function (event) {
                 event.preventDefault();
                 event.stopPropagation();
 
@@ -1299,12 +1344,21 @@
                 const $row = $(this).closest('.js-hr-document-row');
 
                 if ($row.length > 0) {
-                    $row.find('.js-hr-document-file-display').val(file.name || '');
+                    const fileName = file.name || file.original_name || '';
+
+                    $row.find('.js-hr-document-file-display').val(fileName);
                     $row.find('.js-hr-document-file-input, .js-hr-document-file-display').removeClass('is-invalid');
                     $row.find('[data-error-for$=".archive_file_doc_num"]').text('');
+                    $row.find('.js-hr-document-file-clear').removeClass('d-none');
+                    $row.find('.js-hr-document-existing-actions').addClass('d-none');
+                    $row.find('.js-hr-document-file-picker-label').text(messages.replaceDocumentFile || '');
 
                     if (!$row.find('[name$="[file_label]"]').val()) {
-                        $row.find('[name$="[file_label]"]').val(file.name || '');
+                        $row.find('[name$="[file_label]"]').val(fileName);
+                    }
+
+                    if (!$row.find('[name$="[title]"]').val()) {
+                        $row.find('[name$="[title]"]').val(fileName);
                     }
 
                     return;
@@ -1317,6 +1371,16 @@
                 if (!$form.find('[name="title"]').val()) {
                     $form.find('[name="title"]').val(file.name || '');
                 }
+            })
+            .off('click.hrEmployeeDocumentFileClear', '.js-hr-document-file-clear')
+            .on('click.hrEmployeeDocumentFileClear', '.js-hr-document-file-clear', function () {
+                const $row = $(this).closest('.js-hr-document-row');
+
+                $row.find('.js-hr-document-file-input').val('').trigger('change');
+                $row.find('.js-hr-document-file-display').val('');
+                $row.find('.js-hr-document-existing-actions').addClass('d-none');
+                $row.find('.js-hr-document-file-picker-label').text(messages.selectDocumentFile || '');
+                $(this).addClass('d-none');
             });
     }
 
@@ -1326,8 +1390,19 @@
         $rows.find('.js-hr-document-empty').remove();
 
         if ($visibleRows.length === 0) {
-            $rows.append('<tr class="js-hr-document-empty"><td colspan="8" class="text-center text-600 py-4">' + (messages.emptyDocuments || '') + '</td></tr>');
+            $rows.append('<div class="border rounded-2 py-4 text-center text-600 js-hr-document-empty">' + (messages.emptyDocuments || '') + '</div>');
         }
+    }
+
+    function updateDocumentSequences($rows) {
+        let sequence = 0;
+
+        $rows.find('.js-hr-document-row').not('.d-none').each(function () {
+            sequence += 1;
+            $(this).find('.js-hr-document-sequence').first().text(
+                String(messages.documentItemTitle || '').replace(':number', sequence)
+            );
+        });
     }
 
     function initDocumentRows() {
@@ -1350,6 +1425,7 @@
                 $rows.data('next-index', index + 1);
                 initDynamicSelect2($row.get(0));
                 initDynamicDatePickers($row.get(0));
+                updateDocumentSequences($rows);
             })
             .off('click.hrDocumentRemove', '.js-hr-document-remove')
             .on('click.hrDocumentRemove', '.js-hr-document-remove', function () {
@@ -1362,11 +1438,91 @@
                     $row.find('input, select, textarea').not('[name$="[id]"], .js-hr-document-delete-flag').prop('disabled', true);
                     $row.addClass('d-none');
                     updateDocumentEmptyState($rows);
+                    updateDocumentSequences($rows);
                     return;
                 }
 
                 $row.remove();
                 updateDocumentEmptyState($rows);
+                updateDocumentSequences($rows);
+            });
+    }
+
+    function initDocumentDatePickerSpacing() {
+        $(document)
+            .off('app:date-picker-open.hrEmployeeDocument', '.js-hr-document-row .js-date-picker')
+            .on('app:date-picker-open.hrEmployeeDocument', '.js-hr-document-row .js-date-picker', function (event) {
+                const $row = $(this).closest('.js-hr-document-row');
+                const $previousRow = $row.prevAll('.js-hr-document-row').not('.d-none').first();
+                const $nextRow = $row.nextAll('.js-hr-document-row').not('.d-none').first();
+                const nativeEvent = event.originalEvent || event;
+                const instance = nativeEvent.detail ? nativeEvent.detail.instance : null;
+                const calendar = instance ? instance.calendarContainer : null;
+
+                $row
+                    .removeClass('hr-document-calendar-open hr-document-calendar-open-above')
+                    .css({
+                        '--hr-document-calendar-clearance': '',
+                        '--hr-document-calendar-clearance-above': ''
+                    });
+
+                if (!calendar) {
+                    return;
+                }
+
+                const reserveOverlapSpace = function () {
+                    if (!instance.isOpen) {
+                        return;
+                    }
+
+                    const calendarRect = calendar.getBoundingClientRect();
+
+                    if ($previousRow.length > 0) {
+                        const overlapAbove = $previousRow.get(0).getBoundingClientRect().bottom - calendarRect.top;
+
+                        if (overlapAbove > 0) {
+                            const currentClearanceAbove = Number.parseFloat($row.css('--hr-document-calendar-clearance-above')) || 0;
+
+                            $row
+                                .css('--hr-document-calendar-clearance-above', Math.ceil(currentClearanceAbove + overlapAbove + 16) + 'px')
+                                .addClass('hr-document-calendar-open-above');
+
+                            if (typeof instance._positionCalendar === 'function') {
+                                instance._positionCalendar();
+                            }
+
+                            return;
+                        }
+                    }
+
+                    if ($nextRow.length === 0) {
+                        return;
+                    }
+
+                    const overlap = calendarRect.bottom - $nextRow.get(0).getBoundingClientRect().top;
+
+                    if (overlap <= 0) {
+                        return;
+                    }
+
+                    const currentClearance = Number.parseFloat($row.css('--hr-document-calendar-clearance')) || 0;
+
+                    $row
+                        .css('--hr-document-calendar-clearance', Math.ceil(currentClearance + overlap + 16) + 'px')
+                        .addClass('hr-document-calendar-open');
+                };
+
+                window.requestAnimationFrame(reserveOverlapSpace);
+                window.setTimeout(reserveOverlapSpace, 350);
+            })
+            .off('app:date-picker-close.hrEmployeeDocument', '.js-hr-document-row .js-date-picker')
+            .on('app:date-picker-close.hrEmployeeDocument', '.js-hr-document-row .js-date-picker', function () {
+                $(this).closest('.js-hr-document-row')
+                    .removeClass('hr-document-calendar-open hr-document-calendar-open-above')
+                    .css({
+                        '--hr-document-calendar-clearance': '',
+                        '--hr-document-calendar-clearance-above': ''
+                    });
             });
     }
 
@@ -1376,7 +1532,7 @@
         $rows.find('.js-hr-biometric-empty').remove();
 
         if ($visibleRows.length === 0) {
-            $rows.append('<div class="text-center text-600 py-3 js-hr-biometric-empty">' + (messages.emptyBiometric || '') + '</div>');
+            $rows.append('<tr class="js-hr-biometric-empty"><td colspan="5" class="text-center text-600 py-4">' + (messages.emptyBiometric || '') + '</td></tr>');
         }
     }
 
@@ -1428,6 +1584,7 @@
     initDocumentForm();
     initFilePickerIntegrations();
     initDocumentRows();
+    initDocumentDatePickerSpacing();
     initBiometricRows();
 
     $(window).on('pageshow', function (e) {

@@ -52,6 +52,90 @@
         </div>
     @endcan
 
+    <div class="card mb-3 hr-employees-filter-card">
+        <div class="card-header py-2">
+            <button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center justify-content-between"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#hr-employees-filters"
+                aria-expanded="true"
+                aria-controls="hr-employees-filters">
+                <span class="fw-semibold"><span class="fas fa-filter me-1"></span>{{ __('hr.employees.filters.title') }}</span>
+                <span class="fas fa-chevron-down fs-11"></span>
+            </button>
+        </div>
+        <div class="collapse show" id="hr-employees-filters">
+            <div class="card-body">
+                <form class="js-hr-employees-filters" novalidate>
+                    <div class="row g-3 align-items-end">
+                        @foreach ($filterSelects as $fieldName => $option)
+                            <div class="col-md-6 col-xl-4">
+                                <label class="form-label" for="hr-employees-filter-{{ str_replace('_', '-', $fieldName) }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
+                                <select id="hr-employees-filter-{{ str_replace('_', '-', $fieldName) }}"
+                                    name="{{ $fieldName }}"
+                                    class="form-select js-select2-ajax js-hr-employees-filter"
+                                    data-url="{{ $option['url'] ?? '' }}"
+                                    data-placeholder="{{ __('hr.employees.placeholders.' . $fieldName) }}"
+                                    data-allow-clear="true"></select>
+                            </div>
+                        @endforeach
+
+                        <div class="col-md-6 col-xl-3">
+                            <label class="form-label" for="hr-employees-filter-person-type">{{ __('hr.employees.attributes.person_type') }}</label>
+                            <select id="hr-employees-filter-person-type" name="person_type" class="form-select js-hr-employees-filter">
+                                <option value="">{{ __('hr.employees.filters.all') }}</option>
+                                @foreach (['fixed_employee', 'regular_labor', 'casual_labor'] as $personType)
+                                    <option value="{{ $personType }}">{{ __('hr.employees.person_types.' . $personType) }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        <div class="col-md-6 col-xl-3">
+                            <label class="form-label" for="hr-employees-filter-status">{{ __('common.fields.status') }}</label>
+                            <select id="hr-employees-filter-status" name="status" class="form-select js-hr-employees-filter">
+                                <option value="">{{ __('hr.employees.filters.all') }}</option>
+                                @foreach (['active', 'inactive', 'suspended', 'stopped', 'left'] as $status)
+                                    <option value="{{ $status }}">{{ __('hr.employees.statuses.' . $status) }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        <div class="col-md-6 col-xl-3">
+                            <label class="form-label" for="hr-employees-filter-hire-from">{{ __('hr.employees.filters.hire_from') }}</label>
+                            <input id="hr-employees-filter-hire-from" name="hire_from" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}">
+                        </div>
+
+                        <div class="col-md-6 col-xl-3">
+                            <label class="form-label" for="hr-employees-filter-hire-to">{{ __('hr.employees.filters.hire_to') }}</label>
+                            <input id="hr-employees-filter-hire-to" name="hire_to" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}">
+                        </div>
+
+                        @can('hr.employees.view_trashed')
+                            <div class="col-md-6 col-xl-3">
+                                <label class="form-label" for="hr_employees_trash_filter">{{ __('hr.trash.filter_label') }}</label>
+                                <select class="form-select js-hr-employees-filter" id="hr_employees_trash_filter" name="trash_filter">
+                                    <option value="active">{{ __('hr.trash.active') }}</option>
+                                    <option value="inactive">{{ __('hr.trash.inactive') }}</option>
+                                    <option value="trashed">{{ __('hr.trash.trashed') }}</option>
+                                    <option value="all">{{ __('hr.trash.all') }}</option>
+                                </select>
+                            </div>
+                        @endcan
+
+                        <div class="col-12 d-flex flex-wrap gap-2 justify-content-end">
+                            <button type="button" class="btn btn-falcon-default js-hr-employees-filter-clear">
+                                <span class="fas fa-eraser me-1"></span>{{ __('common.actions.clear') }}
+                            </button>
+                            <button type="submit" class="btn btn-falcon-primary">
+                                <span class="fas fa-filter me-1"></span>{{ __('common.actions.apply') }}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="card erp-datatable-card hr-employees-datatable-card">
         <div class="card-header">
             <div class="row flex-between-center">
@@ -59,18 +143,7 @@
                     <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ __('hr.employees.title') }}</h5>
                 </div>
                 <div class="col-6 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2 hr-employees-toolbar-actions">
-                    @can('hr.employees.view_trashed')
-                        <div class="d-flex align-items-center gap-2">
-                            <label class="form-label mb-0 text-700 fs-10" for="hr_employees_trash_filter">{{ __('hr.trash.filter_label') }}</label>
-                            <select class="form-select form-select-sm w-auto" id="hr_employees_trash_filter" aria-label="{{ __('hr.trash.filter_label') }}">
-                                <option value="active">{{ __('hr.trash.active') }}</option>
-                                <option value="inactive">{{ __('hr.trash.inactive') }}</option>
-                                <option value="trashed">{{ __('hr.trash.trashed') }}</option>
-                                <option value="all">{{ __('hr.trash.all') }}</option>
-                            </select>
-                        </div>
-                    @endcan
-                    @can('hr.employees.delete')
+                    @if (auth()->user()?->can('hr.employees.delete') || auth()->user()?->can('hr.employees.restore') || auth()->user()?->can('hr.employees.edit'))
                         <div class="d-none align-items-center gap-2 hr-employees-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
                             <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('hr.bulk_action') }}">
@@ -89,7 +162,7 @@
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
                         </div>
-                    @endcan
+                    @endif
                     <x-buttons.add-record :href="route('admin.hr.employees.create')" permission="hr.employees.create" />
                 </div>
             </div>
@@ -98,7 +171,7 @@
             <div class="falcon-data-table">
                 <div class="erp-datatable-wrapper">
                     <div class="erp-datatable-scroll">
-                        <table class="table table-sm table-hover mb-0 data-table erp-datatable align-middle js-hr-employees-table" id="hr-employees-table"
+                        <table class="table table-sm table-hover mb-0 data-table erp-datatable erp-datatable-wide erp-datatable-sticky-columns align-middle js-hr-employees-table" id="hr-employees-table"
                             data-url="{{ route('admin.hr.employees.data') }}"
                             data-bulk-delete-url="{{ route('admin.hr.employees.bulk-delete') }}"
                             data-bulk-restore-url="{{ route('admin.hr.employees.bulk-restore') }}"

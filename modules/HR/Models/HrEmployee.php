@@ -8,10 +8,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
+use Modules\Core\Services\OperatingCompanyContextService;
 
 class HrEmployee extends Model
 {
@@ -117,6 +119,13 @@ class HrEmployee extends Model
         'status' => 'active',
     ];
 
+    protected static function booted(): void
+    {
+        static::creating(function (self $employee): void {
+            $employee->public_uuid ??= (string) Str::uuid();
+        });
+    }
+
     /**
      * @return array<string, string>
      */
@@ -152,6 +161,16 @@ class HrEmployee extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function resolveRouteBinding(mixed $value, mixed $field = null): ?self
+    {
+        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+        $query = $this->newQuery()->where($field ?? $this->getRouteKeyName(), $value);
+
+        return $companyId === null
+            ? $query->whereRaw('1 = 0')->first()
+            : $query->where($this->getTable().'.company_id', $companyId)->first();
     }
 
     /**

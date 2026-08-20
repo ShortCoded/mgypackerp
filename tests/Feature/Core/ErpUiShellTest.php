@@ -301,16 +301,30 @@ test('expanded screen breadcrumbs follow the accounting and costing domain hiera
         ->and($breadcrumbs[array_key_last($breadcrumbs)]['url'])->toBeNull();
 });
 
-test('navigation styling uses one Falcon token based color system', function (): void {
+test('navigation styling provides readable interactive nested menus in both directions', function (): void {
     $dropdownTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-dropdown-items.blade.php'));
+    $topTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-items.blade.php'));
     $navigationStyles = file_get_contents(public_path('assets/css/user.css'));
 
     expect($dropdownTemplate)->not->toContain('link-600')
+        ->and($dropdownTemplate)->toContain(
+            'erp-top-nav-branch',
+            'erp-top-nav-item',
+            'erp-top-nav-submenu',
+            'data-bs-display="static"',
+            'aria-current="page"',
+        )
+        ->and($topTemplate)->toContain('erp-top-nav-menu', 'erp-top-nav-panel')
         ->and($navigationStyles)->toContain(
-            '--erp-navigation-link-color: var(--falcon-navbar-color)',
-            '--erp-navigation-submenu-color: var(--falcon-dropdown-link-color)',
+            '--erp-navigation-link-color: var(--falcon-gray-700)',
+            '--erp-navigation-submenu-color: var(--falcon-gray-800)',
             'color: var(--erp-navigation-submenu-color)',
-            '--erp-navigation-submenu-active-color: var(--falcon-dropdown-link-active-color)',
+            '--erp-navigation-submenu-active-bg: rgba(var(--falcon-primary-rgb), .12)',
+            '.erp-top-nav-item:focus-visible',
+            '.erp-top-nav-item[aria-disabled="true"]',
+            'html[dir="ltr"] .navbar-top',
+            'html[dir="rtl"] .navbar-top',
+            '@media (max-width: 991.98px)',
             '#navbarVerticalNav .nav-link.dropdown-indicator::after',
         );
 });

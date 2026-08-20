@@ -32,10 +32,11 @@ class StoreFilePickerUploadRequest extends FormRequest
         $imageExtensions = implode(',', config('archive.logo.allowed_extensions', ['jpg', 'jpeg', 'png', 'webp']));
         $imageMimeTypes = implode(',', config('archive.logo.allowed_mime_types', ['image/jpeg', 'image/png', 'image/webp']));
         $documentExtensions = implode(',', config('archive.documents.allowed_extensions', config('archive.allowed_extensions', [])));
+        $documentMimeTypes = implode(',', config('archive.documents.allowed_mime_types', []));
         $imageMaxFileSize = (int) config('archive.logo.max_file_size_kib', 2048);
         $documentMaxFileSize = (int) config('archive.uploads.max_file_size_kib', 51200);
         $fileRules = $accept === FilePickerService::AcceptDocument
-            ? ['required', 'file', "extensions:{$documentExtensions}", "max:{$documentMaxFileSize}"]
+            ? ['required', 'file', "mimetypes:{$documentMimeTypes}", "extensions:{$documentExtensions}", "max:{$documentMaxFileSize}"]
             : ['required', 'file', 'image:allow_svg', "mimetypes:{$imageMimeTypes}", "mimes:{$imageExtensions}", "extensions:{$imageExtensions}", "max:{$imageMaxFileSize}"];
 
         return [
@@ -97,7 +98,9 @@ class StoreFilePickerUploadRequest extends FormRequest
         return [
             'file.required' => $isDocument ? __('archive.validation.files_required') : __('archive.picker.image_required'),
             'file.image' => __('archive.picker.selected_file_not_image'),
-            'file.mimetypes' => __('archive.picker.selected_file_not_image'),
+            'file.mimetypes' => $isDocument
+                ? __('archive.invalid_file_type')
+                : __('archive.picker.selected_file_not_image'),
             'file.mimes' => __('archive.picker.selected_file_not_image'),
             'file.extensions' => $isDocument
                 ? __('archive.invalid_file_type')

@@ -14,9 +14,10 @@
     };
     $dateFormatService = app(DateFormatService::class);
     $employeeName = $isClone && $employee ? __('hr.defaults.clone_name', ['name' => $employee->full_name]) : $employee?->full_name;
-    $cloneBlankFields = ['national_id', 'email', 'work_email'];
+    $cloneBlankFields = ['employee_code', 'national_id', 'email', 'work_email'];
     $dateFields = ['birth_date', 'hire_date', 'start_date', 'end_date', 'national_id_expiry_date', 'passport_expiry_date', 'probation_end_date', 'contract_start_date', 'contract_end_date', 'termination_date'];
-    $select2FieldNames = array_values(array_diff(array_keys($selectFields), ['default_shift_doc_num']));
+    $select2FieldNames = array_keys($selectFields);
+    $booleanFields = ['attendance_tracking_enabled', 'overtime_enabled'];
     $personTypeOptions = ['fixed_employee', 'regular_labor', 'casual_labor'];
     $statusOptions = ['active', 'inactive', 'suspended', 'stopped', 'left'];
     $payBasisOptions = ['monthly_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'];
@@ -71,6 +72,7 @@
     $showsDocumentNumberColumn = $canControlDocumentNumber || (($isEdit || $isView) && ! $canControlDocumentNumber);
     $trackedFields = [
         'doc_number',
+        'employee_code',
         'full_name',
         'person_type',
         'status',
@@ -80,6 +82,7 @@
         'national_id',
         'work_email',
         'email',
+        'personal_email',
         'phone',
         'mobile',
         'alternate_phone',
@@ -89,7 +92,14 @@
         'hire_date',
         'start_date',
         'end_date',
+        'contract_start_date',
+        'contract_end_date',
+        'probation_end_date',
+        'attendance_tracking_enabled',
         'attendance_policy_type',
+        'allow_late_minutes',
+        'allow_early_leave_minutes',
+        'overtime_enabled',
         'pay_basis',
         'exchange_rate',
         'basic_salary',
@@ -108,6 +118,7 @@
             $trackedField === 'doc_number' => $canControlDocumentNumber ? (($isEdit || $isView) ? $employee?->doc_number : '') : null,
             in_array($trackedField, $dateFields, true) => $dateValue($trackedField),
             in_array($trackedField, $select2FieldNames, true) => $selectValue($trackedField),
+            in_array($trackedField, $booleanFields, true) => $fieldValue($trackedField) ? '1' : '0',
             default => (string) $fieldValue($trackedField),
         };
     }
@@ -115,69 +126,6 @@
 @endphp
 
 @section('title', $title)
-
-@push('styles')
-    <style>
-        .hr-select2-inline-control {
-            display: flex;
-            gap: .375rem;
-            align-items: stretch;
-        }
-
-        .hr-select2-inline-control .select2-container {
-            flex: 1 1 auto;
-            width: 100% !important;
-        }
-
-        .hr-select2-inline-control .js-inline-lookup-create {
-            flex: 0 0 auto;
-            width: 2.25rem;
-            padding-inline: .5rem;
-        }
-
-        .hr-document-table th,
-        .hr-document-table td {
-            vertical-align: top;
-        }
-
-        .hr-document-table .form-control,
-        .hr-document-table .form-select {
-            min-width: 9rem;
-        }
-
-        .hr-document-table .hr-document-file-control {
-            min-width: 13rem;
-        }
-
-        .hr-employee-form-card .select2-container {
-            width: 100% !important;
-        }
-
-        .hr-employee-form-card .product-image-field .product-image-picker-panel {
-            min-height: 8.5rem;
-        }
-
-        .hr-employee-form-card .product-image-preview-frame {
-            width: 8rem !important;
-            height: 8rem !important;
-            min-width: 8rem !important;
-            aspect-ratio: 1 / 1;
-        }
-
-        .hr-employee-form-card .js-hr-pay-amount-input {
-            text-align: center;
-        }
-
-        .hr-employee-form-card .product-image-preview-frame .js-product-image-preview-image {
-            display: block;
-            width: 100%;
-            height: 100%;
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-    </style>
-@endpush
 
 @section('content')
     <form id="hr-employee-form"
@@ -243,6 +191,16 @@
                                 </div>
                             @endif
 
+                            <div class="col-md-4 col-xl-3">
+                                <label class="form-label" for="hr-employee-employee-code">{{ __('hr.employees.attributes.employee_code') }}</label>
+                                @if ($isView)
+                                    <x-forms.view-field for="hr-employee-employee-code" :value="$fieldValue('employee_code')" />
+                                @else
+                                    <input id="hr-employee-employee-code" name="employee_code" type="text" class="form-control" value="{{ $fieldValue('employee_code') }}">
+                                @endif
+                                <div class="invalid-feedback" data-error-for="employee_code"></div>
+                            </div>
+
                             <div class="{{ $showsDocumentNumberColumn ? 'col-md-5 col-xl-4' : 'col-md-6 col-xl-5' }}">
                                 <x-forms.label for="hr-employee-full-name" :label="__('hr.employees.attributes.full_name')" required />
                                 @if ($isView)
@@ -297,6 +255,27 @@
                                     </select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="gender"></div>
+                            </div>
+
+                            @php
+                                $fieldName = 'nationality_doc_num';
+                                $option = $selectOption($fieldName) ?? [];
+                            @endphp
+                            <div class="col-md-4 col-xl-3">
+                                @include('modules.hr.partials.inline-select2-field', [
+                                    'isView' => $isView,
+                                    'inputId' => 'hr-employee-nationality-doc-num',
+                                    'fieldName' => $fieldName,
+                                    'fieldLabel' => __('hr.employees.attributes.' . $fieldName),
+                                    'placeholder' => __('hr.employees.placeholders.' . $fieldName),
+                                    'selectedValue' => $selectValue($fieldName),
+                                    'selectedText' => (string) ($option['text'] ?? ''),
+                                    'dataUrl' => (string) ($option['url'] ?? ''),
+                                    'canCreate' => (bool) ($option['can_create'] ?? false),
+                                    'createUrl' => $option['create_url'] ?? null,
+                                    'inlineUrl' => null,
+                                    'required' => false,
+                                ])
                             </div>
 
                             <div class="col-md-4 col-xl-3">
@@ -507,6 +486,16 @@
                                 <div class="invalid-feedback" data-error-for="email"></div>
                             </div>
 
+                            <div class="col-md-4 col-xl-3">
+                                <label class="form-label" for="hr-employee-personal-email">{{ __('hr.employees.attributes.personal_email') }}</label>
+                                @if ($isView)
+                                    <x-forms.view-field for="hr-employee-personal-email" :value="$fieldValue('personal_email')" />
+                                @else
+                                    <input id="hr-employee-personal-email" name="personal_email" type="email" class="form-control" value="{{ $fieldValue('personal_email') }}">
+                                @endif
+                                <div class="invalid-feedback" data-error-for="personal_email"></div>
+                            </div>
+
                             <div class="col-md-6 col-xl">
                                 <label class="form-label" for="hr-employee-emergency-contact-name">{{ __('hr.employees.attributes.emergency_contact_name') }}</label>
                                 @if ($isView)
@@ -541,7 +530,7 @@
 
                     <div class="tab-pane fade" id="pane-work-info" role="tabpanel" aria-labelledby="tab-work-info">
                         <div class="row g-3 align-items-start">
-                            @foreach (['branch_doc_num', 'department_doc_num', 'section_doc_num', 'job_doc_num', 'employment_type_doc_num'] as $fieldName)
+                            @foreach (['branch_doc_num', 'department_doc_num', 'section_doc_num', 'job_doc_num', 'employment_type_doc_num', 'hiring_status_doc_num'] as $fieldName)
                                 @php
                                     $option = $selectOption($fieldName) ?? [];
                                     $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName);
@@ -564,7 +553,8 @@
                                 </div>
                             @endforeach
 
-                            @foreach (['hire_date', 'start_date', 'end_date'] as $fieldName)
+                            {{-- @foreach (['hire_date', 'start_date', 'end_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName) --}}
+                            @foreach (['hire_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName)
                                 @php $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName); @endphp
                                 <div class="col-md-6 col-xl-3">
                                     <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
@@ -591,6 +581,20 @@
 
                     <div class="tab-pane fade" id="pane-attendance-biometric" role="tabpanel" aria-labelledby="tab-attendance-biometric">
                         <div class="row g-3 align-items-start">
+                            @php $attendanceTrackingEnabled = (bool) old('attendance_tracking_enabled', $employee?->attendance_tracking_enabled ?? false); @endphp
+                            <div class="col-md-6 col-xl-3">
+                                <label class="form-label d-block" for="hr-employee-attendance-tracking-enabled">{{ __('hr.employees.attributes.attendance_tracking_enabled') }}</label>
+                                @if ($isView)
+                                    <x-forms.view-field for="hr-employee-attendance-tracking-enabled" :value="__('hr.employees.booleans.' . ($attendanceTrackingEnabled ? 'yes' : 'no'))" />
+                                @else
+                                    <input type="hidden" name="attendance_tracking_enabled" value="0">
+                                    <div class="form-check form-switch pt-2">
+                                        <input id="hr-employee-attendance-tracking-enabled" name="attendance_tracking_enabled" type="checkbox" class="form-check-input" value="1" @checked($attendanceTrackingEnabled)>
+                                    </div>
+                                @endif
+                                <div class="invalid-feedback" data-error-for="attendance_tracking_enabled"></div>
+                            </div>
+
                             <div class="col-md-6 col-xl-4">
                                 @php $attendancePolicyValue = (string) old('attendance_policy_type', $fieldValue('attendance_policy_type')); @endphp
                                 @if ($isView)
@@ -605,6 +609,53 @@
                                     </select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="attendance_policy_type"></div>
+                            </div>
+
+                            @php
+                                $fieldName = 'default_shift_doc_num';
+                                $option = $selectOption($fieldName) ?? [];
+                            @endphp
+                            <div class="col-md-6 col-xl-3">
+                                @include('modules.hr.partials.inline-select2-field', [
+                                    'isView' => $isView,
+                                    'inputId' => 'hr-employee-default-shift-doc-num',
+                                    'fieldName' => $fieldName,
+                                    'fieldLabel' => __('hr.employees.attributes.' . $fieldName),
+                                    'placeholder' => __('hr.employees.placeholders.' . $fieldName),
+                                    'selectedValue' => $selectValue($fieldName),
+                                    'selectedText' => (string) ($option['text'] ?? ''),
+                                    'dataUrl' => (string) ($option['url'] ?? ''),
+                                    'canCreate' => false,
+                                    'inlineUrl' => null,
+                                    'required' => false,
+                                ])
+                            </div>
+
+                            @foreach (['allow_late_minutes', 'allow_early_leave_minutes'] as $fieldName)
+                                @php $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName); @endphp
+                                <div class="col-md-6 col-xl-3">
+                                    <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
+                                    @if ($isView)
+                                        <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" numeric dir="ltr" />
+                                    @else
+                                        <input id="{{ $inputId }}" name="{{ $fieldName }}" type="number" min="0" step="1" class="form-control text-center" value="{{ $fieldValue($fieldName, 0) }}">
+                                    @endif
+                                    <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
+                                </div>
+                            @endforeach
+
+                            @php $overtimeEnabled = (bool) old('overtime_enabled', $employee?->overtime_enabled ?? false); @endphp
+                            <div class="col-md-6 col-xl-3">
+                                <label class="form-label d-block" for="hr-employee-overtime-enabled">{{ __('hr.employees.attributes.overtime_enabled') }}</label>
+                                @if ($isView)
+                                    <x-forms.view-field for="hr-employee-overtime-enabled" :value="__('hr.employees.booleans.' . ($overtimeEnabled ? 'yes' : 'no'))" />
+                                @else
+                                    <input type="hidden" name="overtime_enabled" value="0">
+                                    <div class="form-check form-switch pt-2">
+                                        <input id="hr-employee-overtime-enabled" name="overtime_enabled" type="checkbox" class="form-check-input" value="1" @checked($overtimeEnabled)>
+                                    </div>
+                                @endif
+                                <div class="invalid-feedback" data-error-for="overtime_enabled"></div>
                             </div>
                         </div>
 
@@ -836,211 +887,73 @@
                                 @endif
                                 <div class="invalid-feedback" data-error-for="payment_method"></div>
                             </div>
+
+                            @php
+                                $fieldName = 'allowance_doc_num';
+                                $option = $selectOption($fieldName) ?? [];
+                            @endphp
+                            <div class="col-md-6 col-xl">
+                                @include('modules.hr.partials.inline-select2-field', [
+                                    'isView' => $isView,
+                                    'inputId' => 'hr-employee-allowance-doc-num',
+                                    'fieldName' => $fieldName,
+                                    'fieldLabel' => __('hr.employees.attributes.' . $fieldName),
+                                    'placeholder' => __('hr.employees.placeholders.' . $fieldName),
+                                    'selectedValue' => $selectValue($fieldName),
+                                    'selectedText' => (string) ($option['text'] ?? ''),
+                                    'dataUrl' => (string) ($option['url'] ?? ''),
+                                    'canCreate' => (bool) ($option['can_create'] ?? false),
+                                    'createUrl' => $option['create_url'] ?? null,
+                                    'inlineUrl' => null,
+                                    'required' => false,
+                                ])
+                            </div>
                         </div>
                     </div>
 
                     <div class="tab-pane fade" id="pane-documents" role="tabpanel" aria-labelledby="tab-documents">
-                        @if ($isView)
-                            <div class="table-responsive scrollbar">
-                                <table class="table mb-0 align-middle table-sm js-hr-employee-documents-table">
-                                    <thead class="bg-100 text-900">
-                                        <tr>
-                                            <th>{{ __('hr.employees.documents.attributes.document_type') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.original_name') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.file_label') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.issue_date') }}</th>
-                                            <th>{{ __('common.fields.file_size') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.expires_at') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.alert_before_expiry_days') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.notes') }}</th>
-                                            <th class="text-end">{{ __('common.fields.actions') }}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @forelse ($documentRows as $document)
-                                            @include('modules.hr.employees.partials.document-row', ['document' => $document, 'employee' => $employee, 'isView' => $isView])
-                                        @empty
-                                            <tr class="js-hr-employee-documents-empty">
-                                                <td colspan="9" class="py-4 text-center text-600">{{ __('hr.employees.documents.messages.empty') }}</td>
-                                            </tr>
-                                        @endforelse
-                                    </tbody>
-                                </table>
+                        @if (($isView || ! $canManageDocuments) && $canViewDocuments)
+                            <div class="vstack gap-3 js-hr-employee-documents-list">
+                                @forelse ($documentRows as $documentIndex => $document)
+                                    @include('modules.hr.employees.partials.document-row', [
+                                        'document' => $document,
+                                        'documentSequence' => $documentIndex + 1,
+                                        'employee' => $employee,
+                                        'isView' => true,
+                                    ])
+                                @empty
+                                    <div class="border rounded-2 py-4 text-center text-600 js-hr-employee-documents-empty">{{ __('hr.employees.documents.messages.empty') }}</div>
+                                @endforelse
                             </div>
-                        @else
-                            <div class="gap-2 mb-2 d-flex align-items-center justify-content-between">
+                        @elseif (! $isView && $canManageDocuments)
+                            <div class="gap-2 mb-3 d-flex align-items-center justify-content-between">
                                 <h6 class="mb-0">{{ __('hr.employees.documents.title') }}</h6>
                                 <button type="button" class="btn btn-falcon-default btn-sm js-hr-document-add">
                                     <span class="fas fa-plus me-1"></span>{{ __('hr.employees.actions.add_document') }}
                                 </button>
                             </div>
-                            <div class="table-responsive scrollbar">
-                                <table class="table mb-0 align-middle table-sm hr-document-table">
-                                    <thead class="bg-100 text-900">
-                                        <tr>
-                                            <th>{{ __('hr.employees.documents.attributes.document_type_doc_num') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.archive_file_doc_num') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.file_label') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.issue_date') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.expires_at') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.alert_before_expiry_days') }}</th>
-                                            <th>{{ __('hr.employees.documents.attributes.notes') }}</th>
-                                            <th class="text-center">{{ __('common.fields.actions') }}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="js-hr-document-rows" data-next-index="{{ $documentRows->count() }}">
-                                        @forelse ($documentRows as $documentIndex => $document)
-                                            @php
-                                                $documentType = $document->documentType;
-                                                $documentTypeText = $documentType ? trim(implode(' / ', array_filter([$documentType->name, $documentType->doc_num]))) : '';
-                                                $archiveFile = $document->archiveFile;
-                                            @endphp
-                                            <tr class="js-hr-document-row" data-document-index="{{ $documentIndex }}">
-                                                <td>
-                                                    <input type="hidden" name="documents[{{ $documentIndex }}][id]" value="{{ $document->id }}">
-                                                    <input type="hidden" name="documents[{{ $documentIndex }}][_delete]" value="0" class="js-hr-document-delete-flag">
-                                                    <input type="hidden" name="documents[{{ $documentIndex }}][document_number_text]" value="{{ $document->document_number_text }}">
-                                                    <div class="hr-select2-inline-control">
-                                                        <select id="hr-document-type-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][document_type_doc_num]" class="form-select js-select2-ajax" data-url="{{ $documentTypeSelect['url'] }}" data-placeholder="{{ __('hr.employees.documents.attributes.document_type_doc_num') }}" data-allow-clear="true">
-                                                            @if ($documentType)
-                                                                <option value="{{ $documentType->doc_num }}" selected>{{ $documentTypeText }}</option>
-                                                            @endif
-                                                        </select>
-                                                        @if (($documentTypeSelect['can_create'] ?? false) && ($documentTypeSelect['create_url'] ?? null))
-                                                            <a class="btn btn-falcon-default btn-sm" href="{{ $documentTypeSelect['create_url'] }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new') }}" data-bs-title="{{ __('hr.inline_lookup.add_new') }}">
-                                                                <span class="fas fa-plus"></span>
-                                                                <span class="visually-hidden">{{ __('hr.inline_lookup.add_new') }}</span>
-                                                            </a>
-                                                        @endif
-                                                    </div>
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.document_type_doc_num"></div>
-                                                </td>
-                                                <td>
-                                                    <div class="input-group hr-document-file-control">
-                                                        <input id="hr-document-file-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][archive_file_doc_num]" type="hidden" value="{{ $archiveFile?->doc_num ?? '' }}" class="js-hr-document-file-input">
-                                                        <input type="text" class="form-control js-hr-document-file-display" value="{{ $archiveFile?->original_name ?? $document->original_name }}" readonly>
-                                                        <button type="button"
-                                                            class="btn btn-falcon-default js-hr-document-file-picker"
-                                                            data-file-picker
-                                                            data-picker-accept="document"
-                                                            data-picker-title="{{ __('hr.employees.actions.select_document_file') }}"
-                                                            data-picker-target-input="#hr-document-file-{{ $documentIndex }}"
-                                                            data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
-                                                            data-picker-allow-create-folder="{{ auth()->user()?->can('file_manager.folders.create') ? 'true' : 'false' }}">
-                                                            <span class="fas fa-paperclip"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.archive_file_doc_num"></div>
-                                                </td>
-                                                <td>
-                                                    <input name="documents[{{ $documentIndex }}][file_label]" type="text" class="form-control" value="{{ $document->file_label }}">
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.file_label"></div>
-                                                </td>
-                                                <td>
-                                                    <input name="documents[{{ $documentIndex }}][issue_date]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'issue_date') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.issue_date"></div>
-                                                </td>
-                                                <td>
-                                                    <input name="documents[{{ $documentIndex }}][expires_at]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'expires_at') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-date-min="{{ $documentDateValue($document, 'issue_date') ? '' : '' }}">
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.expires_at"></div>
-                                                </td>
-                                                <td>
-                                                    <x-forms.numeric-input
-                                                        :name="'documents['.$documentIndex.'][alert_before_expiry_days]'"
-                                                        :value="$document->alert_before_expiry_days"
-                                                        :scale="0"
-                                                        min="0"
-                                                        max="3650"
-                                                        step="1"
-                                                        class="text-center"
-                                                    />
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.alert_before_expiry_days"></div>
-                                                </td>
-                                                <td>
-                                                    <input name="documents[{{ $documentIndex }}][notes]" type="text" class="form-control" value="{{ $document->notes }}">
-                                                    <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.notes"></div>
-                                                </td>
-                                                <td class="text-center">
-                                                    <button type="button" class="p-0 btn btn-link text-danger js-hr-document-remove" title="{{ __('common.actions.delete') }}">
-                                                        <span class="fas fa-trash-alt"></span>
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        @empty
-                                            <tr class="js-hr-document-empty">
-                                                <td colspan="8" class="py-4 text-center text-600">{{ __('hr.employees.documents.messages.empty') }}</td>
-                                            </tr>
-                                        @endforelse
-                                    </tbody>
-                                </table>
+                            <div class="vstack gap-3 js-hr-document-rows" data-next-index="{{ $documentRows->count() }}">
+                                @forelse ($documentRows as $documentIndex => $document)
+                                    @include('modules.hr.employees.partials.document-form-card', compact('document', 'documentIndex', 'documentTypeSelect', 'dateFormatService', 'documentDateValue', 'employee', 'canViewDocuments', 'canDeleteDocuments'))
+                                @empty
+                                    <div class="border rounded-2 py-4 text-center text-600 js-hr-document-empty">{{ __('hr.employees.documents.messages.empty') }}</div>
+                                @endforelse
                             </div>
 
                             <template id="hr-document-row-template">
-                                <tr class="js-hr-document-row" data-document-index="__INDEX__">
-                                    <td>
-                                        <input type="hidden" name="documents[__INDEX__][_delete]" value="0" class="js-hr-document-delete-flag">
-                                        <div class="hr-select2-inline-control">
-                                            <select id="hr-document-type-__INDEX__" name="documents[__INDEX__][document_type_doc_num]" class="form-select js-select2-ajax" data-url="{{ $documentTypeSelect['url'] }}" data-placeholder="{{ __('hr.employees.documents.attributes.document_type_doc_num') }}" data-allow-clear="true"></select>
-                                            @if (($documentTypeSelect['can_create'] ?? false) && ($documentTypeSelect['create_url'] ?? null))
-                                                <a class="btn btn-falcon-default btn-sm" href="{{ $documentTypeSelect['create_url'] }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new') }}" data-bs-title="{{ __('hr.inline_lookup.add_new') }}">
-                                                    <span class="fas fa-plus"></span>
-                                                    <span class="visually-hidden">{{ __('hr.inline_lookup.add_new') }}</span>
-                                                </a>
-                                            @endif
-                                        </div>
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.document_type_doc_num"></div>
-                                    </td>
-                                    <td>
-                                        <div class="input-group hr-document-file-control">
-                                            <input id="hr-document-file-__INDEX__" name="documents[__INDEX__][archive_file_doc_num]" type="hidden" class="js-hr-document-file-input">
-                                            <input type="text" class="form-control js-hr-document-file-display" value="" readonly>
-                                            <button type="button"
-                                                class="btn btn-falcon-default js-hr-document-file-picker"
-                                                data-file-picker
-                                                data-picker-accept="document"
-                                                data-picker-title="{{ __('hr.employees.actions.select_document_file') }}"
-                                                data-picker-target-input="#hr-document-file-__INDEX__"
-                                                data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
-                                                data-picker-allow-create-folder="{{ auth()->user()?->can('file_manager.folders.create') ? 'true' : 'false' }}">
-                                                <span class="fas fa-paperclip"></span>
-                                            </button>
-                                        </div>
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.archive_file_doc_num"></div>
-                                    </td>
-                                    <td>
-                                        <input name="documents[__INDEX__][file_label]" type="text" class="form-control">
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.file_label"></div>
-                                    </td>
-                                    <td>
-                                        <input name="documents[__INDEX__][issue_date]" type="text" class="form-control js-date-picker" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.issue_date"></div>
-                                    </td>
-                                    <td>
-                                        <input name="documents[__INDEX__][expires_at]" type="text" class="form-control js-date-picker" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.expires_at"></div>
-                                    </td>
-                                    <td>
-                                        <x-forms.numeric-input
-                                            name="documents[__INDEX__][alert_before_expiry_days]"
-                                            :scale="0"
-                                            min="0"
-                                            max="3650"
-                                            step="1"
-                                            class="text-center"
-                                        />
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.alert_before_expiry_days"></div>
-                                    </td>
-                                    <td>
-                                        <input name="documents[__INDEX__][notes]" type="text" class="form-control">
-                                        <div class="invalid-feedback d-block" data-error-for="documents.__INDEX__.notes"></div>
-                                    </td>
-                                    <td class="text-center">
-                                        <button type="button" class="p-0 btn btn-link text-danger js-hr-document-remove" title="{{ __('common.actions.delete') }}">
-                                            <span class="fas fa-trash-alt"></span>
-                                        </button>
-                                    </td>
-                                </tr>
+                                @include('modules.hr.employees.partials.document-form-card', [
+                                    'document' => null,
+                                    'documentIndex' => '__INDEX__',
+                                    'documentTypeSelect' => $documentTypeSelect,
+                                    'dateFormatService' => $dateFormatService,
+                                    'documentDateValue' => $documentDateValue,
+                                    'employee' => $employee,
+                                    'canViewDocuments' => $canViewDocuments,
+                                    'canDeleteDocuments' => $canDeleteDocuments,
+                                ])
                             </template>
+                        @else
+                            <div class="alert alert-info mb-0">{{ __('common.messages.forbidden') }}</div>
                         @endif
                     </div>
 
@@ -1097,6 +1010,9 @@
             'documentDeleteConfirmYes' => __('hr.messages.delete_confirm_yes'),
             'emptyDocuments' => __('hr.employees.documents.messages.empty'),
             'documentFileRequired' => __('hr.employees.documents.validation.file_required'),
+            'documentItemTitle' => __('hr.employees.documents.item_title', ['number' => ':number']),
+            'replaceDocumentFile' => __('hr.employees.documents.actions.replace'),
+            'selectDocumentFile' => __('hr.employees.actions.select_document_file'),
             'emptyBiometric' => __('hr.employees.biometric.empty'),
             'noPhotoSelected' => __('hr.employees.photo.no_file_selected'),
         ];

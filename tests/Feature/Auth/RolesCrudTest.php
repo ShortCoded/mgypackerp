@@ -203,7 +203,12 @@ test('roles index requires view permission', function () {
         ->toContain("className: 'btn btn-falcon-default btn-sm'")
         ->toContain('columnVisibilityButton')
         ->toContain('protectStateColumns')
-        ->toContain('showColumns');
+        ->toContain('showColumns')
+        ->toContain('wideOptions')
+        ->toContain('scrollX: true')
+        ->toContain('responsive: false')
+        ->toContain('bindDropdownOverflow')
+        ->toContain('datatable-dropdown-open');
 
     $userCss = file_get_contents(public_path('assets/css/user.css'));
 

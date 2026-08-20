@@ -148,9 +148,11 @@ Route::middleware('auth')
             Route::patch('/bulk-restore', 'bulkRestore')->middleware('can:hr.employees.restore')->name('bulk-restore');
             Route::patch('/bulk-status', 'bulkStatus')->middleware('can:hr.employees.edit')->name('bulk-status');
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:hr.employees.document_number_settings.update')->name('document-number-settings.update');
-            Route::patch('/{employee}/restore', 'restore')->middleware('can:hr.employees.restore')->name('restore');
+            Route::get('/trashed/{employee}', 'showTrashed')->whereUuid('employee')->middleware(['can:hr.employees.view', 'can:hr.employees.view_trashed'])->name('trashed.show');
+            Route::get('/trashed/{employee}/documents/{document:doc_num}/download', 'downloadTrashedDocument')->whereUuid('employee')->middleware(['can:hr.employees.view_trashed', 'can:hr.employees.documents.view'])->name('trashed.documents.download');
+            Route::patch('/trashed/{employee}/restore', 'restore')->whereUuid('employee')->middleware('can:hr.employees.restore')->name('restore');
             Route::get('/{employee:doc_num}/clone', 'clone')->middleware('can:hr.employees.clone')->name('clone');
-            Route::get('/{employee:doc_num}', 'show')->withTrashed()->middleware('can:hr.employees.view')->name('show');
+            Route::get('/{employee:doc_num}', 'show')->middleware('can:hr.employees.view')->name('show');
             Route::get('/{employee:doc_num}/edit', 'edit')->middleware('can:hr.employees.edit')->name('edit');
             Route::put('/{employee:doc_num}', 'update')->middleware('can:hr.employees.edit')->name('update');
             Route::delete('/{employee:doc_num}', 'destroy')->middleware('can:hr.employees.delete')->name('destroy');

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
@@ -30,6 +31,7 @@ class JournalEntry extends Model
         'entry_date',
         'company_id',
         'financial_period_id',
+        'branch_id',
         'currency_id',
         'exchange_rate',
         'description',
@@ -37,6 +39,7 @@ class JournalEntry extends Model
         'source_type',
         'source_id',
         'source_doc_num',
+        'reference_no',
         'status',
         'is_system_generated',
         'is_posted',
@@ -88,6 +91,10 @@ class JournalEntry extends Model
         if ($this->is_system_generated || $this->source_type !== null || $this->source_id !== null) {
             throw new DomainException(__('opening_balances.messages.system_journal_entry_locked'));
         }
+
+        if ($this->status !== self::StatusDraft || $this->is_posted) {
+            throw new DomainException(__('journal_entries.messages.posted_locked'));
+        }
     }
 
     public function lines(): HasMany
@@ -105,6 +112,11 @@ class JournalEntry extends Model
         return $this->belongsTo(Company::class);
     }
 
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
     public function currency(): BelongsTo
     {
         return $this->belongsTo(Currency::class);
@@ -118,6 +130,26 @@ class JournalEntry extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updatedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function deletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
+    }
+
+    public function restoredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'restored_by');
     }
 
     public function reversedEntry(): BelongsTo

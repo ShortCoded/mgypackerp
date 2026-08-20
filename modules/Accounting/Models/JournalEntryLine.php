@@ -4,6 +4,10 @@ namespace Modules\Accounting\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Core\Models\Branch;
+use Modules\HR\Models\HrEmployee;
+use Modules\Purchases\Models\Supplier;
+use Modules\Sales\Models\Customer;
 
 class JournalEntryLine extends Model
 {
@@ -40,5 +44,30 @@ class JournalEntryLine extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class);
+    }
+
+    public function costCenter(): BelongsTo
+    {
+        return $this->belongsTo(CostCenter::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class);
+    }
+
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(HrEmployee::class);
     }
 }

@@ -25,7 +25,7 @@ class StoreHrEmployeeDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'document_type_doc_num' => ['required', 'string', Rule::exists('hr_document_types', 'doc_num')->whereNull('deleted_at')],
+            'document_type_doc_num' => ['required', 'string', Rule::exists('hr_document_types', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'document_type' => ['nullable', 'string', Rule::in(['national_id', 'birth_certificate', 'qualification', 'military_service', 'work_permit', 'insurance', 'contract', 'medical', 'other'])],
             'document_number_text' => ['nullable', 'string', 'max:120'],
             'title' => ['required', 'string', 'max:255'],

@@ -20,6 +20,7 @@ use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Events\HrEmployeeCreated;
+use Modules\HR\Models\HrAllowance;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
@@ -27,7 +28,9 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeBiometricMapping;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
 
@@ -37,6 +40,7 @@ class HrEmployeeService
      * @var list<string>
      */
     private array $fillableFields = [
+        'employee_code',
         'full_name',
         'person_type',
         'status',
@@ -45,8 +49,12 @@ class HrEmployeeService
         'marital_status',
         'national_id',
         'hire_date',
+        'contract_start_date',
+        'contract_end_date',
+        'probation_end_date',
         'work_email',
         'email',
+        'personal_email',
         'phone',
         'mobile',
         'alternate_phone',
@@ -81,6 +89,9 @@ class HrEmployeeService
         'section_doc_num' => ['column' => 'section_id', 'model' => HrSection::class],
         'job_doc_num' => ['column' => 'job_id', 'model' => HrJob::class],
         'employment_type_doc_num' => ['column' => 'employment_type_id', 'model' => HrEmploymentType::class],
+        'nationality_doc_num' => ['column' => 'nationality_id', 'model' => HrNationality::class],
+        'hiring_status_doc_num' => ['column' => 'hiring_status_id', 'model' => HrHiringStatus::class],
+        'allowance_doc_num' => ['column' => 'allowance_id', 'model' => HrAllowance::class],
         'default_shift_doc_num' => ['column' => 'default_shift_id', 'model' => HrShift::class],
         'payroll_currency_doc_num' => ['column' => 'payroll_currency_id', 'model' => Currency::class],
         'photo_archive_file_doc_num' => ['column' => 'photo_archive_file_id', 'model' => ArchiveFile::class],
@@ -125,7 +136,7 @@ class HrEmployeeService
 
     /**
      * @param  array<string, mixed>  $data
-     * @return array{employee: HrEmployee, changed: bool, changed_fields: list<string>, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string|null, old_name: string}
+     * @return array{employee: HrEmployee, changed: bool, changed_fields: list<string>, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string|null, old_name: string, document_row_ids: array<int|string, int>}
      */
     public function update(HrEmployee $employee, array $data): array
     {
@@ -156,7 +167,8 @@ class HrEmployeeService
             }
 
             $mappingsChanged = $this->syncBiometricMappings($employee, $data['biometric_mappings'] ?? null);
-            $documentsChanged = $this->syncDocuments($employee, $data['documents'] ?? null);
+            $documentSync = $this->syncDocuments($employee, $data['documents'] ?? null);
+            $documentsChanged = $documentSync['changed'];
 
             if ($changedFields === [] && ! $mappingsChanged && ! $documentsChanged) {
                 return [
@@ -167,6 +179,7 @@ class HrEmployeeService
                     'old_doc_number' => $oldDocNumber,
                     'old_doc_num' => $oldDocNum,
                     'old_name' => $oldName,
+                    'document_row_ids' => $documentSync['row_ids'],
                 ];
             }
 
@@ -186,6 +199,7 @@ class HrEmployeeService
                 'old_doc_number' => $oldDocNumber,
                 'old_doc_num' => $oldDocNum,
                 'old_name' => $oldName,
+                'document_row_ids' => $documentSync['row_ids'],
             ];
         });
     }
@@ -204,6 +218,7 @@ class HrEmployeeService
     {
         return DB::transaction(function () use ($docNums): int {
             $records = HrEmployee::query()
+                ->where('company_id', app(OperatingCompanyContextService::class)->currentCompanyId())
                 ->whereIn('doc_num', $docNums)
                 ->get();
             $deleted = 0;
@@ -218,13 +233,14 @@ class HrEmployeeService
     }
 
     /**
-     * @param  list<string>  $docNums
+     * @param  list<string>  $publicUuids
      */
-    public function bulkRestore(array $docNums): int
+    public function bulkRestore(array $publicUuids): int
     {
-        return DB::transaction(function () use ($docNums): int {
+        return DB::transaction(function () use ($publicUuids): int {
             $records = HrEmployee::onlyTrashed()
-                ->whereIn('doc_num', $docNums)
+                ->where('company_id', app(OperatingCompanyContextService::class)->currentCompanyId())
+                ->whereIn('public_uuid', $publicUuids)
                 ->get();
             $restored = 0;
 
@@ -245,6 +261,7 @@ class HrEmployeeService
     {
         return DB::transaction(function () use ($docNums, $status): int {
             $records = HrEmployee::query()
+                ->where('company_id', app(OperatingCompanyContextService::class)->currentCompanyId())
                 ->whereIn('doc_num', $docNums)
                 ->get();
             $updated = 0;
@@ -520,15 +537,19 @@ class HrEmployeeService
         return $changed;
     }
 
-    private function syncDocuments(HrEmployee $employee, mixed $rows): bool
+    /**
+     * @return array{changed: bool, row_ids: array<int|string, int>}
+     */
+    private function syncDocuments(HrEmployee $employee, mixed $rows): array
     {
         if (! is_array($rows)) {
-            return false;
+            return ['changed' => false, 'row_ids' => []];
         }
 
         $changed = false;
+        $rowIds = [];
 
-        foreach ($rows as $row) {
+        foreach ($rows as $index => $row) {
             if (! is_array($row)) {
                 continue;
             }
@@ -568,6 +589,8 @@ class HrEmployeeService
                     $changed = true;
                 }
 
+                $rowIds[$index] = (int) $document->getKey();
+
                 continue;
             }
 
@@ -580,10 +603,11 @@ class HrEmployeeService
                 'created_by' => auth()->id(),
             ]);
             $this->crudAudit->clearCreationUpdateAudit($document);
+            $rowIds[$index] = (int) $document->getKey();
             $changed = true;
         }
 
-        return $changed;
+        return ['changed' => $changed, 'row_ids' => $rowIds];
     }
 
     /**
@@ -771,7 +795,7 @@ class HrEmployeeService
     {
         $conflictFields = [];
 
-        foreach (['doc_number', 'doc_num', 'national_id', 'email', 'work_email'] as $field) {
+        foreach (['doc_number', 'doc_num', 'employee_code', 'national_id', 'email', 'work_email'] as $field) {
             $value = $employee->getAttribute($field);
 
             if (! $this->hasComparableValue($value)) {
@@ -790,7 +814,9 @@ class HrEmployeeService
 
     private function activeEmployeeExists(callable $constraint): bool
     {
-        $query = HrEmployee::query()->whereNull('deleted_at');
+        $query = HrEmployee::query()
+            ->whereNull('deleted_at')
+            ->lockForUpdate();
         $constraint($query);
 
         return $query->exists();

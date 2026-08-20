@@ -111,6 +111,7 @@ class OpeningBalanceService
     public function restore(OpeningBalance $record): OpeningBalance
     {
         return DB::transaction(function () use ($record): OpeningBalance {
+            $this->assertRestorable($record);
             $this->audit->restore($record, auth()->id());
 
             return $record->refresh();
@@ -264,6 +265,27 @@ class OpeningBalanceService
 
         if ($record->is_cancelled || $record->journal_entry_id !== null) {
             throw new DomainException(__('opening_balances.messages.document_delete_blocked'));
+        }
+    }
+
+    private function assertRestorable(OpeningBalance $record): void
+    {
+        if (! $record->trashed()) {
+            throw new DomainException(__('opening_balances.messages.restore_requires_trashed'));
+        }
+
+        $hasActiveConflict = OpeningBalance::query()
+            ->where('company_id', $record->company_id)
+            ->where('financial_period_id', $record->financial_period_id)
+            ->where('doc_num', $record->doc_num)
+            ->whereKeyNot($record->getKey())
+            ->lockForUpdate()
+            ->exists();
+
+        if ($hasActiveConflict) {
+            throw new DomainException(__('opening_balances.messages.restore_doc_num_conflict', [
+                'doc_num' => $record->doc_num,
+            ]));
         }
     }
 

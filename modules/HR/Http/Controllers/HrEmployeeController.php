@@ -20,6 +20,7 @@ use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\DataTables\HrEmployeesDataTable;
 use Modules\HR\Http\Requests\Employees\BulkDeleteHrEmployeesRequest;
@@ -29,13 +30,16 @@ use Modules\HR\Http\Requests\Employees\StoreHrEmployeeDocumentRequest;
 use Modules\HR\Http\Requests\Employees\StoreHrEmployeeRequest;
 use Modules\HR\Http\Requests\Employees\UpdateHrEmployeeDocumentNumberSettingsRequest;
 use Modules\HR\Http\Requests\Employees\UpdateHrEmployeeRequest;
+use Modules\HR\Models\HrAllowance;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
 use Modules\HR\Services\HrEmployeeDocumentNumberSettingsService;
@@ -56,6 +60,9 @@ class HrEmployeeController extends Controller
         'section_doc_num' => ['column' => 'section_id', 'model' => HrSection::class, 'foundation' => 'sections'],
         'job_doc_num' => ['column' => 'job_id', 'model' => HrJob::class, 'foundation' => 'jobs'],
         'employment_type_doc_num' => ['column' => 'employment_type_id', 'model' => HrEmploymentType::class, 'foundation' => 'employment-types'],
+        'nationality_doc_num' => ['column' => 'nationality_id', 'model' => HrNationality::class, 'lookup' => 'nationalities'],
+        'hiring_status_doc_num' => ['column' => 'hiring_status_id', 'model' => HrHiringStatus::class, 'lookup' => 'hiring-statuses'],
+        'allowance_doc_num' => ['column' => 'allowance_id', 'model' => HrAllowance::class, 'lookup' => 'allowances'],
         'default_shift_doc_num' => ['column' => 'default_shift_id', 'model' => HrShift::class, 'foundation' => 'shifts'],
         'payroll_currency_doc_num' => ['column' => 'payroll_currency_id', 'model' => Currency::class, 'route' => 'admin.select2.currencies'],
     ];
@@ -70,9 +77,19 @@ class HrEmployeeController extends Controller
 
     public function index(Request $request, HrEmployeeDocumentNumberSettingsService $documentNumberSettings): View
     {
+        $filterSelects = collect($this->selectedOptions(null))->only([
+            'branch_doc_num',
+            'department_doc_num',
+            'section_doc_num',
+            'job_doc_num',
+            'employment_type_doc_num',
+            'hiring_status_doc_num',
+        ])->all();
+
         return view('modules.hr.employees.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.employees.index'),
             'documentNumberSettings' => $documentNumberSettings->current(),
+            'filterSelects' => $filterSelects,
         ]);
     }
 
@@ -88,8 +105,15 @@ class HrEmployeeController extends Controller
 
     public function show(Request $request, HrEmployee $employee): View
     {
-        $this->abortIfTrashedRecordIsNotViewable($request, $employee);
         $this->logActivity($request, 'hr.employees.view', $this->recordPublicProperties($employee));
+
+        return $this->formView('view', $employee);
+    }
+
+    public function showTrashed(Request $request, string $employee): View
+    {
+        $employee = $this->trashedRecordByPublicUuid($employee);
+        $this->logActivity($request, 'hr.employees.view_trashed', $this->recordPublicProperties($employee));
 
         return $this->formView('view', $employee);
     }
@@ -194,6 +218,7 @@ class HrEmployeeController extends Controller
                 'doc_number' => $employee->doc_number,
                 'doc_num' => $employee->doc_num,
                 'urls' => $this->recordUrls($employee),
+                'document_row_ids' => $result['document_row_ids'],
             ],
         ]);
     }
@@ -235,21 +260,23 @@ class HrEmployeeController extends Controller
 
     public function bulkRestore(BulkRestoreHrEmployeesRequest $request): JsonResponse
     {
-        $docNums = $request->validated()['doc_nums'];
+        $publicUuids = $request->validated()['public_uuids'];
 
         try {
-            $restored = $this->employees->bulkRestore($docNums);
-        } catch (DomainException $exception) {
+            $restored = $this->employees->bulkRestore($publicUuids);
+        } catch (DomainException|QueryException $exception) {
             return response()->json([
                 'success' => false,
-                'message' => $exception->getMessage(),
+                'message' => $exception instanceof QueryException
+                    ? __('hr.employees.messages.restore_conflict')
+                    : $exception->getMessage(),
             ], 422);
         }
 
         $this->logActivity($request, 'hr.employees.bulk_restore', [
             'bulk' => [
                 'count' => $restored,
-                'doc_nums' => $docNums,
+                'public_uuids' => $publicUuids,
             ],
         ]);
 
@@ -291,14 +318,16 @@ class HrEmployeeController extends Controller
 
     public function restore(Request $request, string $employee): JsonResponse
     {
-        $employee = $this->restoreRecordByDocNum($employee);
+        $employee = $this->trashedRecordByPublicUuid($employee);
 
         try {
             $employee = $this->employees->restore($employee);
-        } catch (DomainException $exception) {
+        } catch (DomainException|QueryException $exception) {
             return response()->json([
                 'success' => false,
-                'message' => $exception->getMessage(),
+                'message' => $exception instanceof QueryException
+                    ? __('hr.employees.messages.restore_conflict')
+                    : $exception->getMessage(),
             ], 422);
         }
 
@@ -374,6 +403,16 @@ class HrEmployeeController extends Controller
 
     public function downloadDocument(Request $request, HrEmployee $employee, HrEmployeeDocument $document): BinaryFileResponse
     {
+        return $this->downloadEmployeeDocument($request, $employee, $document);
+    }
+
+    public function downloadTrashedDocument(Request $request, string $employee, HrEmployeeDocument $document): BinaryFileResponse
+    {
+        return $this->downloadEmployeeDocument($request, $this->trashedRecordByPublicUuid($employee), $document);
+    }
+
+    private function downloadEmployeeDocument(Request $request, HrEmployee $employee, HrEmployeeDocument $document): BinaryFileResponse
+    {
         $this->ensureDocumentBelongsToEmployee($employee, $document);
         abort_unless((bool) $request->user()?->can('hr.employees.documents.view'), 403);
 
@@ -432,6 +471,9 @@ class HrEmployeeController extends Controller
             'defaults' => $this->defaults($employee),
             'documentTypeSelect' => $this->foundationSelect('document-types'),
             'biometricDeviceSelect' => $this->foundationSelect('biometric-devices'),
+            'canViewDocuments' => (bool) auth()->user()?->can('hr.employees.documents.view'),
+            'canManageDocuments' => (bool) auth()->user()?->can('hr.employees.documents.manage'),
+            'canDeleteDocuments' => (bool) auth()->user()?->can('hr.employees.documents.delete'),
         ]);
     }
 
@@ -444,13 +486,19 @@ class HrEmployeeController extends Controller
 
         foreach ($this->selectFields as $field => $config) {
             $selected[$field] = null;
+            $record = null;
 
-            if (! $employee || ! $employee->{$config['column']}) {
-                continue;
+            if ($employee && $employee->{$config['column']}) {
+                $model = $config['model'];
+                $record = $model::withTrashed()->whereKey($employee->{$config['column']})->first();
+            } elseif ($field === 'branch_doc_num') {
+                $oldBranchDocNum = request()->old($field);
+
+                if (is_string($oldBranchDocNum) && trim($oldBranchDocNum) !== '') {
+                    $record = app(OperatingContextService::class)
+                        ->allowedBranchForCurrentCompany(request(), trim($oldBranchDocNum));
+                }
             }
-
-            $model = $config['model'];
-            $record = $model::withTrashed()->whereKey($employee->{$config['column']})->first();
 
             if (! $record) {
                 continue;
@@ -459,13 +507,7 @@ class HrEmployeeController extends Controller
             $label = $record instanceof Currency
                 ? trim(implode(' / ', array_filter([$record->code, $record->name])))
                 : trim(implode(' / ', array_filter([$record->name ?? $record->full_name ?? null, $record->doc_num])));
-            $url = isset($config['route'])
-                ? route($config['route'])
-                : (
-                    isset($config['lookup'])
-                        ? route('admin.hr.select2.lookups', $config['lookup'])
-                        : route('admin.hr.select2.foundation', $config['foundation'])
-                );
+            $url = $this->selectFieldUrl($field, $config);
 
             $canCreate = $this->selectFieldCanCreatePage($config);
 
@@ -489,13 +531,7 @@ class HrEmployeeController extends Controller
             $selected[$field] = [
                 'id' => '',
                 'text' => '',
-                'url' => isset($config['route'])
-                    ? route($config['route'])
-                    : (
-                        isset($config['lookup'])
-                            ? route('admin.hr.select2.lookups', $config['lookup'])
-                            : route('admin.hr.select2.foundation', $config['foundation'])
-                    ),
+                'url' => $this->selectFieldUrl($field, $config),
                 'can_create' => $canCreate,
                 'create_url' => $canCreate ? $this->selectFieldCreateUrl($config) : null,
                 'inline_url' => null,
@@ -503,6 +539,33 @@ class HrEmployeeController extends Controller
         }
 
         return $selected;
+    }
+
+    /**
+     * @param  array{column: string, model: class-string, route?: string, lookup?: string, foundation?: string, create_route?: string, create_permission?: string}  $config
+     */
+    private function selectFieldUrl(string $field, array $config): string
+    {
+        if (isset($config['route'])) {
+            $parameters = [];
+
+            if ($field === 'branch_doc_num') {
+                $parameters['access_scope'] = 'operating_scope';
+                $companyDocNum = app(OperatingCompanyContextService::class)->currentCompany()?->doc_num;
+
+                if (is_string($companyDocNum) && $companyDocNum !== '') {
+                    $parameters['company_doc_num'] = $companyDocNum;
+                }
+            }
+
+            return route($config['route'], $parameters);
+        }
+
+        if (isset($config['lookup'])) {
+            return route('admin.hr.select2.lookups', $config['lookup']);
+        }
+
+        return route('admin.hr.select2.foundation', $config['foundation']);
     }
 
     /**
@@ -837,24 +900,14 @@ class HrEmployeeController extends Controller
         }
     }
 
-    private function restoreRecordByDocNum(string $docNum): HrEmployee
+    private function trashedRecordByPublicUuid(string $publicUuid): HrEmployee
     {
-        return HrEmployee::onlyTrashed()
-            ->where('doc_num', $docNum)
-            ->latest('deleted_at')
-            ->first()
-            ?? HrEmployee::query()
-                ->where('doc_num', $docNum)
-                ->firstOrFail();
-    }
+        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
 
-    private function abortIfTrashedRecordIsNotViewable(Request $request, HrEmployee $employee): void
-    {
-        abort_if(
-            $employee->trashed() && ! $request->user()?->can('hr.employees.view_trashed'),
-            404,
-            __('hr.trash.view_forbidden'),
-        );
+        return HrEmployee::onlyTrashed()
+            ->where('public_uuid', $publicUuid)
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId), fn ($query) => $query->whereRaw('1 = 0'))
+            ->firstOrFail();
     }
 
     /**

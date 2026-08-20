@@ -13,7 +13,7 @@
         <div class="py-2 border dropdown-menu dropdown-menu-end">
             @if ($isTrashed)
                 @if ($canView)
-                    <a class="dropdown-item" href="{{ route('admin.hr.employees.show', $employee->doc_num) }}" data-doc-num="{{ $employee->doc_num }}">
+                    <a class="dropdown-item" href="{{ route('admin.hr.employees.trashed.show', $employee->public_uuid) }}" data-doc-num="{{ $employee->doc_num }}">
                         {{ __('common.actions.view') }}
                     </a>
                 @endif
@@ -21,7 +21,7 @@
                     @if ($canView)
                         <div class="dropdown-divider"></div>
                     @endif
-                    <button type="button" class="dropdown-item text-success js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->doc_num) }}">
+                    <button type="button" class="dropdown-item text-success js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-public-uuid="{{ $employee->public_uuid }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->public_uuid) }}">
                         {{ __('hr.trash.restore') }}
                     </button>
                 @endif

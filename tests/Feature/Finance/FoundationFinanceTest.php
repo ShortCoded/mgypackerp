@@ -185,6 +185,28 @@ function financePeriod(?Company $company = null): FinancialPeriod
     return FinancialPeriod::query()->create(['doc_number' => 9001, 'doc_num' => 'Period-09001', 'company_id' => $company?->getKey(), 'name' => 'FY Test', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31', 'is_closed' => false]);
 }
 
+function financeOpeningBalanceRecord(
+    Company $company,
+    FinancialPeriod $period,
+    Currency $currency,
+    int $docNumber,
+    string $description,
+): OpeningBalance {
+    return OpeningBalance::query()->create([
+        'doc_number' => $docNumber,
+        'doc_num' => 'OB-'.str_pad((string) $docNumber, 5, '0', STR_PAD_LEFT),
+        'document_date' => '2026-01-01',
+        'company_id' => $company->getKey(),
+        'financial_period_id' => $period->getKey(),
+        'currency_id' => $currency->getKey(),
+        'exchange_rate' => 1,
+        'description' => $description,
+        'status' => OpeningBalance::StatusDraft,
+        'is_closed' => false,
+        'approved' => false,
+    ]);
+}
+
 function financeBankGroup(string $name = 'National Bank'): Account
 {
     $mainBanksAccount = Account::query()
@@ -398,6 +420,86 @@ test('Finance CRUD indexes share the same table foundation', function (): void {
             ->assertDontSee('js-crud-table', false)
             ->assertDontSee('data-id=', false);
     }
+});
+
+test('OpeningBalance normal routes resolve active records and never historical deleted duplicates', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor([
+        'opening_balances.view',
+        'opening_balances.edit',
+        'opening_balances.view_trashed',
+    ]);
+    $company = financeCurrentCompany();
+    $period = FinancialPeriod::query()->findOrFail(session(OperatingContextService::FinancialPeriodIdKey));
+    $currency = financeCurrency(company: $company);
+    $historical = financeOpeningBalanceRecord($company, $period, $currency, 15, 'Historical deleted record');
+    $historical->delete();
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.opening-balances.show', $historical->doc_num))
+        ->assertNotFound();
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.opening-balances.trashed.show', $historical->doc_num))
+        ->assertOk()
+        ->assertSee('Historical deleted record');
+
+    $active = financeOpeningBalanceRecord($company, $period, $currency, 15, 'Current active record');
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.opening-balances.show', $active->doc_num))
+        ->assertOk()
+        ->assertSee('Current active record')
+        ->assertDontSee('Historical deleted record');
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.opening-balances.edit', $active->doc_num))
+        ->assertOk()
+        ->assertSee('Current active record')
+        ->assertDontSee('Historical deleted record');
+});
+
+test('OpeningBalance explicit restore resolves and audits the deleted record', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['opening_balances.restore']);
+    $company = financeCurrentCompany();
+    $period = FinancialPeriod::query()->findOrFail(session(OperatingContextService::FinancialPeriodIdKey));
+    $currency = financeCurrency(company: $company);
+    $historical = financeOpeningBalanceRecord($company, $period, $currency, 16, 'Restorable historical record');
+    $historical->delete();
+
+    $this->actingAs($actor)
+        ->patchJson(route('admin.finance.opening-balances.restore', $historical->doc_num))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $restored = OpeningBalance::query()->whereKey($historical->getKey())->firstOrFail();
+
+    expect($restored->trashed())->toBeFalse()
+        ->and($restored->restored_by)->toBe($actor->getKey())
+        ->and($restored->restored_at)->not->toBeNull();
+});
+
+test('OpeningBalance restore rejects an active document number collision without rebinding', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['opening_balances.restore']);
+    $company = financeCurrentCompany();
+    $period = FinancialPeriod::query()->findOrFail(session(OperatingContextService::FinancialPeriodIdKey));
+    $currency = financeCurrency(company: $company);
+    $historical = financeOpeningBalanceRecord($company, $period, $currency, 17, 'Historical collision record');
+    $historical->delete();
+    $active = financeOpeningBalanceRecord($company, $period, $currency, 17, 'Active collision record');
+
+    $this->actingAs($actor)
+        ->patchJson(route('admin.finance.opening-balances.restore', $historical->doc_num))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document'])
+        ->assertJsonPath('errors.document.0', __('opening_balances.messages.restore_doc_num_conflict', [
+            'doc_num' => $historical->doc_num,
+        ]));
+
+    expect(OpeningBalance::withTrashed()->whereKey($historical->getKey())->firstOrFail()->trashed())->toBeTrue()
+        ->and(OpeningBalance::query()->whereKey($active->getKey())->exists())->toBeTrue();
 });
 
 test('BankAccount form uses bank selectors instead of free text bank name', function (): void {

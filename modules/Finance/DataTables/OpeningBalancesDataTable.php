@@ -73,7 +73,7 @@ class OpeningBalancesDataTable
                 }
             })
             ->addColumn('checkbox', fn (OpeningBalance $record): string => view('modules.finance.partials.checkbox', ['record' => $record])->render())
-            ->editColumn('doc_num', fn (OpeningBalance $record): string => '<a class="fw-semibold dt-code-value" href="'.e(route('admin.finance.opening-balances.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
+            ->editColumn('doc_num', fn (OpeningBalance $record): string => '<a class="fw-semibold dt-code-value" href="'.e($this->viewUrl($record)).'">'.e($record->doc_num).'</a>')
             ->editColumn('document_date', fn (OpeningBalance $record): string => $this->plainText($record->document_date?->format($dateFormat) ?? ''))
             ->addColumn('currency', fn (OpeningBalance $record): string => $this->plainText(trim(implode(' — ', array_filter([$record->currency_code, $record->currency_name])))))
             ->addColumn('total_debit', fn (OpeningBalance $record): string => $this->plainText($this->numbers->format($record->total_debit)))
@@ -124,6 +124,13 @@ class OpeningBalancesDataTable
         }
 
         return __('opening_balances.messages.document_locked');
+    }
+
+    private function viewUrl(OpeningBalance $record): string
+    {
+        return $record->trashed()
+            ? route('admin.finance.opening-balances.trashed.show', $record->doc_num)
+            : route('admin.finance.opening-balances.show', $record->doc_num);
     }
 
     private function trashFilter(Request $request): string

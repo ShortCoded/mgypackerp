@@ -12,13 +12,14 @@
     const minuteIncrement = Number.parseInt(input.getAttribute('data-minute-increment') || '5', 10);
     const options = {
       allowInput: true,
+      appendTo: document.body,
       dateFormat: input.getAttribute('data-date-format') || defaults.dateFormat || 'd/m/Y',
       disableMobile: true,
       enableTime: enableTime,
       locale: locale,
       minuteIncrement: Number.isNaN(minuteIncrement) ? 5 : minuteIncrement,
       position: direction === 'rtl' ? 'auto right' : 'auto left',
-      static: true,
+      static: false,
       time_24hr: input.getAttribute('data-time-24hr') === 'true' || input.getAttribute('data-time-24hr') === '1',
       onReady: function (selectedDates, dateStr, instance) {
         if (instance && instance.wrapper) {
@@ -28,6 +29,18 @@
         if (instance && instance.calendarContainer) {
           instance.calendarContainer.classList.add('erp-date-picker-calendar');
         }
+      },
+      onOpen: function (selectedDates, dateStr, instance) {
+        input.dispatchEvent(new CustomEvent('app:date-picker-open', {
+          bubbles: true,
+          detail: { instance: instance }
+        }));
+      },
+      onClose: function (selectedDates, dateStr, instance) {
+        input.dispatchEvent(new CustomEvent('app:date-picker-close', {
+          bubbles: true,
+          detail: { instance: instance }
+        }));
       }
     };
 

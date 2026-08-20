@@ -50,8 +50,14 @@ class OpeningBalanceController extends Controller
 
     public function show(Request $request, string $openingBalance): View
     {
-        $openingBalance = $this->findInCurrentContext($request, $openingBalance, true);
-        abort_if($openingBalance->trashed() && ! $request->user()?->can('opening_balances.view_trashed'), 404);
+        $openingBalance = $this->findInCurrentContext($request, $openingBalance);
+
+        return $this->form('view', $openingBalance);
+    }
+
+    public function showTrashed(Request $request, string $openingBalance): View
+    {
+        $openingBalance = $this->findTrashedInCurrentContext($request, $openingBalance);
 
         return $this->form('view', $openingBalance);
     }
@@ -127,7 +133,9 @@ class OpeningBalanceController extends Controller
 
     public function restore(Request $request, string $openingBalance): JsonResponse
     {
-        $this->service->restore($this->findInCurrentContext($request, $openingBalance, true));
+        $this->guardDomain(fn (): OpeningBalance => $this->service->restore(
+            $this->findTrashedInCurrentContext($request, $openingBalance)
+        ));
 
         return response()->json(['success' => true, 'message' => __('opening_balances.messages.restored')]);
     }
@@ -250,15 +258,26 @@ class OpeningBalanceController extends Controller
         ];
     }
 
-    private function findInCurrentContext(Request $request, string $docNum, bool $withTrashed = false): OpeningBalance
+    private function findInCurrentContext(Request $request, string $docNum): OpeningBalance
     {
         $context = app(OperatingContextService::class)->snapshot($request);
 
         abort_unless($context['company_id'] && $context['financial_period_id'], 404);
 
-        $query = $withTrashed ? OpeningBalance::withTrashed() : OpeningBalance::query();
+        return OpeningBalance::query()
+            ->where('doc_num', $docNum)
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->firstOrFail();
+    }
 
-        return $query
+    private function findTrashedInCurrentContext(Request $request, string $docNum): OpeningBalance
+    {
+        $context = app(OperatingContextService::class)->snapshot($request);
+
+        abort_unless($context['company_id'] && $context['financial_period_id'], 404);
+
+        return OpeningBalance::onlyTrashed()
             ->where('doc_num', $docNum)
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])

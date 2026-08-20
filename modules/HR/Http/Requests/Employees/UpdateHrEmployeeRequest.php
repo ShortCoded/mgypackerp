@@ -11,7 +11,7 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('hr.employees.edit');
+        return (bool) $this->user()?->can('hr.employees.edit') && $this->canSubmitDocumentRows();
     }
 
     /**
@@ -23,14 +23,10 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
         $employee = $this->route('employee');
         $key = $employee instanceof HrEmployee ? $employee->getKey() : null;
         $nationalIdRule = Rule::unique('hr_employees', 'national_id')->ignore($key)->withoutTrashed();
-        $companyId = $this->companyId();
-
-        if ($companyId !== null) {
-            $nationalIdRule->where('company_id', $companyId);
-        }
 
         $rules['submit_action'] = ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new', 'save_clone'])];
         $rules['national_id'] = ['nullable', 'string', 'max:60', $nationalIdRule];
+        $rules['employee_code'] = ['nullable', 'string', 'max:255', Rule::unique('hr_employees', 'employee_code')->ignore($key)->withoutTrashed()];
         $rules['work_email'] = ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'work_email')->ignore($key)->withoutTrashed()];
         $rules['email'] = ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'email')->ignore($key)->withoutTrashed()];
 
@@ -70,6 +66,7 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
             $this->validateCurrencyAndPayBasis($validator);
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
+            $this->validateNestedRowOwnership($validator);
         });
     }
 

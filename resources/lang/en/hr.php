@@ -221,6 +221,12 @@ return [
             'yes' => 'Yes',
             'no' => 'No',
         ],
+        'filters' => [
+            'title' => 'Employee Filters',
+            'all' => 'All',
+            'hire_from' => 'Appointment Date From',
+            'hire_to' => 'Appointment Date To',
+        ],
         'genders' => [
             'male' => 'Male',
             'female' => 'Female',
@@ -402,10 +408,14 @@ return [
         ],
         'documents' => [
             'title' => 'Documents & Attachments',
+            'item_title' => 'Document :number',
+            'no_file_selected' => 'No file selected',
             'actions' => [
                 'upload' => 'Save Document',
                 'download' => 'Download',
                 'preview' => 'Preview',
+                'replace' => 'Replace',
+                'remove_attachment' => 'Remove attachment',
             ],
             'types' => [
                 'identification' => 'Identification',

@@ -245,11 +245,12 @@ Route::middleware('auth')
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:opening_balances.delete')->name('bulk-delete');
             Route::post('/bulk-approve', 'bulkApprove')->middleware('can:opening_balances.approve')->name('bulk-approve');
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:opening_balances.document_number_settings.update')->name('document-number-settings.update');
+            Route::get('/trashed/{openingBalance}', 'showTrashed')->middleware(['can:opening_balances.view', 'can:opening_balances.view_trashed'])->name('trashed.show');
             Route::post('/{openingBalance}/approve', 'approve')->middleware('can:opening_balances.approve')->name('approve');
             Route::post('/{openingBalance}/cancel', 'cancel')->middleware('can:opening_balances.cancel')->name('cancel');
             Route::patch('/{openingBalance}/restore', 'restore')->middleware('can:opening_balances.restore')->name('restore');
             Route::get('/{openingBalance}/clone', 'clone')->middleware('can:opening_balances.clone')->name('clone');
-            Route::get('/{openingBalance}', 'show')->withTrashed()->middleware('can:opening_balances.view')->name('show');
+            Route::get('/{openingBalance}', 'show')->middleware('can:opening_balances.view')->name('show');
             Route::get('/{openingBalance}/edit', 'edit')->middleware('can:opening_balances.edit')->name('edit');
             Route::put('/{openingBalance}', 'update')->middleware('can:opening_balances.edit')->name('update');
             Route::delete('/{openingBalance}', 'destroy')->middleware('can:opening_balances.delete')->name('destroy');

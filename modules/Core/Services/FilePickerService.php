@@ -166,8 +166,12 @@ class FilePickerService
     public function isDocumentFile(ArchiveFile $file): bool
     {
         $extension = mb_strtolower((string) $file->extension);
+        $mimeType = mb_strtolower((string) $file->mime_type);
+        $maxSizeBytes = (int) config('archive.uploads.max_file_size_kib', 51200) * 1024;
 
-        return in_array($extension, $this->documentExtensions(), true);
+        return in_array($extension, $this->documentExtensions(), true)
+            && in_array($mimeType, $this->documentMimeTypes(), true)
+            && (int) $file->size_bytes <= $maxSizeBytes;
     }
 
     public function fileHiddenFromPicker(ArchiveFile $file): bool
@@ -307,7 +311,10 @@ class FilePickerService
      */
     private function applyDocumentFilter(Builder $query): Builder
     {
-        return $query->whereIn('extension', $this->documentExtensions());
+        return $query
+            ->whereIn('extension', $this->documentExtensions())
+            ->whereIn('mime_type', $this->documentMimeTypes())
+            ->where('size_bytes', '<=', (int) config('archive.uploads.max_file_size_kib', 51200) * 1024);
     }
 
     private function acceptsImages(string $accept): bool
@@ -376,6 +383,19 @@ class FilePickerService
             fn (string $extension): string => mb_strtolower(ltrim($extension, '.')),
             config('archive.documents.allowed_extensions', config('archive.allowed_extensions', [])),
         ));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function documentMimeTypes(): array
+    {
+        return collect(config('archive.documents.allowed_mime_types', []))
+            ->map(fn (mixed $mimeType): string => mb_strtolower(trim((string) $mimeType)))
+            ->filter(fn (string $mimeType): bool => $mimeType !== '')
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function formatBytes(int $bytes): string

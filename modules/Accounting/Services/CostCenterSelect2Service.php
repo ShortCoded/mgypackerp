@@ -22,7 +22,7 @@ class CostCenterSelect2Service
         $query = CostCenter::query()
             ->select(['doc_num', 'cost_center_code', 'name', 'doc_number'])
             ->where('status', 'active')
-            ->where('is_group', true)
+            ->where('is_group', ! $request->boolean('postable'))
             ->orderByRaw('LENGTH(cost_center_code), cost_center_code');
 
         if ($companyId === null) {

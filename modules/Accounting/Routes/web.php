@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Accounting\Http\Controllers\AccountController;
 use Modules\Accounting\Http\Controllers\CostCenterController;
+use Modules\Accounting\Http\Controllers\JournalEntryController;
+use Modules\Accounting\Http\Controllers\LedgerReportController;
 
 Route::middleware('auth')
     ->prefix('admin/accounting')
@@ -17,6 +19,57 @@ Route::middleware('auth')
         Route::get('/select2/cost-centers', [CostCenterController::class, 'select2CostCenters'])
             ->middleware('can:cost_centers.view')
             ->name('select2.cost-centers');
+
+        Route::prefix('journal-entries/select2')
+            ->as('journal-entries.select2.')
+            ->controller(JournalEntryController::class)
+            ->group(function (): void {
+                Route::get('/accounts', 'accounts')->name('accounts');
+                Route::get('/cost-centers', 'costCenters')->name('cost-centers');
+                Route::get('/customers', 'customers')->name('customers');
+                Route::get('/suppliers', 'suppliers')->name('suppliers');
+                Route::get('/employees', 'employees')->name('employees');
+            });
+
+        Route::prefix('journal-entries')
+            ->as('journal-entries.')
+            ->controller(JournalEntryController::class)
+            ->group(function (): void {
+                Route::get('/', 'index')->middleware('can:journal_entries.view')->name('index');
+                Route::get('/data', 'data')->middleware('can:journal_entries.view')->name('data');
+                Route::get('/create', 'create')->middleware('can:journal_entries.create')->name('create');
+                Route::post('/', 'store')->name('store');
+                Route::get('/trashed/{journalEntry}', 'showTrashed')->middleware(['can:journal_entries.view', 'can:journal_entries.view_trashed'])->name('trashed.show');
+                Route::patch('/{journalEntry}/restore', 'restore')->middleware('can:journal_entries.restore')->name('restore');
+                Route::post('/{journalEntry}/post', 'post')->middleware('can:journal_entries.post')->name('post');
+                Route::get('/{journalEntry}', 'show')->middleware('can:journal_entries.view')->name('show');
+                Route::get('/{journalEntry}/edit', 'edit')->middleware('can:journal_entries.edit')->name('edit');
+                Route::put('/{journalEntry}', 'update')->middleware('can:journal_entries.edit')->name('update');
+                Route::delete('/{journalEntry}', 'destroy')->middleware('can:journal_entries.delete')->name('destroy');
+            });
+
+        Route::prefix('reports')
+            ->as('reports.')
+            ->controller(LedgerReportController::class)
+            ->group(function (): void {
+                foreach ([
+                    'account-ledger' => 'account_ledger',
+                    'customer-statement' => 'customer_statement',
+                    'supplier-statement' => 'supplier_statement',
+                ] as $slug => $type) {
+                    foreach (['excel', 'csv', 'pdf'] as $format) {
+                        Route::get("/{$slug}/export/{$format}", 'export')
+                            ->defaults('ledger_report_type', $type)
+                            ->defaults('ledger_export_format', $format)
+                            ->middleware("can:reports.{$type}.export")
+                            ->name("{$slug}.export.{$format}");
+                    }
+                }
+
+                Route::get('/account-ledger', 'accountLedger')->middleware('can:reports.account_ledger.view')->name('account-ledger');
+                Route::get('/customer-statement', 'customerStatement')->middleware('can:reports.customer_statement.view')->name('customer-statement');
+                Route::get('/supplier-statement', 'supplierStatement')->middleware('can:reports.supplier_statement.view')->name('supplier-statement');
+            });
 
         Route::prefix('accounts')
             ->name('accounts.')

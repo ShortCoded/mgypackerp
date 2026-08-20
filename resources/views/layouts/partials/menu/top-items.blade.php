@@ -6,19 +6,19 @@
     @endphp
 
     @if ($hasChildren)
-        <li class="nav-item dropdown">
+        <li class="nav-item dropdown erp-top-nav-root">
             <a class="nav-link dropdown-toggle {{ $item['active'] ? 'active' : '' }}" id="{{ $menuId }}" href="#" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="{{ $item['open'] ? 'true' : 'false' }}">
                 {{ $item['text'] }}
             </a>
-            <div class="dropdown-menu dropdown-caret dropdown-menu-card border-0 mt-0" aria-labelledby="{{ $menuId }}">
-                <div class="bg-white dark__bg-1000 rounded-3 py-2">
+            <div class="dropdown-menu dropdown-caret dropdown-menu-card erp-top-nav-menu mt-0" aria-labelledby="{{ $menuId }}">
+                <div class="erp-top-nav-panel">
                     @include('layouts.partials.menu.top-dropdown-items', ['items' => $item['children'], 'menuPath' => $itemPath])
                 </div>
             </div>
         </li>
     @else
         <li class="nav-item">
-            <a class="nav-link {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}">
+            <a class="nav-link {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}" @if($item['active']) aria-current="page" @endif>
                 {{ $item['text'] }}
             </a>
         </li>

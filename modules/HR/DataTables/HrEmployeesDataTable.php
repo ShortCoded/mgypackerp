@@ -7,7 +7,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrEmployee;
 use Yajra\DataTables\Facades\DataTables;
@@ -19,6 +21,8 @@ class HrEmployeesDataTable
     public function __construct(
         private readonly DataTableSearchService $searchService,
         private readonly NumericFormatService $numericFormatter,
+        private readonly OperatingCompanyContextService $companies,
+        private readonly DateFormatService $dates,
     ) {}
 
     public function json(Request $request): JsonResponse
@@ -27,19 +31,21 @@ class HrEmployeesDataTable
         $dateTimeFormat = app(SettingService::class)->dateTimeFormat();
         $trashFilter = $this->trashFilter($request);
         $canView = (bool) $request->user()?->can('hr.employees.view');
-        $query = $this->baseQuery($trashFilter)
+        $query = $this->baseQuery($trashFilter, $this->companies->currentCompanyId($request))
             ->leftJoin('companies', 'companies.id', '=', 'hr_employees.company_id')
             ->leftJoin('branches', 'branches.id', '=', 'hr_employees.branch_id')
             ->leftJoin('hr_departments', 'hr_departments.id', '=', 'hr_employees.department_id')
             ->leftJoin('hr_sections', 'hr_sections.id', '=', 'hr_employees.section_id')
             ->leftJoin('hr_jobs', 'hr_jobs.id', '=', 'hr_employees.job_id')
             ->leftJoin('hr_employment_types', 'hr_employment_types.id', '=', 'hr_employees.employment_type_id')
+            ->leftJoin('hr_hiring_statuses', 'hr_hiring_statuses.id', '=', 'hr_employees.hiring_status_id')
             ->leftJoin('currencies as payroll_currencies', 'payroll_currencies.id', '=', 'hr_employees.payroll_currency_id')
             ->leftJoin('archive_files as photo_files', 'photo_files.id', '=', 'hr_employees.photo_archive_file_id')
             ->leftJoin('users as created_users', 'created_users.id', '=', 'hr_employees.created_by')
             ->leftJoin('users as updated_users', 'updated_users.id', '=', 'hr_employees.updated_by')
             ->leftJoin('users as deleted_users', 'deleted_users.id', '=', 'hr_employees.deleted_by')
             ->select([
+                'hr_employees.public_uuid',
                 'hr_employees.doc_number',
                 'hr_employees.doc_num',
                 'hr_employees.full_name',
@@ -89,6 +95,8 @@ class HrEmployeesDataTable
                 'biometricMappings as active_biometric_mappings_count' => fn (Builder $query) => $query->where('is_active', true),
             ]);
 
+        $this->applyStructuredFilters($query, $request);
+
         return DataTables::eloquent($query)
             ->filter(function ($query) use ($request): void {
                 $search = $request->input('search.value');
@@ -134,7 +142,7 @@ class HrEmployeesDataTable
             ->orderColumn('job', 'hr_jobs.name $1')
             ->orderColumn('job_type', 'hr_employment_types.name $1')
             ->orderColumn('pay_basis', 'hr_employees.pay_basis $1')
-            ->orderColumn('pay_amount', 'hr_employees.basic_salary $1')
+            ->orderColumn('pay_amount', 'CASE hr_employees.pay_basis WHEN \'monthly_salary\' THEN hr_employees.basic_salary WHEN \'weekly_wage\' THEN hr_employees.weekly_wage WHEN \'daily_wage\' THEN hr_employees.daily_wage WHEN \'hourly_wage\' THEN hr_employees.hourly_wage WHEN \'shift_wage\' THEN hr_employees.shift_wage WHEN \'piece_rate\' THEN hr_employees.piece_rate END $1')
             ->orderColumn('payroll_currency', 'payroll_currencies.code $1')
             ->orderColumn('status', 'hr_employees.status $1')
             ->orderColumn('end_date', 'hr_employees.end_date $1')
@@ -152,13 +160,19 @@ class HrEmployeesDataTable
     /**
      * @return Builder<HrEmployee>
      */
-    private function baseQuery(string $trashFilter): Builder
+    private function baseQuery(string $trashFilter, ?int $companyId): Builder
     {
         $query = match ($trashFilter) {
             'trashed' => HrEmployee::onlyTrashed(),
             'all' => HrEmployee::withTrashed(),
             default => HrEmployee::query(),
         };
+
+        if ($companyId === null) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        $query->where('hr_employees.company_id', $companyId);
 
         return match ($trashFilter) {
             'active' => $query->where('hr_employees.status', 'active'),
@@ -181,6 +195,42 @@ class HrEmployeesDataTable
         return in_array($filter, ['active', 'inactive', 'trashed', 'all'], true) ? $filter : 'active';
     }
 
+    /**
+     * @param  Builder<HrEmployee>  $query
+     */
+    private function applyStructuredFilters(Builder $query, Request $request): void
+    {
+        $exactFilters = [
+            'branch_doc_num' => 'branches.doc_num',
+            'department_doc_num' => 'hr_departments.doc_num',
+            'section_doc_num' => 'hr_sections.doc_num',
+            'job_doc_num' => 'hr_jobs.doc_num',
+            'employment_type_doc_num' => 'hr_employment_types.doc_num',
+            'hiring_status_doc_num' => 'hr_hiring_statuses.doc_num',
+            'person_type' => 'hr_employees.person_type',
+            'status' => 'hr_employees.status',
+        ];
+
+        foreach ($exactFilters as $input => $column) {
+            $value = $request->string($input)->trim()->toString();
+
+            if ($value !== '') {
+                $query->where($column, $value);
+            }
+        }
+
+        $hireFrom = $this->dates->normalizeForStorage($request->string('hire_from')->trim()->toString());
+        $hireTo = $this->dates->normalizeForStorage($request->string('hire_to')->trim()->toString());
+
+        if ($hireFrom !== null) {
+            $query->whereDate('hr_employees.hire_date', '>=', $hireFrom);
+        }
+
+        if ($hireTo !== null) {
+            $query->whereDate('hr_employees.hire_date', '<=', $hireTo);
+        }
+    }
+
     private function docNumColumn(HrEmployee $employee, bool $canView): string
     {
         if (! $canView) {
@@ -189,7 +239,7 @@ class HrEmployeesDataTable
 
         return sprintf(
             '<a class="fw-semibold" href="%s">%s</a>',
-            e(route('admin.hr.employees.show', $employee->doc_num)),
+            e(route($employee->trashed() ? 'admin.hr.employees.trashed.show' : 'admin.hr.employees.show', $employee->trashed() ? $employee->public_uuid : $employee->doc_num)),
             e((string) $employee->doc_num),
         );
     }

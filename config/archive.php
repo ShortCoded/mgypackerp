@@ -38,6 +38,29 @@ return [
     ],
 
     'documents' => [
+        'allowed_mime_types' => [
+            'application/pdf',
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/svg+xml',
+            'image/bmp',
+            'image/x-ms-bmp',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'text/plain',
+            'text/csv',
+            'application/csv',
+            'application/zip',
+            'application/x-zip-compressed',
+            'application/vnd.rar',
+            'application/x-rar-compressed',
+        ],
+
         'allowed_extensions' => [
             'pdf',
             'jpg',

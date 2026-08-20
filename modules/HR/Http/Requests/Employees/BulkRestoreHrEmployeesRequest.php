@@ -4,6 +4,7 @@ namespace Modules\HR\Http\Requests\Employees;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Core\Services\OperatingCompanyContextService;
 
 class BulkRestoreHrEmployeesRequest extends FormRequest
 {
@@ -17,9 +18,16 @@ class BulkRestoreHrEmployeesRequest extends FormRequest
      */
     public function rules(): array
     {
+        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId($this);
+
         return [
-            'doc_nums' => ['required', 'array', 'min:1'],
-            'doc_nums.*' => ['string', Rule::exists('hr_employees', 'doc_num')],
+            'public_uuids' => ['required', 'array', 'min:1'],
+            'public_uuids.*' => [
+                'uuid',
+                Rule::exists('hr_employees', 'public_uuid')
+                    ->where(fn ($query) => $query->where('company_id', $companyId))
+                    ->whereNotNull('deleted_at'),
+            ],
         ];
     }
 }

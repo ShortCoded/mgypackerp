@@ -37,10 +37,29 @@
         $root.find('.erp-datatable-card .dataTables_filter input, .erp-datatable-card .dt-search input').addClass('form-control-sm');
         $root.find('.erp-datatable-card .dataTables_length select, .erp-datatable-card .dt-length select').addClass('form-select-sm');
         $root.find('.erp-datatable-card .dt-buttons .btn').removeClass('btn-secondary').addClass('btn-falcon-default btn-sm');
+        bindDropdownOverflow($root);
 
         if (window.AppShortcuts && typeof window.AppShortcuts.applyDataTableSearchTitles === 'function') {
             window.AppShortcuts.applyDataTableSearchTitles(root || document);
         }
+    }
+
+    function bindDropdownOverflow($root) {
+        const selector = '.erp-datatable-card .dropdown, .erp-datatable-card .btn-reveal-trigger';
+
+        $root
+            .off('show.bs.dropdown.erpDataTables', selector)
+            .on('show.bs.dropdown.erpDataTables', selector, function () {
+                $(this)
+                    .closest('.dataTables_scrollBody, .dt-scroll-body, .erp-datatable-scroll')
+                    .addClass('datatable-dropdown-open');
+            })
+            .off('hidden.bs.dropdown.erpDataTables', selector)
+            .on('hidden.bs.dropdown.erpDataTables', selector, function () {
+                $(this)
+                    .closest('.dataTables_scrollBody, .dt-scroll-body, .erp-datatable-scroll')
+                    .removeClass('datatable-dropdown-open');
+            });
     }
 
     function resolveColumnIndex(index, totalColumns) {
@@ -113,6 +132,15 @@
         return merged;
     }
 
+    function wideOptions(overrides) {
+        return options($.extend(true, {
+            autoWidth: false,
+            scrollCollapse: true,
+            scrollX: true,
+            responsive: false
+        }, overrides || {}));
+    }
+
     window.AppDataTables = {
         applyFalconEnhancements: applyFalconEnhancements,
         columnVisibilityButton: columnVisibilityButton,
@@ -122,6 +150,7 @@
         noColvisSelector: noColvisSelector,
         options: options,
         protectStateColumns: protectStateColumns,
-        showColumns: showColumns
+        showColumns: showColumns,
+        wideOptions: wideOptions
     };
 })(window, jQuery);

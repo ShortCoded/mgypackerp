@@ -68,6 +68,8 @@ return [
         'bulk_approved' => 'Selected records were approved successfully. Approved: :count, skipped: :skipped.',
         'bulk_approve_confirm' => 'Do you want to approve the selected records?',
         'restored' => 'Opening balance restored successfully.',
+        'restore_requires_trashed' => 'Only a deleted opening balance can be restored.',
+        'restore_doc_num_conflict' => 'Opening balance :doc_num cannot be restored because an active record already uses this document number.',
         'approved' => 'Opening balance approved and posted successfully.',
         'no_financial_period_selected' => 'No financial period selected.',
         'document_date_invalid' => 'Enter a valid document date.',

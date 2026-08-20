@@ -6,7 +6,7 @@
     $canCreate = auth()->user()?->can('hr.employees.create');
     $canClone = auth()->user()?->can('hr.employees.clone');
     $isTrashed = $employee?->trashed() ?? false;
-    $canRestore = $isView && $isTrashed && auth()->user()?->can('hr.employees.restore') && $employee?->doc_num !== null;
+    $canRestore = $isView && $isTrashed && auth()->user()?->can('hr.employees.restore') && $employee?->public_uuid !== null;
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
     $shortcutTitles = [
         'back' => __('common.shortcuts.back'),
@@ -45,7 +45,7 @@
         @endif
 
         @if ($canRestore)
-            <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->doc_num) }}">
+            <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $employee->doc_num }}" data-public-uuid="{{ $employee->public_uuid }}" data-record-name="{{ $employee->full_name }}" data-hr-employees-restore-url="{{ route('admin.hr.employees.restore', $employee->public_uuid) }}">
                 <span class="fas fa-undo me-1"></span>{{ __('hr.trash.restore') }}
             </button>
         @endif

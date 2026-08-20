@@ -221,6 +221,12 @@ return [
             'yes' => 'نعم',
             'no' => 'لا',
         ],
+        'filters' => [
+            'title' => 'مرشحات الموظفين',
+            'all' => 'الكل',
+            'hire_from' => 'تاريخ التعيين من',
+            'hire_to' => 'تاريخ التعيين إلى',
+        ],
         'genders' => [
             'male' => 'ذكر',
             'female' => 'أنثى',
@@ -402,10 +408,14 @@ return [
         ],
         'documents' => [
             'title' => 'المستندات والمرفقات',
+            'item_title' => 'المستند :number',
+            'no_file_selected' => 'لم يتم اختيار ملف',
             'actions' => [
                 'upload' => 'حفظ المستند',
                 'download' => 'تحميل',
                 'preview' => 'معاينة',
+                'replace' => 'استبدال',
+                'remove_attachment' => 'إزالة المرفق',
             ],
             'types' => [
                 'identification' => 'هوية',
