@@ -400,10 +400,10 @@ test('implemented sales cycle routes are not shadowed by UI shell placeholders',
 
 test('restricted production and warehouse browser responses do not expose commercial values', function () {
     $fixture = salesCycleFixture();
-    foreach (['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.reserve'] as $permission) {
+    foreach (['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
-    $fixture['user']->givePermissionTo(['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.reserve']);
+    $fixture['user']->givePermissionTo(['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve']);
     $payload = salesCycleOrderPayload($fixture, [
         'lines' => [[
             'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
@@ -426,6 +426,9 @@ test('restricted production and warehouse browser responses do not expose commer
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.production.work-orders.show', $production))
         ->assertOk()->assertSee('Sealed export carton')->assertDontSee('987.6543')->assertDontSee('Credit limit');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
+        ->get(route('admin.sales.production-requests.show', $production))
+        ->assertOk()->assertSee('Finished-goods store')->assertSee($fixture['store']->name)->assertDontSee('987.6543');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.production.work-orders.print', $production))
         ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price');

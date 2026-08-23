@@ -80,7 +80,9 @@ client.on('Runtime.consoleAPICalled', ({ type, args }) => {
   }
 });
 client.on('Log.entryAdded', ({ entry }) => {
-  if (entry.level === 'error' && !entry.url?.endsWith('/favicon.ico')) browserErrors.push(entry.text);
+  if (entry.level === 'error' && !entry.url?.endsWith('/favicon.ico')) {
+    browserErrors.push(entry.url ? `${entry.url}: ${entry.text}` : entry.text);
+  }
 });
 
 await Promise.all([
@@ -555,8 +557,8 @@ try {
   };
 
   const actionableErrors = [...new Set(browserErrors)].filter((message) => message && !message.includes('favicon.ico'));
-  assert(actionableErrors.length === 0, `Browser console errors detected: ${actionableErrors.join(' | ')}`);
   await writeFile(path.join(artifactDirectory, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  assert(actionableErrors.length === 0, `Browser console errors detected: ${actionableErrors.join(' | ')}`);
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 } finally {
   client.close();

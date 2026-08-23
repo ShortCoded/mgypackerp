@@ -195,7 +195,7 @@
 @section('content')
 <form class="js-purchase-invoice-form"
     action="{{ $action }}"
-    method="{{ $method }}"
+    method="POST"
     data-mode="{{ $mode }}"
     data-readonly="{{ $isReadonly ? '1' : '0' }}"
     data-product-url="{{ route('admin.purchases.select2.products') }}"

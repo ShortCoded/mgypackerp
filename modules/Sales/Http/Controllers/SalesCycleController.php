@@ -186,7 +186,14 @@ class SalesCycleController extends Controller
 
     public function showProduction(ProductionOrder $productionOrder): View
     {
-        return $this->show('production_request', $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit']));
+        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit']);
+
+        return view('modules.sales.cycle.show', [
+            'kind' => 'production_request',
+            'record' => $record,
+            'showPrices' => false,
+            'stores' => BranchStore::query()->where('branch_id', $record->branch_id)->orderBy('position')->get(),
+        ]);
     }
 
     public function storeOrder(StoreSalesOrderRequest $request, SalesOrderService $service): JsonResponse
