@@ -14,6 +14,7 @@ use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\DataTables\HrFoundationDataTable;
 use Modules\HR\Exceptions\HrLookupRestoreBlockedException;
@@ -288,6 +289,14 @@ abstract class HrFoundationController extends Controller
         $definition = $this->definition();
         $settings = app(HrFoundationDocumentNumberSettingsService::class)->current($definition);
 
+        if ($definition->hasTaxBrackets && $record !== null) {
+            $record->load('brackets');
+        }
+
+        if ($definition->hasInsuranceComponents && $record !== null) {
+            $record->load('components');
+        }
+
         return view('modules.hr.foundation.form', [
             'definition' => $definition,
             'mode' => $mode,
@@ -519,6 +528,7 @@ abstract class HrFoundationController extends Controller
 
         /** @var HrFoundationModel|null $source */
         $source = $this->definition()->modelClass::query()
+            ->when($this->definition()->companyScoped, fn ($query) => app(OperatingCompanyContextService::class)->applyCompanyScope($query, $this->definition()->table))
             ->where('doc_num', $sourceDocNum)
             ->first();
 
@@ -653,15 +663,32 @@ abstract class HrFoundationController extends Controller
                 'name' => __('hr.validation.name_unique'),
             ]);
         }
+
+        if (str_contains($message, '_device_uid_unique_active')
+            || str_contains($message, 'hr_biometric_devices.company_id, hr_biometric_devices.device_uid')) {
+            throw ValidationException::withMessages([
+                'device_uid' => __('validation.unique', [
+                    'attribute' => __('hr.foundation.attributes.device_uid'),
+                ]),
+            ]);
+        }
     }
 
     private function restoreRecordByDocNum(HrFoundationDefinition $definition, string $docNum): HrFoundationModel
     {
-        return $definition->modelClass::onlyTrashed()
+        $trashedQuery = $definition->modelClass::onlyTrashed();
+        $activeQuery = $definition->modelClass::query();
+
+        if ($definition->companyScoped) {
+            app(OperatingCompanyContextService::class)->applyCompanyScope($trashedQuery, $definition->table);
+            app(OperatingCompanyContextService::class)->applyCompanyScope($activeQuery, $definition->table);
+        }
+
+        return $trashedQuery
             ->where('doc_num', $docNum)
             ->latest('deleted_at')
             ->first()
-            ?? $definition->modelClass::query()
+            ?? $activeQuery
                 ->where('doc_num', $docNum)
                 ->firstOrFail();
     }

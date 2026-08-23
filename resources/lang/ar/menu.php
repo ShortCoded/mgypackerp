@@ -65,6 +65,8 @@ return [
     'hr_hiring_statuses' => 'حالات التعيين',
     'hr_identifications' => 'الهويات',
     'hr_insurance_offices' => 'مكاتب التأمين',
+    'hr_social_insurance_policies' => 'سياسات التأمينات الاجتماعية',
+    'hr_employment_tax_policies' => 'سياسات ضريبة المرتبات',
     'hr_military_services' => 'الموقف من التجنيد',
     'hr_nationalities' => 'الجنسيات',
     'hr_qualifications' => 'المؤهلات',

@@ -58,18 +58,30 @@ class HrSelect2Service
             ->orderBy('name')
             ->orderBy('doc_number');
 
-        if ($resource === 'biometric-devices') {
-            $companyId = $this->companies->currentCompanyId($request);
-            $query->when(
-                $companyId,
-                fn (Builder $query, int $companyId): Builder => $query->where('company_id', $companyId),
-                fn (Builder $query): Builder => $query->whereRaw('1 = 0'),
-            );
+        if ($definition->companyScoped) {
+            $this->companies->applyCompanyScope($query, $definition->table, $request);
+        }
+
+        if ($resource === 'sections') {
+            $query->addSelect('department_id')->with('department:id,doc_num');
+            $departmentDocNum = $request->string('department_doc_num')->trim()->toString();
+
+            if ($departmentDocNum !== '') {
+                $query->whereHas('department', fn (Builder $query): Builder => $query->where('doc_num', $departmentDocNum));
+            }
         }
 
         $this->applySearch($query, $search, $definition->table);
 
-        return $this->select2->paginated($query, $request, fn (HrFoundationModel $record): array => $this->asSelect2Option($record));
+        return $this->select2->paginated($query, $request, function (HrFoundationModel $record) use ($resource): array {
+            $option = $this->asSelect2Option($record);
+
+            if ($resource === 'sections') {
+                $option['department_doc_num'] = (string) ($record->department?->doc_num ?? '');
+            }
+
+            return $option;
+        });
     }
 
     /**

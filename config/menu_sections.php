@@ -140,6 +140,8 @@ return [
         'hr_shifts' => 'attendance_leave',
         'hr_document_types' => 'hr_setup',
         'hr_insurance_offices' => 'hr_setup',
+        'hr_social_insurance_policies' => 'hr_setup',
+        'hr_employment_tax_policies' => 'hr_setup',
         'hr_allowances' => 'hr_setup',
         'hr_areas' => 'hr_setup',
         'hr_cities' => 'hr_setup',

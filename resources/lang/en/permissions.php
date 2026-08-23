@@ -41,6 +41,8 @@ foreach ([
     'hr.shifts' => ['Work Shifts', 'Work Shift'],
     'hr.biometric_devices' => ['Attendance Devices', 'Attendance Device'],
     'hr.insurance_offices' => ['Insurance Offices', 'Insurance Office'],
+    'hr.social_insurance_policies' => ['Social Insurance Policies', 'Social Insurance Policy'],
+    'hr.employment_tax_policies' => ['Employment Tax Policies', 'Employment Tax Policy'],
 ] as $prefix => [$plural, $singular]) {
     $hrFoundationPermissionLabels["{$prefix}.view"] = "View {$plural}";
     $hrFoundationPermissionLabels["{$prefix}.create"] = "Create {$plural}";

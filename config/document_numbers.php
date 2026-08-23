@@ -182,6 +182,18 @@ return [
         'column' => 'doc_num',
         'number_column' => 'doc_number',
     ],
+    'hr_social_insurance_policies' => [
+        'prefix' => 'InsPolicy-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+    ],
+    'hr_employment_tax_policies' => [
+        'prefix' => 'TaxPolicy-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+    ],
     'hr_employee_documents' => [
         'prefix' => 'EmpDoc-',
         'padding' => 5,

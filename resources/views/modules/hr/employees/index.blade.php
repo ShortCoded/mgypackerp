@@ -58,13 +58,13 @@
                 type="button"
                 data-bs-toggle="collapse"
                 data-bs-target="#hr-employees-filters"
-                aria-expanded="true"
+                aria-expanded="false"
                 aria-controls="hr-employees-filters">
                 <span class="fw-semibold"><span class="fas fa-filter me-1"></span>{{ __('hr.employees.filters.title') }}</span>
                 <span class="fas fa-chevron-down fs-11"></span>
             </button>
         </div>
-        <div class="collapse show" id="hr-employees-filters">
+        <div class="collapse" id="hr-employees-filters">
             <div class="card-body">
                 <form class="js-hr-employees-filters" novalidate>
                     <div class="row g-3 align-items-end">
@@ -76,7 +76,13 @@
                                     class="form-select js-select2-ajax js-hr-employees-filter"
                                     data-url="{{ $option['url'] ?? '' }}"
                                     data-placeholder="{{ __('hr.employees.placeholders.' . $fieldName) }}"
-                                    data-allow-clear="true"></select>
+                                    data-allow-clear="true"
+                                    @if ($fieldName === 'section_doc_num')
+                                        data-depends-on="#hr-employees-filter-department-doc-num"
+                                        data-dependent-param="department_doc_num"
+                                        data-dependent-result-field="department_doc_num"
+                                        data-disable-when-dependency-empty="true"
+                                    @endif></select>
                             </div>
                         @endforeach
 
@@ -99,6 +105,18 @@
                                 @endforeach
                             </select>
                         </div>
+
+                        @foreach (['insurance_status', 'tax_status'] as $statutoryFilter)
+                            <div class="col-md-6 col-xl-3">
+                                <label class="form-label" for="hr-employees-filter-{{ str_replace('_', '-', $statutoryFilter) }}">{{ __('hr.employees.attributes.'.$statutoryFilter) }}</label>
+                                <select id="hr-employees-filter-{{ str_replace('_', '-', $statutoryFilter) }}" name="{{ $statutoryFilter }}" class="form-select js-hr-employees-filter">
+                                    <option value="">{{ __('hr.employees.filters.all') }}</option>
+                                    @foreach (['subject', 'not_subject', 'suspended', 'ended'] as $statutoryStatus)
+                                        <option value="{{ $statutoryStatus }}">{{ __('hr.employees.statutory_statuses.'.$statutoryStatus) }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                        @endforeach
 
                         <div class="col-md-6 col-xl-3">
                             <label class="form-label" for="hr-employees-filter-hire-from">{{ __('hr.employees.filters.hire_from') }}</label>

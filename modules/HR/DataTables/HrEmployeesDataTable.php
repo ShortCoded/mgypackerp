@@ -39,6 +39,7 @@ class HrEmployeesDataTable
             ->leftJoin('hr_jobs', 'hr_jobs.id', '=', 'hr_employees.job_id')
             ->leftJoin('hr_employment_types', 'hr_employment_types.id', '=', 'hr_employees.employment_type_id')
             ->leftJoin('hr_hiring_statuses', 'hr_hiring_statuses.id', '=', 'hr_employees.hiring_status_id')
+            ->leftJoin('hr_insurance_offices', 'hr_insurance_offices.id', '=', 'hr_employees.insurance_office_id')
             ->leftJoin('currencies as payroll_currencies', 'payroll_currencies.id', '=', 'hr_employees.payroll_currency_id')
             ->leftJoin('archive_files as photo_files', 'photo_files.id', '=', 'hr_employees.photo_archive_file_id')
             ->leftJoin('users as created_users', 'created_users.id', '=', 'hr_employees.created_by')
@@ -66,6 +67,9 @@ class HrEmployeesDataTable
                 'hr_employees.email',
                 'hr_employees.work_email',
                 'hr_employees.personal_email',
+                'hr_employees.insurance_status',
+                'hr_employees.social_insurance_number',
+                'hr_employees.tax_status',
                 'hr_employees.end_date',
                 'hr_employees.created_at',
                 'hr_employees.updated_at',
@@ -82,6 +86,8 @@ class HrEmployeesDataTable
                 'hr_jobs.doc_num as job_doc_num',
                 'hr_employment_types.name as employment_type_name',
                 'hr_employment_types.doc_num as employment_type_doc_num',
+                'hr_insurance_offices.name as insurance_office_name',
+                'hr_insurance_offices.doc_num as insurance_office_doc_num',
                 'payroll_currencies.code as payroll_currency_code',
                 'payroll_currencies.name as payroll_currency_name',
                 'payroll_currencies.doc_num as payroll_currency_doc_num',
@@ -207,8 +213,11 @@ class HrEmployeesDataTable
             'job_doc_num' => 'hr_jobs.doc_num',
             'employment_type_doc_num' => 'hr_employment_types.doc_num',
             'hiring_status_doc_num' => 'hr_hiring_statuses.doc_num',
+            'insurance_office_doc_num' => 'hr_insurance_offices.doc_num',
             'person_type' => 'hr_employees.person_type',
             'status' => 'hr_employees.status',
+            'insurance_status' => 'hr_employees.insurance_status',
+            'tax_status' => 'hr_employees.tax_status',
         ];
 
         foreach ($exactFilters as $input => $column) {
@@ -325,6 +334,9 @@ class HrEmployeesDataTable
                 'hr_employees.email',
                 'hr_employees.work_email',
                 'hr_employees.personal_email',
+                'hr_employees.insurance_status',
+                'hr_employees.social_insurance_number',
+                'hr_employees.tax_status',
                 'companies.name',
                 'companies.doc_num',
                 'branches.name',
@@ -337,6 +349,8 @@ class HrEmployeesDataTable
                 'hr_jobs.doc_num',
                 'hr_employment_types.name',
                 'hr_employment_types.doc_num',
+                'hr_insurance_offices.name',
+                'hr_insurance_offices.doc_num',
                 'payroll_currencies.code',
                 'payroll_currencies.name',
                 'payroll_currencies.doc_num',

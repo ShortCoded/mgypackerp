@@ -5,6 +5,11 @@
         $inlineMergeFields = $inlineMergeFields ?? [];
         $required = (bool) ($required ?? false);
         $createUrl = $createUrl ?? null;
+        $dependsOn = $dependsOn ?? null;
+        $dependentParam = $dependentParam ?? null;
+        $dependentResultField = $dependentResultField ?? null;
+        $preserveDependentValues = (bool) ($preserveDependentValues ?? false);
+        $disableWhenDependencyEmpty = (bool) ($disableWhenDependencyEmpty ?? false);
     @endphp
     <x-forms.label :for="$inputId" :label="$fieldLabel" :required="$required" />
     <div class="hr-select2-inline-control">
@@ -14,6 +19,11 @@
             data-url="{{ $dataUrl }}"
             data-placeholder="{{ $placeholder }}"
             data-allow-clear="true"
+            @if ($dependsOn) data-depends-on="{{ $dependsOn }}" @endif
+            @if ($dependentParam) data-dependent-param="{{ $dependentParam }}" @endif
+            @if ($dependentResultField) data-dependent-result-field="{{ $dependentResultField }}" @endif
+            @if ($preserveDependentValues) data-preserve-dependent-values="true" @endif
+            @if ($disableWhenDependencyEmpty) data-disable-when-dependency-empty="true" @endif
             @required($required)>
             @if ($selectedValue !== '' && $selectedText !== '')
                 <option value="{{ $selectedValue }}" selected>{{ $selectedText }}</option>

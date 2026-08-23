@@ -15,7 +15,7 @@
     $dateFormatService = app(DateFormatService::class);
     $employeeName = $isClone && $employee ? __('hr.defaults.clone_name', ['name' => $employee->full_name]) : $employee?->full_name;
     $cloneBlankFields = ['employee_code', 'national_id', 'email', 'work_email'];
-    $dateFields = ['birth_date', 'hire_date', 'start_date', 'end_date', 'national_id_expiry_date', 'passport_expiry_date', 'probation_end_date', 'contract_start_date', 'contract_end_date', 'termination_date'];
+    $dateFields = ['birth_date', 'hire_date', 'start_date', 'end_date', 'national_id_expiry_date', 'passport_expiry_date', 'probation_end_date', 'contract_start_date', 'contract_end_date', 'termination_date', 'insurance_start_date', 'insurance_end_date', 'tax_start_date', 'tax_end_date'];
     $select2FieldNames = array_keys($selectFields);
     $booleanFields = ['attendance_tracking_enabled', 'overtime_enabled'];
     $personTypeOptions = ['fixed_employee', 'regular_labor', 'casual_labor'];
@@ -31,6 +31,7 @@
     ];
     $attendancePolicyOptions = ['fixed_shift', 'flexible_shift', 'scheduled_labor', 'attendance_only', 'manual_work_sessions'];
     $paymentMethodOptions = ['cash', 'bank_transfer', 'wallet', 'other'];
+    $statutoryStatusOptions = ['subject', 'not_subject', 'suspended', 'ended'];
     $fieldValue = function (string $field, mixed $default = '') use ($employee, $employeeName, $isClone, $cloneBlankFields) {
         if ($field === 'full_name') {
             return old($field, $employeeName ?? $default);
@@ -109,6 +110,18 @@
         'shift_wage',
         'piece_rate',
         'payment_method',
+        'insurance_status',
+        'social_insurance_number',
+        'insurance_start_date',
+        'insurance_end_date',
+        'insurance_contribution_wage',
+        'insurance_non_coverage_reason',
+        'insurance_notes',
+        'tax_status',
+        'tax_start_date',
+        'tax_end_date',
+        'tax_special_treatment_reason',
+        'tax_notes',
         'notes',
         ...$select2FieldNames,
     ];
@@ -162,6 +175,7 @@
                     <li class="nav-item"><button class="nav-link" id="tab-attendance-biometric" data-bs-toggle="tab" data-bs-target="#pane-attendance-biometric" type="button" role="tab">{{ __('hr.employees.sections.attendance_biometric') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-salary-payment" data-bs-toggle="tab" data-bs-target="#pane-salary-payment" type="button" role="tab">{{ __('hr.employees.sections.salary_payment') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-documents" data-bs-toggle="tab" data-bs-target="#pane-documents" type="button" role="tab">{{ __('hr.employees.sections.documents') }}</button></li>
+                    <li class="nav-item"><button class="nav-link" id="tab-insurance-taxes" data-bs-toggle="tab" data-bs-target="#pane-insurance-taxes" type="button" role="tab">{{ __('hr.employees.sections.insurance_taxes') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-notes" data-bs-toggle="tab" data-bs-target="#pane-notes" type="button" role="tab">{{ __('hr.employees.sections.notes') }}</button></li>
                 </ul>
 
@@ -549,6 +563,10 @@
                                         'createUrl' => $option['create_url'] ?? null,
                                         'inlineUrl' => null,
                                         'required' => false,
+                                        'dependsOn' => $fieldName === 'section_doc_num' ? '#hr-employee-department-doc-num' : null,
+                                        'dependentParam' => $fieldName === 'section_doc_num' ? 'department_doc_num' : null,
+                                        'dependentResultField' => $fieldName === 'section_doc_num' ? 'department_doc_num' : null,
+                                        'disableWhenDependencyEmpty' => $fieldName === 'section_doc_num',
                                     ])
                                 </div>
                             @endforeach
@@ -670,139 +688,33 @@
                                     <span class="fas fa-plus me-1"></span>{{ __('hr.employees.actions.add_fingerprint') }}
                                 </button>
                             </div>
-                            <div class="table-responsive scrollbar">
-                                <table class="table mb-0 align-middle table-sm hr-biometric-table">
-                                    <thead class="bg-100 text-900">
-                                        <tr>
-                                            <th>{{ __('hr.employees.biometric.device') }}</th>
-                                            <th>{{ __('hr.employees.biometric.code') }}</th>
-                                            <th class="text-center">{{ __('hr.employees.biometric.active') }}</th>
-                                            <th>{{ __('hr.employees.biometric.notes') }}</th>
-                                            <th class="text-center">{{ __('common.fields.actions') }}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="js-hr-biometric-rows" data-next-index="{{ $biometricRows->count() }}">
-                                        @forelse ($biometricRows as $biometricIndex => $mapping)
-                                            @php
-                                                $device = $mapping->device;
-                                                $deviceText = $device ? trim(implode(' / ', array_filter([$device->name, $device->doc_num]))) : '';
-                                            @endphp
-                                            <tr class="js-hr-biometric-row" data-biometric-index="{{ $biometricIndex }}">
-                                                <td>
-                                                    <input type="hidden" name="biometric_mappings[{{ $biometricIndex }}][id]" value="{{ $mapping->id }}">
-                                                    <input type="hidden" name="biometric_mappings[{{ $biometricIndex }}][_delete]" value="0" class="js-hr-biometric-delete-flag">
-                                                    <div class="hr-select2-inline-control">
-                                                        <select id="hr-biometric-device-{{ $biometricIndex }}" name="biometric_mappings[{{ $biometricIndex }}][device_doc_num]" class="form-select js-select2-ajax" data-url="{{ $biometricDeviceSelect['url'] }}" data-placeholder="{{ __('hr.employees.biometric.placeholder_device') }}" data-allow-clear="true">
-                                                            @if ($device)
-                                                                <option value="{{ $device->doc_num }}" selected>{{ $deviceText }}</option>
-                                                            @endif
-                                                        </select>
-                                                        @if (($biometricDeviceSelect['can_create'] ?? false) && ($biometricDeviceSelect['create_url'] ?? null))
-                                                            <a class="btn btn-falcon-default btn-sm" href="{{ $biometricDeviceSelect['create_url'] }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new_device') }}" data-bs-title="{{ __('hr.inline_lookup.add_new_device') }}">
-                                                                <span class="fas fa-plus"></span>
-                                                                <span class="visually-hidden">{{ __('hr.inline_lookup.add_new_device') }}</span>
-                                                            </a>
-                                                        @endif
-                                                    </div>
-                                                    <div class="invalid-feedback d-block" data-error-for="biometric_mappings.{{ $biometricIndex }}.device_doc_num"></div>
-                                                </td>
-                                                <td>
-                                                    <input name="biometric_mappings[{{ $biometricIndex }}][biometric_code]" type="text" class="form-control" value="{{ $mapping->biometric_code }}" placeholder="{{ __('hr.employees.biometric.code_placeholder') }}">
-                                                    <div class="invalid-feedback d-block" data-error-for="biometric_mappings.{{ $biometricIndex }}.biometric_code"></div>
-                                                </td>
-                                                <td class="text-center">
-                                                    <div class="form-check form-check-inline mb-0 justify-content-center">
-                                                        <input id="hr-biometric-active-{{ $biometricIndex }}" name="biometric_mappings[{{ $biometricIndex }}][is_active]" type="checkbox" class="form-check-input" value="1" @checked($mapping->is_active)>
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <input name="biometric_mappings[{{ $biometricIndex }}][notes]" type="text" class="form-control" value="{{ $mapping->notes }}" placeholder="{{ __('hr.employees.biometric.notes_placeholder') }}">
-                                                </td>
-                                                <td class="text-center">
-                                                    <button type="button" class="p-0 btn btn-link text-danger js-hr-biometric-remove" title="{{ __('common.actions.delete') }}">
-                                                        <span class="fas fa-trash-alt"></span>
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        @empty
-                                            <tr class="js-hr-biometric-empty">
-                                                <td colspan="5" class="py-4 text-center text-600">{{ __('hr.employees.biometric.empty') }}</td>
-                                            </tr>
-                                        @endforelse
-                                    </tbody>
-                                </table>
+                            <div class="vstack gap-3 js-hr-biometric-rows" data-next-index="{{ $biometricRows->count() }}">
+                                @forelse ($biometricRows as $biometricIndex => $mapping)
+                                    @include('modules.hr.employees.partials.biometric-mapping-card', compact('mapping', 'biometricIndex', 'biometricDeviceSelect', 'isView'))
+                                @empty
+                                    <div class="border rounded-3 py-4 text-center text-600 js-hr-biometric-empty">{{ __('hr.employees.biometric.empty') }}</div>
+                                @endforelse
                             </div>
 
                             <template id="hr-biometric-row-template">
-                                <tr class="js-hr-biometric-row" data-biometric-index="__INDEX__">
-                                    <td>
-                                        <input type="hidden" name="biometric_mappings[__INDEX__][_delete]" value="0" class="js-hr-biometric-delete-flag">
-                                        <div class="hr-select2-inline-control">
-                                            <select id="hr-biometric-device-__INDEX__" name="biometric_mappings[__INDEX__][device_doc_num]" class="form-select js-select2-ajax" data-url="{{ $biometricDeviceSelect['url'] }}" data-placeholder="{{ __('hr.employees.biometric.placeholder_device') }}" data-allow-clear="true"></select>
-                                            @if (($biometricDeviceSelect['can_create'] ?? false) && ($biometricDeviceSelect['create_url'] ?? null))
-                                                <a class="btn btn-falcon-default btn-sm" href="{{ $biometricDeviceSelect['create_url'] }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new_device') }}" data-bs-title="{{ __('hr.inline_lookup.add_new_device') }}">
-                                                    <span class="fas fa-plus"></span>
-                                                    <span class="visually-hidden">{{ __('hr.inline_lookup.add_new_device') }}</span>
-                                                </a>
-                                            @endif
-                                        </div>
-                                        <div class="invalid-feedback d-block" data-error-for="biometric_mappings.__INDEX__.device_doc_num"></div>
-                                    </td>
-                                    <td>
-                                        <input name="biometric_mappings[__INDEX__][biometric_code]" type="text" class="form-control" placeholder="{{ __('hr.employees.biometric.code_placeholder') }}">
-                                        <div class="invalid-feedback d-block" data-error-for="biometric_mappings.__INDEX__.biometric_code"></div>
-                                    </td>
-                                    <td class="text-center">
-                                        <div class="form-check form-check-inline mb-0 justify-content-center">
-                                            <input name="biometric_mappings[__INDEX__][is_active]" type="checkbox" class="form-check-input" value="1" checked>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <input name="biometric_mappings[__INDEX__][notes]" type="text" class="form-control" placeholder="{{ __('hr.employees.biometric.notes_placeholder') }}">
-                                    </td>
-                                    <td class="text-center">
-                                        <button type="button" class="p-0 btn btn-link text-danger js-hr-biometric-remove" title="{{ __('common.actions.delete') }}">
-                                            <span class="fas fa-trash-alt"></span>
-                                        </button>
-                                    </td>
-                                </tr>
+                                @include('modules.hr.employees.partials.biometric-mapping-card', [
+                                    'mapping' => null,
+                                    'biometricIndex' => '__INDEX__',
+                                    'biometricDeviceSelect' => $biometricDeviceSelect,
+                                    'isView' => false,
+                                ])
                             </template>
                         @else
                             @php
                                 $biometricRows = $employee ? $employee->biometricMappings : collect();
                             @endphp
                             <hr class="my-3">
-                            <div class="table-responsive scrollbar">
-                                <table class="table mb-0 align-middle table-sm">
-                                    <thead class="bg-100 text-900">
-                                        <tr>
-                                            <th>{{ __('hr.employees.biometric.device') }}</th>
-                                            <th>{{ __('hr.employees.biometric.code') }}</th>
-                                            <th class="text-center">{{ __('hr.employees.biometric.active') }}</th>
-                                            <th>{{ __('hr.employees.biometric.notes') }}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @forelse ($biometricRows as $mapping)
-                                            <tr>
-                                                <td>{{ $mapping->device?->name ?? $mapping->device?->doc_num ?? '-' }}</td>
-                                                <td>{{ $mapping->biometric_code }}</td>
-                                                <td class="text-center">
-                                                    @if ($mapping->is_active)
-                                                        <span class="badge badge-soft-success">{{ __('common.status.active') }}</span>
-                                                    @else
-                                                        <span class="badge badge-soft-secondary">{{ __('common.status.inactive') }}</span>
-                                                    @endif
-                                                </td>
-                                                <td>{{ $mapping->notes ?? '-' }}</td>
-                                            </tr>
-                                        @empty
-                                            <tr>
-                                                <td colspan="4" class="py-4 text-center text-600">{{ __('hr.employees.biometric.empty') }}</td>
-                                            </tr>
-                                        @endforelse
-                                    </tbody>
-                                </table>
+                            <div class="vstack gap-3">
+                                @forelse ($biometricRows as $biometricIndex => $mapping)
+                                    @include('modules.hr.employees.partials.biometric-mapping-card', compact('mapping', 'biometricIndex', 'biometricDeviceSelect', 'isView'))
+                                @empty
+                                    <div class="border rounded-3 py-4 text-center text-600">{{ __('hr.employees.biometric.empty') }}</div>
+                                @endforelse
                             </div>
                         @endif
                     </div>
@@ -907,6 +819,306 @@
                                     'inlineUrl' => null,
                                     'required' => false,
                                 ])
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="pane-insurance-taxes" role="tabpanel" aria-labelledby="tab-insurance-taxes">
+                        <div class="row g-4">
+                            <div class="col-12 col-xl-6">
+                                <div class="border rounded-3 p-3 h-100">
+                                    <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1">{{ __('hr.employees.statutory.social_insurance') }}</h6>
+                                            <small class="text-muted">{{ __('hr.employees.statutory.preview_date', ['date' => $statutoryPreviewDate]) }}</small>
+                                        </div>
+                                        @if ($socialInsurancePolicyEditUrl)
+                                            <a class="btn btn-sm btn-falcon-default" href="{{ $socialInsurancePolicyEditUrl }}">
+                                                <span class="fas fa-external-link-alt me-1"></span>{{ __('hr.employees.statutory.open_policy') }}
+                                            </a>
+                                        @endif
+                                    </div>
+
+                                    @if ($socialInsurancePolicy)
+                                        @php
+                                            $socialCombinedRate = bcadd((string) $socialInsurancePolicy->employee_contribution_rate, (string) $socialInsurancePolicy->employer_contribution_rate, 4);
+                                        @endphp
+                                        <div class="rounded-3 bg-body-tertiary p-3 mb-3">
+                                            <div class="fw-semibold mb-2">{{ __('hr.employees.statutory.applicable_policy') }}</div>
+                                            <div class="row g-2 small">
+                                                <div class="col-12"><span class="text-muted">{{ __('hr.employees.statutory.policy_name') }}:</span> <strong>{{ $socialInsurancePolicy->name }}</strong></div>
+                                                <div class="col-12"><span class="text-muted">{{ __('hr.employees.statutory.effective_period') }}:</span> {{ $dateFormatService->formatDate($socialInsurancePolicy->effective_from, '') }} — {{ $socialInsurancePolicy->effective_to ? $dateFormatService->formatDate($socialInsurancePolicy->effective_to, '') : '∞' }}</div>
+                                                <div class="col-6"><span class="text-muted">{{ __('hr.employees.statutory.minimum_wage') }}:</span> {{ $socialInsurancePolicy->minimum_contribution_wage ?? '—' }}</div>
+                                                <div class="col-6"><span class="text-muted">{{ __('hr.employees.statutory.maximum_wage') }}:</span> {{ $socialInsurancePolicy->maximum_contribution_wage ?? '—' }}</div>
+                                                <div class="col-4"><span class="text-muted">{{ __('hr.employees.statutory.employee_rate') }}:</span> {{ $socialInsurancePolicy->employee_contribution_rate }}%</div>
+                                                <div class="col-4"><span class="text-muted">{{ __('hr.employees.statutory.employer_rate') }}:</span> {{ $socialInsurancePolicy->employer_contribution_rate }}%</div>
+                                                <div class="col-4"><span class="text-muted">{{ __('hr.employees.statutory.combined_rate') }}:</span> {{ $socialCombinedRate }}%</div>
+                                            </div>
+                                            <button class="btn btn-link btn-sm px-0 mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#employee-insurance-policy-components" aria-expanded="false">
+                                                {{ __('hr.employees.statutory.components') }} <span class="fas fa-chevron-down ms-1"></span>
+                                            </button>
+                                            <div class="collapse" id="employee-insurance-policy-components">
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm mb-0 align-middle">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>{{ __('hr.employees.statutory.component') }}</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.employee_rate') }}</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.employer_rate') }}</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.combined_rate') }}</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach ($socialInsurancePolicy->components->where('is_active', true) as $component)
+                                                                <tr>
+                                                                    <td>{{ $component->name }}</td>
+                                                                    <td class="text-center">{{ $component->employee_rate }}%</td>
+                                                                    <td class="text-center">{{ $component->employer_rate }}%</td>
+                                                                    <td class="text-center">{{ bcadd((string) $component->employee_rate, (string) $component->employer_rate, 4) }}%</td>
+                                                                </tr>
+                                                            @endforeach
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    @else
+                                        <div class="alert alert-warning py-2 mb-3">{{ __('hr.employees.statutory.no_applicable_policy', ['date' => $statutoryPreviewDate]) }}</div>
+                                    @endif
+                                    <div class="row g-3">
+                                        @php $insuranceStatus = (string) old('insurance_status', $fieldValue('insurance_status', 'not_subject')); @endphp
+                                        <div class="col-md-6">
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-insurance-status" :label="__('hr.employees.attributes.insurance_status')" :value="__('hr.employees.statutory_statuses.'.$insuranceStatus)" required />
+                                            @else
+                                                <x-forms.label for="hr-employee-insurance-status" :label="__('hr.employees.attributes.insurance_status')" required />
+                                                <select id="hr-employee-insurance-status" name="insurance_status" class="form-select js-hr-statutory-status" data-statutory-target="insurance" required>
+                                                    @foreach ($statutoryStatusOptions as $status)
+                                                        <option value="{{ $status }}" @selected($insuranceStatus === $status)>{{ __('hr.employees.statutory_statuses.'.$status) }}</option>
+                                                    @endforeach
+                                                </select>
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="insurance_status"></div>
+                                        </div>
+
+                                        <div class="col-md-6" data-statutory-details="insurance">
+                                            <label class="form-label" for="hr-employee-social-insurance-number">{{ __('hr.employees.attributes.social_insurance_number') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-social-insurance-number" :value="$fieldValue('social_insurance_number')" dir="ltr" />
+                                            @else
+                                                <input id="hr-employee-social-insurance-number" name="social_insurance_number" type="text" class="form-control" value="{{ $fieldValue('social_insurance_number') }}" maxlength="60" dir="ltr">
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="social_insurance_number"></div>
+                                        </div>
+
+                                        @php
+                                            $fieldName = 'insurance_office_doc_num';
+                                            $option = $selectOption($fieldName) ?? [];
+                                        @endphp
+                                        <div class="col-md-6" data-statutory-details="insurance">
+                                            @include('modules.hr.partials.inline-select2-field', [
+                                                'isView' => $isView,
+                                                'inputId' => 'hr-employee-insurance-office-doc-num',
+                                                'fieldName' => $fieldName,
+                                                'fieldLabel' => __('hr.employees.attributes.'.$fieldName),
+                                                'placeholder' => __('hr.employees.placeholders.'.$fieldName),
+                                                'selectedValue' => $selectValue($fieldName),
+                                                'selectedText' => (string) ($option['text'] ?? ''),
+                                                'dataUrl' => (string) ($option['url'] ?? ''),
+                                                'canCreate' => (bool) ($option['can_create'] ?? false),
+                                                'createUrl' => $option['create_url'] ?? null,
+                                                'inlineUrl' => null,
+                                            ])
+                                        </div>
+
+                                        @foreach (['insurance_start_date', 'insurance_end_date'] as $fieldName)
+                                            @php $inputId = 'hr-employee-'.str_replace('_', '-', $fieldName); @endphp
+                                            <div class="col-md-6" data-statutory-details="insurance">
+                                                <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.'.$fieldName) }}</label>
+                                                @if ($isView)
+                                                    <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
+                                                @else
+                                                    <input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                                @endif
+                                                <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
+                                            </div>
+                                        @endforeach
+
+                                        <div class="col-md-6" data-statutory-details="insurance">
+                                            <label class="form-label" for="hr-employee-insurance-contribution-wage">{{ __('hr.employees.attributes.insurance_contribution_wage') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-insurance-contribution-wage" :value="$fieldValue('insurance_contribution_wage')" numeric dir="ltr" />
+                                            @else
+                                                <x-forms.numeric-input id="hr-employee-insurance-contribution-wage" name="insurance_contribution_wage" :value="$fieldValue('insurance_contribution_wage')" :scale="2" min="0" step="0.01" class="text-center" />
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="insurance_contribution_wage"></div>
+                                        </div>
+
+                                        <div class="col-12" data-statutory-reason="insurance">
+                                            <label class="form-label" for="hr-employee-insurance-non-coverage-reason">{{ __('hr.employees.attributes.insurance_non_coverage_reason') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-insurance-non-coverage-reason" :value="$fieldValue('insurance_non_coverage_reason')" />
+                                            @else
+                                                <input id="hr-employee-insurance-non-coverage-reason" name="insurance_non_coverage_reason" type="text" class="form-control" value="{{ $fieldValue('insurance_non_coverage_reason') }}">
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="insurance_non_coverage_reason"></div>
+                                        </div>
+
+                                        <div class="col-12">
+                                            <label class="form-label" for="hr-employee-insurance-notes">{{ __('hr.employees.attributes.insurance_notes') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-insurance-notes" as="textarea" :value="$fieldValue('insurance_notes')" rows="3" />
+                                            @else
+                                                <textarea id="hr-employee-insurance-notes" name="insurance_notes" class="form-control" rows="3">{{ $fieldValue('insurance_notes') }}</textarea>
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="insurance_notes"></div>
+                                        </div>
+
+                                        @if ($socialInsurancePolicy)
+                                            <div class="col-12">
+                                                <div class="card border shadow-none js-insurance-contribution-preview"
+                                                    data-employee-rate="{{ $socialInsurancePolicy->employee_contribution_rate }}"
+                                                    data-employer-rate="{{ $socialInsurancePolicy->employer_contribution_rate }}"
+                                                    data-minimum-wage="{{ $socialInsurancePolicy->minimum_contribution_wage ?? '' }}"
+                                                    data-maximum-wage="{{ $socialInsurancePolicy->maximum_contribution_wage ?? '' }}"
+                                                    data-rounding-rule="{{ $socialInsurancePolicy->rounding_rule }}">
+                                                    <div class="card-header bg-body-tertiary py-2">
+                                                        <div class="fw-semibold">{{ __('hr.employees.statutory.insurance_preview') }}</div>
+                                                        <small class="text-muted">{{ __('hr.employees.statutory.preview_information', ['date' => $statutoryPreviewDate]) }}</small>
+                                                    </div>
+                                                    <div class="card-body py-2">
+                                                        <div class="text-muted js-insurance-preview-empty {{ $socialInsurancePreview ? 'd-none' : '' }}">{{ __('hr.employees.statutory.preview_waiting_for_wage') }}</div>
+                                                        <div class="row g-2 small js-insurance-preview-values {{ $socialInsurancePreview ? '' : 'd-none' }}">
+                                                            @foreach ([
+                                                                'entered_wage' => 'entered_wage',
+                                                                'applicable_wage' => 'applicable_wage',
+                                                                'employee_contribution' => 'employee_contribution',
+                                                                'employer_contribution' => 'employer_contribution',
+                                                                'combined_contribution' => 'combined_contribution',
+                                                            ] as $label => $previewKey)
+                                                                <div class="col-6">
+                                                                    <span class="text-muted">{{ __('hr.employees.statutory.'.$label) }}:</span>
+                                                                    <strong data-insurance-preview-value="{{ $previewKey }}">{{ $socialInsurancePreview[$previewKey] ?? '—' }}</strong>
+                                                                </div>
+                                                            @endforeach
+                                                            <div class="col-12 text-warning js-insurance-preview-clamped {{ ($socialInsurancePreview['was_clamped'] ?? false) ? '' : 'd-none' }}">
+                                                                {{ __('hr.employees.statutory.wage_was_clamped') }}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        @endif
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 col-xl-6">
+                                <div class="border rounded-3 p-3 h-100">
+                                    <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1">{{ __('hr.employees.statutory.employment_tax') }}</h6>
+                                            <small class="text-muted">{{ __('hr.employees.statutory.preview_date', ['date' => $statutoryPreviewDate]) }}</small>
+                                        </div>
+                                        @if ($employmentTaxPolicyEditUrl)
+                                            <a class="btn btn-sm btn-falcon-default" href="{{ $employmentTaxPolicyEditUrl }}">
+                                                <span class="fas fa-external-link-alt me-1"></span>{{ __('hr.employees.statutory.open_policy') }}
+                                            </a>
+                                        @endif
+                                    </div>
+
+                                    @if ($employmentTaxPolicy)
+                                        <div class="rounded-3 bg-body-tertiary p-3 mb-3">
+                                            <div class="fw-semibold mb-2">{{ __('hr.employees.statutory.applicable_policy') }}</div>
+                                            <div class="row g-2 small">
+                                                <div class="col-12"><span class="text-muted">{{ __('hr.employees.statutory.policy_name') }}:</span> <strong>{{ $employmentTaxPolicy->name }}</strong></div>
+                                                <div class="col-12"><span class="text-muted">{{ __('hr.employees.statutory.effective_period') }}:</span> {{ $dateFormatService->formatDate($employmentTaxPolicy->effective_from, '') }} — {{ $employmentTaxPolicy->effective_to ? $dateFormatService->formatDate($employmentTaxPolicy->effective_to, '') : '∞' }}</div>
+                                                <div class="col-6"><span class="text-muted">{{ __('hr.employees.statutory.tax_year') }}:</span> {{ $employmentTaxPolicy->tax_year }}</div>
+                                                <div class="col-6"><span class="text-muted">{{ __('hr.employees.statutory.annual_exemption') }}:</span> {{ $employmentTaxPolicy->annual_exemption_amount }}</div>
+                                                <div class="col-12"><span class="text-muted">{{ __('hr.employees.statutory.rounding_rule') }}:</span> {{ __('hr.foundation.options.rounding_rule.'.$employmentTaxPolicy->rounding_rule) }}</div>
+                                            </div>
+                                            <button class="btn btn-link btn-sm px-0 mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#employee-tax-policy-brackets" aria-expanded="false">
+                                                {{ __('hr.employees.statutory.tax_brackets') }} <span class="fas fa-chevron-down ms-1"></span>
+                                            </button>
+                                            <div class="collapse" id="employee-tax-policy-brackets">
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm mb-0 align-middle">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>#</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.from_amount') }}</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.to_amount') }}</th>
+                                                                <th class="text-center">{{ __('hr.employees.statutory.rate') }}</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach ($employmentTaxPolicy->brackets as $bracketIndex => $bracket)
+                                                                <tr>
+                                                                    <td>{{ $bracketIndex + 1 }}</td>
+                                                                    <td class="text-center">{{ $bracket->from_amount }}</td>
+                                                                    <td class="text-center">{{ $bracket->to_amount ?? __('hr.employees.statutory.no_upper_limit') }}</td>
+                                                                    <td class="text-center">{{ $bracket->rate }}%</td>
+                                                                </tr>
+                                                            @endforeach
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                            <div class="alert alert-info py-2 mt-3 mb-0 small">{{ __('hr.employees.statutory.tax_calculation_deferred') }}</div>
+                                        </div>
+                                    @else
+                                        <div class="alert alert-warning py-2 mb-3">{{ __('hr.employees.statutory.no_applicable_policy', ['date' => $statutoryPreviewDate]) }}</div>
+                                    @endif
+                                    <div class="row g-3">
+                                        @php $taxStatus = (string) old('tax_status', $fieldValue('tax_status', 'not_subject')); @endphp
+                                        <div class="col-md-6">
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-tax-status" :label="__('hr.employees.attributes.tax_status')" :value="__('hr.employees.statutory_statuses.'.$taxStatus)" required />
+                                            @else
+                                                <x-forms.label for="hr-employee-tax-status" :label="__('hr.employees.attributes.tax_status')" required />
+                                                <select id="hr-employee-tax-status" name="tax_status" class="form-select js-hr-statutory-status" data-statutory-target="tax" required>
+                                                    @foreach ($statutoryStatusOptions as $status)
+                                                        <option value="{{ $status }}" @selected($taxStatus === $status)>{{ __('hr.employees.statutory_statuses.'.$status) }}</option>
+                                                    @endforeach
+                                                </select>
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="tax_status"></div>
+                                        </div>
+
+                                        @foreach (['tax_start_date', 'tax_end_date'] as $fieldName)
+                                            @php $inputId = 'hr-employee-'.str_replace('_', '-', $fieldName); @endphp
+                                            <div class="col-md-6" data-statutory-details="tax">
+                                                <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.'.$fieldName) }}</label>
+                                                @if ($isView)
+                                                    <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
+                                                @else
+                                                    <input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                                @endif
+                                                <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
+                                            </div>
+                                        @endforeach
+
+                                        <div class="col-12" data-statutory-reason="tax">
+                                            <label class="form-label" for="hr-employee-tax-special-treatment-reason">{{ __('hr.employees.attributes.tax_special_treatment_reason') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-tax-special-treatment-reason" :value="$fieldValue('tax_special_treatment_reason')" />
+                                            @else
+                                                <input id="hr-employee-tax-special-treatment-reason" name="tax_special_treatment_reason" type="text" class="form-control" value="{{ $fieldValue('tax_special_treatment_reason') }}">
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="tax_special_treatment_reason"></div>
+                                        </div>
+
+                                        <div class="col-12">
+                                            <label class="form-label" for="hr-employee-tax-notes">{{ __('hr.employees.attributes.tax_notes') }}</label>
+                                            @if ($isView)
+                                                <x-forms.view-field for="hr-employee-tax-notes" as="textarea" :value="$fieldValue('tax_notes')" rows="3" />
+                                            @else
+                                                <textarea id="hr-employee-tax-notes" name="tax_notes" class="form-control" rows="3">{{ $fieldValue('tax_notes') }}</textarea>
+                                            @endif
+                                            <div class="invalid-feedback" data-error-for="tax_notes"></div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

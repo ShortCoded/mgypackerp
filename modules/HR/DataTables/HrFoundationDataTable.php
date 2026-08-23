@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Services\HrFoundationDefinition;
@@ -125,6 +126,10 @@ class HrFoundationDataTable
     private function baseQuery(HrFoundationDefinition $definition, string $trashFilter): Builder
     {
         $query = $definition->modelClass::query();
+
+        if ($definition->companyScoped) {
+            app(OperatingCompanyContextService::class)->applyCompanyScope($query, $definition->table);
+        }
 
         return match ($trashFilter) {
             'trashed' => $query->onlyTrashed(),

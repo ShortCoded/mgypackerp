@@ -1,13 +1,22 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Services\PermissionRegistryService;
+use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
+use Modules\Core\Services\OperatingContextService;
+use Modules\HR\Models\HrBiometricDevice;
+use Modules\HR\Models\HrEmploymentTaxPolicy;
 use Modules\HR\Models\HrGrade;
 use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrShift;
+use Modules\HR\Models\HrSocialInsurancePolicy;
+use Modules\HR\Services\HrSocialInsuranceContributionCalculator;
+use Modules\HR\Services\HrStatutoryPolicyResolver;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -63,6 +72,8 @@ test('current HR foundation permissions are discovered and obsolete HR foundatio
         'hr.grades',
         'hr.employment_types',
         'hr.insurance_offices',
+        'hr.social_insurance_policies',
+        'hr.employment_tax_policies',
     ] as $prefix) {
         foreach (hrFoundationPermissions($prefix) as $permission) {
             expect($registryPermissions)->toContain($permission)
@@ -79,6 +90,370 @@ test('current HR foundation permissions are discovered and obsolete HR foundatio
         ->not->toContain('hr.cost_centers.view')
         ->not->toContain('hr.work_locations.view')
         ->not->toContain('hr.contract_types.view');
+});
+
+test('statutory policies are company scoped effective dated and tax brackets are relational', function (): void {
+    $actor = hrFoundationActor([
+        ...hrFoundationPermissions('hr.social_insurance_policies'),
+        ...hrFoundationPermissions('hr.employment_tax_policies'),
+    ]);
+    $company = Company::factory()->create([
+        'doc_number' => 751,
+        'doc_num' => 'Company-00751',
+        'name' => 'Statutory Policy Company',
+        'status' => 'active',
+    ]);
+    $branch = Branch::query()->create([
+        'doc_number' => 752,
+        'doc_num' => 'Branch-00752',
+        'company_id' => $company->getKey(),
+        'name' => 'Statutory Policy Branch',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $session = [
+        OperatingContextService::CompanyIdKey => $company->getKey(),
+        OperatingContextService::CompanyDocNumKey => $company->doc_num,
+        OperatingContextService::BranchIdKey => $branch->getKey(),
+        OperatingContextService::BranchDocNumKey => $branch->doc_num,
+    ];
+    $insurancePayload = [
+        'name' => 'Insurance Policy 2026',
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-12-31',
+        'minimum_contribution_wage' => '2,000.00',
+        'maximum_contribution_wage' => '20,000.00',
+        'rounding_rule' => 'nearest',
+        'status' => 'active',
+        'insurance_components' => [
+            [
+                'name' => 'TEST Component A',
+                'employee_rate' => '5.0000',
+                'employer_rate' => '10.0000',
+                'calculation_basis' => 'contribution_wage',
+                'is_active' => true,
+                'notes' => 'Neutral test fixture; not a statutory rate.',
+            ],
+            [
+                'name' => 'TEST Component B',
+                'employee_rate' => '2.0000',
+                'employer_rate' => '3.0000',
+                'calculation_basis' => 'contribution_wage',
+                'is_active' => true,
+                'notes' => 'Neutral test fixture; not a statutory rate.',
+            ],
+        ],
+    ];
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->get(route('admin.hr.social-insurance-policies.create'))
+        ->assertOk()
+        ->assertSee('insurance_components[0][employee_rate]', false)
+        ->assertSee(__('hr.foundation.insurance_components.total_employee'));
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employment-tax-policies.create'))
+        ->assertOk()
+        ->assertSee('tax_brackets[0][from_amount]', false);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.social-insurance-policies.store'), $insurancePayload)
+        ->assertOk();
+
+    $insurancePolicy = HrSocialInsurancePolicy::query()->with('components')->firstOrFail();
+    $insurancePreview = app(HrSocialInsuranceContributionCalculator::class)->preview($insurancePolicy, '10000');
+
+    expect($insurancePolicy->company_id)->toBe($company->getKey())
+        ->and($insurancePolicy->employee_contribution_rate)->toBe('7.0000')
+        ->and($insurancePolicy->employer_contribution_rate)->toBe('13.0000')
+        ->and($insurancePolicy->maximum_contribution_wage)->toBe('20000.00')
+        ->and($insurancePolicy->components)->toHaveCount(2)
+        ->and($insurancePreview['employee_contribution'] ?? null)->toBe('700.00')
+        ->and($insurancePreview['employer_contribution'] ?? null)->toBe('1300.00')
+        ->and($insurancePreview['combined_contribution'] ?? null)->toBe('2000.00');
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.social-insurance-policies.store'), [
+            ...$insurancePayload,
+            'name' => 'Overlapping Insurance Policy',
+            'effective_from' => '2026-06-01',
+            'effective_to' => null,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['effective_from']);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.social-insurance-policies.store'), [
+            ...$insurancePayload,
+            'name' => 'Invalid Combined Contribution Policy',
+            'effective_from' => '2029-01-01',
+            'effective_to' => '2029-12-31',
+            'insurance_components' => [
+                ...$insurancePayload['insurance_components'],
+                [
+                    'name' => 'TEST Excess Component',
+                    'employee_rate' => '50.0000',
+                    'employer_rate' => '50.0000',
+                    'calculation_basis' => 'contribution_wage',
+                    'is_active' => true,
+                ],
+            ],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['insurance_components']);
+
+    $taxPayload = [
+        'name' => 'Employment Tax Policy 2026',
+        'tax_year' => '2026',
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-12-31',
+        'annual_exemption_amount' => '15,000.00',
+        'rounding_rule' => 'down',
+        'status' => 'active',
+        'tax_brackets' => [
+            ['from_amount' => '0', 'to_amount' => '20,000.00', 'rate' => '0', 'notes' => 'Neutral test bracket.'],
+            ['from_amount' => '20,000.00', 'to_amount' => '40,000.00', 'rate' => '5.0000', 'notes' => 'Neutral test bracket.'],
+            ['from_amount' => '40,000.00', 'to_amount' => null, 'rate' => '12.5000', 'notes' => 'Neutral test bracket.'],
+        ],
+    ];
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employment-tax-policies.store'), $taxPayload)
+        ->assertOk();
+
+    $taxPolicy = HrEmploymentTaxPolicy::query()->with('brackets')->firstOrFail();
+
+    expect($taxPolicy->company_id)->toBe($company->getKey())
+        ->and($taxPolicy->brackets)->toHaveCount(3)
+        ->and($taxPolicy->brackets->first()->from_amount)->toBe('0.00')
+        ->and($taxPolicy->brackets->get(1)?->notes)->toBe('Neutral test bracket.')
+        ->and($taxPolicy->brackets->last()->rate)->toBe('12.5000');
+
+    $resolvedInsurance = app(HrStatutoryPolicyResolver::class)->socialInsuranceAt('2026-06-30');
+    $resolvedTax = app(HrStatutoryPolicyResolver::class)->employmentTaxAt('2026-06-30');
+
+    expect($resolvedInsurance?->is($insurancePolicy))->toBeTrue()
+        ->and($resolvedTax?->is($taxPolicy))->toBeTrue()
+        ->and($resolvedTax?->brackets)->toHaveCount(3);
+
+    $futureInsurancePolicy = HrSocialInsurancePolicy::query()->create([
+        'doc_number' => 754,
+        'doc_num' => 'HSIP-00754',
+        'company_id' => $company->getKey(),
+        'name' => 'TEST Insurance Policy 2027',
+        'effective_from' => '2027-01-01',
+        'effective_to' => '2027-12-31',
+        'employee_contribution_rate' => '1.0000',
+        'employer_contribution_rate' => '2.0000',
+        'rounding_rule' => 'nearest',
+        'status' => 'active',
+    ]);
+    HrSocialInsurancePolicy::query()->create([
+        'doc_number' => 755,
+        'doc_num' => 'HSIP-00755',
+        'company_id' => $company->getKey(),
+        'name' => 'TEST Inactive Insurance Policy 2028',
+        'effective_from' => '2028-01-01',
+        'effective_to' => '2028-12-31',
+        'employee_contribution_rate' => '1.0000',
+        'employer_contribution_rate' => '2.0000',
+        'rounding_rule' => 'nearest',
+        'status' => 'inactive',
+    ]);
+
+    expect(app(HrStatutoryPolicyResolver::class)->socialInsuranceAt('2026-06-30')?->is($insurancePolicy))->toBeTrue()
+        ->and(app(HrStatutoryPolicyResolver::class)->socialInsuranceAt('2027-06-30')?->is($futureInsurancePolicy))->toBeTrue()
+        ->and(app(HrStatutoryPolicyResolver::class)->socialInsuranceAt('2028-06-30'))->toBeNull();
+
+    $updatePayload = [
+        ...$taxPayload,
+        'tax_brackets' => $taxPolicy->brackets->map(fn ($bracket): array => [
+            'public_uuid' => $bracket->public_uuid,
+            'from_amount' => $bracket->from_amount,
+            'to_amount' => $bracket->to_amount,
+            'rate' => $bracket->rate,
+            'notes' => $bracket->notes,
+        ])->all(),
+    ];
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employment-tax-policies.update', $taxPolicy->doc_num), $updatePayload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    $activityCount = DB::table(config('activitylog.table_name', 'activity_log'))->count();
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employment-tax-policies.update', $taxPolicy->doc_num), [
+            ...$updatePayload,
+            'tax_brackets' => [
+                $updatePayload['tax_brackets'][0],
+                $updatePayload['tax_brackets'][1],
+                [...$updatePayload['tax_brackets'][2], 'rate' => '13.0000'],
+            ],
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $policyActivityProperties = json_decode((string) DB::table(config('activitylog.table_name', 'activity_log'))
+        ->where('event', 'hr.employment_tax_policies.update')
+        ->latest('id')
+        ->value('properties'), true, flags: JSON_THROW_ON_ERROR);
+
+    expect(DB::table(config('activitylog.table_name', 'activity_log'))->count())->toBe($activityCount + 1)
+        ->and($taxPolicy->brackets()->orderBy('sort_order')->get()->last()->rate)->toBe('13.0000')
+        ->and(data_get($policyActivityProperties, 'changes.tax_brackets.new.bracket_3.rate'))->toBe('13.0000');
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employment-tax-policies.store'), [
+            ...$taxPayload,
+            'name' => 'Invalid Open-ended Tax Policy',
+            'effective_from' => '2027-01-01',
+            'effective_to' => '2027-12-31',
+            'tax_brackets' => [
+                ['from_amount' => '0', 'to_amount' => null, 'rate' => '0'],
+                ['from_amount' => '40,000.00', 'to_amount' => null, 'rate' => '12.5000'],
+            ],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['tax_brackets.0.to_amount', 'tax_brackets.1.from_amount']);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employment-tax-policies.store'), [
+            ...$taxPayload,
+            'name' => 'Invalid Overlapping Tax Policy',
+            'effective_from' => '2027-01-01',
+            'effective_to' => '2027-12-31',
+            'tax_brackets' => [
+                ['from_amount' => '0', 'to_amount' => '30,000.00', 'rate' => '0'],
+                ['from_amount' => '20,000.00', 'to_amount' => null, 'rate' => '5.0000'],
+            ],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['tax_brackets.1.from_amount']);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employment-tax-policies.store'), [
+            ...$taxPayload,
+            'name' => 'Invalid Reversed Tax Policy',
+            'effective_from' => '2027-01-01',
+            'effective_to' => '2027-12-31',
+            'tax_brackets' => [
+                ['from_amount' => '0', 'to_amount' => '20,000.00', 'rate' => '0'],
+                ['from_amount' => '20,000.00', 'to_amount' => '10,000.00', 'rate' => '5.0000'],
+            ],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['tax_brackets.1.to_amount']);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employment-tax-policies.store'), [
+            ...$taxPayload,
+            'name' => 'Invalid Gap Tax Policy',
+            'effective_from' => '2027-01-01',
+            'effective_to' => '2027-12-31',
+            'tax_brackets' => [
+                ['from_amount' => '0', 'to_amount' => '20,000.00', 'rate' => '0'],
+                ['from_amount' => '30,000.00', 'to_amount' => null, 'rate' => '5.0000'],
+            ],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['tax_brackets.1.from_amount']);
+
+    $otherCompany = Company::factory()->create([
+        'doc_number' => 753,
+        'doc_num' => 'Company-00753',
+        'name' => 'Other Statutory Company',
+        'status' => 'active',
+        'is_main' => 2,
+    ]);
+    $otherPolicy = HrSocialInsurancePolicy::query()->create([
+        'doc_number' => 999,
+        'doc_num' => 'HSIP-00999',
+        'company_id' => $otherCompany->getKey(),
+        'name' => 'Other Company Policy',
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-12-31',
+        'employee_contribution_rate' => '0',
+        'employer_contribution_rate' => '0',
+        'rounding_rule' => 'nearest',
+        'status' => 'active',
+    ]);
+
+    $this->withSession($session)
+        ->get(route('admin.hr.social-insurance-policies.edit', $otherPolicy->doc_num))
+        ->assertNotFound();
+
+    $this->withSession($session)
+        ->deleteJson(route('admin.hr.social-insurance-policies.destroy', $insurancePolicy->doc_num))
+        ->assertOk();
+    $this->withSession($session)
+        ->postJson(route('admin.hr.social-insurance-policies.store'), [
+            ...$insurancePayload,
+            'name' => 'Replacement Insurance Policy',
+        ])
+        ->assertOk();
+    $this->withSession($session)
+        ->patchJson(route('admin.hr.social-insurance-policies.restore', $insurancePolicy->doc_num))
+        ->assertUnprocessable()
+        ->assertJsonPath('data.conflict_type', 'effective_period_conflict')
+        ->assertJsonPath('data.conflict_fields.0', 'effective_period');
+});
+
+test('attendance device setup assigns the operating company and optional code is selectable by employees', function (): void {
+    $actor = hrFoundationActor([
+        ...hrFoundationPermissions('hr.biometric_devices'),
+        'hr.employees.create',
+    ]);
+    $company = Company::factory()->create([
+        'doc_number' => 761,
+        'doc_num' => 'Company-00761',
+        'name' => 'Attendance Device Company',
+        'status' => 'active',
+    ]);
+    $branch = Branch::query()->create([
+        'doc_number' => 762,
+        'doc_num' => 'Branch-00762',
+        'company_id' => $company->getKey(),
+        'name' => 'Attendance Device Branch',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $session = [
+        OperatingContextService::CompanyIdKey => $company->getKey(),
+        OperatingContextService::CompanyDocNumKey => $company->doc_num,
+        OperatingContextService::BranchIdKey => $branch->getKey(),
+        OperatingContextService::BranchDocNumKey => $branch->doc_num,
+    ];
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.biometric-devices.store'), [
+            'name' => 'North Gate Device',
+            'device_uid' => null,
+            'serial_number' => 'SERIAL-001',
+            'location' => 'North Gate',
+            'status' => 'active',
+        ])
+        ->assertOk();
+
+    $device = HrBiometricDevice::query()->firstOrFail();
+
+    expect($device->company_id)->toBe($company->getKey())
+        ->and($device->device_uid)->toBeNull();
+
+    $this->withSession($session)
+        ->getJson(route('admin.hr.select2.foundation', 'biometric-devices', ['q' => 'North Gate']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $device->doc_num);
+
+    $this->withSession($session)
+        ->get(route('admin.hr.biometric-devices.edit', $device->doc_num))
+        ->assertOk()
+        ->assertSee(__('hr.foundation.help.device_uid'))
+        ->assertDontSee('connection_password', false);
 });
 
 test('shift break minutes and grade rank use grouped integer presentation and schema bounds', function () {

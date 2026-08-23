@@ -63,7 +63,7 @@ class HrEmployeeBiometricMapping extends Model
      */
     public function device(): BelongsTo
     {
-        return $this->belongsTo(HrBiometricDevice::class, 'biometric_device_id');
+        return $this->belongsTo(HrBiometricDevice::class, 'biometric_device_id')->withTrashed();
     }
 
     /**

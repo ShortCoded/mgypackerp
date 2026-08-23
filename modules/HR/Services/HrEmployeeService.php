@@ -29,6 +29,7 @@ use Modules\HR\Models\HrEmployeeBiometricMapping;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
 use Modules\HR\Models\HrHiringStatus;
+use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
 use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
@@ -65,6 +66,18 @@ class HrEmployeeService
         'allow_late_minutes',
         'allow_early_leave_minutes',
         'overtime_enabled',
+        'insurance_status',
+        'social_insurance_number',
+        'insurance_start_date',
+        'insurance_end_date',
+        'insurance_contribution_wage',
+        'insurance_non_coverage_reason',
+        'insurance_notes',
+        'tax_status',
+        'tax_start_date',
+        'tax_end_date',
+        'tax_special_treatment_reason',
+        'tax_notes',
         'pay_basis',
         'exchange_rate',
         'weekly_wage',
@@ -96,6 +109,7 @@ class HrEmployeeService
         'payroll_currency_doc_num' => ['column' => 'payroll_currency_id', 'model' => Currency::class],
         'photo_archive_file_doc_num' => ['column' => 'photo_archive_file_id', 'model' => ArchiveFile::class],
         'signature_archive_file_doc_num' => ['column' => 'signature_archive_file_id', 'model' => ArchiveFile::class],
+        'insurance_office_doc_num' => ['column' => 'insurance_office_id', 'model' => HrInsuranceOffice::class],
     ];
 
     public function __construct(
@@ -166,7 +180,9 @@ class HrEmployeeService
                 $employee = $employee->refresh();
             }
 
+            $oldBiometricMappings = $this->biometricSnapshot($employee);
             $mappingsChanged = $this->syncBiometricMappings($employee, $data['biometric_mappings'] ?? null);
+            $newBiometricMappings = $mappingsChanged ? $this->biometricSnapshot($employee) : $oldBiometricMappings;
             $documentSync = $this->syncDocuments($employee, $data['documents'] ?? null);
             $documentsChanged = $documentSync['changed'];
 
@@ -193,7 +209,7 @@ class HrEmployeeService
                 ])),
                 'changes' => [
                     ...$changes,
-                    ...($mappingsChanged ? ['biometric_mappings' => ['old' => null, 'new' => __('hr.employees.biometric.title')]] : []),
+                    ...($mappingsChanged ? ['biometric_mappings' => ['old' => $oldBiometricMappings, 'new' => $newBiometricMappings]] : []),
                     ...($documentsChanged ? ['documents' => ['old' => null, 'new' => __('hr.employees.documents.title')]] : []),
                 ],
                 'old_doc_number' => $oldDocNumber,
@@ -398,12 +414,12 @@ class HrEmployeeService
 
             $values[$field] = match ($field) {
                 'full_name' => $this->normalizeString((string) $data[$field]),
-                'basic_salary' => $this->normalizeNullableDecimal($data[$field] ?? null, 2),
+                'basic_salary', 'insurance_contribution_wage' => $this->normalizeNullableDecimal($data[$field] ?? null, 2),
                 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate' => $this->normalizeNullableDecimal($data[$field] ?? null, 4),
                 'exchange_rate' => $this->normalizeNullableDecimal($data[$field] ?? null, 6),
                 'graduation_year', 'allow_late_minutes', 'allow_early_leave_minutes' => $this->normalizeNullableNumber($data[$field] ?? null),
                 'attendance_tracking_enabled', 'overtime_enabled' => (bool) ($data[$field] ?? false),
-                'status', 'gender', 'marital_status', 'person_type', 'attendance_policy_type', 'pay_basis', 'payment_method' => $this->normalizeNullableString($data[$field] ?? null),
+                'status', 'gender', 'marital_status', 'person_type', 'attendance_policy_type', 'pay_basis', 'payment_method', 'insurance_status', 'tax_status' => $this->normalizeNullableString($data[$field] ?? null),
                 default => $this->normalizeNullableString($data[$field] ?? null),
             };
         }
@@ -483,12 +499,22 @@ class HrEmployeeService
 
             $id = isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null;
             $delete = (bool) ($row['_delete'] ?? false);
-            $deviceId = $this->resolveDocNumId(HrBiometricDevice::class, $row['device_doc_num'] ?? null);
-            $code = $this->normalizeNullableString($row['biometric_code'] ?? null);
-
             $mapping = $id
                 ? $employee->biometricMappings()->withTrashed()->whereKey($id)->first()
                 : null;
+            $deviceDocNum = $this->normalizeNullableString($row['device_doc_num'] ?? null);
+            $deviceId = $this->resolveDocNumId(HrBiometricDevice::class, $deviceDocNum);
+
+            if ($deviceId === null && $mapping instanceof HrEmployeeBiometricMapping && $deviceDocNum !== null) {
+                $historicalDevice = HrBiometricDevice::withTrashed()
+                    ->whereKey($mapping->biometric_device_id)
+                    ->where('company_id', $employee->company_id)
+                    ->where('doc_num', $deviceDocNum)
+                    ->first();
+                $deviceId = $historicalDevice?->getKey();
+            }
+
+            $code = $this->normalizeNullableString($row['biometric_code'] ?? null);
 
             if ($delete) {
                 if ($mapping instanceof HrEmployeeBiometricMapping && ! $mapping->trashed()) {
@@ -697,6 +723,24 @@ class HrEmployeeService
             }
 
             if (str_ends_with($field, '_id')) {
+                foreach ($this->relationFields as $requestField => $relation) {
+                    if ($relation['column'] !== $field) {
+                        continue;
+                    }
+
+                    $model = $relation['model'];
+                    $ids = array_values(array_filter([$employee->getAttribute($field), $newValue]));
+                    $records = $ids === []
+                        ? collect()
+                        : $model::withTrashed()->whereIn('id', $ids)->get(['id', 'doc_num'])->keyBy('id');
+                    $changes[$requestField] = [
+                        'old' => $records->get($employee->getAttribute($field))?->doc_num,
+                        'new' => $records->get($newValue)?->doc_num,
+                    ];
+
+                    break;
+                }
+
                 continue;
             }
 
@@ -707,6 +751,25 @@ class HrEmployeeService
         }
 
         return $changes;
+    }
+
+    /**
+     * @return list<array{device_doc_num: string|null, biometric_code: string, is_active: bool, notes: string|null}>
+     */
+    private function biometricSnapshot(HrEmployee $employee): array
+    {
+        return $employee->biometricMappings()
+            ->with('device:id,doc_num')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (HrEmployeeBiometricMapping $mapping): array => [
+                'device_doc_num' => $mapping->device?->doc_num,
+                'biometric_code' => (string) $mapping->biometric_code,
+                'is_active' => (bool) $mapping->is_active,
+                'notes' => $mapping->notes,
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -740,6 +803,7 @@ class HrEmployeeService
             'hourly_wage',
             'shift_wage',
             'piece_rate',
+            'insurance_contribution_wage',
         ], true)) {
             return $this->numericFormatter->normalize($value) ?? '';
         }

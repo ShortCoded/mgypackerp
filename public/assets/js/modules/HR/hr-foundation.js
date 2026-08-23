@@ -104,7 +104,7 @@
         const original = originalFormData($form);
         const current = currentFormData($form);
 
-        return Object.keys(current).some(function (field) {
+        return Object.keys($.extend({}, original, current)).some(function (field) {
             const $input = $form.find('[name="' + field + '"]').first();
 
             if ($input.is('[data-numeric-input]') && window.AppNumbers && typeof window.AppNumbers.same === 'function') {
@@ -161,12 +161,126 @@
 
         Object.keys(errors || {}).forEach(function (field) {
             const normalizedField = field.replace(/\.\d+$/, '');
+            const parts = field.split('.');
+            const inputName = parts.length > 1
+                ? parts[0] + parts.slice(1).map(function (part) { return '[' + part + ']'; }).join('')
+                : normalizedField;
             const message = $.isArray(errors[field]) ? errors[field][0] : errors[field];
-            const $input = $form.find('[name="' + normalizedField + '"], [name="' + normalizedField + '[]"]');
+            const $input = $form.find('[name="' + inputName + '"], [name="' + normalizedField + '"], [name="' + normalizedField + '[]"]');
 
             $input.addClass('is-invalid');
-            $form.find('[data-error-for="' + normalizedField + '"]').text(message || '');
+            $form.find('[data-error-for="' + field + '"], [data-error-for="' + normalizedField + '"]').first().text(message || '');
         });
+    }
+
+    function reindexTaxBrackets($container) {
+        $container.find('.js-tax-bracket-row').each(function (index) {
+            const $row = $(this);
+            $row.attr('data-tax-bracket-index', index);
+            $row.find('.js-tax-bracket-sequence').text((messages.taxBracketSequence || '') + ' ' + (index + 1));
+
+            $row.find('[name]').each(function () {
+                const $field = $(this);
+                const name = String($field.attr('name') || '').replace(/^tax_brackets\[\d+\]/, 'tax_brackets[' + index + ']');
+                const columnMatch = name.match(/\[([^\]]+)]$/);
+
+                $field.attr('name', name);
+
+                if (columnMatch) {
+                    const id = 'tax-bracket-' + index + '-' + columnMatch[1];
+                    $field.attr('id', id);
+                    $row.find('label[for$="-' + columnMatch[1] + '"]').attr('for', id);
+                    $row.find('[data-error-for$=".' + columnMatch[1] + '"]').attr('data-error-for', 'tax_brackets.' + index + '.' + columnMatch[1]);
+                }
+            });
+        });
+    }
+
+    function reindexInsuranceComponents($container) {
+        $container.find('.js-insurance-component-row').each(function (index) {
+            const $row = $(this);
+            $row.attr('data-insurance-component-index', index);
+            $row.find('.js-insurance-component-sequence').text(index + 1);
+
+            $row.find('[name]').each(function () {
+                const $field = $(this);
+                const name = String($field.attr('name') || '').replace(/^insurance_components\[\d+\]/, 'insurance_components[' + index + ']');
+                const columnMatch = name.match(/\[([^\]]+)]$/);
+
+                $field.attr('name', name);
+
+                if (columnMatch) {
+                    const id = 'insurance-component-' + index + '-' + columnMatch[1];
+                    $field.attr('id', id);
+                    $row.find('label[for$="-' + columnMatch[1] + '"]').attr('for', id);
+                    $row.find('[data-error-for$=".' + columnMatch[1] + '"]').attr('data-error-for', 'insurance_components.' + index + '.' + columnMatch[1]);
+                }
+            });
+        });
+    }
+
+    function insuranceRate(value) {
+        const number = Number.parseFloat(String(value || '0'));
+
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    function updateInsuranceComponentTotals($form) {
+        let employeeTotal = 0;
+        let employerTotal = 0;
+
+        $form.find('.js-insurance-component-row').each(function () {
+            const $row = $(this);
+            const employeeRate = insuranceRate($row.find('[name$="[employee_rate]"]').val());
+            const employerRate = insuranceRate($row.find('[name$="[employer_rate]"]').val());
+            const isActive = $row.find('.js-insurance-component-active').length === 0 || $row.find('.js-insurance-component-active').is(':checked');
+
+            $row.find('.js-insurance-component-total').text((employeeRate + employerRate).toFixed(4) + '%');
+
+            if (isActive) {
+                employeeTotal += employeeRate;
+                employerTotal += employerRate;
+            }
+        });
+
+        $form.find('.js-insurance-employee-total').text(employeeTotal.toFixed(4) + '%');
+        $form.find('.js-insurance-employer-total').text(employerTotal.toFixed(4) + '%');
+        $form.find('.js-insurance-combined-total').text((employeeTotal + employerTotal).toFixed(4) + '%');
+    }
+
+    function resetInsuranceComponents($form) {
+        const $container = $form.find('.js-insurance-components');
+        const $rows = $container.find('.js-insurance-component-row');
+
+        if ($rows.length === 0) {
+            return;
+        }
+
+        $rows.slice(1).remove();
+        const $row = $rows.first();
+        $row.find('input[type="hidden"]').val('');
+        $row.find('[name$="[public_uuid]"], [name$="[name]"], [name$="[notes]"]').val('');
+        $row.find('[name$="[employee_rate]"], [name$="[employer_rate]"]').val('0');
+        $row.find('[name$="[calculation_basis]"]').val('contribution_wage');
+        $row.find('[name$="[is_active]"][type="hidden"]').val('0');
+        $row.find('.js-insurance-component-active').val('1').prop('checked', true);
+        reindexInsuranceComponents($container);
+        updateInsuranceComponentTotals($form);
+    }
+
+    function resetTaxBrackets($form) {
+        const $container = $form.find('.js-tax-brackets');
+        const $rows = $container.find('.js-tax-bracket-row');
+
+        if ($rows.length === 0) {
+            return;
+        }
+
+        $rows.slice(1).remove();
+        $rows.first().find('input').val('');
+        $rows.first().find('[name$="[from_amount]"]').val('0');
+        $rows.first().find('[name$="[rate]"]').val('0');
+        reindexTaxBrackets($container);
     }
 
     function showFormNotice($form, message, type) {
@@ -218,6 +332,8 @@
         $form.find('.js-select2-ajax').val(null).trigger('change');
         $form.find('[name="submit_action"]').val('save');
         $form.find('[name="clone_source_token"]').remove();
+        resetTaxBrackets($form);
+        resetInsuranceComponents($form);
         updateOriginalFormData($form);
     }
 
@@ -617,6 +733,92 @@
     }
 
     function initForm() {
+        $('.js-hr-foundation-form').each(function () {
+            updateInsuranceComponentTotals($(this));
+        });
+
+        $(document)
+            .off('click.hrFoundationInsuranceAdd', '.js-add-insurance-component')
+            .on('click.hrFoundationInsuranceAdd', '.js-add-insurance-component', function () {
+                const $form = $(this).closest('form');
+                const $container = $form.find('.js-insurance-components');
+                const $source = $container.find('.js-insurance-component-row').last();
+
+                if ($source.length === 0) {
+                    return;
+                }
+
+                const $row = $source.clone(false, false);
+                $row.find('[name$="[public_uuid]"], [name$="[name]"], [name$="[notes]"]').val('');
+                $row.find('[name$="[employee_rate]"], [name$="[employer_rate]"]').val('0');
+                $row.find('[name$="[calculation_basis]"]').val('contribution_wage');
+                $row.find('[name$="[is_active]"][type="hidden"]').val('0');
+                $row.find('.js-insurance-component-active').val('1').prop('checked', true);
+                $row.find('.is-invalid').removeClass('is-invalid');
+                $row.find('[data-error-for]').text('');
+                $container.append($row);
+                reindexInsuranceComponents($container);
+                updateInsuranceComponentTotals($form);
+                $row.find('[name$="[name]"]').trigger('focus');
+            });
+
+        $(document)
+            .off('click.hrFoundationInsuranceRemove', '.js-remove-insurance-component')
+            .on('click.hrFoundationInsuranceRemove', '.js-remove-insurance-component', function () {
+                const $form = $(this).closest('form');
+                const $container = $form.find('.js-insurance-components');
+
+                if ($container.find('.js-insurance-component-row').length <= 1) {
+                    showToast('info', messages.insuranceComponentMinimum || '');
+                    return;
+                }
+
+                $(this).closest('.js-insurance-component-row').remove();
+                reindexInsuranceComponents($container);
+                updateInsuranceComponentTotals($form);
+            });
+
+        $(document)
+            .off('input.hrFoundationInsurance change.hrFoundationInsurance', '.js-insurance-component-rate, .js-insurance-component-active')
+            .on('input.hrFoundationInsurance change.hrFoundationInsurance', '.js-insurance-component-rate, .js-insurance-component-active', function () {
+                updateInsuranceComponentTotals($(this).closest('form'));
+            });
+
+        $(document)
+            .off('click.hrFoundationTaxAdd', '.js-add-tax-bracket')
+            .on('click.hrFoundationTaxAdd', '.js-add-tax-bracket', function () {
+                const $container = $(this).closest('form').find('.js-tax-brackets');
+                const $source = $container.find('.js-tax-bracket-row').last();
+                const previousUpper = String($source.find('[name$="[to_amount]"]').val() || '');
+
+                if ($source.length === 0) {
+                    return;
+                }
+
+                const $row = $source.clone(false, false);
+                $row.find('input').val('').removeClass('is-invalid');
+                $row.find('[name$="[from_amount]"]').val(previousUpper);
+                $row.find('[name$="[rate]"]').val('0');
+                $row.find('[data-error-for]').text('');
+                $container.append($row);
+                reindexTaxBrackets($container);
+                $row.find('[name$="[from_amount]"]').trigger('focus');
+            });
+
+        $(document)
+            .off('click.hrFoundationTaxRemove', '.js-remove-tax-bracket')
+            .on('click.hrFoundationTaxRemove', '.js-remove-tax-bracket', function () {
+                const $container = $(this).closest('.js-tax-brackets');
+
+                if ($container.find('.js-tax-bracket-row').length <= 1) {
+                    showToast('info', messages.taxBracketMinimum || '');
+                    return;
+                }
+
+                $(this).closest('.js-tax-bracket-row').remove();
+                reindexTaxBrackets($container);
+            });
+
         $(document)
             .off('click.hrFoundationSubmitAction', '.js-hr-foundation-submit-action')
             .on('click.hrFoundationSubmitAction', '.js-hr-foundation-submit-action', function () {
@@ -688,9 +890,10 @@
         $(document).off('input.hrFoundationForm change.hrFoundationForm', '.js-hr-foundation-form .is-invalid').on('input.hrFoundationForm change.hrFoundationForm', '.js-hr-foundation-form .is-invalid', function () {
             const $input = $(this);
             const field = ($input.attr('name') || '').replace('[]', '');
+            const dottedField = field.replace(/\[([^\]]+)]/g, '.$1');
 
             $input.removeClass('is-invalid');
-            $input.closest('form').find('[data-error-for="' + field + '"]').text('');
+            $input.closest('form').find('[data-error-for="' + field + '"], [data-error-for="' + dottedField + '"]').text('');
         });
     }
 

@@ -88,7 +88,18 @@ class HrEmployee extends Model
         'allow_early_leave_minutes',
         'overtime_enabled',
         'social_insurance_number',
-        'tax_number',
+        'insurance_status',
+        'insurance_office_id',
+        'insurance_start_date',
+        'insurance_end_date',
+        'insurance_contribution_wage',
+        'insurance_non_coverage_reason',
+        'insurance_notes',
+        'tax_status',
+        'tax_start_date',
+        'tax_end_date',
+        'tax_special_treatment_reason',
+        'tax_notes',
         'pay_basis',
         'payroll_currency_id',
         'exchange_rate',
@@ -117,6 +128,8 @@ class HrEmployee extends Model
      */
     protected $attributes = [
         'status' => 'active',
+        'insurance_status' => 'not_subject',
+        'tax_status' => 'not_subject',
     ];
 
     protected static function booted(): void
@@ -142,6 +155,10 @@ class HrEmployee extends Model
             'contract_end_date' => 'date',
             'start_date' => 'date',
             'end_date' => 'date',
+            'insurance_start_date' => 'date',
+            'insurance_end_date' => 'date',
+            'tax_start_date' => 'date',
+            'tax_end_date' => 'date',
             'attendance_tracking_enabled' => 'boolean',
             'overtime_enabled' => 'boolean',
             'basic_salary' => 'decimal:2',
@@ -151,6 +168,7 @@ class HrEmployee extends Model
             'hourly_wage' => 'decimal:4',
             'shift_wage' => 'decimal:4',
             'piece_rate' => 'decimal:4',
+            'insurance_contribution_wage' => 'decimal:2',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
@@ -395,6 +413,14 @@ class HrEmployee extends Model
     public function payrollCurrency(): BelongsTo
     {
         return $this->belongsTo(Currency::class, 'payroll_currency_id');
+    }
+
+    /**
+     * @return BelongsTo<HrInsuranceOffice, $this>
+     */
+    public function insuranceOffice(): BelongsTo
+    {
+        return $this->belongsTo(HrInsuranceOffice::class, 'insurance_office_id');
     }
 
     /**

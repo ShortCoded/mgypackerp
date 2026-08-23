@@ -307,6 +307,11 @@
                 return;
             }
 
+            if (name === 'insurance_status' || name === 'tax_status') {
+                $fields.val('not_subject');
+                return;
+            }
+
             if ($checkbox.length > 0) {
                 $checkbox.prop('checked', name === 'attendance_tracking_enabled');
                 return;
@@ -322,6 +327,8 @@
         restoreDefaultPayrollCurrency($form);
         applyMainCurrencyExchangeRate($form);
         updatePayAmountFields($form, false);
+        updateStatutoryFields($form);
+        updateInsuranceContributionPreview($form);
         $form.find('[name="submit_action"]').val('save');
         $form.find('[name="clone_source_token"]').remove();
         updateOriginalFormData($form);
@@ -1532,8 +1539,125 @@
         $rows.find('.js-hr-biometric-empty').remove();
 
         if ($visibleRows.length === 0) {
-            $rows.append('<tr class="js-hr-biometric-empty"><td colspan="5" class="text-center text-600 py-4">' + (messages.emptyBiometric || '') + '</td></tr>');
+            $rows.append('<div class="border rounded-3 text-center text-600 py-4 js-hr-biometric-empty">' + (messages.emptyBiometric || '') + '</div>');
         }
+    }
+
+    function updateStatutoryFields($form) {
+        $form.find('.js-hr-statutory-status').each(function () {
+            const $status = $(this);
+            const target = String($status.data('statutory-target') || '');
+            const value = String($status.val() || 'not_subject');
+
+            $form.find('[data-statutory-details="' + target + '"]').toggleClass('d-none', value === 'not_subject');
+            $form.find('[data-statutory-reason="' + target + '"]').toggleClass('d-none', value === 'subject');
+        });
+    }
+
+    function previewNumber(value, fallback) {
+        if (window.AppNumbers && typeof window.AppNumbers.number === 'function') {
+            return window.AppNumbers.number(value, fallback);
+        }
+
+        const number = Number.parseFloat(String(value || '').replace(',', '.'));
+
+        return Number.isFinite(number) ? number : fallback;
+    }
+
+    function formatPreviewNumber(value, scale) {
+        const normalized = Number(value).toFixed(scale);
+
+        if (window.AppNumbers && typeof window.AppNumbers.format === 'function') {
+            return window.AppNumbers.format(normalized);
+        }
+
+        return normalized;
+    }
+
+    function roundedPreviewContribution(amount, rule) {
+        if (rule === 'none') {
+            return Math.trunc((amount + Number.EPSILON) * 10000) / 10000;
+        }
+
+        if (rule === 'down') {
+            return Math.floor((amount + Number.EPSILON) * 100) / 100;
+        }
+
+        if (rule === 'up') {
+            return Math.ceil((amount - Number.EPSILON) * 100) / 100;
+        }
+
+        return Math.round((amount + Number.EPSILON) * 100) / 100;
+    }
+
+    function updateInsuranceContributionPreview($form) {
+        const $preview = $form.find('.js-insurance-contribution-preview');
+
+        if ($preview.length === 0) {
+            return;
+        }
+
+        const enteredWage = previewNumber($form.find('[name="insurance_contribution_wage"]').val(), NaN);
+
+        if (!Number.isFinite(enteredWage) || enteredWage < 0) {
+            $preview.find('.js-insurance-preview-empty').removeClass('d-none');
+            $preview.find('.js-insurance-preview-values').addClass('d-none');
+            return;
+        }
+
+        const minimum = previewNumber($preview.attr('data-minimum-wage'), NaN);
+        const maximum = previewNumber($preview.attr('data-maximum-wage'), NaN);
+        const employeeRate = previewNumber($preview.attr('data-employee-rate'), 0);
+        const employerRate = previewNumber($preview.attr('data-employer-rate'), 0);
+        const roundingRule = String($preview.attr('data-rounding-rule') || 'nearest');
+        let applicableWage = enteredWage;
+
+        if (Number.isFinite(minimum) && applicableWage < minimum) {
+            applicableWage = minimum;
+        }
+
+        if (Number.isFinite(maximum) && applicableWage > maximum) {
+            applicableWage = maximum;
+        }
+
+        const employeeContribution = roundedPreviewContribution(applicableWage * employeeRate / 100, roundingRule);
+        const employerContribution = roundedPreviewContribution(applicableWage * employerRate / 100, roundingRule);
+        const moneyScale = roundingRule === 'none' ? 4 : 2;
+        const values = {
+            entered_wage: formatPreviewNumber(enteredWage, 2),
+            applicable_wage: formatPreviewNumber(applicableWage, 2),
+            employee_contribution: formatPreviewNumber(employeeContribution, moneyScale),
+            employer_contribution: formatPreviewNumber(employerContribution, moneyScale),
+            combined_contribution: formatPreviewNumber(employeeContribution + employerContribution, moneyScale)
+        };
+
+        Object.keys(values).forEach(function (key) {
+            $preview.find('[data-insurance-preview-value="' + key + '"]').text(values[key]);
+        });
+
+        $preview.find('.js-insurance-preview-clamped').toggleClass('d-none', Math.abs(enteredWage - applicableWage) < Number.EPSILON);
+        $preview.find('.js-insurance-preview-empty').addClass('d-none');
+        $preview.find('.js-insurance-preview-values').removeClass('d-none');
+    }
+
+    function initStatutoryFields() {
+        $('.js-hr-employees-form').each(function () {
+            const $form = $(this);
+            updateStatutoryFields($form);
+            updateInsuranceContributionPreview($form);
+        });
+
+        $(document)
+            .off('change.hrEmployeeStatutory', '.js-hr-statutory-status')
+            .on('change.hrEmployeeStatutory', '.js-hr-statutory-status', function () {
+                updateStatutoryFields($(this).closest('form'));
+            });
+
+        $(document)
+            .off('input.hrEmployeeInsurancePreview change.hrEmployeeInsurancePreview', '[name="insurance_contribution_wage"]')
+            .on('input.hrEmployeeInsurancePreview change.hrEmployeeInsurancePreview', '[name="insurance_contribution_wage"]', function () {
+                updateInsuranceContributionPreview($(this).closest('form'));
+            });
     }
 
     function initBiometricRows() {
@@ -1548,7 +1672,9 @@
                 }
 
                 const index = Number($rows.data('next-index') || 0);
-                const html = template.innerHTML.replace(/__INDEX__/g, String(index));
+                const html = template.innerHTML
+                    .replace(/__INDEX__/g, String(index))
+                    .replace(/:number/g, String(index + 1));
                 const $row = $(html);
 
                 $rows.find('.js-hr-biometric-empty').remove();
@@ -1586,6 +1712,7 @@
     initDocumentRows();
     initDocumentDatePickerSpacing();
     initBiometricRows();
+    initStatutoryFields();
 
     $(window).on('pageshow', function (e) {
         if (e.originalEvent && e.originalEvent.persisted) {

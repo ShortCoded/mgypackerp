@@ -12,8 +12,10 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeBiometricMapping;
+use Modules\HR\Models\HrSection;
 
 class StoreHrEmployeeRequest extends FormRequest
 {
@@ -30,6 +32,10 @@ class StoreHrEmployeeRequest extends FormRequest
         'probation_end_date',
         'start_date',
         'end_date',
+        'insurance_start_date',
+        'insurance_end_date',
+        'tax_start_date',
+        'tax_end_date',
     ];
 
     public function authorize(): bool
@@ -86,6 +92,19 @@ class StoreHrEmployeeRequest extends FormRequest
             'allow_late_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'allow_early_leave_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'overtime_enabled' => ['nullable', 'boolean'],
+            'insurance_status' => ['required', 'string', Rule::in(['subject', 'not_subject', 'suspended', 'ended'])],
+            'social_insurance_number' => [Rule::requiredIf(fn (): bool => $this->input('insurance_status') === 'subject'), 'nullable', 'string', 'max:60', $this->uniqueEmployeeRule('social_insurance_number')],
+            'insurance_office_doc_num' => [Rule::requiredIf(fn (): bool => $this->input('insurance_status') === 'subject'), 'nullable', 'string', Rule::exists('hr_insurance_offices', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
+            'insurance_start_date' => [Rule::requiredIf(fn (): bool => $this->input('insurance_status') === 'subject'), 'nullable', 'date_format:Y-m-d'],
+            'insurance_end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:insurance_start_date'],
+            'insurance_contribution_wage' => [Rule::requiredIf(fn (): bool => $this->input('insurance_status') === 'subject'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'],
+            'insurance_non_coverage_reason' => ['nullable', 'string', 'max:255'],
+            'insurance_notes' => ['nullable', 'string'],
+            'tax_status' => ['required', 'string', Rule::in(['subject', 'not_subject', 'suspended', 'ended'])],
+            'tax_start_date' => [Rule::requiredIf(fn (): bool => $this->input('tax_status') === 'subject'), 'nullable', 'date_format:Y-m-d'],
+            'tax_end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:tax_start_date'],
+            'tax_special_treatment_reason' => ['nullable', 'string', 'max:255'],
+            'tax_notes' => ['nullable', 'string'],
             'pay_basis' => ['required', 'string', Rule::in(['monthly_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'])],
             'payroll_currency_doc_num' => ['required', 'string', Rule::exists('currencies', 'doc_num')->whereNull('deleted_at')],
             'exchange_rate' => ['required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,12}|\d{0,12}\.\d{1,6})$/D'],
@@ -99,7 +118,7 @@ class StoreHrEmployeeRequest extends FormRequest
             'biometric_mappings' => ['nullable', 'array'],
             'biometric_mappings.*' => ['array:id,device_doc_num,biometric_code,is_active,_delete,notes'],
             'biometric_mappings.*.id' => ['nullable', 'integer'],
-            'biometric_mappings.*.device_doc_num' => ['nullable', 'string', Rule::exists('hr_biometric_devices', 'doc_num')->where(fn ($query) => $query->where('company_id', $this->companyId())->where('status', 'active')->whereNull('deleted_at'))],
+            'biometric_mappings.*.device_doc_num' => ['nullable', 'string', 'max:255'],
             'biometric_mappings.*.biometric_code' => ['nullable', 'string', 'max:120'],
             'biometric_mappings.*.is_active' => ['nullable', 'boolean'],
             'biometric_mappings.*._delete' => ['nullable', 'boolean'],
@@ -136,6 +155,18 @@ class StoreHrEmployeeRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $employee = $this->route('employee');
+        $prepared = [
+            'insurance_status' => $this->input('insurance_status', $employee instanceof HrEmployee ? $employee->insurance_status : 'not_subject'),
+            'tax_status' => $this->input('tax_status', $employee instanceof HrEmployee ? $employee->tax_status : 'not_subject'),
+        ];
+
+        if ($this->exists('social_insurance_number')) {
+            $prepared['social_insurance_number'] = $this->normalizeArabicIndicDigits($this->input('social_insurance_number'));
+        }
+
+        $this->merge($prepared);
+
         $dates = [];
         $dateFormat = app(DateFormatService::class);
 
@@ -167,6 +198,7 @@ class StoreHrEmployeeRequest extends FormRequest
             'hourly_wage',
             'shift_wage',
             'piece_rate',
+            'insurance_contribution_wage',
             'documents.*.alert_before_expiry_days',
         ]);
 
@@ -194,6 +226,7 @@ class StoreHrEmployeeRequest extends FormRequest
             $this->validateSelectedPhoto($validator);
             $this->validateSelectedSignature($validator);
             $this->validateCurrencyAndPayBasis($validator);
+            $this->validateOrganizationDependencies($validator);
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
             $this->validateNestedRowOwnership($validator);
@@ -379,6 +412,7 @@ class StoreHrEmployeeRequest extends FormRequest
             $deviceDocNum = trim((string) ($row['device_doc_num'] ?? ''));
             $code = trim((string) ($row['biometric_code'] ?? ''));
             $isActive = filter_var($row['is_active'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $mappingId = isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null;
 
             if ($deviceDocNum === '' && $code === '') {
                 continue;
@@ -392,6 +426,29 @@ class StoreHrEmployeeRequest extends FormRequest
 
             if ($code === '') {
                 $validator->errors()->add("biometric_mappings.{$index}.biometric_code", __('hr.employees.validation.fingerprint_code_required'));
+
+                continue;
+            }
+
+            $device = HrBiometricDevice::withTrashed()
+                ->where('company_id', $companyId)
+                ->where('doc_num', $deviceDocNum)
+                ->first();
+            $existingMapping = $employeeId && $mappingId
+                ? HrEmployeeBiometricMapping::withTrashed()
+                    ->where('employee_id', $employeeId)
+                    ->whereKey($mappingId)
+                    ->first()
+                : null;
+            $isExistingDevice = $device instanceof HrBiometricDevice
+                && $existingMapping instanceof HrEmployeeBiometricMapping
+                && $existingMapping->biometric_device_id === $device->getKey();
+
+            if (! $device instanceof HrBiometricDevice
+                || (! $isExistingDevice && ($device->trashed() || $device->status !== 'active'))) {
+                $validator->errors()->add("biometric_mappings.{$index}.device_doc_num", __('validation.exists', [
+                    'attribute' => __('hr.employees.biometric.device'),
+                ]));
 
                 continue;
             }
@@ -510,6 +567,25 @@ class StoreHrEmployeeRequest extends FormRequest
         }
     }
 
+    protected function validateOrganizationDependencies(Validator $validator): void
+    {
+        $departmentDocNum = $this->string('department_doc_num')->trim()->toString();
+        $sectionDocNum = $this->string('section_doc_num')->trim()->toString();
+
+        if ($departmentDocNum === '' || $sectionDocNum === '' || $validator->errors()->hasAny(['department_doc_num', 'section_doc_num'])) {
+            return;
+        }
+
+        $matches = HrSection::query()
+            ->where('doc_num', $sectionDocNum)
+            ->whereHas('department', fn ($query) => $query->where('doc_num', $departmentDocNum))
+            ->exists();
+
+        if (! $matches) {
+            $validator->errors()->add('section_doc_num', __('hr.employees.validation.section_department_mismatch'));
+        }
+    }
+
     /**
      * @param  array<string, mixed>  $row
      */
@@ -522,5 +598,19 @@ class StoreHrEmployeeRequest extends FormRequest
         }
 
         return false;
+    }
+
+    private function normalizeArabicIndicDigits(mixed $value): mixed
+    {
+        if (! is_string($value)) {
+            return $value;
+        }
+
+        return strtr($value, [
+            '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4',
+            '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
+            '۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4',
+            '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
+        ]);
     }
 }

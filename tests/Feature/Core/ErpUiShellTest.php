@@ -305,6 +305,7 @@ test('navigation styling provides readable interactive nested menus in both dire
     $dropdownTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-dropdown-items.blade.php'));
     $topTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-items.blade.php'));
     $navigationStyles = file_get_contents(public_path('assets/css/user.css'));
+    $navigationScript = file_get_contents(public_path('assets/js/modules/Core/layout.js'));
 
     expect($dropdownTemplate)->not->toContain('link-600')
         ->and($dropdownTemplate)->toContain(
@@ -326,6 +327,17 @@ test('navigation styling provides readable interactive nested menus in both dire
             'html[dir="rtl"] .navbar-top',
             '@media (max-width: 991.98px)',
             '#navbarVerticalNav .nav-link.dropdown-indicator::after',
+        )
+        ->and($navigationStyles)->not->toContain('calc(100% + .25rem)')
+        ->and($navigationStyles)->toContain(
+            'calc(100% - .125rem)',
+            '.erp-top-nav-branch-flipped',
+        )
+        ->and($navigationScript)->toContain(
+            'positionNestedTopMenu',
+            'erp-top-nav-branch-flipped',
+            "navigation.addEventListener('focusin'",
+            "window.addEventListener('resize'",
         );
 });
 

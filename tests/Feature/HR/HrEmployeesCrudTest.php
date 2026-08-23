@@ -19,12 +19,15 @@ use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
+use Modules\HR\Models\HrEmploymentTaxPolicy;
 use Modules\HR\Models\HrEmploymentType;
 use Modules\HR\Models\HrHiringStatus;
+use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
 use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
+use Modules\HR\Models\HrSocialInsurancePolicy;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -130,6 +133,8 @@ function hrSimplifiedHrViewPermissions(): array
         'hr.shifts.view',
         'hr.document_types.view',
         'hr.insurance_offices.view',
+        'hr.social_insurance_policies.view',
+        'hr.employment_tax_policies.view',
         'hr.employees.view',
     ];
 }
@@ -171,10 +176,13 @@ function hrSimplifiedHrIndexRoutes(): array
         'admin.hr.sections.index',
         'admin.hr.jobs.index',
         'admin.hr.employment-types.index',
-        'admin.hr.biometric-devices.index',
-        'admin.hr.shifts.index',
         'admin.hr.document-types.index',
         'admin.hr.insurance-offices.index',
+        'admin.hr.social-insurance-policies.index',
+        'admin.hr.employment-tax-policies.index',
+        ...hrRestoredLegacyHrIndexRoutes(),
+        'admin.hr.biometric-devices.index',
+        'admin.hr.shifts.index',
     ];
 }
 
@@ -201,10 +209,7 @@ function hrRestoredLegacyHrIndexRoutes(): array
 
 function hrAllReviewHrIndexRoutes(): array
 {
-    return [
-        ...hrSimplifiedHrIndexRoutes(),
-        ...hrRestoredLegacyHrIndexRoutes(),
-    ];
+    return hrSimplifiedHrIndexRoutes();
 }
 
 function hrSimplifiedHrMenuLabels(): array
@@ -219,6 +224,8 @@ function hrSimplifiedHrMenuLabels(): array
         'hr_shifts',
         'hr_document_types',
         'hr_insurance_offices',
+        'hr_social_insurance_policies',
+        'hr_employment_tax_policies',
     ];
 }
 
@@ -261,6 +268,23 @@ function hrMenuRoutes(array $items): array
     }
 
     return $routes;
+}
+
+function hrMenuItemByLabel(array $items, string $label): ?array
+{
+    foreach ($items as $item) {
+        if (($item['label'] ?? null) === $label) {
+            return $item;
+        }
+
+        $match = hrMenuItemByLabel($item['children'] ?? [], $label);
+
+        if ($match !== null) {
+            return $match;
+        }
+    }
+
+    return null;
 }
 
 function hrEmployeeFixtures(): array
@@ -311,6 +335,7 @@ function hrEmployeeFixtures(): array
     $shift = HrShift::query()->create(['doc_number' => 805, 'doc_num' => 'HSH-00805', 'name' => 'Morning', 'start_time' => '08:00', 'end_time' => '16:00', 'break_minutes' => 30, 'status' => 'active']);
     $device = HrBiometricDevice::query()->create(['doc_number' => 806, 'doc_num' => 'HBD-00806', 'company_id' => $company->getKey(), 'branch_id' => $branch->getKey(), 'name' => 'Main Gate', 'device_uid' => 'GATE-01', 'status' => 'active']);
     $documentType = HrDocumentType::query()->create(['doc_number' => 807, 'doc_num' => 'HDT-00807', 'name' => 'Contract', 'status' => 'active']);
+    $insuranceOffice = HrInsuranceOffice::query()->create(['doc_number' => 808, 'doc_num' => 'HIO-00808', 'name' => 'Nasr City Insurance Office', 'status' => 'active']);
 
     Storage::disk('public')->put('tests/hr/contract.pdf', 'contract');
     $archiveFile = ArchiveFile::query()->create([
@@ -331,7 +356,7 @@ function hrEmployeeFixtures(): array
         'size_bytes' => 8,
     ]);
 
-    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'nationality', 'hiringStatus', 'allowance', 'shift', 'device', 'documentType', 'archiveFile');
+    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'nationality', 'hiringStatus', 'allowance', 'shift', 'device', 'documentType', 'insuranceOffice', 'archiveFile');
 }
 
 function hrOperatingSession(array $fixtures): array
@@ -440,14 +465,13 @@ test('Human Resources menu exposes current screens and retained lookup screens',
 
     expect($humanResources)->not->toBeNull()
         ->and($humanResources['text'])->toBe('Human Resources')
-        ->and($labels)->toBe([
-            ...hrSimplifiedHrMenuLabels(),
-            ...hrRestoredLegacyHrMenuLabels(),
-        ])
-        ->and(collect($humanResources['children'])->firstWhere('label', 'hr_employees')['text'])->toBe('Employees')
-        ->and(collect($humanResources['children'])->firstWhere('label', 'hr_sections')['text'])->toBe('Job Sections')
-        ->and(collect($humanResources['children'])->firstWhere('label', 'hr_jobs')['text'])->toBe('Jobs')
-        ->and(collect($humanResources['children'])->firstWhere('label', 'hr_employment_types')['text'])->toBe('Job Types')
+        ->and($labels)->toBe(['employee_data', 'hr_setup', 'attendance_leave'])
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_employees')['text'])->toBe('Employees')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_sections')['text'])->toBe('Job Sections')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_jobs')['text'])->toBe('Jobs')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_types')['text'])->toBe('Job Types')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_social_insurance_policies')['text'])->toBe('Social Insurance Policies')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_tax_policies')['text'])->toBe('Employment Tax Policies')
         ->and($routes)->toBe(hrAllReviewHrIndexRoutes())
         ->and($routes)->not->toContain('admin.hr.select2.lookups')
         ->and($routes)->not->toContain('admin.hr.select2.foundation');
@@ -463,12 +487,12 @@ test('Human Resources menu exposes current screens and retained lookup screens',
 
     expect($arabicHumanResources)->not->toBeNull()
         ->and($arabicHumanResources['text'])->toBe('الموارد البشرية')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_employees')['text'])->toBe('الموظفون')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_sections')['text'])->toBe('الأقسام الوظيفية')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_jobs')['text'])->toBe('الوظائف')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_employment_types')['text'])->toBe('أنواع الوظائف')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_document_types')['text'])->toBe('أنواع مستندات الموظفين')
-        ->and(collect($arabicHumanResources['children'])->firstWhere('label', 'hr_insurance_offices')['text'])->toBe('مكاتب التأمين');
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_employees')['text'])->toBe('الموظفون')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_sections')['text'])->toBe('الأقسام الوظيفية')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_jobs')['text'])->toBe('الوظائف')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_employment_types')['text'])->toBe('أنواع الوظائف')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_document_types')['text'])->toBe('أنواع مستندات الموظفين')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_insurance_offices')['text'])->toBe('مكاتب التأمين');
 
     app()->setLocale('en');
 
@@ -476,7 +500,8 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
     expect($lookupOnlyHr)->not->toBeNull();
-    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_countries']);
+    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_setup'])
+        ->and(hrMenuItemByLabel([$lookupOnlyHr], 'hr_countries'))->not->toBeNull();
 });
 
 test('HrEmployee index uses the shared wide table usability contract', function (): void {
@@ -519,21 +544,29 @@ test('HrEmployee index uses the shared wide table usability contract', function 
 test('current and legacy review HR index routes are accessible to admin role and forbidden without permissions', function () {
     $this->seed(PermissionSeeder::class);
 
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
     $admin = User::factory()->create();
     $admin->assignRole(Role::query()->where('name', 'admin')->where('guard_name', 'web')->firstOrFail());
 
     foreach (hrAllReviewHrIndexRoutes() as $route) {
-        $this->actingAs($admin)
-            ->get(route($route))
-            ->assertOk();
+        $response = $this->withSession($session)
+            ->actingAs($admin)
+            ->followingRedirects()
+            ->get(route($route));
+
+        expect($response->status(), "Route [{$route}] should be accessible to the admin role.")->toBe(200);
     }
 
     $unauthorized = User::factory()->create();
 
     foreach (hrAllReviewHrIndexRoutes() as $route) {
-        $this->actingAs($unauthorized)
-            ->get(route($route))
-            ->assertForbidden();
+        $response = $this->withSession($session)
+            ->actingAs($unauthorized)
+            ->get(route($route));
+
+        expect($response->status(), "Route [{$route}] should be forbidden without its view permission.")->toBe(403);
     }
 });
 
@@ -554,6 +587,7 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertSee(__('hr.employees.sections.work_info'))
         ->assertSee(__('hr.employees.sections.attendance_biometric'))
         ->assertSee(__('hr.employees.sections.salary_payment'))
+        ->assertSee(__('hr.employees.sections.insurance_taxes'))
         ->assertSee(__('hr.employees.sections.documents'))
         ->assertSee(__('hr.employees.sections.notes'))
         ->assertSee('product-image-picker-panel', false)
@@ -579,6 +613,10 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertSee('hr-biometric-row-template', false)
         ->assertSee(route('admin.hr.select2.foundation', 'shifts'), false)
         ->assertSee(route('admin.hr.select2.foundation', 'biometric-devices'), false)
+        ->assertSee(route('admin.hr.select2.foundation', 'insurance-offices'), false)
+        ->assertSee('data-depends-on="#hr-employee-department-doc-num"', false)
+        ->assertSee('data-dependent-result-field="department_doc_num"', false)
+        ->assertSee('js-hr-biometric-card-title', false)
         ->assertSee('documents[__INDEX__][document_number_text]', false)
         ->assertSee('name="documents[__INDEX__][alert_before_expiry_days]"', false)
         ->assertSee('data-numeric-max="3650"', false)
@@ -614,6 +652,196 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
     $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'document-types').'?q=Contract')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['documentType']->doc_num);
+});
+
+test('HrEmployee insurance and tax profiles validate persist hydrate filter and remain no-op safe', function (): void {
+    $actor = hrEmployeeActor([
+        ...hrEmployeePermissions(),
+        'hr.social_insurance_policies.edit',
+        'hr.employment_tax_policies.edit',
+    ]);
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $insurancePolicy = HrSocialInsurancePolicy::query()->create([
+        'doc_number' => 831,
+        'doc_num' => 'HSIP-00831',
+        'company_id' => $fixtures['company']->getKey(),
+        'name' => 'TEST Effective Insurance Policy',
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-12-31',
+        'employee_contribution_rate' => '7.0000',
+        'employer_contribution_rate' => '13.0000',
+        'minimum_contribution_wage' => '2000.00',
+        'maximum_contribution_wage' => '20000.00',
+        'rounding_rule' => 'nearest',
+        'status' => 'active',
+    ]);
+    $insurancePolicy->components()->createMany([
+        ['name' => 'TEST Component A', 'employee_rate' => '5.0000', 'employer_rate' => '10.0000', 'calculation_basis' => 'contribution_wage', 'is_active' => true, 'sort_order' => 0],
+        ['name' => 'TEST Component B', 'employee_rate' => '2.0000', 'employer_rate' => '3.0000', 'calculation_basis' => 'contribution_wage', 'is_active' => true, 'sort_order' => 1],
+    ]);
+    $taxPolicy = HrEmploymentTaxPolicy::query()->create([
+        'doc_number' => 832,
+        'doc_num' => 'HETP-00832',
+        'company_id' => $fixtures['company']->getKey(),
+        'name' => 'TEST Effective Tax Policy',
+        'tax_year' => 2026,
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-12-31',
+        'annual_exemption_amount' => '1000.00',
+        'rounding_rule' => 'down',
+        'status' => 'active',
+    ]);
+    $taxPolicy->brackets()->createMany([
+        ['from_amount' => '0', 'to_amount' => '10000', 'rate' => '0', 'sort_order' => 0],
+        ['from_amount' => '10000', 'to_amount' => '20000', 'rate' => '5', 'sort_order' => 1],
+        ['from_amount' => '20000', 'to_amount' => null, 'rate' => '10', 'sort_order' => 2],
+    ]);
+    $payload = hrEmployeePayload($fixtures, [
+        'insurance_status' => 'subject',
+        'social_insurance_number' => '٠١٢٣٤٥٦٧٨٩',
+        'insurance_office_doc_num' => $fixtures['insuranceOffice']->doc_num,
+        'insurance_start_date' => '2026-01-01',
+        'insurance_end_date' => '2026-12-31',
+        'insurance_contribution_wage' => '10,000.00',
+        'insurance_notes' => 'Active social insurance profile.',
+        'tax_status' => 'subject',
+        'tax_start_date' => '2026-01-01',
+        'tax_notes' => 'Standard employment tax treatment.',
+        'biometric_mappings' => [],
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), $payload)
+        ->assertOk();
+
+    $employee = HrEmployee::query()->firstOrFail();
+
+    expect($employee->insurance_status)->toBe('subject')
+        ->and($employee->social_insurance_number)->toBe('0123456789')
+        ->and($employee->insurance_office_id)->toBe($fixtures['insuranceOffice']->getKey())
+        ->and($employee->insurance_start_date?->toDateString())->toBe('2026-01-01')
+        ->and($employee->insurance_end_date?->toDateString())->toBe('2026-12-31')
+        ->and($employee->insurance_contribution_wage)->toBe('10000.00')
+        ->and($employee->tax_status)->toBe('subject')
+        ->and($employee->tax_start_date?->toDateString())->toBe('2026-01-01');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.edit', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('value="0123456789"', false)
+        ->assertSee('value="'.$fixtures['insuranceOffice']->doc_num.'" selected', false)
+        ->assertSee('value="10,000"', false)
+        ->assertSee('TEST Effective Insurance Policy')
+        ->assertSee('TEST Component A')
+        ->assertSee('700.00')
+        ->assertSee(route('admin.hr.social-insurance-policies.edit', $insurancePolicy->doc_num), false)
+        ->assertSee('TEST Effective Tax Policy')
+        ->assertSee(__('hr.employees.statutory.tax_calculation_deferred'))
+        ->assertSee(route('admin.hr.employment-tax-policies.edit', $taxPolicy->doc_num), false);
+
+    $activityCount = DB::table(config('activitylog.table_name', 'activity_log'))->count();
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), $payload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    expect(DB::table(config('activitylog.table_name', 'activity_log'))->count())->toBe($activityCount);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), [
+            ...$payload,
+            'insurance_contribution_wage' => '11,000.00',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $activityProperties = json_decode((string) DB::table(config('activitylog.table_name', 'activity_log'))
+        ->where('event', 'hr.employees.update')
+        ->latest('id')
+        ->value('properties'), true, flags: JSON_THROW_ON_ERROR);
+
+    expect(data_get($activityProperties, 'changes.insurance_contribution_wage.old'))->toBe('10000.00')
+        ->and(data_get($activityProperties, 'changes.insurance_contribution_wage.new'))->toBe('11000.00');
+
+    $this->withSession($session)
+        ->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([
+            'insurance_status' => 'subject',
+            'tax_status' => 'subject',
+            'insurance_office_doc_num' => $fixtures['insuranceOffice']->doc_num,
+        ])))
+        ->assertOk()
+        ->assertJsonCount(1, 'data');
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Non-insured Employee',
+            'national_id' => '29104150000999',
+            'email' => 'not.insured@example.test',
+            'work_email' => 'not.insured@company.example.test',
+            'insurance_status' => 'not_subject',
+            'insurance_non_coverage_reason' => 'Covered by another statutory arrangement.',
+            'tax_status' => 'not_subject',
+            'biometric_mappings' => [],
+        ]))
+        ->assertOk();
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Missing Insured Fields',
+            'national_id' => '29104150000998',
+            'email' => 'missing.insurance@example.test',
+            'work_email' => 'missing.insurance@company.example.test',
+            'insurance_status' => 'subject',
+            'tax_status' => 'not_subject',
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([
+            'social_insurance_number',
+            'insurance_office_doc_num',
+            'insurance_start_date',
+            'insurance_contribution_wage',
+        ]);
+});
+
+test('HrEmployee filters start collapsed and section lookup respects its department dependency', function (): void {
+    $actor = hrEmployeeActor(['hr.employees.view', 'hr.employees.create']);
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $otherDepartment = HrDepartment::query()->create([
+        'doc_number' => 901,
+        'doc_num' => 'HRD-00901',
+        'name' => 'Finance',
+        'status' => 'active',
+    ]);
+    $otherSection = HrSection::query()->create([
+        'doc_number' => 902,
+        'doc_num' => 'HRS-00902',
+        'name' => 'Accounts',
+        'department_id' => $otherDepartment->getKey(),
+        'status' => 'active',
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->get(route('admin.hr.employees.index'))
+        ->assertOk()
+        ->assertSee('aria-expanded="false"', false)
+        ->assertSee('class="collapse" id="hr-employees-filters"', false)
+        ->assertSee('data-depends-on="#hr-employees-filter-department-doc-num"', false);
+
+    $results = $this->withSession($session)
+        ->getJson(route('admin.hr.select2.foundation', 'sections').'?department_doc_num='.urlencode($fixtures['department']->doc_num))
+        ->assertOk()
+        ->assertJsonPath('results.0.department_doc_num', $fixtures['department']->doc_num)
+        ->json('results');
+
+    expect(collect($results)->pluck('id')->all())
+        ->toContain($fixtures['section']->doc_num)
+        ->not->toContain($otherSection->doc_num);
 });
 
 test('HrEmployee branch Select2 uses the current company context and public branch doc nums', function (): void {
@@ -1249,6 +1477,33 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->assertSee('name="attendance_tracking_enabled" type="checkbox"', false)
         ->assertSee('name="overtime_enabled" type="checkbox"', false)
         ->assertSee('nadia.personal@example.test');
+
+    $fixtures['device']->update(['status' => 'inactive']);
+
+    $this->withSession($session)
+        ->getJson(route('admin.hr.select2.foundation', 'biometric-devices').'?q=Main%20Gate')
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.edit', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('value="'.$fixtures['device']->doc_num.'" selected', false);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'biometric_mappings' => [[
+                'id' => $employee->biometricMappings()->firstOrFail()->getKey(),
+                'device_doc_num' => $fixtures['device']->doc_num,
+                'biometric_code' => 'FP-1001',
+                'is_active' => true,
+                'notes' => 'Main gate code',
+            ]],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    $fixtures['device']->update(['status' => 'active']);
 
     $this->withSession($session)->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([
         'order' => [

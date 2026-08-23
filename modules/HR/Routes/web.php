@@ -9,6 +9,7 @@ use Modules\HR\Http\Controllers\HrCountryController;
 use Modules\HR\Http\Controllers\HrDepartmentController;
 use Modules\HR\Http\Controllers\HrDocumentTypeController;
 use Modules\HR\Http\Controllers\HrEmployeeController;
+use Modules\HR\Http\Controllers\HrEmploymentTaxPolicyController;
 use Modules\HR\Http\Controllers\HrEmploymentTypeController;
 use Modules\HR\Http\Controllers\HrFacultyController;
 use Modules\HR\Http\Controllers\HrGovernorateController;
@@ -24,6 +25,7 @@ use Modules\HR\Http\Controllers\HrReligionController;
 use Modules\HR\Http\Controllers\HrSectionController;
 use Modules\HR\Http\Controllers\HrSelect2InlineController;
 use Modules\HR\Http\Controllers\HrShiftController;
+use Modules\HR\Http\Controllers\HrSocialInsurancePolicyController;
 use Modules\HR\Http\Controllers\HrSpecializationController;
 use Modules\HR\Http\Controllers\HrUniversityController;
 use Modules\HR\Http\Controllers\Select2\HrSelect2Controller;
@@ -114,6 +116,8 @@ Route::middleware('auth')
             ['prefix' => 'grades', 'controller' => HrGradeController::class, 'parameter' => 'grade', 'permission' => 'hr.grades'],
             ['prefix' => 'employment-types', 'controller' => HrEmploymentTypeController::class, 'parameter' => 'employmentType', 'permission' => 'hr.employment_types'],
             ['prefix' => 'insurance-offices', 'controller' => HrInsuranceOfficeController::class, 'parameter' => 'insuranceOffice', 'permission' => 'hr.insurance_offices'],
+            ['prefix' => 'social-insurance-policies', 'controller' => HrSocialInsurancePolicyController::class, 'parameter' => 'socialInsurancePolicy', 'permission' => 'hr.social_insurance_policies'],
+            ['prefix' => 'employment-tax-policies', 'controller' => HrEmploymentTaxPolicyController::class, 'parameter' => 'employmentTaxPolicy', 'permission' => 'hr.employment_tax_policies'],
         ];
 
         foreach ($enterpriseFoundationResources as $resource) {

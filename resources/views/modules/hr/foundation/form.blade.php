@@ -27,8 +27,49 @@
             return (array) old($name, $record?->getAttribute((string) ($field['column'] ?? $name)) ?? []);
         }
 
-        return old($name, $record?->getAttribute((string) ($field['column'] ?? $name)) ?? ($field['default'] ?? ''));
+        $value = old($name, $record?->getAttribute((string) ($field['column'] ?? $name)) ?? ($field['default'] ?? ''));
+
+        return ($field['type'] ?? null) === 'date' && $value instanceof \DateTimeInterface
+            ? $value->format('Y-m-d')
+            : $value;
     };
+    $taxBracketRows = $definition->hasTaxBrackets
+        ? old('tax_brackets', $record?->brackets?->map(fn ($bracket) => [
+            'public_uuid' => $bracket->public_uuid,
+            'from_amount' => $bracket->from_amount,
+            'to_amount' => $bracket->to_amount,
+            'rate' => $bracket->rate,
+            'notes' => $bracket->notes,
+        ])->values()->all() ?? [['public_uuid' => '', 'from_amount' => '0', 'to_amount' => '', 'rate' => '0', 'notes' => '']])
+        : [];
+    $insuranceComponentRows = $definition->hasInsuranceComponents
+        ? old('insurance_components', $record?->components?->map(fn ($component) => [
+            'public_uuid' => $component->public_uuid,
+            'name' => $component->name,
+            'employee_rate' => $component->employee_rate,
+            'employer_rate' => $component->employer_rate,
+            'calculation_basis' => $component->calculation_basis,
+            'is_active' => $component->is_active,
+            'notes' => $component->notes,
+        ])->values()->all() ?? [[
+            'public_uuid' => '',
+            'name' => '',
+            'employee_rate' => '0',
+            'employer_rate' => '0',
+            'calculation_basis' => 'contribution_wage',
+            'is_active' => true,
+            'notes' => '',
+        ]])
+        : [];
+    $insuranceEmployeeTotal = '0.0000';
+    $insuranceEmployerTotal = '0.0000';
+    foreach ($insuranceComponentRows as $componentRow) {
+        if (filter_var($componentRow['is_active'] ?? false, FILTER_VALIDATE_BOOL)) {
+            $insuranceEmployeeTotal = bcadd($insuranceEmployeeTotal, (string) ($componentRow['employee_rate'] ?? '0'), 4);
+            $insuranceEmployerTotal = bcadd($insuranceEmployerTotal, (string) ($componentRow['employer_rate'] ?? '0'), 4);
+        }
+    }
+    $insuranceCombinedTotal = bcadd($insuranceEmployeeTotal, $insuranceEmployerTotal, 4);
     $originalRecordData = [
         'name' => $recordName,
         'doc_number' => $canControlDocumentNumber ? (($isEdit || $isView) ? $record?->doc_number : '') : null,
@@ -58,6 +99,17 @@
         $originalRecordData[$fieldName] = is_scalar($value) || $value === null
             ? (string) ($value ?? '')
             : json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+    }
+    foreach ($taxBracketRows as $index => $row) {
+        foreach (['public_uuid', 'from_amount', 'to_amount', 'rate', 'notes'] as $column) {
+            $originalRecordData["tax_brackets[{$index}][{$column}]"] = (string) ($row[$column] ?? '');
+        }
+    }
+    foreach ($insuranceComponentRows as $index => $row) {
+        foreach (['public_uuid', 'name', 'employee_rate', 'employer_rate', 'calculation_basis', 'notes'] as $column) {
+            $originalRecordData["insurance_components[{$index}][{$column}]"] = (string) ($row[$column] ?? '');
+        }
+        $originalRecordData["insurance_components[{$index}][is_active]"] = filter_var($row['is_active'] ?? false, FILTER_VALIDATE_BOOL) ? '1' : '0';
     }
     $showsDocumentNumberColumn = $canControlDocumentNumber || (($isEdit || $isView) && ! $canControlDocumentNumber);
 @endphp
@@ -167,6 +219,7 @@
                             $numericMin = $field['min'] ?? null;
                             $numericMax = $field['max'] ?? null;
                             $numericStep = $field['step'] ?? ($numericScale === 0 ? '1' : '0.'.str_repeat('0', max(0, $numericScale - 1)).'1');
+                            $fieldRequired = in_array('required', $field['rules'] ?? [], true);
                         @endphp
 
                         <div class="{{ in_array($fieldType, ['checkbox'], true) ? 'col-md-4 col-lg-3 d-flex align-items-end' : (in_array($fieldType, ['textarea', 'weekdays'], true) ? 'col-12' : 'col-md-6 col-lg-4') }}">
@@ -196,8 +249,8 @@
                                     <div class="invalid-feedback d-block" data-error-for="{{ $fieldName }}"></div>
                                 </div>
                             @elseif ($fieldType === 'select')
-                                <label class="form-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
-                                <select id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-select">
+                                <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
+                                <select id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-select" @required($fieldRequired)>
                                     @foreach (($field['options'] ?? []) as $option)
                                         <option value="{{ $option }}" @selected((string) $value === (string) $option)>{{ __('hr.foundation.options.'.$fieldName.'.'.$option) }}</option>
                                     @endforeach
@@ -240,7 +293,7 @@
                                 <textarea id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-control" rows="4">{{ $value }}</textarea>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @elseif ($isNumericField)
-                                <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" />
+                                <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
                                 <x-forms.numeric-input
                                     :id="'hr-foundation-'.$fieldName"
                                     :name="$fieldName"
@@ -250,20 +303,199 @@
                                     :max="$numericMax"
                                     :step="$numericStep"
                                     class="text-center"
+                                    :required="$fieldRequired"
                                 />
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @else
-                                <label class="form-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
+                                <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
                                 <input id="hr-foundation-{{ $fieldName }}"
                                     name="{{ $fieldName }}"
                                     type="{{ $fieldType === 'time' ? 'time' : 'text' }}"
                                     class="form-control {{ $fieldType === 'date' ? 'datetimepicker' : '' }}"
                                     value="{{ $value }}"
+                                    @required($fieldRequired)
                                     @if ($fieldType === 'date') placeholder="{{ __('common.placeholders.select_date') }}" data-options='{"disableMobile":true,"dateFormat":"Y-m-d"}' @endif>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @endif
+                            @if (isset($field['help']))
+                                <div class="form-text">{{ __('hr.foundation.help.'.$field['help']) }}</div>
+                            @endif
                         </div>
                     @endforeach
+
+                    @if ($definition->hasInsuranceComponents)
+                        <div class="col-12">
+                            <div class="card border shadow-none">
+                                <div class="card-header bg-body-tertiary d-flex align-items-start justify-content-between gap-3">
+                                    <div>
+                                        <h6 class="mb-1">{{ __('hr.foundation.insurance_components.title') }}</h6>
+                                        <small class="text-muted">{{ __('hr.foundation.insurance_components.help') }}</small>
+                                    </div>
+                                    @unless ($isView)
+                                        <button class="btn btn-sm btn-falcon-primary js-add-insurance-component" type="button">
+                                            <span class="fas fa-plus me-1"></span>{{ __('hr.foundation.insurance_components.add') }}
+                                        </button>
+                                    @endunless
+                                </div>
+                                <div class="card-body">
+                                    <div class="vstack gap-3 js-insurance-components">
+                                        @foreach ($insuranceComponentRows as $index => $row)
+                                            @php
+                                                $componentActive = filter_var($row['is_active'] ?? false, FILTER_VALIDATE_BOOL);
+                                                $componentTotal = bcadd((string) ($row['employee_rate'] ?? '0'), (string) ($row['employer_rate'] ?? '0'), 4);
+                                            @endphp
+                                            <div class="border rounded-3 p-3 js-insurance-component-row" data-insurance-component-index="{{ $index }}">
+                                                <input type="hidden" name="insurance_components[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}">
+                                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                                    <span class="badge rounded-pill bg-primary-subtle text-primary js-insurance-component-sequence">{{ $index + 1 }}</span>
+                                                    @unless ($isView)
+                                                        <button class="btn btn-sm btn-outline-danger js-remove-insurance-component" type="button" aria-label="{{ __('common.actions.delete') }}">
+                                                            <span class="fas fa-trash-alt"></span>
+                                                        </button>
+                                                    @endunless
+                                                </div>
+                                                <div class="row g-2 align-items-end">
+                                                    <div class="col-md-5 col-xl-3">
+                                                        <label class="form-label" for="insurance-component-{{ $index }}-name">{{ __('hr.foundation.insurance_components.component') }}</label>
+                                                        @if ($isView)
+                                                            <div class="form-control-plaintext" id="insurance-component-{{ $index }}-name">{{ $row['name'] ?? '—' }}</div>
+                                                        @else
+                                                            <input class="form-control" id="insurance-component-{{ $index }}-name" name="insurance_components[{{ $index }}][name]" type="text" maxlength="255" value="{{ $row['name'] ?? '' }}" required>
+                                                            <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.name"></div>
+                                                        @endif
+                                                    </div>
+                                                    @foreach (['employee_rate', 'employer_rate'] as $column)
+                                                        <div class="col-6 col-md-3 col-xl-2">
+                                                            <label class="form-label" for="insurance-component-{{ $index }}-{{ $column }}">{{ __('hr.foundation.insurance_components.'.$column) }}</label>
+                                                            @if ($isView)
+                                                                <div class="form-control-plaintext text-center" id="insurance-component-{{ $index }}-{{ $column }}">{{ $row[$column] ?? '0' }}%</div>
+                                                            @else
+                                                                <input class="form-control text-center js-insurance-component-rate" id="insurance-component-{{ $index }}-{{ $column }}" name="insurance_components[{{ $index }}][{{ $column }}]" type="number" min="0" max="100" step="0.0001" value="{{ $row[$column] ?? '0' }}" required>
+                                                                <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.{{ $column }}"></div>
+                                                            @endif
+                                                        </div>
+                                                    @endforeach
+                                                    <div class="col-6 col-md-3 col-xl-2">
+                                                        <label class="form-label">{{ __('hr.foundation.insurance_components.total_rate') }}</label>
+                                                        <div class="form-control-plaintext text-center fw-semibold js-insurance-component-total">{{ $componentTotal }}%</div>
+                                                    </div>
+                                                    <div class="col-md-5 col-xl-2">
+                                                        <label class="form-label" for="insurance-component-{{ $index }}-calculation_basis">{{ __('hr.foundation.insurance_components.calculation_basis') }}</label>
+                                                        @if ($isView)
+                                                            <div class="form-control-plaintext" id="insurance-component-{{ $index }}-calculation_basis">{{ __('hr.foundation.insurance_components.bases.'.($row['calculation_basis'] ?? 'contribution_wage')) }}</div>
+                                                        @else
+                                                            <select class="form-select" id="insurance-component-{{ $index }}-calculation_basis" name="insurance_components[{{ $index }}][calculation_basis]" required>
+                                                                <option value="contribution_wage" @selected(($row['calculation_basis'] ?? '') === 'contribution_wage')>{{ __('hr.foundation.insurance_components.bases.contribution_wage') }}</option>
+                                                            </select>
+                                                            <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.calculation_basis"></div>
+                                                        @endif
+                                                    </div>
+                                                    <div class="col-md-2 col-xl-1">
+                                                        @if ($isView)
+                                                            <label class="form-label">{{ __('hr.foundation.insurance_components.active') }}</label>
+                                                            <div class="form-control-plaintext">{{ $componentActive ? __('common.actions.yes') : __('common.actions.no') }}</div>
+                                                        @else
+                                                            <input type="hidden" name="insurance_components[{{ $index }}][is_active]" value="0">
+                                                            <div class="form-check form-switch mb-2">
+                                                                <input class="form-check-input js-insurance-component-active" id="insurance-component-{{ $index }}-is_active" name="insurance_components[{{ $index }}][is_active]" type="checkbox" value="1" @checked($componentActive)>
+                                                                <label class="form-check-label" for="insurance-component-{{ $index }}-is_active">{{ __('hr.foundation.insurance_components.active') }}</label>
+                                                            </div>
+                                                            <div class="invalid-feedback d-block" data-error-for="insurance_components.{{ $index }}.is_active"></div>
+                                                        @endif
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <label class="form-label" for="insurance-component-{{ $index }}-notes">{{ __('common.fields.notes') }}</label>
+                                                        @if ($isView)
+                                                            <div class="form-control-plaintext" id="insurance-component-{{ $index }}-notes">{{ ($row['notes'] ?? '') ?: '—' }}</div>
+                                                        @else
+                                                            <input class="form-control" id="insurance-component-{{ $index }}-notes" name="insurance_components[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}">
+                                                            <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.notes"></div>
+                                                        @endif
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                    <div class="invalid-feedback d-block" data-error-for="insurance_components"></div>
+                                </div>
+                                <div class="card-footer bg-body-tertiary">
+                                    <div class="row g-3 text-center">
+                                        <div class="col-md-4">
+                                            <small class="d-block text-muted">{{ __('hr.foundation.insurance_components.total_employee') }}</small>
+                                            <strong class="js-insurance-employee-total">{{ $insuranceEmployeeTotal }}%</strong>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <small class="d-block text-muted">{{ __('hr.foundation.insurance_components.total_employer') }}</small>
+                                            <strong class="js-insurance-employer-total">{{ $insuranceEmployerTotal }}%</strong>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <small class="d-block text-muted">{{ __('hr.foundation.insurance_components.total_combined') }}</small>
+                                            <strong class="js-insurance-combined-total">{{ $insuranceCombinedTotal }}%</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    @endif
+
+                    @if ($definition->hasTaxBrackets)
+                        <div class="col-12">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <div>
+                                    <h6 class="mb-0">{{ __('hr.foundation.tax_brackets.title') }}</h6>
+                                    <small class="text-muted">{{ __('hr.foundation.tax_brackets.help') }}</small>
+                                </div>
+                                @unless ($isView)
+                                    <button class="btn btn-sm btn-falcon-primary js-add-tax-bracket" type="button">
+                                        <span class="fas fa-plus me-1"></span>{{ __('hr.foundation.tax_brackets.add') }}
+                                    </button>
+                                @endunless
+                            </div>
+                            <div class="vstack gap-2 js-tax-brackets">
+                                @foreach ($taxBracketRows as $index => $row)
+                                    <div class="border rounded-3 p-3 js-tax-bracket-row" data-tax-bracket-index="{{ $index }}">
+                                        <input type="hidden" name="tax_brackets[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}">
+                                        <div class="d-flex align-items-center justify-content-between mb-2">
+                                            <span class="badge rounded-pill bg-primary-subtle text-primary js-tax-bracket-sequence">{{ __('hr.foundation.tax_brackets.sequence') }} {{ $index + 1 }}</span>
+                                            @unless ($isView)
+                                                <button class="btn btn-sm btn-outline-danger js-remove-tax-bracket" type="button" aria-label="{{ __('common.actions.delete') }}">
+                                                    <span class="fas fa-trash-alt"></span>
+                                                </button>
+                                            @endunless
+                                        </div>
+                                        <div class="row g-2 align-items-end">
+                                            @foreach (['from_amount', 'to_amount', 'rate'] as $column)
+                                                <div class="col-md-4">
+                                                    <label class="form-label" for="tax-bracket-{{ $index }}-{{ $column }}">{{ __('hr.foundation.tax_brackets.'.$column) }}</label>
+                                                    @if ($isView)
+                                                        <div class="form-control-plaintext" id="tax-bracket-{{ $index }}-{{ $column }}">
+                                                            {{ ($row[$column] ?? '') !== '' && ($row[$column] ?? null) !== null ? $row[$column].($column === 'rate' ? '%' : '') : __('hr.foundation.tax_brackets.no_upper_limit') }}
+                                                        </div>
+                                                    @else
+                                                        <input class="form-control text-center" id="tax-bracket-{{ $index }}-{{ $column }}" name="tax_brackets[{{ $index }}][{{ $column }}]" type="number" min="0" step="{{ $column === 'rate' ? '0.0001' : '0.01' }}" value="{{ $row[$column] ?? '' }}" @required($column !== 'to_amount')>
+                                                        @if ($column === 'to_amount')
+                                                            <div class="form-text">{{ __('hr.foundation.tax_brackets.no_upper_limit_help') }}</div>
+                                                        @endif
+                                                        <div class="invalid-feedback" data-error-for="tax_brackets.{{ $index }}.{{ $column }}"></div>
+                                                    @endif
+                                                </div>
+                                            @endforeach
+                                            <div class="col-12">
+                                                <label class="form-label" for="tax-bracket-{{ $index }}-notes">{{ __('common.fields.notes') }}</label>
+                                                @if ($isView)
+                                                    <div class="form-control-plaintext" id="tax-bracket-{{ $index }}-notes">{{ ($row['notes'] ?? '') ?: '—' }}</div>
+                                                @else
+                                                    <input class="form-control" id="tax-bracket-{{ $index }}-notes" name="tax_brackets[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}">
+                                                    <div class="invalid-feedback" data-error-for="tax_brackets.{{ $index }}.notes"></div>
+                                                @endif
+                                            </div>
+                                        </div>
+                                    </div>
+                                @endforeach
+                            </div>
+                            <div class="invalid-feedback d-block" data-error-for="tax_brackets"></div>
+                        </div>
+                    @endif
 
                     <div class="col-12">
                         <label class="form-label" for="hr-foundation-notes">{{ __('common.fields.notes') }}</label>
@@ -341,6 +573,9 @@
             'restoreConfirmTitle' => __('hr.trash.restore_confirm_title'),
             'restoreConfirmText' => __('hr.trash.restore_confirm_text'),
             'restoreConfirmYes' => __('hr.trash.restore_confirm_yes'),
+            'taxBracketMinimum' => __('hr.foundation.tax_brackets.minimum'),
+            'insuranceComponentMinimum' => __('hr.foundation.insurance_components.minimum'),
+            'taxBracketSequence' => __('hr.foundation.tax_brackets.sequence'),
         ];
     @endphp
     <script>

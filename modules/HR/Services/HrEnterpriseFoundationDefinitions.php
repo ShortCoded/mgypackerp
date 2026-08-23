@@ -5,12 +5,14 @@ namespace Modules\HR\Services;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
+use Modules\HR\Models\HrEmploymentTaxPolicy;
 use Modules\HR\Models\HrEmploymentType;
 use Modules\HR\Models\HrGrade;
 use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
+use Modules\HR\Models\HrSocialInsurancePolicy;
 
 final class HrEnterpriseFoundationDefinitions
 {
@@ -113,7 +115,7 @@ final class HrEnterpriseFoundationDefinitions
                 modelClass: HrBiometricDevice::class,
                 translationKey: 'biometric_devices',
                 fields: [
-                    ['name' => 'device_uid', 'type' => 'text', 'rules' => ['required', 'string', 'max:120'], 'unique' => true],
+                    ['name' => 'device_uid', 'type' => 'text', 'rules' => ['nullable', 'string', 'max:120'], 'unique' => true, 'help' => 'device_uid'],
                     ['name' => 'serial_number', 'type' => 'text', 'rules' => ['nullable', 'string', 'max:120']],
                     ['name' => 'location', 'type' => 'text', 'rules' => ['nullable', 'string', 'max:255']],
                 ],
@@ -124,6 +126,7 @@ final class HrEnterpriseFoundationDefinitions
                     ['name' => 'location', 'type' => 'text'],
                     ['name' => 'status', 'type' => 'status'],
                 ],
+                companyScoped: true,
             ),
             'grades' => new HrFoundationDefinition(
                 key: 'grades',
@@ -175,6 +178,58 @@ final class HrEnterpriseFoundationDefinitions
                     ['name' => 'email', 'type' => 'text'],
                     ['name' => 'status', 'type' => 'status'],
                 ],
+            ),
+            'social-insurance-policies' => new HrFoundationDefinition(
+                key: 'social-insurance-policies',
+                routeKey: 'social-insurance-policies',
+                documentKey: 'hr_social_insurance_policies',
+                permissionPrefix: 'hr.social_insurance_policies',
+                table: 'hr_social_insurance_policies',
+                modelClass: HrSocialInsurancePolicy::class,
+                translationKey: 'social_insurance_policies',
+                fields: [
+                    ['name' => 'effective_from', 'type' => 'date', 'rules' => ['required', 'date_format:Y-m-d']],
+                    ['name' => 'effective_to', 'type' => 'date', 'rules' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:effective_from']],
+                    ['name' => 'minimum_contribution_wage', 'type' => 'decimal', 'rules' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'], 'scale' => 2, 'min' => 0, 'step' => '0.01'],
+                    ['name' => 'maximum_contribution_wage', 'type' => 'decimal', 'rules' => ['nullable', 'numeric', 'min:0', 'gte:minimum_contribution_wage', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'], 'scale' => 2, 'min' => 0, 'step' => '0.01'],
+                    ['name' => 'rounding_rule', 'type' => 'select', 'rules' => ['required', 'string', 'in:nearest,down,up,none'], 'options' => ['nearest', 'down', 'up', 'none'], 'default' => 'nearest'],
+                ],
+                jsNamespace: 'hrSocialInsurancePolicies',
+                tableColumns: [
+                    ['name' => 'effective_from', 'type' => 'date'],
+                    ['name' => 'effective_to', 'type' => 'date'],
+                    ['name' => 'employee_contribution_rate', 'type' => 'decimal'],
+                    ['name' => 'employer_contribution_rate', 'type' => 'decimal'],
+                    ['name' => 'status', 'type' => 'status'],
+                ],
+                companyScoped: true,
+                hasInsuranceComponents: true,
+            ),
+            'employment-tax-policies' => new HrFoundationDefinition(
+                key: 'employment-tax-policies',
+                routeKey: 'employment-tax-policies',
+                documentKey: 'hr_employment_tax_policies',
+                permissionPrefix: 'hr.employment_tax_policies',
+                table: 'hr_employment_tax_policies',
+                modelClass: HrEmploymentTaxPolicy::class,
+                translationKey: 'employment_tax_policies',
+                fields: [
+                    ['name' => 'tax_year', 'type' => 'number', 'rules' => ['required', 'integer', 'min:2000', 'max:2200'], 'scale' => 0, 'min' => 2000, 'max' => 2200, 'step' => '1'],
+                    ['name' => 'effective_from', 'type' => 'date', 'rules' => ['required', 'date_format:Y-m-d']],
+                    ['name' => 'effective_to', 'type' => 'date', 'rules' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:effective_from']],
+                    ['name' => 'annual_exemption_amount', 'type' => 'decimal', 'rules' => ['required', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'], 'default' => '0', 'scale' => 2, 'min' => 0, 'step' => '0.01'],
+                    ['name' => 'rounding_rule', 'type' => 'select', 'rules' => ['required', 'string', 'in:nearest,down,up,none'], 'options' => ['nearest', 'down', 'up', 'none'], 'default' => 'nearest'],
+                ],
+                jsNamespace: 'hrEmploymentTaxPolicies',
+                tableColumns: [
+                    ['name' => 'tax_year', 'type' => 'number'],
+                    ['name' => 'effective_from', 'type' => 'date'],
+                    ['name' => 'effective_to', 'type' => 'date'],
+                    ['name' => 'annual_exemption_amount', 'type' => 'decimal'],
+                    ['name' => 'status', 'type' => 'status'],
+                ],
+                companyScoped: true,
+                hasTaxBrackets: true,
             ),
         ];
     }

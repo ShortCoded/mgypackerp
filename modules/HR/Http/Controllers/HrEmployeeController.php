@@ -38,6 +38,7 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
 use Modules\HR\Models\HrHiringStatus;
+use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
 use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
@@ -46,6 +47,8 @@ use Modules\HR\Services\HrEmployeeDocumentNumberSettingsService;
 use Modules\HR\Services\HrEmployeeService;
 use Modules\HR\Services\HrFoundationRegistry;
 use Modules\HR\Services\HrLookupRegistry;
+use Modules\HR\Services\HrSocialInsuranceContributionCalculator;
+use Modules\HR\Services\HrStatutoryPolicyResolver;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 
@@ -65,6 +68,7 @@ class HrEmployeeController extends Controller
         'allowance_doc_num' => ['column' => 'allowance_id', 'model' => HrAllowance::class, 'lookup' => 'allowances'],
         'default_shift_doc_num' => ['column' => 'default_shift_id', 'model' => HrShift::class, 'foundation' => 'shifts'],
         'payroll_currency_doc_num' => ['column' => 'payroll_currency_id', 'model' => Currency::class, 'route' => 'admin.select2.currencies'],
+        'insurance_office_doc_num' => ['column' => 'insurance_office_id', 'model' => HrInsuranceOffice::class, 'foundation' => 'insurance-offices'],
     ];
 
     public function __construct(
@@ -73,6 +77,8 @@ class HrEmployeeController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
         private readonly HrLookupRegistry $hrLookupRegistry,
         private readonly HrFoundationRegistry $hrFoundationRegistry,
+        private readonly HrStatutoryPolicyResolver $statutoryPolicies,
+        private readonly HrSocialInsuranceContributionCalculator $insuranceCalculator,
     ) {}
 
     public function index(Request $request, HrEmployeeDocumentNumberSettingsService $documentNumberSettings): View
@@ -84,6 +90,7 @@ class HrEmployeeController extends Controller
             'job_doc_num',
             'employment_type_doc_num',
             'hiring_status_doc_num',
+            'insurance_office_doc_num',
         ])->all();
 
         return view('modules.hr.employees.index', [
@@ -447,10 +454,18 @@ class HrEmployeeController extends Controller
     private function formView(string $mode, ?HrEmployee $employee = null, ?string $cloneSourceToken = null): View
     {
         $documentNumberSettings = app(HrEmployeeDocumentNumberSettingsService::class)->current();
+        $statutoryPreviewDate = now()->toDateString();
+        $socialInsurancePolicy = $this->statutoryPolicies->socialInsuranceAt($statutoryPreviewDate);
+        $employmentTaxPolicy = $this->statutoryPolicies->employmentTaxAt($statutoryPreviewDate);
+        $contributionWage = old('insurance_contribution_wage', $employee?->insurance_contribution_wage);
+        $socialInsurancePreview = $socialInsurancePolicy === null
+            ? null
+            : $this->insuranceCalculator->preview($socialInsurancePolicy, $contributionWage);
         $employee?->load([
             'photoArchiveFile',
             'signatureArchiveFile',
             'payrollCurrency',
+            'insuranceOffice',
             'biometricMappings' => fn ($query) => $query->with('device')->latest('created_at'),
             'documents' => fn ($query) => $query->with(['documentType', 'archiveFile'])->latest('created_at'),
         ]);
@@ -474,6 +489,18 @@ class HrEmployeeController extends Controller
             'canViewDocuments' => (bool) auth()->user()?->can('hr.employees.documents.view'),
             'canManageDocuments' => (bool) auth()->user()?->can('hr.employees.documents.manage'),
             'canDeleteDocuments' => (bool) auth()->user()?->can('hr.employees.documents.delete'),
+            'statutoryPreviewDate' => $statutoryPreviewDate,
+            'socialInsurancePolicy' => $socialInsurancePolicy,
+            'socialInsurancePreview' => $socialInsurancePreview,
+            'socialInsurancePolicyEditUrl' => $socialInsurancePolicy !== null
+                && auth()->user()?->can('hr.social_insurance_policies.edit')
+                ? route('admin.hr.social-insurance-policies.edit', $socialInsurancePolicy->doc_num)
+                : null,
+            'employmentTaxPolicy' => $employmentTaxPolicy,
+            'employmentTaxPolicyEditUrl' => $employmentTaxPolicy !== null
+                && auth()->user()?->can('hr.employment_tax_policies.edit')
+                ? route('admin.hr.employment-tax-policies.edit', $employmentTaxPolicy->doc_num)
+                : null,
         ]);
     }
 
@@ -491,12 +518,22 @@ class HrEmployeeController extends Controller
             if ($employee && $employee->{$config['column']}) {
                 $model = $config['model'];
                 $record = $model::withTrashed()->whereKey($employee->{$config['column']})->first();
-            } elseif ($field === 'branch_doc_num') {
-                $oldBranchDocNum = request()->old($field);
+            } else {
+                $oldDocNum = request()->old($field);
 
-                if (is_string($oldBranchDocNum) && trim($oldBranchDocNum) !== '') {
+                if ($field === 'branch_doc_num' && is_string($oldDocNum) && trim($oldDocNum) !== '') {
                     $record = app(OperatingContextService::class)
-                        ->allowedBranchForCurrentCompany(request(), trim($oldBranchDocNum));
+                        ->allowedBranchForCurrentCompany(request(), trim($oldDocNum));
+                } elseif (is_string($oldDocNum) && trim($oldDocNum) !== '') {
+                    $model = $config['model'];
+                    $query = $model::withTrashed()->where('doc_num', trim($oldDocNum));
+
+                    if ($model === Currency::class) {
+                        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+                        $query->when($companyId !== null, fn ($query) => $query->forCompany($companyId));
+                    }
+
+                    $record = $query->first();
                 }
             }
 
@@ -897,6 +934,13 @@ class HrEmployeeController extends Controller
 
         if (str_contains($message, '_email_unique_active')) {
             throw ValidationException::withMessages(['email' => __('hr.employees.validation.email_unique')]);
+        }
+
+        if (str_contains($message, '_social_insurance_number_unique_active')
+            || str_contains($message, 'hr_employees.social_insurance_number')) {
+            throw ValidationException::withMessages(['social_insurance_number' => __('validation.unique', [
+                'attribute' => __('hr.employees.attributes.social_insurance_number'),
+            ])]);
         }
     }
 

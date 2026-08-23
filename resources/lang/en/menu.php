@@ -65,6 +65,8 @@ return [
     'hr_hiring_statuses' => 'Hiring Statuses',
     'hr_identifications' => 'Identifications',
     'hr_insurance_offices' => 'Insurance Offices',
+    'hr_social_insurance_policies' => 'Social Insurance Policies',
+    'hr_employment_tax_policies' => 'Employment Tax Policies',
     'hr_military_services' => 'Military Services',
     'hr_nationalities' => 'Nationalities',
     'hr_qualifications' => 'Qualifications',

@@ -29,6 +29,13 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
         $rules['employee_code'] = ['nullable', 'string', 'max:255', Rule::unique('hr_employees', 'employee_code')->ignore($key)->withoutTrashed()];
         $rules['work_email'] = ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'work_email')->ignore($key)->withoutTrashed()];
         $rules['email'] = ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'email')->ignore($key)->withoutTrashed()];
+        $rules['social_insurance_number'] = [
+            Rule::requiredIf(fn (): bool => $this->input('insurance_status') === 'subject'),
+            'nullable',
+            'string',
+            'max:60',
+            Rule::unique('hr_employees', 'social_insurance_number')->ignore($key)->withoutTrashed(),
+        ];
 
         if ($this->canControlDocumentNumberForUpdate()) {
             $rules['doc_number'] = [
@@ -64,6 +71,7 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
             $this->validateSelectedPhoto($validator);
             $this->validateSelectedSignature($validator);
             $this->validateCurrencyAndPayBasis($validator);
+            $this->validateOrganizationDependencies($validator);
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
             $this->validateNestedRowOwnership($validator);

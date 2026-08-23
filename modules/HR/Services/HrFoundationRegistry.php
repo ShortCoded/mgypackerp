@@ -54,6 +54,9 @@ class HrFoundationRegistry
                 $definition->tableColumns,
                 fn (array $column): bool => ($column['name'] ?? null) !== 'code',
             )),
+            companyScoped: $definition->companyScoped,
+            hasTaxBrackets: $definition->hasTaxBrackets,
+            hasInsuranceComponents: $definition->hasInsuranceComponents,
         );
     }
 }
