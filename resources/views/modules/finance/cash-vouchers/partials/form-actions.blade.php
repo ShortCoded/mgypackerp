@@ -12,6 +12,7 @@
     $canRestore = $isView && $isTrashed && ($record?->isDeletable() ?? false) && auth()->user()?->can($resource.'.restore');
     $canApprove = $isView && ! $isTrashed && ($record?->isDraft() ?? false) && auth()->user()?->can($resource.'.approve');
     $canCancel = $isView && ! $isTrashed && ($record?->isApproved() ?? false) && auth()->user()?->can($resource.'.cancel');
+    $canPrint = $isView && ! $isTrashed && auth()->user()?->can($resource.'.print');
     $canSave = ! $isView;
     $shortcutTitles = [
         'back' => __('common.shortcuts.back'),
@@ -35,6 +36,11 @@
     @endif
 
     @if ($isView && $record)
+        @if ($canPrint)
+            <a class="btn btn-falcon-default btn-sm" href="{{ route($routePrefix.'.print', $record->doc_num) }}" target="_blank" rel="noopener">
+                <span class="fas fa-print me-1"></span>{{ __($translationKey.'.actions.print') }}
+            </a>
+        @endif
         @if ($canEdit)
             <a class="btn btn-primary btn-sm" href="{{ route($routePrefix.'.edit', $record->doc_num) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">
                 <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}

@@ -191,6 +191,12 @@
         return parts !== null && parts.integer > BigInt(0);
     }
 
+    function decimalIsWholeNumber(value) {
+        var normalized = normalizedDecimal(value);
+
+        return normalized !== null && /^\d+(?:\.0+)?$/.test(normalized);
+    }
+
     function bigIntegerAbsolute(value) {
         return value < BigInt(0) ? -value : value;
     }
@@ -1173,7 +1179,13 @@
     function componentCalculationMethod($row) {
         var method = String($row.find('[data-component-field="calculation_method"]').val() || $row.attr('data-calculation-method') || 'direct').trim();
 
-        return method === 'percentage' ? 'percentage' : 'direct';
+        return normalizedComponentCalculationMethod(method);
+    }
+
+    function normalizedComponentCalculationMethod(method) {
+        method = String(method || '').trim();
+
+        return ['direct', 'percentage', 'quantity', 'count'].indexOf(method) >= 0 ? method : 'direct';
     }
 
     function componentInputSource($row) {
@@ -1184,11 +1196,50 @@
 
     function setComponentInputSource($row, source) {
         $row.find('[data-component-field="input_source"]').val(source === 'percentage' ? 'percentage' : 'weight');
-        updateComponentCalculatedFieldState($row);
+    }
+
+    function componentDetailsRow($row) {
+        var $details = $row.data('componentDetailsRow');
+
+        if ($details && $details.length) {
+            return $details;
+        }
+
+        $details = $row.next('.js-product-component-details-row').first();
+
+        if ($details.length) {
+            $row.data('componentDetailsRow', $details);
+            $details.data('componentMainRow', $row);
+        }
+
+        return $details;
+    }
+
+    function componentRowGroup($row) {
+        return $row.add(componentDetailsRow($row));
+    }
+
+    function componentMainRow($element) {
+        var $row = $element.closest('.js-product-component-row');
+
+        if ($row.length) {
+            return $row;
+        }
+
+        var $details = $element.closest('.js-product-component-details-row');
+        var $storedRow = $details.data('componentMainRow');
+
+        return $storedRow && $storedRow.length
+            ? $storedRow
+            : $details.prev('.js-product-component-row').first();
+    }
+
+    function componentReferenceField($row) {
+        return componentRowGroup($row).find('[data-component-field="reference_component_key"]').first();
     }
 
     function componentReferenceKey($row) {
-        return String($row.find('[data-component-field="reference_component_key"]').val() || $row.attr('data-reference-component-key') || '').trim();
+        return String(componentReferenceField($row).val() || $row.attr('data-reference-component-key') || '').trim();
     }
 
     function componentQuantityValue($row) {
@@ -1196,7 +1247,7 @@
     }
 
     function componentPercentageValue($row) {
-        return normalizedDecimal($row.find('[data-component-field="percentage"]').val());
+        return componentQuantityValue($row);
     }
 
     function componentActive($row) {
@@ -1219,9 +1270,12 @@
             }
 
             values.client_key = key;
-            values.calculation_method = values.calculation_method === 'percentage' ? 'percentage' : 'direct';
-            values.input_source = values.input_source === 'percentage' ? 'percentage' : 'weight';
-            values.reference_component_key = String(values.reference_component_key || values.reference_client_key || '').trim();
+            values.calculation_method = normalizedComponentCalculationMethod(values.calculation_method);
+            values.calculation_value = componentInitialCalculationValue(values, values.calculation_method);
+            values.input_source = values.calculation_method === 'percentage' ? 'percentage' : 'weight';
+            values.reference_component_key = values.calculation_method === 'percentage'
+                ? String(values.reference_component_key || values.reference_client_key || '').trim()
+                : '';
             values._delete = componentBoolean(values._delete);
             usedKeys[key] = true;
 
@@ -1241,6 +1295,25 @@
         return rows;
     }
 
+    function componentInitialCalculationValue(values, method) {
+        var candidates = method === 'percentage'
+            ? [values.calculation_value, values.percentage_raw, values.percentage, values.quantity_raw, values.quantity]
+            : [values.calculation_value, values.quantity_raw, values.quantity];
+        var calculationValue = '';
+
+        candidates.some(function (candidate) {
+            if (candidate === null || candidate === undefined || String(candidate).trim() === '') {
+                return false;
+            }
+
+            calculationValue = candidate;
+
+            return true;
+        });
+
+        return calculationValue;
+    }
+
     function showComponentAlert($panel, text, type) {
         var $container = $panel.find('[data-components-alert]');
 
@@ -1257,6 +1330,8 @@
 
     function clearComponentValidation($panel) {
         $panel.find('.is-invalid').removeClass('is-invalid');
+        $panel.find('.select2-selection.is-invalid').removeClass('is-invalid');
+        $panel.find('.js-product-component-details-row').removeClass('product-component-details-error');
         $panel.find('[data-error-for^="components."]').text('');
         clearComponentAlert($panel);
     }
@@ -1291,6 +1366,8 @@
             $field.next('.select2-container').find('.select2-selection').removeClass('is-invalid');
         }
 
+        componentDetailsRow(componentMainRow($field)).removeClass('product-component-details-error');
+
         if (errorKey !== '') {
             $panel.find('[data-error-for="' + errorKey + '"]').text('');
         }
@@ -1305,6 +1382,14 @@
 
             if ($field.length > 0) {
                 $field.addClass('is-invalid');
+
+                if ($field.hasClass('select2-hidden-accessible')) {
+                    $field.next('.select2-container').find('.select2-selection').addClass('is-invalid');
+                }
+
+                if (normalizedField.endsWith('.reference_component_key')) {
+                    componentDetailsRow(componentMainRow($field)).addClass('product-component-details-error');
+                }
             }
 
             $panel.find('[data-error-for="' + normalizedField + '"]').text(messageText);
@@ -1334,6 +1419,24 @@
         );
     }
 
+    function renderComponentClientValidation($panel) {
+        visibleEditableComponentRows($panel).each(function () {
+            var $row = $(this);
+
+            if (componentCalculationMethod($row) !== 'percentage' || componentReferenceKey($row) !== '') {
+                return;
+            }
+
+            var $reference = componentReferenceField($row);
+            var errorKey = componentNameToErrorKey($reference.attr('name'));
+
+            $reference.addClass('is-invalid');
+            $reference.next('.select2-container').find('.select2-selection').addClass('is-invalid');
+            componentDetailsRow($row).addClass('product-component-details-error');
+            $panel.find('[data-error-for="' + errorKey + '"]').text(message('componentReferenceRequired'));
+        });
+    }
+
     function componentTemplateHtml(index) {
         var template = document.getElementById('product-component-row-template');
 
@@ -1346,30 +1449,33 @@
 
     function editableComponentRow(index, values) {
         var rowValues = values || {};
-        var $row = $(componentTemplateHtml(index).trim()).first();
+        var $templateRows = $(componentTemplateHtml(index).trim());
+        var $row = $templateRows.filter('.js-product-component-row').first();
+        var $details = $templateRows.filter('.js-product-component-details-row').first();
         var rawMaterialValue = String(rowValues.component_product_doc_num || '');
         var rawMaterialText = String(rowValues.raw_material || rawMaterialValue);
-        var method = rowValues.calculation_method === 'percentage' ? 'percentage' : 'direct';
+        var method = normalizedComponentCalculationMethod(rowValues.calculation_method);
         var referenceKey = String(rowValues.reference_component_key || rowValues.reference_client_key || '').trim();
-        var inputSource = rowValues.input_source === 'percentage' ? 'percentage' : 'weight';
+        var inputSource = method === 'percentage' ? 'percentage' : 'weight';
         var deleted = componentBoolean(rowValues._delete);
 
         if (!$row.length) {
             return $row;
         }
 
+        $row.data('componentDetailsRow', $details);
+        $details.data('componentMainRow', $row);
         $row.attr('data-client-key', rowValues.client_key || componentUuid());
         $row.find('[data-component-field="client_key"]').val($row.attr('data-client-key'));
         $row.find('[data-component-field="public_id"]').val(rowValues.public_id || '');
         $row.find('[data-component-field="_delete"]').val(deleted ? '1' : '0');
         $row.find('[data-component-field="calculation_method"]').val(method);
         $row.find('[data-component-field="input_source"]').val(inputSource);
-        $row.find('[data-component-field="percentage"]').val(rowValues.percentage_raw || rowValues.percentage || '');
-        $row.find('[data-component-field="reference_component_key"]').val(referenceKey);
+        componentReferenceField($row).val(referenceKey);
         $row.data('componentMetadataComplete', Object.prototype.hasOwnProperty.call(rowValues, 'unit_conversion_edges'));
         $row.data('componentUnitConversionEdges', $.isArray(rowValues.unit_conversion_edges) ? rowValues.unit_conversion_edges : []);
         setComponentUnitOptions($row, rowValues.unit_options || fallbackComponentUnitOptions(rowValues), rowValues.unit_doc_num || '');
-        $row.find('[data-component-field="quantity"]').val(rowValues.quantity_raw || rowValues.quantity || '');
+        $row.find('[data-component-field="quantity"]').val(componentInitialCalculationValue(rowValues, method));
         $row.find('[data-component-field="notes"]').val(rowValues.notes || '');
         updateComponentMethodUi($row);
 
@@ -1394,14 +1500,14 @@
         }
 
         if (referenceKey !== '') {
-            $row.find('.js-product-component-reference')
+            componentReferenceField($row)
                 .append(new Option(referenceKey, referenceKey, true, true))
                 .val(referenceKey);
         }
 
         if (deleted) {
-            $row.addClass('d-none').attr('aria-hidden', 'true');
-            $row.find(':input')
+            componentRowGroup($row).addClass('d-none').attr('aria-hidden', 'true');
+            componentRowGroup($row).find(':input')
                 .not('[data-component-field="client_key"], [data-component-field="public_id"], [data-component-field="_delete"]')
                 .prop('disabled', true);
         }
@@ -1413,10 +1519,10 @@
 
     function readonlyComponentRow($panel, values, rowMap) {
         var rowValues = values || {};
-        var method = rowValues.calculation_method === 'percentage' ? 'percentage' : 'direct';
+        var method = normalizedComponentCalculationMethod(rowValues.calculation_method);
         var referenceKey = String(rowValues.reference_component_key || '').trim();
         var reference = rowMap[referenceKey] || null;
-        var $row = $('<tr class="js-product-component-readonly-row"></tr>')
+        var $row = $('<tr class="js-product-component-readonly-row product-component-main-row"></tr>')
             .attr('data-client-key', rowValues.client_key || '')
             .attr('data-calculation-method', method)
             .attr('data-reference-component-key', referenceKey)
@@ -1428,60 +1534,55 @@
             ? rowValues.quantity_raw
             : (rowValues.quantity === null || rowValues.quantity === undefined ? '' : rowValues.quantity);
         var quantity = formatDecimal(rawQuantity);
-        var percentage = formatDecimal(rowValues.percentage_raw || rowValues.percentage || '');
-        var methodText = method === 'percentage' ? message('componentPercentage') : message('componentDirect');
-        var calculationText = message('componentDirectFormula');
+        var calculationValue = formatDecimal(componentInitialCalculationValue(rowValues, method));
+        var percentage = method === 'percentage' ? calculationValue : '';
+        var methodText = componentMethodText(method);
+        var resultWeight = quantity + (rowValues.unit ? ' ' + rowValues.unit : '');
+        var referenceText = '';
+        var calculationText = '';
 
         if (method === 'percentage') {
-            var referenceText = reference
+            referenceText = reference
                 ? componentLineLabelFromValues(reference, Number(reference._line_number || 0))
                 : (message('componentUnknownReference') || referenceKey);
-            var resultWeight = quantity + (rowValues.unit ? ' ' + rowValues.unit : '');
-
-            calculationText = referenceText;
 
             if (reference && percentage !== '') {
-                var $referenceConversionRow = $('<span></span>');
+                var referenceWeight = formatDecimal(reference.quantity_raw || reference.quantity || '')
+                    + (reference.unit ? ' ' + reference.unit : '');
 
-                $referenceConversionRow.data(
-                    'componentUnitConversionEdges',
-                    $.isArray(reference.unit_conversion_edges) ? reference.unit_conversion_edges : []
-                );
-
-                var referenceFactor = componentConversionFactor(
-                    $panel,
-                    reference.unit_doc_num || '',
-                    rowValues.unit_doc_num || '',
-                    $referenceConversionRow,
-                    $row
-                );
-                var convertedReference = referenceFactor === null
-                    ? null
-                    : decimalMultiply(
-                        reference.quantity_raw || reference.quantity || '',
-                        referenceFactor,
-                        componentWorkingScale
-                    );
-
-                calculationText = convertedReference === null
-                    ? referenceText + ' · ' + message('componentIncompatibleUnits')
-                    : referenceText + ' · ' + interpolateMessage(message('componentFormulaTemplate'), {
-                        reference_weight: formatDecimal(convertedReference) + (rowValues.unit ? ' ' + rowValues.unit : ''),
-                        percentage: percentage,
-                        weight: resultWeight
-                    });
+                calculationText = interpolateMessage(message('componentFormulaTemplate'), {
+                    reference_weight: referenceWeight,
+                    percentage: percentage,
+                    weight: resultWeight
+                });
             }
         }
 
-        $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.raw_material || '') + '">' + escapeHtml(rowValues.raw_material || '') + '</span></td>');
-        $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.unit || '') + '">' + escapeHtml(rowValues.unit || '') + '</span></td>');
-        $row.append('<td class="dt-text white-space-nowrap">' + escapeHtml(methodText) + '</td>');
-        $row.append('<td class="dt-number text-center white-space-nowrap" dir="ltr">' + escapeHtml(quantity) + '</td>');
-        $row.append('<td class="dt-text"><span class="small">' + escapeHtml(calculationText) + '</span></td>');
-        $row.append('<td class="dt-text dt-ellipsis"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.notes || '') + '">' + escapeHtml(rowValues.notes || '') + '</span></td>');
+        $row.append('<td class="dt-text dt-ellipsis product-component-item-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.raw_material || '') + '">' + escapeHtml(rowValues.raw_material || '') + '</span></td>');
+        $row.append('<td class="dt-text dt-ellipsis product-component-unit-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.unit || '') + '">' + escapeHtml(rowValues.unit || '') + '</span></td>');
+        $row.append('<td class="dt-text white-space-nowrap product-component-method-column">' + escapeHtml(methodText) + '</td>');
+        $row.append('<td class="dt-number text-center white-space-nowrap product-component-value-column"><span dir="ltr">' + escapeHtml(calculationValue) + (method === 'percentage' && calculationValue !== '' ? ' %' : '') + '</span></td>');
+        $row.append('<td class="dt-text product-component-calculation-column"><span class="product-component-calculation-state text-600 fw-semi-bold">' + escapeHtml(resultWeight) + '</span></td>');
+        $row.append('<td class="dt-text dt-ellipsis product-component-notes-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.notes || '') + '">' + escapeHtml(rowValues.notes || '') + '</span></td>');
 
         if (!componentReadonly($panel)) {
-            $row.append('<td></td>');
+            $row.append('<td class="product-component-actions-column"></td>');
+        }
+
+        if (method === 'percentage') {
+            var $details = $('<tr class="js-product-component-details-row product-component-details-row"></tr>');
+            var $detailsCell = $('<td class="product-component-details-cell"></td>').attr('colspan', componentColumnCount($panel));
+            var $detailsLayout = $('<div class="product-component-details-layout"></div>');
+            var $referenceControl = $('<div class="product-component-reference-control"></div>')
+                .append($('<span class="form-label small fw-semi-bold mb-1 d-block"></span>').text(message('componentReferenceLabel')))
+                .append($('<div class="small text-700"></div>').text(referenceText));
+            var $explanationControl = $('<div class="product-component-explanation-control"></div>')
+                .append($('<span class="form-label small fw-semi-bold mb-1 d-block"></span>').text(message('componentCalculationLabel')))
+                .append($('<div class="small text-600 product-component-calculation-explanation"></div>').text(calculationText));
+
+            $details.append($detailsCell.append($detailsLayout.append($referenceControl, $explanationControl)));
+            $row.addClass('product-component-has-details').data('componentDetailsRow', $details);
+            $details.data('componentMainRow', $row);
         }
 
         return $row;
@@ -1497,44 +1598,65 @@
         });
     }
 
-    function updateComponentMethodUi($row) {
-        var isPercentage = componentCalculationMethod($row) === 'percentage';
-
-        $row.find('.js-product-component-percentage-fields').toggleClass('d-none', !isPercentage);
-
-        if (!isPercentage) {
-            setComponentInputSource($row, 'weight');
-            updateComponentCalculatedFieldState($row);
-            return;
-        }
-
-        updateComponentCalculatedFieldState($row);
+    function componentMethodText(method) {
+        return message({
+            percentage: 'componentPercentage',
+            quantity: 'componentQuantity',
+            count: 'componentCount'
+        }[method] || 'componentDirect');
     }
 
-    function updateComponentCalculatedFieldState($row) {
-        var $weight = $row.find('[data-component-field="quantity"]').first();
-        var $percentage = $row.find('[data-component-field="percentage"]').first();
-        var $fields = $weight.add($percentage);
+    function componentValueHeading(method) {
+        return message({
+            percentage: 'componentPercentageLabel',
+            quantity: 'componentQuantityLabel',
+            count: 'componentCountLabel'
+        }[method] || 'componentWeightLabel');
+    }
 
-        $fields
-            .removeClass('product-component-calculated-field')
-            .removeAttr('data-calculated title aria-description');
+    function refreshComponentValueHeading($panel) {
+        var methods = [];
+        var $rows = componentReadonly($panel)
+            ? visibleReadonlyComponentRows($panel)
+            : visibleEditableComponentRows($panel);
 
-        if (componentCalculationMethod($row) !== 'percentage') {
-            return;
+        $rows.each(function () {
+            var method = componentCalculationMethod($(this));
+
+            if (methods.indexOf(method) === -1) {
+                methods.push(method);
+            }
+        });
+
+        $panel.find('[data-component-value-heading]').text(
+            methods.length === 1 ? componentValueHeading(methods[0]) : message('componentValueLabel')
+        );
+    }
+
+    function updateComponentMethodUi($row) {
+        var method = componentCalculationMethod($row);
+        var isPercentage = method === 'percentage';
+        var isCount = method === 'count';
+        var $value = $row.find('[data-component-field="quantity"]').first();
+        var $details = componentDetailsRow($row);
+        var $reference = componentReferenceField($row);
+
+        $details.toggleClass('d-none', !isPercentage);
+        $row.toggleClass('product-component-has-details', isPercentage);
+        $row.find('.js-product-component-percentage-addon').toggleClass('d-none', !isPercentage);
+        $reference.prop('disabled', !isPercentage);
+        $value
+            .attr('inputmode', isCount ? 'numeric' : 'decimal')
+            .attr('step', isCount ? '1' : '0.00000001')
+            .attr('min', isCount ? '1' : '0.00000001')
+            .attr('data-numeric-min', isCount ? '1' : '0.00000001')
+            .attr('data-numeric-scale', isCount ? '0' : String(componentCalculationScale));
+
+        setComponentInputSource($row, isPercentage ? 'percentage' : 'weight');
+
+        if (isPercentage && $details.length && $details[0].isConnected) {
+            initSelect2($details[0]);
         }
-
-        var weightIsCalculated = componentInputSource($row) === 'percentage';
-        var $calculatedField = weightIsCalculated ? $weight : $percentage;
-        var title = weightIsCalculated
-            ? message('componentCalculatedWeightTitle')
-            : message('componentCalculatedPercentageTitle');
-
-        $calculatedField
-            .addClass('product-component-calculated-field')
-            .attr('data-calculated', 'true')
-            .attr('title', title)
-            .attr('aria-description', title);
     }
 
     function componentUnitPlaceholder($unit) {
@@ -1817,8 +1939,7 @@
             unit_options: copyRawMaterial ? storedComponentUnitOptions($rawMaterial) : [],
             unit_conversion_edges: copyRawMaterial ? storedComponentUnitConversionEdges($rawMaterial) : [],
             calculation_method: componentCalculationMethod($row),
-            quantity_raw: $row.find('[data-component-field="quantity"]').val() || '',
-            percentage: $row.find('[data-component-field="percentage"]').val() || '',
+            calculation_value: $row.find('[data-component-field="quantity"]').val() || '',
             reference_component_key: componentReferenceKey($row),
             input_source: componentInputSource($row),
             notes: $row.find('[data-component-field="notes"]').val() || '',
@@ -1898,7 +2019,7 @@
             var selfKey = componentClientKey($row);
             var selectedKey = componentReferenceKey($row);
             var excludedKeys = componentDependentKeys($panel, selfKey);
-            var $reference = $row.find('.js-product-component-reference').first();
+            var $reference = componentReferenceField($row);
             var selectedFound = false;
 
             if (!$reference.length) {
@@ -2150,17 +2271,38 @@
             : rationalToDecimal(factors[to], componentWorkingScale);
     }
 
-    function setComponentCalculationState($row, text, state) {
+    function componentResolvedText(quantity, $row) {
+        var unitText = componentUnitText($row);
+
+        return formatDecimal(quantity) + (unitText ? ' ' + unitText : '');
+    }
+
+    function setComponentCalculationState($row, text, state, explanation) {
         var $state = $row.find('.js-product-component-calculation-state').first();
+        var $details = componentDetailsRow($row);
+        var $explanation = $details.find('.js-product-component-calculation-explanation').first();
         var style = state || 'muted';
+        var isPercentage = componentCalculationMethod($row) === 'percentage';
+        var resultText = text || '';
+        var explanationText = explanation || '';
+
+        if (isPercentage && explanation === undefined) {
+            resultText = style === 'danger' ? '—' : resultText;
+            explanationText = text || '';
+        }
 
         $state
             .removeClass('text-600 text-success text-danger text-warning')
-            .addClass(style === 'danger' ? 'text-danger' : (style === 'success' ? 'text-success' : (style === 'warning' ? 'text-warning' : 'text-600')))
-            .text(text || '');
+            .addClass(style === 'danger' ? 'text-danger' : (style === 'warning' ? 'text-warning' : 'text-600'))
+            .text(resultText);
+        $explanation
+            .removeClass('text-600 text-danger text-warning')
+            .addClass(style === 'danger' ? 'text-danger' : (style === 'warning' ? 'text-warning' : 'text-600'))
+            .text(explanationText);
         $row
             .attr('data-component-calculation-state', style)
-            .toggleClass('table-danger', style === 'danger');
+            .removeClass('table-danger');
+        $details.toggleClass('product-component-details-error', style === 'danger');
     }
 
     function componentGraphStatusMessage(status) {
@@ -2175,39 +2317,12 @@
         return message('componentReferenceMissing');
     }
 
-    function prepareComponentDependentsForRecalculation($panel, rootKey) {
-        var pending = [rootKey];
-        var visited = {};
-
-        while (pending.length > 0) {
-            var referenceKey = pending.shift();
-
-            visibleEditableComponentRows($panel).each(function () {
-                var $row = $(this);
-                var key = componentClientKey($row);
-
-                if (visited[key] || componentCalculationMethod($row) !== 'percentage' || componentReferenceKey($row) !== referenceKey) {
-                    return;
-                }
-
-                visited[key] = true;
-
-                if (decimalIsPositive(componentPercentageValue($row))) {
-                    setComponentInputSource($row, 'percentage');
-                }
-
-                pending.push(key);
-            });
-        }
-    }
-
-    function recalculateComponentGraph($panel, options) {
+    function recalculateComponentGraph($panel) {
         if (!$panel.length || componentReadonly($panel) || $panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
             updateComponentTotals($panel);
             return true;
         }
 
-        var settings = options || {};
         $panel.data('calculatingComponents', true);
 
         var rowMap = activeComponentRowMap($panel);
@@ -2227,17 +2342,33 @@
             }
 
             updateComponentMethodUi($row);
+            $row.attr('data-component-resolved-quantity', '');
 
-            if (componentCalculationMethod($row) === 'direct') {
+            var method = componentCalculationMethod($row);
+
+            if (method !== 'percentage') {
                 var directQuantity = componentQuantityValue($row);
+                var directIsValid = decimalIsPositive(directQuantity)
+                    && (method !== 'count' || decimalIsWholeNumber(directQuantity));
 
-                setComponentCalculationState($row, message('componentDirectFormula'), 'muted');
+                if (!directIsValid) {
+                    clientValid = false;
+                    setComponentCalculationState(
+                        $row,
+                        method === 'count' ? message('componentCountInteger') : message('componentCalculationIncomplete'),
+                        'danger'
+                    );
+                } else {
+                    setComponentCalculationState($row, componentResolvedText(directQuantity, $row), 'muted');
+                }
+
                 results[key] = {
-                    valid: decimalIsPositive(directQuantity),
+                    valid: directIsValid,
                     quantity: directQuantity,
                     unit: componentUnitValue($row),
                     row: $row
                 };
+                $row.attr('data-component-resolved-quantity', directIsValid ? directQuantity : '');
 
                 return results[key];
             }
@@ -2253,7 +2384,7 @@
             var referenceKey = componentReferenceKey($row);
             var referenceResult = evaluate(referenceKey);
 
-            if (!referenceResult.valid || !decimalIsPositive(referenceResult.quantity)) {
+            if (!referenceResult.valid || !decimalIsPositive(referenceResult.quantity) || referenceResult.unit === '') {
                 clientValid = false;
                 setComponentCalculationState($row, message('componentReferenceWeightUnavailable'), 'danger');
                 results[key] = { valid: false };
@@ -2261,99 +2392,77 @@
                 return results[key];
             }
 
-            var unit = componentUnitValue($row);
-            var conversionFactor = componentConversionFactor($panel, referenceResult.unit, unit, referenceResult.row, $row);
+            var percentage = componentPercentageValue($row);
 
-            if (conversionFactor === null) {
+            if (!decimalIsPositive(percentage)) {
                 clientValid = false;
-                setComponentCalculationState($row, message('componentIncompatibleUnits'), 'danger');
+                setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
                 results[key] = { valid: false };
+                $row.attr('data-component-resolved-quantity', '');
 
                 return results[key];
             }
 
-            var convertedReferenceWeight = decimalMultiply(referenceResult.quantity, conversionFactor, componentWorkingScale);
-            var source = componentInputSource($row);
-            var weight = componentQuantityValue($row);
-            var percentage = componentPercentageValue($row);
+            var percentageRatio = decimalDivide(percentage, '100', componentWorkingScale);
+            var referenceUnitWeight = decimalMultiply(referenceResult.quantity, percentageRatio, componentWorkingScale);
+            var unit = referenceResult.unit;
+            var resolvedRow = referenceResult.row;
+            var unitText = componentUnitText(referenceResult.row);
+            var weight = decimalMultiply(referenceResult.quantity, percentageRatio, componentCalculationScale);
+            var targetUnit = componentUnitValue($row);
 
-            if (source === 'weight') {
-                if (!decimalIsPositive(weight) || !decimalIsPositive(convertedReferenceWeight)) {
+            if (targetUnit !== '') {
+                var conversionFactor = componentConversionFactor(
+                    $panel,
+                    referenceResult.unit,
+                    targetUnit,
+                    referenceResult.row,
+                    $row
+                );
+
+                if (conversionFactor === null) {
                     clientValid = false;
-                    setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
+                    setComponentCalculationState($row, message('componentIncompatibleUnits'), 'danger');
                     results[key] = { valid: false };
 
                     return results[key];
                 }
 
-                var percentageNumerator = decimalMultiply(
-                    weight,
-                    '100',
-                    componentWorkingScale
-                );
-                var calculatedPercentage = decimalDivide(
-                    percentageNumerator,
-                    convertedReferenceWeight,
-                    componentCalculationScale
-                );
-
-                if (!settings.preserveValues || !decimalIsPositive(percentage)) {
-                    percentage = calculatedPercentage;
-                    setNumericFieldValue($row.find('[data-component-field="percentage"]'), percentage);
-
-                    var durablePercentageRatio = decimalDivide(percentage, '100', componentWorkingScale);
-                    var durableWeight = decimalMultiply(
-                        convertedReferenceWeight,
-                        durablePercentageRatio,
-                        componentCalculationScale
-                    );
-
-                    if (decimalIsPositive(durableWeight)) {
-                        weight = durableWeight;
-                        setNumericFieldValue($row.find('[data-component-field="quantity"]'), weight);
-                    }
-                }
-            } else {
-                if (!decimalIsPositive(percentage) || !decimalIsPositive(convertedReferenceWeight)) {
-                    clientValid = false;
-                    setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
-                    results[key] = { valid: false };
-
-                    return results[key];
-                }
-
-                var percentageRatio = decimalDivide(percentage, '100', componentWorkingScale);
-
-                var calculatedWeight = decimalMultiply(convertedReferenceWeight, percentageRatio, componentCalculationScale);
-
-                if (!settings.preserveValues || !decimalIsPositive(weight)) {
-                    weight = calculatedWeight;
-                    setNumericFieldValue($row.find('[data-component-field="quantity"]'), weight);
-                }
+                weight = decimalMultiply(referenceUnitWeight, conversionFactor, componentCalculationScale);
+                unit = targetUnit;
+                resolvedRow = $row;
+                unitText = componentUnitText($row);
             }
 
             if (!decimalIsPositive(weight) || !decimalIsPositive(percentage)) {
                 clientValid = false;
                 setComponentCalculationState($row, message('componentCalculationIncomplete'), 'danger');
                 results[key] = { valid: false };
+                $row.attr('data-component-resolved-quantity', '');
 
                 return results[key];
             }
 
-            var unitText = componentUnitText($row);
+            var referenceUnitText = componentUnitText(referenceResult.row);
             var formula = interpolateMessage(message('componentFormulaTemplate'), {
-                reference_weight: formatDecimal(convertedReferenceWeight) + (unitText ? ' ' + unitText : ''),
+                reference_weight: formatDecimal(referenceResult.quantity) + (referenceUnitText ? ' ' + referenceUnitText : ''),
                 percentage: formatDecimal(percentage),
                 weight: formatDecimal(weight) + (unitText ? ' ' + unitText : '')
             });
 
-            setComponentCalculationState($row, formula, 'success');
+            setComponentCalculationState(
+                $row,
+                formatDecimal(weight) + (unitText ? ' ' + unitText : ''),
+                'muted',
+                formula
+            );
             results[key] = {
                 valid: true,
                 quantity: weight,
                 unit: unit,
-                row: $row
+                row: resolvedRow
             };
+            $row.attr('data-component-resolved-quantity', weight);
 
             return results[key];
         }
@@ -2392,7 +2501,7 @@
 
             rows.push({
                 invalid: String($row.attr('data-component-calculation-state') || '') === 'danger',
-                quantity: componentQuantityValue($row),
+                quantity: normalizedDecimal($row.attr('data-component-resolved-quantity')),
                 row: $row,
                 unit: componentUnitValue($row),
                 unitText: componentUnitText($row)
@@ -2486,6 +2595,7 @@
             : visibleEditableComponentRows($panel).length;
 
         $tbody.find('.js-product-components-empty').remove();
+        refreshComponentValueHeading($panel);
 
         if (rowCount > 0) {
             return;
@@ -2497,11 +2607,25 @@
     }
 
     function renumberComponents($panel) {
+        resetComponentReferenceSelect2($panel);
+
         $panel.find('.js-product-component-row').each(function (index) {
             var $row = $(this);
+            var $group = componentRowGroup($row);
+            var $details = componentDetailsRow($row);
+            var valueInputId = 'product-component-value-' + index;
+            var referenceInputId = 'product-component-reference-' + index;
+            var referenceErrorId = 'product-component-reference-error-' + index;
 
             $row.attr('data-component-index', index);
-            $row.find('[data-component-field]').each(function () {
+            $details.attr('data-component-details-index', index);
+            $row.find('[data-component-field="quantity"]').attr('id', valueInputId);
+            componentReferenceField($row)
+                .attr('id', referenceInputId)
+                .attr('aria-describedby', referenceErrorId);
+            $details.find('label[for^="product-component-reference-"]').attr('for', referenceInputId);
+            $details.find('[data-error-for$=".reference_component_key"]').attr('id', referenceErrorId);
+            $group.find('[data-component-field]').each(function () {
                 var $field = $(this);
                 var field = String($field.data('component-field') || '');
 
@@ -2509,7 +2633,7 @@
                     $field.attr('name', componentFieldName(index, field));
                 }
             });
-            $row.find('[data-error-for^="components."]').each(function () {
+            $group.find('[data-error-for^="components."]').each(function () {
                 var $error = $(this);
                 var field = String($error.attr('data-error-for') || '').split('.').pop();
 
@@ -2520,6 +2644,14 @@
         });
 
         rebuildComponentReferenceOptions($panel);
+
+        $panel.find('.js-product-component-row').each(function () {
+            var $row = $(this);
+
+            if (componentCalculationMethod($row) === 'percentage') {
+                initSelect2(componentDetailsRow($row)[0]);
+            }
+        });
     }
 
     function syncComponentInputs($panel) {
@@ -2545,6 +2677,32 @@
         }, 0);
     }
 
+    function initComponentRowSelect2($row) {
+        var $details = componentDetailsRow($row);
+
+        initSelect2($row[0]);
+
+        if ($details.length && componentCalculationMethod($row) === 'percentage') {
+            initSelect2($details[0]);
+        }
+    }
+
+    function resetComponentReferenceSelect2($panel) {
+        if (!$.fn.select2 || !$panel.length) {
+            return;
+        }
+
+        $panel.find('.js-product-component-reference').each(function () {
+            var $reference = $(this);
+
+            if ($reference.data('select2')) {
+                $reference.select2('destroy');
+            }
+
+            $reference.removeData('select2AjaxInitialized');
+        });
+    }
+
     function addComponentRow($panel, values, shouldFocus, $afterRow) {
         if (!$panel.length || componentReadonly($panel)) {
             return $();
@@ -2568,13 +2726,18 @@
         }
 
         $tbody.find('.js-product-components-empty').remove();
+        var $details = componentDetailsRow($row);
+
         if ($afterRow && $afterRow.length && $.contains($tbody.get(0), $afterRow.get(0))) {
-            $afterRow.after($row);
+            var $afterDetails = componentDetailsRow($afterRow);
+            var $anchor = $afterDetails.length ? $afterDetails : $afterRow;
+
+            $anchor.after($row, $details);
         } else {
-            $tbody.append($row);
+            $tbody.append($row, $details);
         }
         renumberComponents($panel);
-        initSelect2($row[0]);
+        initComponentRowSelect2($row);
         initComponentUnitSelect($row);
         updateComponentEmptyState($panel);
         recalculateComponentGraph($panel);
@@ -2646,7 +2809,7 @@
                 dependentLines.push(componentLineLabel($candidate, visibleIndex + 1));
 
                 if (!$firstDependentReference.length) {
-                    $firstDependentReference = $candidate.find('.js-product-component-reference').first();
+                    $firstDependentReference = componentReferenceField($candidate);
                 }
             }
         });
@@ -2668,12 +2831,15 @@
         var publicId = String($row.find('[data-component-field="public_id"]').val() || '').trim();
 
         if (publicId === '') {
-            var $focusTarget = $row.next('.js-product-component-row:not(.d-none)').length
-                ? $row.next('.js-product-component-row:not(.d-none)')
-                : $row.prev('.js-product-component-row:not(.d-none)');
+            var $details = componentDetailsRow($row);
+            var $focusTarget = $details.nextAll('.js-product-component-row:not(.d-none)').first();
 
-            destroyComponentSelect2($row);
-            $row.remove();
+            if (!$focusTarget.length) {
+                $focusTarget = $row.prevAll('.js-product-component-row:not(.d-none)').first();
+            }
+
+            destroyComponentSelect2(componentRowGroup($row));
+            componentRowGroup($row).remove();
             renumberComponents($panel);
             updateComponentEmptyState($panel);
             recalculateComponentGraph($panel);
@@ -2685,9 +2851,9 @@
             return;
         }
 
-        $row.addClass('d-none').attr('aria-hidden', 'true');
+        componentRowGroup($row).addClass('d-none').attr('aria-hidden', 'true');
         $row.find('[data-component-field="_delete"]').val('1');
-        $row.find(':input')
+        componentRowGroup($row).find(':input')
             .not('[data-component-field="client_key"], [data-component-field="public_id"], [data-component-field="_delete"]')
             .prop('disabled', true);
         clearComponentValidation($panel);
@@ -2720,10 +2886,10 @@
                 ? readonlyComponentRow($panel, row, rowMap)
                 : editableComponentRow(index, row);
 
-            $tbody.append($row);
+            $tbody.append($row, componentDetailsRow($row));
 
             if (!componentReadonly($panel)) {
-                initSelect2($row[0]);
+                initComponentRowSelect2($row);
                 initComponentUnitSelect($row);
 
                 if (componentActive($row) && !$row.data('componentMetadataComplete') && String(row.component_product_doc_num || '').trim() !== '') {
@@ -3106,6 +3272,7 @@
             clearValidation($form);
 
             if (!syncComponentInputs($componentPanel)) {
+                renderComponentClientValidation($componentPanel);
                 showComponentAlert($componentPanel, message('componentClientValidationFailed'), 'danger');
 
                 var componentsTab = document.getElementById('product-components-tab');
@@ -3297,7 +3464,6 @@
 
             clearComponentFieldValidation($field);
             rebuildComponentReferenceOptions($row.closest('.product-components-panel'));
-            prepareComponentDependentsForRecalculation($row.closest('.product-components-panel'), componentClientKey($row));
             recalculateComponentGraph($row.closest('.product-components-panel'));
         })
         .off('change.coreProductsComponentsMethod', '.js-product-component-calculation-method')
@@ -3309,32 +3475,35 @@
                 return;
             }
 
-            if (componentCalculationMethod($row) === 'direct') {
-                $row.find('[data-component-field="reference_component_key"]').val('').trigger('change.select2');
-                $row.find('[data-component-field="percentage"]').val('');
+            if (componentCalculationMethod($row) !== 'percentage') {
+                var $reference = componentReferenceField($row);
+
+                $reference.val('').trigger('change.select2');
+                clearComponentFieldValidation($reference);
                 setComponentInputSource($row, 'weight');
             } else {
-                setComponentInputSource($row, 'weight');
+                setComponentInputSource($row, 'percentage');
             }
 
+            clearComponentFieldValidation($row.find('[data-component-field="quantity"]'));
+            clearComponentFieldValidation($row.find('[data-component-field="input_source"]'));
             updateComponentMethodUi($row);
+            refreshNumericInputs($row[0]);
             rebuildComponentReferenceOptions($panel);
-            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
+            refreshComponentValueHeading($panel);
             recalculateComponentGraph($panel);
         })
         .off('change.coreProductsComponentsReference', '.js-product-component-reference')
         .on('change.coreProductsComponentsReference', '.js-product-component-reference', function () {
-            var $row = $(this).closest('.js-product-component-row');
+            var $row = componentMainRow($(this));
             var $panel = $row.closest('.product-components-panel');
 
             if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
                 return;
             }
 
-            setComponentInputSource($row, decimalIsPositive(componentPercentageValue($row)) ? 'percentage' : 'weight');
             clearComponentFieldValidation($(this));
             rebuildComponentReferenceOptions($panel);
-            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
             recalculateComponentGraph($panel);
         })
         .off('input.coreProductsComponentsWeight', '.js-product-component-quantity')
@@ -3346,24 +3515,6 @@
                 return;
             }
 
-            if (componentCalculationMethod($row) === 'percentage') {
-                setComponentInputSource($row, 'weight');
-            }
-
-            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
-            recalculateComponentGraph($panel);
-        })
-        .off('input.coreProductsComponentsPercentage', '.js-product-component-percentage')
-        .on('input.coreProductsComponentsPercentage', '.js-product-component-percentage', function () {
-            var $row = $(this).closest('.js-product-component-row');
-            var $panel = $row.closest('.product-components-panel');
-
-            if ($panel.data('hydratingComponents') || $panel.data('calculatingComponents')) {
-                return;
-            }
-
-            setComponentInputSource($row, 'percentage');
-            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
             recalculateComponentGraph($panel);
         })
         .off('change.coreProductsComponentsUnit', '.js-product-component-unit')
@@ -3375,11 +3526,6 @@
                 return;
             }
 
-            if (componentCalculationMethod($row) === 'percentage' && decimalIsPositive(componentPercentageValue($row))) {
-                setComponentInputSource($row, 'percentage');
-            }
-
-            prepareComponentDependentsForRecalculation($panel, componentClientKey($row));
             recalculateComponentGraph($panel);
         })
         .off('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field]')

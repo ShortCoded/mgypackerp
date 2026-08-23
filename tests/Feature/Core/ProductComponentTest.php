@@ -4,6 +4,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
@@ -129,7 +130,13 @@ test('product components schema and routes use public identifiers', function () 
         ->and(Schema::hasColumn('product_components', 'product_id'))->toBeTrue()
         ->and(Schema::hasColumn('product_components', 'component_product_id'))->toBeTrue()
         ->and(Schema::hasColumn('product_components', 'unit_id'))->toBeTrue()
-        ->and(Schema::hasColumn('product_components', 'quantity'))->toBeTrue();
+        ->and(Schema::hasColumn('product_components', 'quantity'))->toBeTrue()
+        ->and(ProductComponent::calculationMethods())->toBe([
+            ProductComponent::CalculationDirect,
+            ProductComponent::CalculationPercentage,
+            ProductComponent::CalculationQuantity,
+            ProductComponent::CalculationCount,
+        ]);
 
     foreach (['index', 'store', 'update', 'destroy'] as $action) {
         expect(Route::has("admin.products.components.{$action}"))->toBeTrue();
@@ -239,7 +246,96 @@ test('component quantities preserve eight-place precision and strictly normalize
         ->assertJsonValidationErrors(['quantity']);
 });
 
-test('standalone percentage components ignore malformed derived values', function () {
+test('quantity and count calculation methods validate persist and hydrate their exact values', function () {
+    $actor = productComponentActor(['products.view', 'products.create', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 121, 'Piece');
+    $product = productComponentProduct($this->componentCompany, [
+        'doc_number' => 121,
+        'doc_num' => 'Product-00121',
+        'name' => 'Quantity and Count Product',
+    ]);
+    $quantityMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 122,
+        'doc_num' => 'Product-00122',
+        'name' => 'Quantity Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $countMaterial = productComponentProduct($this->componentCompany, [
+        'doc_number' => 123,
+        'doc_num' => 'Product-00123',
+        'name' => 'Count Material',
+        'item_classification' => Product::ClassificationPackaging,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+
+    $quantity = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $quantityMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationQuantity,
+            'quantity' => '2.75000001',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.calculation_method', ProductComponent::CalculationQuantity)
+        ->assertJsonPath('data.quantity_raw', '2.75000001')
+        ->json('data');
+
+    $count = $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $countMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationCount,
+            'quantity' => '3',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.calculation_method', ProductComponent::CalculationCount)
+        ->assertJsonPath('data.quantity_raw', '3.00000000')
+        ->json('data');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.components.update', [$product->doc_num, $count['public_id']]), [
+            'component_product_doc_num' => $countMaterial->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'calculation_method' => ProductComponent::CalculationCount,
+            'quantity' => '1.5',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['quantity']);
+
+    expect(ProductComponent::query()->where('public_id', $quantity['public_id'])->firstOrFail())
+        ->calculation_method->toBe(ProductComponent::CalculationQuantity)
+        ->quantity->toBe('2.75000001')
+        ->and(ProductComponent::query()->where('public_id', $count['public_id'])->firstOrFail())
+        ->calculation_method->toBe(ProductComponent::CalculationCount)
+        ->quantity->toBe('3.00000000');
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->assertSee('"calculation_method":"quantity"', false)
+        ->assertSee('"calculation_method":"count"', false)
+        ->assertSee('"quantity_raw":"2.75000001"', false)
+        ->assertSee('"quantity_raw":"3.00000000"', false);
+
+    $this->withSession([
+        '_old_input' => [
+            'components' => [[
+                'client_key' => (string) Str::uuid(),
+                'component_product_doc_num' => $countMaterial->doc_num,
+                'unit_doc_num' => $unit->doc_num,
+                'calculation_method' => ProductComponent::CalculationCount,
+                'quantity' => '4',
+            ]],
+        ],
+    ])->actingAs($actor)
+        ->get(route('admin.products.create'))
+        ->assertOk()
+        ->assertSee('"calculation_method":"count"', false)
+        ->assertSee('"quantity":"4"', false);
+});
+
+test('standalone percentage components accept one canonical percentage value and preserve legacy updates', function () {
     $actor = productComponentActor(['products.view', 'products.edit']);
     $unit = productComponentUnit($this->componentCompany, 115, 'Kilogram');
     $product = productComponentProduct($this->componentCompany, [
@@ -276,8 +372,7 @@ test('standalone percentage components ignore malformed derived values', functio
             'component_product_doc_num' => $dependentMaterial->doc_num,
             'unit_doc_num' => $unit->doc_num,
             'calculation_method' => ProductComponent::CalculationPercentage,
-            'quantity' => ['stale-weight'],
-            'percentage' => '2',
+            'quantity' => '2',
             'reference_component_key' => $base['public_id'],
             'input_source' => ProductComponent::InputPercentage,
         ])
@@ -421,7 +516,7 @@ test('can add packaging material component and unit is derived from packaging ma
         ->toBe($packagingMaterial->getKey());
 });
 
-test('product component grid renders display-only unit centered quantity and duplicate action', function () {
+test('product component grid renders one main row and one percentage details row', function () {
     $actor = productComponentActor(['products.view', 'products.create', 'products.edit']);
     $unit = productComponentUnit($this->componentCompany, 1111, 'Display Unit');
     $product = productComponentProduct($this->componentCompany, ['doc_number' => 1111, 'doc_num' => 'Product-01111']);
@@ -444,26 +539,81 @@ test('product component grid renders display-only unit centered quantity and dup
     $createResponse = $this->actingAs($actor)
         ->get(route('admin.products.create'))
         ->assertOk()
-        ->assertSee('data-component-unit-display', false)
         ->assertSee('js-product-component-unit', false)
         ->assertSee('disabled', false)
-        ->assertSee('<th class="text-center" style="width: 14%">'.__('products.components.quantity').'</th>', false)
+        ->assertSee('product-components-scroll', false)
+        ->assertSee('product-component-value-column', false)
+        ->assertSee(__('products.components.value'))
+        ->assertSee('data-component-value-heading', false)
         ->assertSee('form-control text-center js-product-component-quantity', false)
         ->assertSee('name="components[__INDEX__][quantity]"', false)
+        ->assertSee('js-product-component-percentage-addon', false)
+        ->assertSee('assets/css/modules/Core/products.css', false)
+        ->assertSee('js-product-component-row product-component-main-row', false)
+        ->assertSee('js-product-component-details-row product-component-details-row d-none', false)
+        ->assertSee('product-component-details-layout', false)
+        ->assertSee('product-component-reference-control', false)
+        ->assertSee('product-component-explanation-control', false)
+        ->assertSee('js-product-component-calculation-explanation', false)
+        ->assertSee('id="product-component-reference-__INDEX__"', false)
+        ->assertSee('aria-describedby="product-component-reference-error-__INDEX__"', false)
+        ->assertSee('colspan="7"', false)
         ->assertSee('data-numeric-input', false)
         ->assertSee('data-numeric-scale="8"', false)
         ->assertSee('js-product-component-duplicate-row', false)
         ->assertSee(__('products.components.duplicate_row_shortcut'))
         ->assertSee(__('products.components.delete_row_shortcut'))
+        ->assertSee('value="'.ProductComponent::CalculationQuantity.'"', false)
+        ->assertSee('value="'.ProductComponent::CalculationCount.'"', false)
+        ->assertDontSee('data-component-value-label', false)
+        ->assertDontSee('data-component-field="percentage"', false)
+        ->assertDontSee('js-product-component-percentage-fields', false)
+        ->assertDontSee('js-product-component-percentage"', false)
         ->assertDontSee('name="components[__INDEX__][unit_id]"', false);
 
     expect($createResponse->getContent())->not->toContain('js-product-component-unit" type="text"');
+
+    expect(file_get_contents(public_path('assets/js/modules/Core/products.js')))
+        ->toContain("['direct', 'percentage', 'quantity', 'count']")
+        ->toContain("isCount ? '0'")
+        ->toContain('function refreshComponentValueHeading($panel)')
+        ->toContain("methods.length === 1 ? componentValueHeading(methods[0]) : message('componentValueLabel')")
+        ->toContain("percentage: 'componentPercentageLabel'")
+        ->toContain('function componentDetailsRow($row)')
+        ->toContain('function componentMainRow($element)')
+        ->toContain('$details.toggleClass(\'d-none\', !isPercentage)')
+        ->toContain('$row.toggleClass(\'product-component-has-details\', isPercentage)')
+        ->toContain('function initComponentRowSelect2($row)')
+        ->toContain('function resetComponentReferenceSelect2($panel)')
+        ->toContain('$reference.removeData(\'select2AjaxInitialized\')')
+        ->toContain('$details.find(\'label[for^="product-component-reference-"]\').attr(\'for\', referenceInputId)')
+        ->toContain('function renderComponentClientValidation($panel)')
+        ->toContain("message('componentReferenceRequired')")
+        ->toContain('initSelect2($details[0])')
+        ->toContain('$anchor.after($row, $details)')
+        ->toContain('componentRowGroup($row).remove()')
+        ->toContain('componentMainRow($(this))')
+        ->toContain("formatDecimal(weight) + (unitText ? ' ' + unitText : '')")
+        ->toContain("'muted',\n                formula")
+        ->toContain('setComponentInputSource($row, isPercentage ? \'percentage\' : \'weight\')')
+        ->toContain('var referenceUnitWeight = decimalMultiply(referenceResult.quantity, percentageRatio, componentWorkingScale)')
+        ->toContain("if (targetUnit !== '')")
+        ->not->toContain('convertedReferenceWeight')
+        ->not->toContain('updateComponentCalculatedFieldState')
+        ->toContain('decimalIsWholeNumber');
+
+    expect(file_get_contents(public_path('assets/css/modules/Core/products.css')))
+        ->toContain('grid-template-columns: minmax(24rem, 1.35fr) minmax(18rem, 1fr)')
+        ->toContain('overflow-x: auto')
+        ->toContain('border-inline-start')
+        ->toContain('.product-component-value-column .input-group')
+        ->toContain('[data-component-unit-display]')
+        ->not->toContain('[dir="rtl"]');
 
     $this->actingAs($actor)
         ->get(route('admin.products.edit', $product->doc_num))
         ->assertOk()
         ->assertSee('Display Unit')
-        ->assertSee('data-component-unit-display', false)
         ->assertSee('js-product-component-duplicate-row', false)
         ->assertDontSee('name="components[0][unit_id]"', false);
 

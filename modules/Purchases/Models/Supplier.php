@@ -35,6 +35,7 @@ class Supplier extends Model
         'commercial_register',
         'national_id',
         'contact_person',
+        'payment_terms_days',
         'address',
         'country_id',
         'governorate_id',
@@ -60,6 +61,7 @@ class Supplier extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
+            'payment_terms_days' => 'integer',
         ];
     }
 

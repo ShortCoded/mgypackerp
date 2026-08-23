@@ -126,3 +126,77 @@ test('DepreciationCalculation verifies salvage floor previous depreciation and i
     ]);
     expect($calculator->depreciationPerUsageUnit($missingExpectedUnitsAsset))->toBeNull();
 });
+
+test('daily depreciation policy has explicit activation disposal leap year opening and residual boundaries', function (): void {
+    config()->set('fixed_assets.day_basis', 365);
+    config()->set('fixed_assets.activation_date_inclusive', true);
+    config()->set('fixed_assets.disposal_cutoff_policy', 'start_of_disposal_month');
+
+    $calculator = new FixedAssetDepreciationCalculator;
+    $fullMonth = depreciationCalculationAsset([
+        'purchase_value' => '36500.0000',
+        'salvage_value' => '0.0000',
+        'useful_life' => '1.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2024-01-01',
+    ]);
+    $midMonthActivation = depreciationCalculationAsset([
+        'purchase_value' => '36500.0000',
+        'salvage_value' => '0.0000',
+        'useful_life' => '1.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2026-08-20',
+    ]);
+    $midMonthDisposal = depreciationCalculationAsset([
+        'purchase_value' => '36500.0000',
+        'salvage_value' => '0.0000',
+        'useful_life' => '1.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2026-01-01',
+        'disposed_at' => '2026-08-18',
+    ]);
+    $sameMonthLifecycle = depreciationCalculationAsset([
+        'purchase_value' => '36500.0000',
+        'salvage_value' => '0.0000',
+        'useful_life' => '1.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2026-08-05',
+        'disposed_at' => '2026-08-20',
+    ]);
+    $openingBoundary = depreciationCalculationAsset([
+        'purchase_value' => '36500.0000',
+        'salvage_value' => '0.0000',
+        'useful_life' => '1.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2026-01-01',
+        'previous_depreciation_until_date' => '2026-06-30',
+    ]);
+    $residualCap = depreciationCalculationAsset([
+        'purchase_value' => '100000.0000',
+        'salvage_value' => '10000.0000',
+        'previous_depreciation' => '89999.0000',
+        'useful_life' => '5.00',
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'depreciation_start_date' => '2026-01-01',
+    ]);
+
+    $activationRange = $calculator->eligibleDateRange($midMonthActivation, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31'));
+    $openingRange = $calculator->eligibleDateRange($openingBoundary, Carbon::parse('2026-06-01'), Carbon::parse('2026-07-31'));
+
+    expect($calculator->dayBasis())->toBe(365)
+        ->and($calculator->calculateForPeriod($fullMonth, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(3100.0)
+        ->and($calculator->calculateForPeriod($fullMonth, Carbon::parse('2024-02-01'), Carbon::parse('2024-02-29')))->toBe(2900.0)
+        ->and($activationRange)->not->toBeNull()
+        ->and($activationRange['start']->toDateString())->toBe('2026-08-20')
+        ->and($activationRange['end']->toDateString())->toBe('2026-08-31')
+        ->and($activationRange['days'])->toBe(12)
+        ->and($calculator->calculateForPeriod($midMonthActivation, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(1200.0)
+        ->and($calculator->calculateForPeriod($midMonthDisposal, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(0.0)
+        ->and($calculator->disposalCutoffDate(Carbon::parse('2026-08-18'))->toDateString())->toBe('2026-07-31')
+        ->and($calculator->calculateForPeriod($sameMonthLifecycle, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(0.0)
+        ->and($openingRange)->not->toBeNull()
+        ->and($openingRange['start']->toDateString())->toBe('2026-07-01')
+        ->and($openingRange['days'])->toBe(31)
+        ->and($calculator->calculateForPeriod($openingBoundary, Carbon::parse('2026-06-01'), Carbon::parse('2026-07-31')))->toBe(3100.0)
+        ->and($calculator->calculateForPeriod($residualCap, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(1.0);
+});

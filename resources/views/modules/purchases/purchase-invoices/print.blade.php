@@ -7,23 +7,6 @@
 
 @section('title', __('purchase_invoices.print_title', ['doc' => $record->doc_num]))
 
-@push('styles')
-    <style>
-        @media print {
-            .navbar,
-            .footer,
-            .page-print-actions {
-                display: none !important;
-            }
-
-            .card {
-                border: 0 !important;
-                box-shadow: none !important;
-            }
-        }
-    </style>
-@endpush
-
 @section('content')
     <div class="page-print-actions d-flex justify-content-end gap-2 mb-3">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.show', $record->doc_num) }}">
@@ -34,8 +17,9 @@
         </button>
     </div>
 
-    <div class="card">
+    <div class="card erp-document-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
         <div class="card-body">
+            <x-company-print-header :identity="$companyPrintIdentity" />
             <div class="row g-3 mb-4">
                 <div class="col">
                     <h4 class="mb-1">{{ __('purchase_invoices.singular') }}</h4>
@@ -152,6 +136,14 @@
                                 <td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td>
                             </tr>
                             <tr>
+                                <th>{{ __('Freight') }}</th>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->freight_amount) }}</td>
+                            </tr>
+                            <tr>
+                                <th>{{ __('Freight VAT') }} ({{ $numbers->format($record->freight_tax_rate) }}%)</th>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($record->freight_tax_amount) }}</td>
+                            </tr>
+                            <tr>
                                 <th>{{ __('purchase_invoices.totals.tax') }}</th>
                                 <td class="text-end" dir="ltr">{{ $numbers->format($record->tax_amount) }}</td>
                             </tr>
@@ -171,6 +163,7 @@
                     </table>
                 </div>
             </div>
+            <x-company-print-authorization :identity="$companyPrintIdentity" />
         </div>
     </div>
 @endsection

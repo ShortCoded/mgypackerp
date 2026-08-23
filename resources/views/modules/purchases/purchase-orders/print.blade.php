@@ -7,23 +7,6 @@
 
 @section('title', __('purchase_orders.print_title', ['doc' => $record->doc_num]))
 
-@push('styles')
-    <style>
-        @media print {
-            .navbar,
-            .footer,
-            .page-print-actions {
-                display: none !important;
-            }
-
-            .card {
-                border: 0 !important;
-                box-shadow: none !important;
-            }
-        }
-    </style>
-@endpush
-
 @section('content')
     <div class="page-print-actions d-flex justify-content-end gap-2 mb-3">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-orders.show', $record->doc_num) }}">
@@ -34,20 +17,21 @@
         </button>
     </div>
 
-    <div class="card">
+    <div class="card erp-document-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
         <div class="card-body">
-        <div class="d-flex justify-content-between align-items-start mb-4">
-            <div>
-                <h3 class="mb-1">{{ __('purchase_orders.singular') }}</h3>
-                <div class="text-700">{{ $record->doc_num }}</div>
+            <x-company-print-header :identity="$companyPrintIdentity" />
+            <div class="d-flex justify-content-between align-items-start mb-4">
+                <div>
+                    <h3 class="mb-1">{{ __('purchase_orders.singular') }}</h3>
+                    <div class="text-700">{{ $record->doc_num }}</div>
+                </div>
+                <div class="text-end">
+                    @include('modules.purchases.purchase-orders.partials.status', ['record' => $record])
+                    <div class="mt-2">{{ $dates->formatDate($record->document_date, '') }}</div>
+                </div>
             </div>
-            <div class="text-end">
-                @include('modules.purchases.purchase-orders.partials.status', ['record' => $record])
-                <div class="mt-2">{{ $dates->formatDate($record->document_date, '') }}</div>
-            </div>
-        </div>
 
-        <div class="row g-3 mb-4">
+            <div class="row g-3 mb-4">
             <div class="col-6">
                 <strong>{{ __('purchase_orders.attributes.supplier') }}</strong>
                 <div>{{ trim(implode(' / ', array_filter([$record->supplier?->doc_num, $record->supplier?->name]))) ?: __('common.empty_value') }}</div>
@@ -68,15 +52,19 @@
                 <strong>{{ __('purchase_orders.attributes.expected_delivery_date') }}</strong>
                 <div>{{ $dates->formatDate($record->expected_delivery_date, __('common.empty_value')) }}</div>
             </div>
+            <div class="col-4">
+                <strong>{{ __('Freight') }}</strong>
+                <div dir="ltr">{{ $numbers->format($record->freight_amount) }}</div>
+            </div>
             @if($record->supplier_reference)
                 <div class="col-12">
                     <strong>{{ __('purchase_orders.attributes.supplier_reference') }}</strong>
                     <div>{{ $record->supplier_reference }}</div>
                 </div>
             @endif
-        </div>
+            </div>
 
-        <table class="table table-sm table-bordered align-middle">
+            <table class="table table-sm table-bordered align-middle">
             <thead>
                 <tr>
                     <th style="width: 3rem;">#</th>
@@ -84,6 +72,8 @@
                     <th>{{ __('purchase_orders.attributes.unit') }}</th>
                     <th class="text-end">{{ __('purchase_orders.attributes.ordered_quantity') }}</th>
                     <th class="text-end">{{ __('purchase_orders.attributes.unit_price') }}</th>
+                    <th class="text-end">{{ __('Discount') }}</th>
+                    <th class="text-end">{{ __('Tax') }}</th>
                     <th class="text-end">{{ __('purchase_orders.attributes.line_total') }}</th>
                     <th class="text-end">{{ __('purchase_orders.attributes.received_quantity') }}</th>
                     <th class="text-end">{{ __('purchase_orders.attributes.remaining_quantity') }}</th>
@@ -100,6 +90,8 @@
                         <td>{{ $snapshot['unit_label'] ?? trim(implode(' / ', array_filter([$line->unit?->doc_num, $line->unit?->name]))) }}</td>
                         <td class="text-end" dir="ltr">{{ $numbers->format($line->ordered_quantity) }}</td>
                         <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
+                        <td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount) }}</td>
                         <td class="text-end" dir="ltr">{{ $numbers->format($line->line_total) }}</td>
                         <td class="text-end" dir="ltr">{{ $numbers->format($line->received_quantity) }}</td>
                         <td class="text-end" dir="ltr">{{ $numbers->format($line->remaining_quantity) }}</td>
@@ -110,20 +102,21 @@
                 <tr>
                     <th colspan="3">{{ __('purchase_orders.totals.net_total') }}</th>
                     <th class="text-end" dir="ltr">{{ $numbers->format($record->total_ordered_quantity) }}</th>
-                    <th></th>
+                    <th colspan="3"></th>
                     <th class="text-end" dir="ltr">{{ $numbers->format($record->total_amount) }}</th>
                     <th class="text-end" dir="ltr">{{ $numbers->format($record->total_received_quantity) }}</th>
                     <th class="text-end" dir="ltr">{{ $numbers->format($record->total_remaining_quantity) }}</th>
                 </tr>
             </tfoot>
-        </table>
+            </table>
 
-        @if($record->notes)
-            <div class="mt-4">
-                <strong>{{ __('purchase_orders.attributes.notes') }}</strong>
-                <div>{{ $record->notes }}</div>
-            </div>
-        @endif
+            @if($record->notes)
+                <div class="mt-4">
+                    <strong>{{ __('purchase_orders.attributes.notes') }}</strong>
+                    <div>{{ $record->notes }}</div>
+                </div>
+            @endif
+            <x-company-print-authorization :identity="$companyPrintIdentity" />
         </div>
     </div>
 @endsection

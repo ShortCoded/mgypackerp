@@ -19,6 +19,7 @@ use Modules\Core\Models\ItemOriginCountry;
 use Modules\Core\Models\ItemSize;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\ProductBomService;
@@ -106,7 +107,7 @@ class ProductExcelImportDefinition implements ExcelImportDefinition
             'component_product_doc_num' => $this->field('products.components.component_item', true, 24, 'ComponentProducts'),
             'unit_doc_num' => $this->field('products.components.unit', false, 18, 'ItemUnits'),
             'calculation_method' => $this->field('products.components.calculation_method', true, 20, 'CalculationMethods'),
-            'quantity' => $this->field('products.components.quantity', false, 16),
+            'quantity' => $this->field('products.components.value', false, 16),
             'percentage' => $this->field('products.components.percentage', false, 16),
             'input_source' => $this->field('products.components.input_source', false, 18, 'ComponentInputSources'),
             'reference_component_import_key' => $this->field('excel_imports.columns.reference_component_import_key', false, 28),
@@ -134,8 +135,10 @@ class ProductExcelImportDefinition implements ExcelImportDefinition
                 ['reference' => '0', 'label' => __('common.no')],
             ]],
             'CalculationMethods' => ['title' => __('products.components.calculation_method'), 'rows' => [
-                ['reference' => 'direct', 'label' => __('products.components.direct')],
-                ['reference' => 'percentage', 'label' => __('products.components.percentage')],
+                ['reference' => ProductComponent::CalculationDirect, 'label' => __('products.components.direct')],
+                ['reference' => ProductComponent::CalculationPercentage, 'label' => __('products.components.percentage')],
+                ['reference' => ProductComponent::CalculationQuantity, 'label' => __('products.components.quantity')],
+                ['reference' => ProductComponent::CalculationCount, 'label' => __('products.components.count')],
             ]],
             'ComponentInputSources' => ['title' => __('products.components.input_source'), 'rows' => [
                 ['reference' => 'weight', 'label' => __('excel_imports.lookups.weight')],
@@ -286,7 +289,7 @@ class ProductExcelImportDefinition implements ExcelImportDefinition
                     'client_key' => $componentClientKeys[$componentKey] ?? (string) Str::uuid(),
                     'component_product_doc_num' => $childData['component_product_doc_num'] ?? null,
                     'unit_doc_num' => $childData['unit_doc_num'] ?? null,
-                    'calculation_method' => $childData['calculation_method'] ?? 'direct',
+                    'calculation_method' => $childData['calculation_method'] ?? ProductComponent::CalculationDirect,
                     'quantity' => $childData['quantity'] ?? null,
                     'percentage' => $childData['percentage'] ?? null,
                     'input_source' => $childData['input_source'] ?? null,

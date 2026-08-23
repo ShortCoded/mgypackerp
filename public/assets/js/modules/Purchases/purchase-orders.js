@@ -377,15 +377,23 @@
     let totalOrdered = 0;
     let totalReceived = 0;
     let totalRemaining = 0;
-    let totalAmount = 0;
+    let totalAmount = number($('#freight_amount').val() || $('#freight_amount').text() || '0');
 
     $('.js-purchase-order-line').each(function () {
       const $row = $(this);
       const quantity = number($row.find('.js-line-quantity').val() || $row.find('td').eq(3).text());
       const price = number($row.find('.js-line-unit-price').val() || $row.find('td').eq(4).text());
-      const received = number($row.find('td').eq(6).text());
+      const discountType = String($row.find('.js-line-discount-type').val() || 'fixed');
+      const discountValue = number($row.find('.js-line-discount-value').val() || '0');
+      const taxRate = Math.min(100, Math.max(0, number($row.find('.js-line-tax-rate').val() || '0')));
+      const received = number($row.find('.js-line-received').text());
       const remaining = Math.max(0, quantity - received);
-      const lineTotal = quantity * price;
+      const subtotal = quantity * price;
+      const discountAmount = discountType === 'percentage'
+        ? subtotal * Math.min(100, Math.max(0, discountValue)) / 100
+        : Math.min(subtotal, Math.max(0, discountValue));
+      const taxableAmount = Math.max(0, subtotal - discountAmount);
+      const lineTotal = taxableAmount + taxableAmount * taxRate / 100;
 
       $row.find('.js-line-total').text(formatAmount(lineTotal));
       $row.find('.js-line-remaining').text(formatQuantity(remaining));
@@ -621,7 +629,7 @@
       populateUnits($(this).closest('.js-purchase-order-line'), [], null);
     });
 
-    $(document).on('input change', '.js-line-quantity, .js-line-unit-price', calculateTotals);
+    $(document).on('input change', '#freight_amount, .js-line-quantity, .js-line-unit-price, .js-line-discount-type, .js-line-discount-value, .js-line-tax-rate', calculateTotals);
 
     $(document).on('click', '.js-finance-submit-action', function () {
       $(this).closest('form').find('[name="submit_action"]').val($(this).data('submit-action') || 'save');

@@ -5,6 +5,7 @@ namespace Modules\Accounting\Services;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Services\OperatingCompanyContextService;
 
@@ -21,7 +22,7 @@ class CostCenterTreeReport
     {
         $filters = [];
 
-        foreach (['cost_center_search', 'status', 'hierarchy'] as $field) {
+        foreach (['cost_center_search', 'status', 'hierarchy', 'default_account_doc_num'] as $field) {
             $value = trim((string) $request->input($field, ''));
 
             if ($value !== '') {
@@ -39,7 +40,7 @@ class CostCenterTreeReport
     public function query(array $filters = []): Builder
     {
         $companyId = $this->companies->currentCompanyId();
-        $query = CostCenter::query()->with('parent');
+        $query = CostCenter::query()->with(['parent', 'defaultAccount']);
 
         if ($companyId === null) {
             return $query->whereRaw('1 = 0');
@@ -65,6 +66,10 @@ class CostCenterTreeReport
             $query->whereNull('cost_centers.parent_id');
         } elseif (($filters['hierarchy'] ?? '') === 'children') {
             $query->whereNotNull('cost_centers.parent_id');
+        }
+
+        if (($filters['default_account_doc_num'] ?? '') !== '') {
+            $query->whereHas('defaultAccount', fn (Builder $builder): Builder => $builder->where('doc_num', $filters['default_account_doc_num']));
         }
 
         return $query;
@@ -106,6 +111,8 @@ class CostCenterTreeReport
             __('cost_centers.attributes.name'),
             __('cost_centers.attributes.is_group'),
             __('cost_centers.attributes.parent_code'),
+            __('cost_centers.attributes.default_account_doc_num'),
+            __('cost_centers.attributes.default_account'),
             __('cost_centers.attributes.status'),
         ];
     }
@@ -120,6 +127,8 @@ class CostCenterTreeReport
             $row->name,
             $row->is_group ? __('common.actions.yes') : __('common.actions.no'),
             $this->parentDisplay($row),
+            $row->defaultAccount?->doc_num ?? '',
+            $row->defaultAccount?->codeNameLabel() ?? '',
             __("cost_centers.statuses.{$row->status}"),
         ];
     }
@@ -136,6 +145,8 @@ class CostCenterTreeReport
                 'is_group' => $row->is_group ? __('common.actions.yes') : __('common.actions.no'),
                 'level' => $this->level($row),
                 'parent_code' => $this->parentDisplay($row),
+                'default_account_doc_num' => $row->defaultAccount?->doc_num ?? '',
+                'default_account' => $row->defaultAccount?->codeNameLabel() ?? '',
                 'status' => __("cost_centers.statuses.{$row->status}"),
             ])
             ->values()
@@ -163,6 +174,10 @@ class CostCenterTreeReport
         return match ($key) {
             'status' => __("cost_centers.statuses.{$value}"),
             'hierarchy' => __("cost_centers.hierarchy_filters.{$value}"),
+            'default_account_doc_num' => Account::withTrashed()
+                ->forCompany($this->companies->requireCompanyId())
+                ->where('doc_num', $value)
+                ->first()?->codeNameLabel() ?? $value,
             default => $value,
         };
     }
@@ -200,7 +215,7 @@ class CostCenterTreeReport
 
         while ($missingParentIds->isNotEmpty()) {
             $parents = CostCenter::query()
-                ->with('parent')
+                ->with(['parent', 'defaultAccount'])
                 ->forCompany($this->companies->requireCompanyId())
                 ->whereIn('id', $missingParentIds->all())
                 ->get();

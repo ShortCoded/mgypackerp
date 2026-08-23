@@ -14,6 +14,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Inventory\Models\UnpricedInventoryReceipt;
 
 class PurchaseOrder extends Model
 {
@@ -53,6 +54,16 @@ class PurchaseOrder extends Model
         'exchange_rate',
         'expected_delivery_date',
         'supplier_reference',
+        'purchase_requisition_id',
+        'request_for_quotation_id',
+        'supplier_quotation_id',
+        'supplier_selection_id',
+        'purchase_type',
+        'payment_terms',
+        'freight_amount',
+        'internal_reference',
+        'direct_procurement_override',
+        'direct_procurement_reason',
         'total_ordered_quantity',
         'total_received_quantity',
         'total_remaining_quantity',
@@ -85,11 +96,13 @@ class PurchaseOrder extends Model
             'document_date' => 'date',
             'expected_delivery_date' => 'date',
             'exchange_rate' => 'decimal:6',
+            'freight_amount' => 'decimal:4',
             'total_ordered_quantity' => 'decimal:8',
             'total_received_quantity' => 'decimal:8',
             'total_remaining_quantity' => 'decimal:8',
             'subtotal_amount' => 'decimal:4',
             'total_amount' => 'decimal:4',
+            'direct_procurement_override' => 'boolean',
             'approved_at' => 'datetime',
             'closed_at' => 'datetime',
             'cancelled_at' => 'datetime',
@@ -183,6 +196,51 @@ class PurchaseOrder extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseOrderLine::class)->orderBy('line_number');
+    }
+
+    public function purchaseInvoices(): HasMany
+    {
+        return $this->hasMany(PurchaseInvoice::class);
+    }
+
+    public function requisition(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequisition::class, 'purchase_requisition_id');
+    }
+
+    public function requestForQuotation(): BelongsTo
+    {
+        return $this->belongsTo(RequestForQuotation::class);
+    }
+
+    public function supplierQuotation(): BelongsTo
+    {
+        return $this->belongsTo(SupplierQuotation::class);
+    }
+
+    public function supplierSelection(): BelongsTo
+    {
+        return $this->belongsTo(SupplierSelection::class);
+    }
+
+    public function deliverySchedules(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderDeliverySchedule::class);
+    }
+
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(UnpricedInventoryReceipt::class);
+    }
+
+    public function purchaseReturns(): HasMany
+    {
+        return $this->hasMany(PurchaseReturn::class);
+    }
+
+    public function supplierPayments(): HasMany
+    {
+        return $this->hasMany(SupplierPaymentContext::class);
     }
 
     public function createdBy(): BelongsTo

@@ -4,6 +4,7 @@ namespace Modules\Accounting\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -130,12 +131,33 @@ class CostCenterService
         return [
             'company_id' => $companyId,
             'parent_id' => $parent?->getKey(),
+            'default_account_id' => $this->defaultAccountId($data['default_account_doc_num'] ?? null, $companyId, $current),
             'cost_center_code' => $this->resolvedCostCenterCode($companyId, $parent, $submittedCode, $current, $parentChanged),
             'name' => $data['name'],
             'is_group' => (bool) ($data['is_group'] ?? false),
             'status' => $data['status'] ?? 'active',
             'notes' => $data['notes'] ?? null,
         ];
+    }
+
+    private function defaultAccountId(mixed $docNum, int $companyId, ?CostCenter $current): ?int
+    {
+        if (! is_string($docNum) || trim($docNum) === '') {
+            return null;
+        }
+
+        $docNum = trim($docNum);
+        $current?->loadMissing('defaultAccount');
+
+        if ($current?->defaultAccount?->doc_num === $docNum) {
+            return (int) $current->default_account_id;
+        }
+
+        return (int) Account::query()
+            ->forCompany($companyId)
+            ->eligibleForDirectPosting()
+            ->where('doc_num', $docNum)
+            ->valueOrFail('id');
     }
 
     public function nextCostCenterCode(?CostCenter $parent, ?int $companyId = null): string

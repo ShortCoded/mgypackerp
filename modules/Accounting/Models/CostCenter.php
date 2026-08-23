@@ -29,6 +29,7 @@ class CostCenter extends Model
     protected $fillable = [
         'company_id',
         'parent_id',
+        'default_account_id',
         'doc_number',
         'doc_num',
         'cost_center_code',
@@ -94,6 +95,11 @@ class CostCenter extends Model
     public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_id');
+    }
+
+    public function defaultAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'default_account_id')->withTrashed();
     }
 
     public function children(): HasMany

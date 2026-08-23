@@ -32,6 +32,8 @@ return [
         'parent' => 'Parent Cost Center',
         'parent_code' => 'Parent Code',
         'no_parent' => 'No Parent Cost Center',
+        'default_account' => 'Default Accounting Account',
+        'default_account_doc_num' => 'Default Accounting Account Document Number',
         'status' => 'Status',
         'notes' => 'Notes',
     ],
@@ -66,8 +68,9 @@ return [
         'parent_unavailable' => 'The selected parent cost center is not available in the current company.',
         'parent_must_be_group' => 'A non-group cost center cannot be selected as parent.',
         'parent_must_be_active' => 'The parent cost center must be active.',
+        'historical_default_account' => 'This historical account remains linked for display, but it is no longer available for new selection.',
         'clone_not_allowed' => 'This cost center can no longer be cloned. Please open the clone page again.',
-        'filters_hint' => 'Filter by code, name, hierarchy, or status.',
+        'filters_hint' => 'Filter by code, name, hierarchy, default accounting account, or status.',
         'no_data_found' => 'No cost centers found',
     ],
     'filters' => [
@@ -75,6 +78,7 @@ return [
         'search' => 'Search',
         'status' => 'Status',
         'hierarchy' => 'Hierarchy',
+        'default_account' => 'Default Accounting Account',
         'summary' => 'Applied filters',
     ],
     'hierarchy_filters' => [
@@ -84,6 +88,7 @@ return [
     ],
     'placeholders' => [
         'search' => 'Code or name',
+        'default_account' => 'Select accounting account',
     ],
     'trash' => [
         'filter_label' => 'Records',

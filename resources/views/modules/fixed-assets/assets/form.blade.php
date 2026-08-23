@@ -138,7 +138,12 @@
             <div class="card-header">
                 <div class="row flex-between-center g-2">
                     <div class="col"><h5 class="mb-0">{{ $title }}</h5></div>
-                    <div class="col-auto">@include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets'])</div>
+                    <div class="col-auto d-flex align-items-center gap-2">
+                        @if($record && ! $record->trashed())
+                            <a class="btn btn-falcon-info btn-sm" href="{{ route('admin.fixed-assets.lifecycle.show', $record) }}"><span class="fas fa-id-card me-1"></span>{{ __('fixed_assets.lifecycle.asset_card') }}</a>
+                        @endif
+                        @include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets'])
+                    </div>
                 </div>
             </div>
             <div class="card-body">
@@ -340,7 +345,9 @@
                                     <x-forms.view-field for="status" :value="__('fixed_assets.statuses.'.($record?->status ?? 'active'))" />
                                 @else
                                     <select class="form-select" id="status" name="status" required>
+                                        <option value="draft" @selected($value('status') === 'draft')>{{ __('fixed_assets.statuses.draft') }}</option>
                                         <option value="active" @selected($value('status', 'active') === 'active')>{{ __('fixed_assets.statuses.active') }}</option>
+                                        <option value="suspended" @selected($value('status') === 'suspended')>{{ __('fixed_assets.statuses.suspended') }}</option>
                                         <option value="inactive" @selected($value('status') === 'inactive')>{{ __('fixed_assets.statuses.inactive') }}</option>
                                     </select>
                                 @endif

@@ -70,6 +70,11 @@ class FixedAssetService
     public function update(FixedAsset $record, array $data): array
     {
         return DB::transaction(function () use ($record, $data): array {
+            $record = FixedAsset::query()
+                ->forCompany($this->companies->requireCompanyId())
+                ->whereKey($record->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
             $parentAccount = $this->parentAccount($data);
@@ -92,6 +97,7 @@ class FixedAssetService
             }
 
             $changes = $this->changes($record, $values);
+            $this->assertMasterUpdateAllowed($record, $changes);
             $usageChangeNeeded = $selectedImageFile instanceof ArchiveFile
                 && ! $this->fileUsages->recordUsesFile($record, $selectedImageFile, FixedAsset::ImageCollection, FixedAsset::MainImageRole);
             $detachChangeNeeded = $detachesImage
@@ -137,6 +143,12 @@ class FixedAssetService
     public function delete(FixedAsset $record): void
     {
         DB::transaction(function () use ($record): void {
+            $record = FixedAsset::query()->forCompany($this->companies->requireCompanyId())->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($record->isMasterLocked()) {
+                throw new DomainException(__('fixed_assets.messages.delete_blocked_lifecycle'));
+            }
+
             $this->accountingSync->softDeleteLinkedAccountForFixedAsset($record);
             $this->audit->softDelete($record);
         });
@@ -159,6 +171,12 @@ class FixedAssetService
     public function restore(FixedAsset $record): FixedAsset
     {
         return DB::transaction(function () use ($record): FixedAsset {
+            $record = FixedAsset::withTrashed()
+                ->forCompany($this->companies->requireCompanyId())
+                ->whereKey($record->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
             if (FixedAsset::query()->forCompany((int) $record->company_id)->where('account_id', $record->account_id)->whereKeyNot($record->getKey())->exists()) {
                 throw new DomainException(__('fixed_assets.messages.restore_conflict'));
             }
@@ -181,7 +199,6 @@ class FixedAssetService
     {
         $root = $this->accounts->rootAccount(BusinessPartnerAccountService::FixedAsset);
         $purchaseValueDecimal = $this->numbers->normalizeToScale($data['purchase_value'] ?? null, 4);
-        $purchaseValue = $this->nullableFloat($purchaseValueDecimal);
         $isDepreciable = (bool) ($data['is_depreciable'] ?? true);
         $salvageValueDecimal = $isDepreciable
             ? ($this->numbers->normalizeToScale($data['salvage_value'] ?? null, 4) ?? '0.0000')
@@ -189,13 +206,13 @@ class FixedAssetService
         $previousDepreciationDecimal = $isDepreciable
             ? ($this->numbers->normalizeToScale($data['previous_depreciation'] ?? null, 4) ?? '0.0000')
             : '0.0000';
-        $previousDepreciation = (float) $previousDepreciationDecimal;
         $hasPreviousDepreciation = ! $this->numbers->equivalent($previousDepreciationDecimal, 0);
         $entryType = (string) ($data['entry_type'] ?? FixedAsset::EntryTypeNewAsset);
         $currency = $this->modelByDocNum(Currency::class, $companyId, $data['currency_doc_num'] ?? null);
         $exchangeRate = $currency?->is_main
             ? '1.000000'
             : $this->numbers->normalizeToScale($data['exchange_rate'] ?? null, 6);
+        $effectiveExchangeRate = $exchangeRate ?? '1.000000';
         $depreciationMethod = $isDepreciable
             ? (trim((string) ($data['depreciation_method'] ?? '')) ?: null)
             : null;
@@ -216,6 +233,9 @@ class FixedAssetService
             'cost_center_id' => $this->idByDocNum(CostCenter::class, $companyId, $data['cost_center_doc_num'] ?? null),
             'currency_id' => $currency?->getKey(),
             'entry_type' => $entryType,
+            'source_type' => $data['source_type'] ?? null,
+            'source_id' => isset($data['source_id']) ? (int) $data['source_id'] : null,
+            'source_doc_num' => $data['source_doc_num'] ?? null,
             'asset_date' => $data['asset_date'],
             'asset_name' => $data['asset_name'],
             'description' => $data['description'] ?? null,
@@ -224,6 +244,7 @@ class FixedAssetService
             'acquisition_date' => $data['acquisition_date'] ?? null,
             'operation_date' => $data['operation_date'] ?? null,
             'purchase_value' => $purchaseValueDecimal,
+            'base_acquisition_value' => $purchaseValueDecimal === null ? null : bcmul($purchaseValueDecimal, $effectiveExchangeRate, 4),
             'salvage_value' => $salvageValueDecimal,
             'exchange_rate' => $exchangeRate,
             'previous_depreciation' => $previousDepreciationDecimal,
@@ -235,14 +256,14 @@ class FixedAssetService
                 $hasPreviousDepreciation,
                 $previousDepreciationUntilDate,
             ),
-            'net_value' => $purchaseValue === null ? null : number_format($purchaseValue - $previousDepreciation, 4, '.', ''),
+            'net_value' => $purchaseValueDecimal === null ? null : bcsub($purchaseValueDecimal, $previousDepreciationDecimal, 4),
             'annual_depreciation_rate' => $annualDepreciationRate,
             'expected_usage_units' => $expectedUsageUnits,
             'useful_life' => $usefulLife,
             'is_depreciable' => $isDepreciable,
             'depreciation_method' => $depreciationMethod,
             'location_address' => $data['location_address'] ?? null,
-            'status' => $data['status'] ?? 'active',
+            'status' => $data['status'] ?? FixedAsset::StatusActive,
             'notes' => $data['notes'] ?? null,
         ];
     }
@@ -257,7 +278,55 @@ class FixedAssetService
         return [
             ...$data,
             'name' => $data['asset_name'] ?? '',
+            'status' => in_array($data['status'] ?? FixedAsset::StatusActive, [FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusFullyDepreciated], true)
+                ? 'active'
+                : 'inactive',
         ];
+    }
+
+    /**
+     * @param  array<string, array{old: mixed, new: mixed}>  $changes
+     */
+    private function assertMasterUpdateAllowed(FixedAsset $record, array $changes): void
+    {
+        if (! $record->isMasterLocked()) {
+            return;
+        }
+
+        $protected = [
+            'branch_id',
+            'branch_hall_id',
+            'cost_center_id',
+            'account_id',
+            'asset_group_account_id',
+            'credit_account_id',
+            'currency_id',
+            'entry_type',
+            'source_type',
+            'source_id',
+            'source_doc_num',
+            'purchase_date',
+            'acquisition_date',
+            'operation_date',
+            'purchase_value',
+            'base_acquisition_value',
+            'salvage_value',
+            'exchange_rate',
+            'previous_depreciation',
+            'previous_depreciation_until_date',
+            'depreciation_start_date',
+            'annual_depreciation_rate',
+            'expected_usage_units',
+            'useful_life',
+            'is_depreciable',
+            'depreciation_method',
+            'location_address',
+            'status',
+        ];
+
+        if (array_intersect(array_keys($changes), $protected) !== []) {
+            throw new DomainException(__('fixed_assets.messages.master_locked'));
+        }
     }
 
     private function assertLinkedAccountCanMove(?Account $linkedAccount, Account $parentAccount): void
@@ -277,9 +346,13 @@ class FixedAssetService
             return true;
         }
 
+        $linkedAccountStatus = in_array($data['status'] ?? FixedAsset::StatusActive, [FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusFullyDepreciated], true)
+            ? 'active'
+            : 'inactive';
+
         return (int) $record->account->parent_id !== (int) $parentAccount->getKey()
             || trim((string) $record->account->name) !== trim((string) $data['asset_name'])
-            || trim((string) $record->account->status) !== trim((string) ($data['status'] ?? 'active'));
+            || trim((string) $record->account->status) !== $linkedAccountStatus;
     }
 
     private function changes(object $record, array $values): array

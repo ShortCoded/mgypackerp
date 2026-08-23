@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 
 class PurchaseInvoiceLine extends Model
 {
@@ -22,6 +23,9 @@ class PurchaseInvoiceLine extends Model
         'line_number',
         'product_id',
         'unit_id',
+        'purchase_order_line_id',
+        'receipt_line_id',
+        'matched_quantity',
         'quantity',
         'unit_price',
         'discount_type',
@@ -52,6 +56,7 @@ class PurchaseInvoiceLine extends Model
     {
         return [
             'quantity' => 'decimal:4',
+            'matched_quantity' => 'decimal:8',
             'unit_price' => 'decimal:4',
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4',
@@ -85,5 +90,15 @@ class PurchaseInvoiceLine extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class)->withTrashed();
+    }
+
+    public function purchaseOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderLine::class);
+    }
+
+    public function receiptLine(): BelongsTo
+    {
+        return $this->belongsTo(UnpricedInventoryReceiptLine::class, 'receipt_line_id');
     }
 }

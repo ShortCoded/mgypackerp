@@ -14,12 +14,17 @@
     $value = fn (string $field, mixed $default = '') => old($field, $record?->{$field} ?? $default);
     $parentDisplay = $record?->parent ? $record->parent->cost_center_code . ' / ' . $record->parent->name : null;
     $parentOption = $record?->parent && $record->parent->status === 'active' && $record->parent->is_group ? ['id' => $record->parent->doc_num, 'text' => $parentDisplay] : null;
+    $defaultAccountDisplay = $record?->defaultAccount?->codeNameLabel();
+    $defaultAccountIsSelectable = $record?->defaultAccount && ! $record->defaultAccount->trashed() && $record->defaultAccount->status === 'active' && $record->defaultAccount->is_postable && ! $record->defaultAccount->is_group;
+    $defaultAccountOption = $record?->defaultAccount && (! $isClone || $defaultAccountIsSelectable) ? ['id' => $record->defaultAccount->doc_num, 'text' => $defaultAccountDisplay] : null;
+    $hasHistoricalDefaultAccount = ! $isClone && $record?->defaultAccount && ! $defaultAccountIsSelectable;
     $showsDocumentNumberColumn = $canControlDocumentNumber || ! $isCreateLike;
     $originalCostCenterData = [
         'doc_number' => ! $isCreateLike ? (string) ($record?->doc_number ?? '') : '',
         'cost_center_code' => $mode === 'clone' ? '' : (string) ($record?->cost_center_code ?? ''),
         'name' => (string) ($record?->name ?? ''),
         'parent_doc_num' => (string) ($record?->parent?->doc_num ?? ''),
+        'default_account_doc_num' => (string) ($defaultAccountOption['id'] ?? ''),
         'is_group' => (bool) ($record?->is_group ?? false),
         'status' => (string) ($record?->status ?? 'active'),
         'notes' => (string) ($record?->notes ?? ''),
@@ -123,6 +128,23 @@
                             </select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
+                    </div>
+
+                    <div class="col-md-6 col-lg-6">
+                        <label class="form-label" for="default_account_doc_num">{{ __('cost_centers.attributes.default_account') }}</label>
+                        @if ($isView)
+                            <x-forms.view-field for="default_account_doc_num" :value="$defaultAccountDisplay" />
+                        @else
+                            <select class="form-select js-select2-ajax" id="default_account_doc_num" name="default_account_doc_num" data-url="{{ route('admin.accounting.select2.accounts', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.default_account') }}" data-allow-clear="true">
+                                @if ($defaultAccountOption)
+                                    <option value="{{ $defaultAccountOption['id'] }}" selected>{{ $defaultAccountOption['text'] }}</option>
+                                @endif
+                            </select>
+                            @if ($hasHistoricalDefaultAccount)
+                                <div class="form-text">{{ __('cost_centers.messages.historical_default_account') }}</div>
+                            @endif
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="default_account_doc_num"></div>
                     </div>
 
                     <div class="col-12">

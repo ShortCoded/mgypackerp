@@ -2,6 +2,7 @@
 
 @php
     use Modules\Core\Models\Product;
+    use Modules\Core\Models\ProductComponent;
     use Modules\Core\Services\FilePickerService;
     use Modules\Core\Services\OperatingCompanyContextService;
     use Modules\Core\Services\ProductImageResolver;
@@ -160,114 +161,7 @@
 @section('title', $title)
 
 @push('styles')
-    <style>
-        .product-form-card .select2-container {
-            width: 100% !important;
-        }
-
-        .product-form-card .product-lookup-control {
-            display: flex;
-            flex-direction: column;
-            gap: .5rem;
-        }
-
-        .product-form-card .product-lookup-control .js-inline-lookup-create {
-            align-self: flex-end;
-            white-space: nowrap;
-        }
-
-        .product-form-card .product-image-field .product-image-picker-panel,
-        .product-form-card .product-options-panel {
-            min-height: 100%;
-        }
-
-        .product-form-card .product-image-preview-frame {
-            width: 6.75rem !important;
-            height: 6.75rem !important;
-            min-width: 6.75rem !important;
-            aspect-ratio: 1 / 1;
-        }
-
-        .product-form-card .product-image-preview-frame .js-product-image-preview-image {
-            display: block;
-            width: 100%;
-            height: 100%;
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-
-        .product-form-card .product-options-panel {
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            border-radius: .375rem;
-            background: var(--falcon-gray-100, #f9fafd);
-            padding: .75rem;
-        }
-
-        .product-form-card .product-option-item {
-            height: 100%;
-            min-height: 5.25rem;
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            border-radius: .375rem;
-            background: var(--falcon-white, #fff);
-            padding: .75rem;
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: .75rem;
-        }
-
-        .product-form-card .product-option-copy {
-            min-width: 0;
-        }
-
-        .product-form-card .product-option-item .form-switch {
-            flex-shrink: 0;
-            min-height: auto;
-            margin-top: .125rem;
-        }
-
-        .product-form-card .product-components-table td,
-        .product-form-card .product-components-table th {
-            vertical-align: middle;
-        }
-
-        .product-form-card .product-components-table {
-            min-width: 82rem;
-        }
-
-        .product-form-card .product-components-table .dt-actions {
-            width: 1%;
-            white-space: nowrap;
-        }
-
-        .product-form-card .product-components-table .js-product-component-raw-material + .select2-container {
-            min-width: 14rem;
-        }
-
-        .product-form-card .product-components-table .js-product-component-reference + .select2-container {
-            min-width: 12rem;
-        }
-
-        .product-form-card .product-component-calculation-state {
-            min-height: 1.25rem;
-        }
-
-        .product-form-card .product-component-calculated-field {
-            background-color: rgba(44, 123, 229, .08);
-            box-shadow: inset 0 0 0 1px rgba(44, 123, 229, .18);
-        }
-
-        .product-form-card .product-components-table [data-component-unit-display] {
-            min-width: 8rem;
-            min-height: calc(1.5em + .625rem + 2px);
-            background-color: var(--falcon-100, #f9fafd);
-        }
-
-        .product-form-card .product-components-total {
-            border-top: 1px solid var(--falcon-border-color, #d8e2ef);
-        }
-    </style>
+    <link href="{{ asset('assets/css/modules/Core/products.css') }}" rel="stylesheet">
 @endpush
 
 @section('content')
@@ -665,18 +559,18 @@
                                     @endunless
                                 </div>
 
-                                <div class="table-responsive">
+                                <div class="table-responsive product-components-scroll" role="region" aria-label="{{ __('products.components.title') }}" tabindex="0">
                                     <table class="table table-sm table-hover align-middle product-components-table mb-0">
                                         <thead class="bg-100 text-900">
                                             <tr>
-                                                <th style="width: 24%">{{ __('products.components.component_item') }}</th>
-                                                <th style="width: 11%">{{ __('products.components.unit') }}</th>
-                                                <th style="width: 11%">{{ __('products.components.calculation_method') }}</th>
-                                                <th class="text-center" style="width: 14%">{{ __('products.components.quantity') }}</th>
-                                                <th style="width: 25%">{{ __('products.components.calculation') }}</th>
-                                                <th>{{ __('products.components.notes') }}</th>
+                                                <th class="product-component-item-column">{{ __('products.components.component_item') }}</th>
+                                                <th class="product-component-unit-column">{{ __('products.components.unit') }}</th>
+                                                <th class="product-component-method-column">{{ __('products.components.calculation_method') }}</th>
+                                                <th class="text-center product-component-value-column" data-component-value-heading>{{ __('products.components.value') }}</th>
+                                                <th class="product-component-calculation-column">{{ __('products.components.calculation') }}</th>
+                                                <th class="product-component-notes-column">{{ __('products.components.notes') }}</th>
                                                 @unless ($componentReadonly)
-                                                    <th class="dt-actions text-center" style="width: 76px">{{ __('common.fields.actions') }}</th>
+                                                    <th class="dt-actions text-center product-component-actions-column">{{ __('common.fields.actions') }}</th>
                                                 @endunless
                                             </tr>
                                         </thead>
@@ -686,8 +580,8 @@
 
                                 @unless ($componentReadonly)
                                     <template id="product-component-row-template">
-                                        <tr class="js-product-component-row" data-component-index="__INDEX__">
-                                            <td>
+                                        <tr class="js-product-component-row product-component-main-row" data-component-index="__INDEX__">
+                                            <td class="product-component-item-column">
                                                 <input type="hidden" data-component-field="client_key" name="components[__INDEX__][client_key]" value="">
                                                 <input type="hidden" data-component-field="public_id" name="components[__INDEX__][public_id]" value="">
                                                 <input type="hidden" data-component-field="_delete" name="components[__INDEX__][_delete]" value="0">
@@ -698,71 +592,74 @@
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.public_id"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__._delete"></div>
                                             </td>
-                                            <td>
+                                            <td class="product-component-unit-column">
                                                 <select class="form-select js-product-component-unit" name="components[__INDEX__][unit_doc_num]" data-component-field="unit_doc_num" data-placeholder="{{ __('common.placeholders.select') }}" disabled>
                                                     <option value="">{{ __('common.placeholders.select') }}</option>
                                                 </select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.unit_doc_num"></div>
                                             </td>
-                                            <td>
+                                            <td class="product-component-method-column">
                                                 <select class="form-select js-product-component-calculation-method" name="components[__INDEX__][calculation_method]" data-component-field="calculation_method">
-                                                    <option value="direct">{{ __('products.components.direct') }}</option>
-                                                    <option value="percentage">{{ __('products.components.percentage') }}</option>
+                                                    <option value="{{ ProductComponent::CalculationDirect }}">{{ __('products.components.direct') }}</option>
+                                                    <option value="{{ ProductComponent::CalculationPercentage }}">{{ __('products.components.percentage') }}</option>
+                                                    <option value="{{ ProductComponent::CalculationQuantity }}">{{ __('products.components.quantity') }}</option>
+                                                    <option value="{{ ProductComponent::CalculationCount }}">{{ __('products.components.count') }}</option>
                                                 </select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.calculation_method"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.input_source"></div>
                                             </td>
-                                            <td class="text-center">
-                                                <x-forms.numeric-input
-                                                    name="components[__INDEX__][quantity]"
-                                                    value=""
-                                                    :scale="8"
-                                                    :allow-negative="false"
-                                                    min="0.00000001"
-                                                    step="0.00000001"
-                                                    class="text-center js-product-component-quantity"
-                                                    data-component-field="quantity"
-                                                />
+                                            <td class="text-center product-component-value-column">
+                                                <div class="input-group input-group-sm">
+                                                    <x-forms.numeric-input
+                                                        id="product-component-value-__INDEX__"
+                                                        name="components[__INDEX__][quantity]"
+                                                        value=""
+                                                        :scale="8"
+                                                        :allow-negative="false"
+                                                        min="0.00000001"
+                                                        step="0.00000001"
+                                                        class="text-center js-product-component-quantity"
+                                                        data-component-field="quantity"
+                                                    />
+                                                    <span class="input-group-text d-none js-product-component-percentage-addon">%</span>
+                                                </div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.quantity"></div>
                                             </td>
-                                            <td>
-                                                <div class="js-product-component-percentage-fields d-none">
-                                                    <label class="form-label small mb-1">{{ __('products.components.reference_component') }}</label>
-                                                    <select class="form-select js-select2-local js-product-component-reference mb-2" name="components[__INDEX__][reference_component_key]" data-component-field="reference_component_key" data-placeholder="{{ __('products.components.select_reference_component') }}" data-allow-clear="true">
-                                                        <option value="">{{ __('products.components.select_reference_component') }}</option>
-                                                    </select>
-                                                    <label class="form-label small mb-1">{{ __('products.components.percentage_value') }}</label>
-                                                    <div class="input-group input-group-sm">
-                                                        <x-forms.numeric-input
-                                                            name="components[__INDEX__][percentage]"
-                                                            value=""
-                                                            :scale="8"
-                                                            :allow-negative="false"
-                                                            min="0.00000001"
-                                                            step="0.00000001"
-                                                            class="text-end js-product-component-percentage"
-                                                            data-component-field="percentage"
-                                                        />
-                                                        <span class="input-group-text">%</span>
-                                                    </div>
-                                                    <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.reference_component_key"></div>
-                                                    <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.percentage"></div>
-                                                </div>
-                                                <div class="small mt-1 text-600 product-component-calculation-state js-product-component-calculation-state" aria-live="polite"></div>
+                                            <td class="product-component-calculation-column">
+                                                <div class="product-component-calculation-state js-product-component-calculation-state text-600 fw-semi-bold" aria-live="polite"></div>
                                             </td>
-                                            <td>
+                                            <td class="product-component-notes-column">
                                                 <input class="form-control js-product-component-notes" name="components[__INDEX__][notes]" data-component-field="notes" type="text" value="">
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.notes"></div>
                                             </td>
-                                            <td class="text-center">
-                                                <button class="btn btn-link text-600 p-0 me-2 js-product-component-duplicate-row" type="button" title="{{ __('products.components.duplicate_row_shortcut') }}" data-bs-title="{{ __('products.components.duplicate_row_shortcut') }}">
-                                                    <span class="fas fa-copy"></span>
-                                                    <span class="visually-hidden">{{ __('products.components.duplicate_row') }}</span>
-                                                </button>
-                                                <button class="btn btn-link text-danger p-0 js-product-component-remove-row" type="button" title="{{ __('products.components.delete_row_shortcut') }}" data-bs-title="{{ __('products.components.delete_row_shortcut') }}">
-                                                    <span class="fas fa-trash-alt"></span>
-                                                    <span class="visually-hidden">{{ __('common.actions.delete') }}</span>
-                                                </button>
+                                            <td class="text-center product-component-actions-column">
+                                                <div class="d-inline-flex align-items-center flex-nowrap gap-2">
+                                                    <button class="btn btn-link text-600 p-0 js-product-component-duplicate-row" type="button" title="{{ __('products.components.duplicate_row_shortcut') }}" data-bs-title="{{ __('products.components.duplicate_row_shortcut') }}">
+                                                        <span class="fas fa-copy"></span>
+                                                        <span class="visually-hidden">{{ __('products.components.duplicate_row') }}</span>
+                                                    </button>
+                                                    <button class="btn btn-link text-danger p-0 js-product-component-remove-row" type="button" title="{{ __('products.components.delete_row_shortcut') }}" data-bs-title="{{ __('products.components.delete_row_shortcut') }}">
+                                                        <span class="fas fa-trash-alt"></span>
+                                                        <span class="visually-hidden">{{ __('common.actions.delete') }}</span>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <tr class="js-product-component-details-row product-component-details-row d-none" data-component-details-index="__INDEX__">
+                                            <td colspan="7" class="product-component-details-cell">
+                                                <div class="product-component-details-layout">
+                                                    <div class="product-component-reference-control">
+                                                        <label class="form-label small fw-semi-bold mb-1" for="product-component-reference-__INDEX__">{{ __('products.components.reference_component') }}</label>
+                                                        <select id="product-component-reference-__INDEX__" class="form-select js-select2-local js-product-component-reference" name="components[__INDEX__][reference_component_key]" data-component-field="reference_component_key" data-placeholder="{{ __('products.components.select_reference_component') }}" data-allow-clear="true" aria-describedby="product-component-reference-error-__INDEX__">
+                                                            <option value="">{{ __('products.components.select_reference_component') }}</option>
+                                                        </select>
+                                                        <div id="product-component-reference-error-__INDEX__" class="invalid-feedback d-block" data-error-for="components.__INDEX__.reference_component_key"></div>
+                                                    </div>
+                                                    <div class="product-component-explanation-control">
+                                                        <span class="form-label small fw-semi-bold mb-1 d-block">{{ __('products.components.calculation') }}</span>
+                                                        <div class="small text-600 product-component-calculation-explanation js-product-component-calculation-explanation"></div>
+                                                    </div>
+                                                </div>
                                             </td>
                                         </tr>
                                     </template>
@@ -838,16 +735,28 @@
         'inlineLookupTitle' => __('products.inline_lookup.title', ['lookup' => ':lookup']),
         'inlineLookupCreated' => __('products.inline_lookup.created'),
         'componentEmpty' => __('products.components.empty'),
-        'componentQuantityGreaterThanZero' => __('products.components.quantity_gt_zero'),
+        'componentValueLabel' => __('products.components.value'),
+        'componentWeightLabel' => __('products.components.weight'),
+        'componentQuantityLabel' => __('products.components.quantity_value'),
+        'componentCountLabel' => __('products.components.count_value'),
+        'componentPercentageLabel' => __('products.components.percentage_value'),
+        'componentCountInteger' => __('products.components.count_integer'),
         'componentDuplicateRowTitle' => __('products.components.duplicate_row_shortcut'),
         'componentDeleteRowTitle' => __('products.components.delete_row_shortcut'),
         'componentDirect' => __('products.components.direct'),
         'componentPercentage' => __('products.components.percentage'),
+        'componentQuantity' => __('products.components.quantity'),
+        'componentCount' => __('products.components.count'),
         'componentDirectFormula' => __('products.components.direct_formula'),
+        'componentQuantityFormula' => __('products.components.quantity_formula'),
+        'componentCountFormula' => __('products.components.count_formula'),
+        'componentCalculationLabel' => __('products.components.calculation'),
         'componentFormulaTemplate' => __('products.components.formula_template'),
         'componentLineLabel' => __('products.components.line_label'),
         'componentLineOnlyLabel' => __('products.components.line_only_label'),
+        'componentReferenceLabel' => __('products.components.reference_component'),
         'componentReferenceMissing' => __('products.components.reference_missing'),
+        'componentReferenceRequired' => __('products.components.reference_required'),
         'componentReferenceSelf' => __('products.components.reference_self'),
         'componentReferenceCycle' => __('products.components.reference_cycle'),
         'componentReferenceWeightUnavailable' => __('products.components.reference_weight_unavailable'),

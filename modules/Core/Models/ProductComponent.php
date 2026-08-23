@@ -18,6 +18,10 @@ class ProductComponent extends Model
 
     public const CalculationPercentage = 'percentage';
 
+    public const CalculationQuantity = 'quantity';
+
+    public const CalculationCount = 'count';
+
     public const InputWeight = 'weight';
 
     public const InputPercentage = 'percentage';
@@ -56,6 +60,8 @@ class ProductComponent extends Model
         return [
             self::CalculationDirect,
             self::CalculationPercentage,
+            self::CalculationQuantity,
+            self::CalculationCount,
         ];
     }
 

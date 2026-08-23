@@ -2,11 +2,13 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Support\Facades\Storage;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Database\Seeders\CurrencySeeder;
+use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
@@ -164,6 +166,29 @@ function cashVoucherPayload(Cashbox $cashbox, Currency $currency, Account $lineA
     ];
 }
 
+function cashVoucherAuthorizationImage(Company $company, int $documentNumber, string $docNum, string $fileName): ArchiveFile
+{
+    $path = 'tests/cash-voucher-authorization/'.$fileName;
+    Storage::disk('public')->put($path, 'image-content');
+
+    return ArchiveFile::query()->create([
+        'doc_number' => $documentNumber,
+        'doc_num' => $docNum,
+        'attachable_type' => (new Company)->getMorphClass(),
+        'attachable_id' => $company->getKey(),
+        'module' => 'core',
+        'record_type' => 'company_authorization',
+        'hidden_from_picker' => false,
+        'original_name' => $fileName,
+        'stored_name' => $fileName,
+        'disk' => 'public',
+        'path' => $path,
+        'mime_type' => 'image/png',
+        'extension' => 'png',
+        'size_bytes' => 13,
+    ]);
+}
+
 test('CashVoucher permissions are discovered for receipt and payment vouchers', function (): void {
     $this->seed(PermissionSeeder::class);
 
@@ -302,6 +327,85 @@ test('CashVoucher payment draft distribution approval lock and cancellation rule
         ->assertOk();
 
     expect($voucher->refresh()->status)->toBe(CashVoucher::StatusCancelled);
+});
+
+test('CashVoucher receipt and payment prints use localized company authorization identity', function (): void {
+    Storage::fake('public');
+
+    ['company' => $company, 'branch' => $branch, 'currency' => $egp] = cashVoucherSeedFoundation();
+    $actor = cashVoucherActor([
+        'cash_receipt_vouchers.create',
+        'cash_receipt_vouchers.print',
+        'cash_payment_vouchers.create',
+        'cash_payment_vouchers.print',
+        'accounts.view',
+    ]);
+    $cashbox = cashVoucherCashbox($company, $branch, [$egp], 'Print Cashbox');
+    $receiptAccount = cashVoucherPostableAccount($company, '411');
+    $paymentAccount = cashVoucherPostableAccount($company, '521');
+    $stamp = cashVoucherAuthorizationImage($company, 991, 'ARCH-PRINT-STAMP', 'stamp.png');
+    $signature = cashVoucherAuthorizationImage($company, 992, 'ARCH-PRINT-SIGN', 'signature.png');
+
+    $company->forceFill([
+        'legal_name' => 'Printable Legal Company',
+        'authorized_signatory_name' => 'Mona Ali',
+        'authorized_signatory_title' => 'Authorized Director',
+        'company_stamp_archive_file_id' => $stamp->getKey(),
+        'authorized_signatory_signature_archive_file_id' => $signature->getKey(),
+    ])->save();
+
+    $receiptDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.cash-receipt-vouchers.store'), cashVoucherPayload($cashbox, $egp, $receiptAccount))
+        ->assertOk()
+        ->json('data.doc_num');
+    $paymentDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.cash-payment-vouchers.store'), cashVoucherPayload($cashbox, $egp, $paymentAccount))
+        ->assertOk()
+        ->json('data.doc_num');
+
+    $actor->forceFill(['locale' => 'en'])->save();
+
+    foreach ([
+        ['route' => 'admin.finance.cash-receipt-vouchers.print', 'doc_num' => $receiptDocNum, 'label' => 'Cash Receipt Voucher'],
+        ['route' => 'admin.finance.cash-payment-vouchers.print', 'doc_num' => $paymentDocNum, 'label' => 'Cash Payment Voucher'],
+    ] as $print) {
+        $this->actingAs($actor)
+            ->get(route($print['route'], $print['doc_num']))
+            ->assertOk()
+            ->assertSee('dir="ltr"', false)
+            ->assertSee('erp-document-company-header', false)
+            ->assertSee('erp-document-authorization', false)
+            ->assertSee('Printable Legal Company')
+            ->assertSee('Mona Ali')
+            ->assertSee('Authorized Director')
+            ->assertSee($print['label'])
+            ->assertSee(route('admin.file-manager.files.preview', $stamp->doc_num), false)
+            ->assertSee(route('admin.file-manager.files.preview', $signature->doc_num), false);
+    }
+
+    $actor->forceFill(['locale' => 'ar'])->save();
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.cash-receipt-vouchers.print', $receiptDocNum))
+        ->assertOk()
+        ->assertSee('dir="rtl"', false)
+        ->assertSee('المفوض بالتوقيع')
+        ->assertSee('ختم الشركة');
+
+    $company->forceFill([
+        'company_stamp_archive_file_id' => null,
+        'authorized_signatory_name' => null,
+        'authorized_signatory_title' => null,
+        'authorized_signatory_signature_archive_file_id' => null,
+    ])->save();
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.cash-payment-vouchers.print', $paymentDocNum))
+        ->assertOk()
+        ->assertSee('erp-document-company-header', false)
+        ->assertDontSee('erp-document-authorization', false)
+        ->assertDontSee(route('admin.file-manager.files.preview', $stamp->doc_num), false)
+        ->assertDontSee(route('admin.file-manager.files.preview', $signature->doc_num), false);
 });
 
 test('CashVoucher currency rules enforce base rate non base positivity and cashbox restrictions', function (): void {

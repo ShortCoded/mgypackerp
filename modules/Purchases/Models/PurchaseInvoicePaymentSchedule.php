@@ -4,12 +4,13 @@ namespace Modules\Purchases\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Finance\Models\BankAccount;
-use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cashbox;
+use Modules\Finance\Models\CashVoucher;
 
 class PurchaseInvoicePaymentSchedule extends Model
 {
@@ -21,6 +22,10 @@ class PurchaseInvoicePaymentSchedule extends Model
 
     public const StatusPaid = 'paid';
 
+    public const StatusSettled = 'settled';
+
+    public const StatusPartiallySettled = 'partially_settled';
+
     public const StatusCancelled = 'cancelled';
 
     protected $fillable = [
@@ -31,6 +36,8 @@ class PurchaseInvoicePaymentSchedule extends Model
         'line_number',
         'due_date',
         'amount',
+        'paid_amount',
+        'credited_amount',
         'payment_source_type',
         'cashbox_id',
         'bank_account_id',
@@ -62,6 +69,8 @@ class PurchaseInvoicePaymentSchedule extends Model
         return [
             'due_date' => 'date',
             'amount' => 'decimal:4',
+            'paid_amount' => 'decimal:4',
+            'credited_amount' => 'decimal:4',
             'payment_date' => 'date',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -92,5 +101,10 @@ class PurchaseInvoicePaymentSchedule extends Model
     public function cashVoucher(): BelongsTo
     {
         return $this->belongsTo(CashVoucher::class);
+    }
+
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(SupplierPaymentAllocation::class, 'payment_schedule_id');
     }
 }

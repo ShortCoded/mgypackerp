@@ -5,12 +5,16 @@ namespace Modules\Core\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Core\Http\Requests\Concerns\ValidatesSelectableArchiveImages;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\OperatingCompanyContextService;
 
 class StoreCompanyRequest extends FormRequest
 {
+    use ValidatesSelectableArchiveImages;
+
     /**
      * @var list<string>
      */
@@ -39,6 +43,10 @@ class StoreCompanyRequest extends FormRequest
             'name' => ['required', 'string', 'max:255', Rule::unique('companies', 'name')->withoutTrashed()],
             'legal_name' => ['nullable', 'string', 'max:255'],
             'commercial_name' => ['nullable', 'string', 'max:255'],
+            'authorized_signatory_name' => ['nullable', 'string', 'max:255'],
+            'authorized_signatory_title' => ['nullable', 'string', 'max:255'],
+            'company_stamp_archive_file_doc_num' => ['nullable', 'string'],
+            'authorized_signatory_signature_archive_file_doc_num' => ['nullable', 'string'],
             'logo' => [
                 'nullable',
                 'image',
@@ -141,6 +149,23 @@ class StoreCompanyRequest extends FormRequest
             if (Company::query()->where('doc_num', $docNum)->exists()) {
                 $validator->errors()->add('doc_number', __('companies.validation.doc_number_unique'));
             }
+        });
+
+        $validator->after(function (Validator $validator): void {
+            $companyId = app(OperatingCompanyContextService::class)->currentCompanyId($this);
+
+            $this->validateSelectableArchiveImage(
+                $validator,
+                'company_stamp_archive_file_doc_num',
+                $companyId,
+                __('companies.validation.selected_stamp_unavailable'),
+            );
+            $this->validateSelectableArchiveImage(
+                $validator,
+                'authorized_signatory_signature_archive_file_doc_num',
+                $companyId,
+                __('companies.validation.selected_signature_unavailable'),
+            );
         });
 
         $validator->after(function (Validator $validator): void {

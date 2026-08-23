@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Core\Http\Controllers\ItemLookupController;
 use Modules\Core\Http\Controllers\Select2\ItemLookupSelect2Controller;
 use Modules\Production\Http\Controllers\ProductionIdentifierController;
+use Modules\Production\Http\Controllers\ProductionOrderController;
 
 Route::middleware('auth')
     ->prefix('admin/production')
@@ -15,6 +16,13 @@ Route::middleware('auth')
         Route::get('/select2/identifiers', [ProductionIdentifierController::class, 'select2Identifiers'])
             ->middleware('can:production.identifiers.view')
             ->name('select2.identifiers');
+
+        Route::prefix('work-orders')->name('work-orders.')->controller(ProductionOrderController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:production.work_orders.view')->name('index');
+            Route::get('/{productionOrder}', 'show')->middleware('can:production.work_orders.view')->name('show');
+            Route::get('/{productionOrder}/print', 'print')->middleware('can:production.work_orders.print')->name('print');
+            Route::post('/{productionOrder}/complete', 'complete')->middleware('can:production.work_orders.complete')->name('complete');
+        });
 
         Route::prefix('identifier-types')
             ->name('identifier-types.')

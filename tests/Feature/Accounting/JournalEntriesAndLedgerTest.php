@@ -5,6 +5,7 @@ use Database\Seeders\DefaultOperatingContextSeeder;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
@@ -281,6 +282,58 @@ test('posting revalidates draft accounts before creating ledger movements', func
     $entry = JournalEntry::query()->where('doc_num', $docNum)->firstOrFail();
     expect($entry->status)->toBe(JournalEntry::StatusDraft)
         ->and($entry->is_posted)->toBeFalse();
+});
+
+test('journal lines persist gl account and cost center independently of the cost center default', function (): void {
+    $context = journalEntryContext();
+    [$debit, $credit] = journalEntryAccounts($context['company']);
+    $defaultAccount = Account::query()
+        ->forCompany($context['company']->getKey())
+        ->active()
+        ->where('is_group', false)
+        ->where('is_postable', true)
+        ->whereKeyNot([$debit->getKey(), $credit->getKey()])
+        ->orderBy('account_code')
+        ->firstOrFail();
+    $costCenter = CostCenter::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'default_account_id' => $defaultAccount->getKey(),
+        'doc_number' => 88001,
+        'doc_num' => 'CC-88001',
+        'cost_center_code' => '88001',
+        'name' => 'Production Line 1',
+        'is_group' => false,
+        'status' => 'active',
+    ]);
+    $actor = journalEntryActor(['journal_entries.create', 'journal_entries.post']);
+    $payload = journalEntryPayload($debit, $credit);
+    $payload['lines'][0]['cost_center_doc_num'] = $costCenter->doc_num;
+    $payload['lines'][1]['cost_center_doc_num'] = $costCenter->doc_num;
+
+    $entryDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.journal-entries.store'), $payload)
+        ->assertOk()
+        ->json('data.doc_num');
+    $entry = JournalEntry::query()->where('doc_num', $entryDocNum)->firstOrFail();
+    $linesBeforeDefaultChange = $entry->lines()->orderBy('line_no')->get();
+
+    expect($linesBeforeDefaultChange[0]->account_id)->toBe($debit->getKey())
+        ->and($linesBeforeDefaultChange[0]->account_id)->not->toBe($defaultAccount->getKey())
+        ->and($linesBeforeDefaultChange[0]->cost_center_id)->toBe($costCenter->getKey())
+        ->and($linesBeforeDefaultChange[1]->account_id)->toBe($credit->getKey())
+        ->and($linesBeforeDefaultChange[1]->cost_center_id)->toBe($costCenter->getKey());
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.accounting.journal-entries.post', $entry->doc_num))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $costCenter->update(['default_account_id' => $credit->getKey()]);
+    $linesAfterDefaultChange = $entry->lines()->orderBy('line_no')->get();
+
+    expect($linesAfterDefaultChange->pluck('account_id')->all())->toBe([$debit->getKey(), $credit->getKey()])
+        ->and($linesAfterDefaultChange->pluck('cost_center_id')->all())->toBe([$costCenter->getKey(), $costCenter->getKey()])
+        ->and($entry->refresh()->is_posted)->toBeTrue();
 });
 
 test('active journal route never resolves a deleted duplicate and restore collision is rejected', function (): void {

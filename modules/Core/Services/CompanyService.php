@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\Core\Exceptions\CompanyDeleteBlockedException;
 use Modules\Core\Exceptions\CompanyRestoreBlockedException;
+use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Company;
 use Modules\HR\Models\HrArea;
 use Modules\HR\Models\HrCity;
@@ -26,6 +27,8 @@ class CompanyService
         'name',
         'legal_name',
         'commercial_name',
+        'authorized_signatory_name',
+        'authorized_signatory_title',
         'status',
         'is_main',
         'notes',
@@ -70,6 +73,14 @@ class CompanyService
         'governorate_doc_num' => ['column' => 'governorate_id', 'model' => HrGovernorate::class],
         'city_doc_num' => ['column' => 'city_id', 'model' => HrCity::class],
         'area_doc_num' => ['column' => 'area_id', 'model' => HrArea::class],
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    private array $archiveFileFields = [
+        'company_stamp_archive_file_doc_num' => 'company_stamp_archive_file_id',
+        'authorized_signatory_signature_archive_file_doc_num' => 'authorized_signatory_signature_archive_file_id',
     ];
 
     public function __construct(
@@ -360,6 +371,14 @@ class CompanyService
             $values[$location['column']] = $this->resolveLocationId($location['model'], $data[$requestField] ?? null);
         }
 
+        foreach ($this->archiveFileFields as $requestField => $column) {
+            if (! array_key_exists($requestField, $data)) {
+                continue;
+            }
+
+            $values[$column] = $this->resolveArchiveFileId($data[$requestField] ?? null);
+        }
+
         if (! array_key_exists('status', $values)) {
             $values['status'] = $existing?->status ?? 'active';
         }
@@ -451,6 +470,25 @@ class CompanyService
 
         foreach ($newValues as $field => $value) {
             $current = $company->{$field};
+
+            $archiveRequestField = array_search($field, $this->archiveFileFields, true);
+
+            if (is_string($archiveRequestField)) {
+                if ((string) ($current ?? '') === (string) ($value ?? '')) {
+                    continue;
+                }
+
+                $ids = array_values(array_filter([$current, $value]));
+                $files = $ids === []
+                    ? collect()
+                    : ArchiveFile::withTrashed()->whereIn('id', $ids)->get(['id', 'doc_num'])->keyBy('id');
+                $changes[$archiveRequestField] = [
+                    'old' => $files->get($current)?->doc_num,
+                    'new' => $files->get($value)?->doc_num,
+                ];
+
+                continue;
+            }
 
             if ($field === 'is_main') {
                 if ((bool) $current !== (bool) $value) {
@@ -738,5 +776,18 @@ class CompanyService
             ->first();
 
         return $record ? (int) $record->getKey() : null;
+    }
+
+    private function resolveArchiveFileId(mixed $docNum): ?int
+    {
+        $docNum = $this->normalizeNullableString($docNum);
+
+        if ($docNum === null) {
+            return null;
+        }
+
+        return ArchiveFile::query()
+            ->where('doc_num', $docNum)
+            ->value('id');
     }
 }

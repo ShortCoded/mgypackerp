@@ -218,6 +218,16 @@
                         <div class="invalid-feedback" data-error-for="contact_person"></div>
                     </div>
 
+                    <div class="col-md-4">
+                        <label class="form-label" for="payment_terms_days">{{ __('Default payment terms (days)') }}</label>
+                        @if($isView)
+                            <x-forms.view-field for="payment_terms_days" :value="$value('payment_terms_days')" dir="ltr" />
+                        @else
+                            <input class="form-control" id="payment_terms_days" name="payment_terms_days" type="number" min="0" max="3650" value="{{ $value('payment_terms_days') }}" dir="ltr">
+                        @endif
+                        <div class="invalid-feedback" data-error-for="payment_terms_days"></div>
+                    </div>
+
                     <div class="col-xl-3 col-md-6 business-partner-location-field">
                         <label class="form-label" for="country_doc_num">{{ __('suppliers.attributes.country') }}</label>
                         @if($isView)

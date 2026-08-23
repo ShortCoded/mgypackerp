@@ -31,7 +31,7 @@ trait ValidatesProductComponentPayload
             $this->input('percentage'),
         );
         $quantityRules = $inputSource === ProductComponent::InputWeight
-            ? ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/']
+            ? $this->componentValueRules($calculationMethod)
             : ['exclude'];
         $percentageRules = $calculationMethod === ProductComponent::CalculationPercentage
             && $inputSource === ProductComponent::InputPercentage
@@ -63,6 +63,20 @@ trait ValidatesProductComponentPayload
 
         if (! $this->filled('calculation_method')) {
             $this->merge(['calculation_method' => ProductComponent::CalculationDirect]);
+        }
+
+        $calculationMethod = $this->componentStringValue($this->input('calculation_method'));
+        $inputSource = $this->componentStringValue($this->input('input_source'));
+
+        if ($calculationMethod === ProductComponent::CalculationPercentage
+            && $inputSource === ProductComponent::InputPercentage
+            && ! $this->componentCalculationValueIsPresent($this->input('percentage'))
+            && $this->componentCalculationValueIsPresent($this->input('quantity'))
+        ) {
+            $this->merge([
+                'percentage' => $this->input('quantity'),
+                'quantity' => null,
+            ]);
         }
     }
 
@@ -148,6 +162,9 @@ trait ValidatesProductComponentPayload
             && $inputSource === ProductComponent::InputPercentage
                 ? app(NumericFormatService::class)->normalizeToScale($data['percentage'] ?? null, 8)
                 : null;
+        $data['reference_component_key'] = $calculationMethod === ProductComponent::CalculationPercentage
+            ? $this->blankToNull($data['reference_component_key'] ?? null)
+            : null;
         $data['input_source'] = $inputSource;
         $data['notes'] = $this->blankToNull($data['notes'] ?? null);
 
@@ -165,7 +182,7 @@ trait ValidatesProductComponentPayload
             'component_product_doc_num' => __('products.components.component_item'),
             'unit_doc_num' => __('products.components.unit'),
             'calculation_method' => __('products.components.calculation_method'),
-            'quantity' => __('products.components.quantity'),
+            'quantity' => __($this->componentValueLabelKey()),
             'percentage' => __('products.components.percentage'),
             'reference_component_key' => __('products.components.reference_component'),
             'notes' => __('products.components.notes'),
@@ -177,14 +194,20 @@ trait ValidatesProductComponentPayload
      */
     public function messages(): array
     {
+        $valueMessagePrefix = $this->componentValueMessagePrefix();
+
         return [
             'component_product_doc_num.required' => __('products.components.component_item_required'),
             'unit_doc_num.required' => __('products.components.unit_required'),
-            'quantity.required' => __('products.components.quantity_required'),
-            'quantity.required_if' => __('products.components.quantity_required'),
-            'quantity.numeric' => __('products.components.quantity_gt_zero'),
-            'quantity.gt' => __('products.components.quantity_gt_zero'),
-            'quantity.regex' => __('products.components.quantity_precision'),
+            'quantity.required' => __("products.components.{$valueMessagePrefix}_required"),
+            'quantity.required_if' => __("products.components.{$valueMessagePrefix}_required"),
+            'quantity.numeric' => __("products.components.{$valueMessagePrefix}_gt_zero"),
+            'quantity.integer' => __('products.components.count_integer'),
+            'quantity.gt' => __("products.components.{$valueMessagePrefix}_gt_zero"),
+            'quantity.min' => __("products.components.{$valueMessagePrefix}_gt_zero"),
+            'quantity.regex' => $valueMessagePrefix === 'count'
+                ? __('products.components.count_integer')
+                : __("products.components.{$valueMessagePrefix}_precision"),
             'percentage.required' => __('products.components.percentage_required'),
             'percentage.numeric' => __('products.components.percentage_gt_zero'),
             'percentage.gt' => __('products.components.percentage_gt_zero'),
@@ -264,7 +287,7 @@ trait ValidatesProductComponentPayload
         mixed $quantity,
         mixed $percentage,
     ): ?string {
-        if ($calculationMethod === ProductComponent::CalculationDirect) {
+        if ($calculationMethod !== ProductComponent::CalculationPercentage) {
             return ProductComponent::InputWeight;
         }
 
@@ -289,6 +312,38 @@ trait ValidatesProductComponentPayload
     private function componentCalculationValueIsPresent(mixed $value): bool
     {
         return $value !== null && (! is_string($value) || trim($value) !== '');
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function componentValueRules(string $calculationMethod): array
+    {
+        if ($calculationMethod === ProductComponent::CalculationCount) {
+            return ['bail', 'required', 'numeric', 'gt:0', 'regex:/^\d{1,10}(?:\.0{1,8})?$/'];
+        }
+
+        return ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/'];
+    }
+
+    private function componentValueLabelKey(): string
+    {
+        return match ($this->componentStringValue($this->input('calculation_method'))) {
+            ProductComponent::CalculationPercentage => 'products.components.percentage_value',
+            ProductComponent::CalculationQuantity => 'products.components.quantity_value',
+            ProductComponent::CalculationCount => 'products.components.count_value',
+            default => 'products.components.weight',
+        };
+    }
+
+    private function componentValueMessagePrefix(): string
+    {
+        return match ($this->componentStringValue($this->input('calculation_method'))) {
+            ProductComponent::CalculationPercentage => 'percentage',
+            ProductComponent::CalculationQuantity => 'quantity',
+            ProductComponent::CalculationCount => 'count',
+            default => 'weight',
+        };
     }
 
     private function componentStringValue(mixed $value): string

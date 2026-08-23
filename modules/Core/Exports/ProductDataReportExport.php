@@ -67,7 +67,8 @@ class ProductDataReportExport extends DefaultValueBinder implements FromCollecti
 
         if ($this->report->mode($this->filters) === ProductDataReport::ModeDetailed) {
             return [
-                'G' => $this->numbers->excelNumberFormat(8),
+                'H' => $this->numbers->excelNumberFormat(8),
+                'I' => $this->numbers->excelNumberFormat(8),
             ];
         }
 
@@ -98,7 +99,7 @@ class ProductDataReportExport extends DefaultValueBinder implements FromCollecti
         }
 
         return $this->report->mode($this->filters) === ProductDataReport::ModeDetailed
-            ? ['G']
+            ? ['H', 'I']
             : ['M', 'P'];
     }
 }

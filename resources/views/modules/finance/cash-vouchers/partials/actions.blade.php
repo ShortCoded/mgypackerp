@@ -7,9 +7,10 @@
     $canRestore = $isTrashed && $record->isDeletable() && auth()->user()?->can($resource.'.restore') && $record->doc_num !== null;
     $canApprove = ! $isTrashed && $record->isDraft() && auth()->user()?->can($resource.'.approve') && $record->doc_num !== null;
     $canCancel = ! $isTrashed && $record->isApproved() && auth()->user()?->can($resource.'.cancel') && $record->doc_num !== null;
+    $canPrint = ! $isTrashed && auth()->user()?->can($resource.'.print') && $record->doc_num !== null;
 @endphp
 
-@if ((! $isTrashed && ($canView || $canEdit || $canClone || $canApprove || $canCancel || $canDelete)) || ($isTrashed && ($canView || $canRestore)))
+@if ((! $isTrashed && ($canView || $canEdit || $canClone || $canApprove || $canCancel || $canPrint || $canDelete)) || ($isTrashed && ($canView || $canRestore)))
     <div class="dropstart font-sans-serif position-static d-inline-block">
         <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal float-end" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-haspopup="true" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}">
             <span class="fas fa-ellipsis-h fs-10"></span>
@@ -39,6 +40,11 @@
                 @if ($canClone)
                     <a class="dropdown-item js-clone-record" href="{{ route($routePrefix.'.clone', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">
                         {{ __('common.actions.clone_record') }}
+                    </a>
+                @endif
+                @if ($canPrint)
+                    <a class="dropdown-item" href="{{ route($routePrefix.'.print', $record->doc_num) }}" target="_blank" rel="noopener">
+                        {{ __($translationKey.'.actions.print') }}
                     </a>
                 @endif
                 @if ($canApprove || $canCancel || $canDelete)

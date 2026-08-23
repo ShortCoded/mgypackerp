@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Brick\Math\BigDecimal;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -24,6 +25,7 @@ use Modules\Core\Services\ArchiveFileUsageService;
 use Modules\Core\Services\ArchiveFolderService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductImageResolver;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
@@ -1852,14 +1854,112 @@ test('product components can be submitted while creating product master', functi
         ->and($component->notes)->toBe('Desktop board');
 });
 
-test('percentage bom rows round trip through product store edit and update endpoints', function () {
+test('product create accepts decimal quantity and rejects fractional count component values', function () {
+    config()->set('products.image_required', false);
+    $actor = productCrudActor(['products.create', 'products.view', 'products.edit']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 713,
+        'doc_num' => 'Unit-00713',
+        'name' => 'Piece',
+        'status' => 'active',
+    ]);
+    $quantityMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 712,
+        'doc_num' => 'RawMaterial-00712',
+        'name' => 'Quantity HTTP Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $countMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 713,
+        'doc_num' => 'Packaging-00713',
+        'name' => 'Count HTTP Material',
+        'item_classification' => Product::ClassificationPackaging,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+
+    $valid = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Quantity Count HTTP Product',
+            'components' => [
+                [
+                    'client_key' => (string) Str::uuid(),
+                    'component_product_doc_num' => $quantityMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationQuantity,
+                    'quantity' => '1.25000001',
+                    'reference_component_key' => (string) Str::uuid(),
+                ],
+                [
+                    'client_key' => (string) Str::uuid(),
+                    'component_product_doc_num' => $countMaterial->doc_num,
+                    'unit_doc_num' => $unit->doc_num,
+                    'calculation_method' => ProductComponent::CalculationCount,
+                    'quantity' => '3',
+                ],
+            ],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $product = Product::query()->where('doc_num', $valid->json('data.doc_num'))->firstOrFail();
+    $components = ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->get()
+        ->keyBy('calculation_method');
+
+    expect((string) $components[ProductComponent::CalculationQuantity]->quantity)->toBe('1.25000001')
+        ->and($components[ProductComponent::CalculationQuantity]->reference_component_id)->toBeNull()
+        ->and((string) $components[ProductComponent::CalculationCount]->quantity)->toBe('3.00000000');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), productPayload([
+            'name' => 'Rejected Fractional Count Product',
+            'components' => [[
+                'client_key' => (string) Str::uuid(),
+                'component_product_doc_num' => $countMaterial->doc_num,
+                'unit_doc_num' => $unit->doc_num,
+                'calculation_method' => ProductComponent::CalculationCount,
+                'quantity' => '1.5',
+            ]],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['components.0.quantity']);
+
+    expect(Product::query()->where('name', 'Rejected Fractional Count Product')->exists())->toBeFalse();
+});
+
+test('all bom methods save reload and recalculate from the reference effective weight', function () {
     config()->set('products.image_required', false);
     $actor = productCrudActor(['products.create', 'products.edit', 'products.view']);
-    $unit = ItemUnit::query()->create([
+    $kilogram = ItemUnit::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 714,
         'doc_num' => 'Unit-00714',
         'name' => 'Kilogram',
+        'status' => 'active',
+    ]);
+    $quantityPack = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 715,
+        'doc_num' => 'Unit-00715',
+        'name' => 'Quantity Pack',
+        'equivalent_value' => '0.5',
+        'equivalent_unit_id' => $kilogram->getKey(),
+        'status' => 'active',
+    ]);
+    $countPiece = ItemUnit::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 716,
+        'doc_num' => 'Unit-00716',
+        'name' => 'Count Piece',
+        'equivalent_value' => '0.25',
+        'equivalent_unit_id' => $kilogram->getKey(),
         'status' => 'active',
     ]);
     $baseMaterial = Product::query()->create([
@@ -1868,7 +1968,7 @@ test('percentage bom rows round trip through product store edit and update endpo
         'doc_num' => 'RawMaterial-00714',
         'name' => 'HTTP Base Material',
         'item_classification' => Product::ClassificationRawMaterial,
-        'item_unit_id' => $unit->getKey(),
+        'item_unit_id' => $kilogram->getKey(),
         'status' => 'active',
     ]);
     $dependentMaterial = Product::query()->create([
@@ -1877,11 +1977,31 @@ test('percentage bom rows round trip through product store edit and update endpo
         'doc_num' => 'RawMaterial-00715',
         'name' => 'HTTP Dependent Material',
         'item_classification' => Product::ClassificationRawMaterial,
-        'item_unit_id' => $unit->getKey(),
+        'item_unit_id' => $kilogram->getKey(),
+        'status' => 'active',
+    ]);
+    $quantityMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 716,
+        'doc_num' => 'RawMaterial-00716',
+        'name' => 'HTTP Quantity Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $quantityPack->getKey(),
+        'status' => 'active',
+    ]);
+    $countMaterial = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 717,
+        'doc_num' => 'RawMaterial-00717',
+        'name' => 'HTTP Count Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $countPiece->getKey(),
         'status' => 'active',
     ]);
     $baseClientKey = (string) Str::uuid();
     $dependentClientKey = (string) Str::uuid();
+    $quantityClientKey = (string) Str::uuid();
+    $countClientKey = (string) Str::uuid();
 
     $store = $this->actingAs($actor)
         ->postJson(route('admin.products.store'), productPayload([
@@ -1890,19 +2010,34 @@ test('percentage bom rows round trip through product store edit and update endpo
                 [
                     'client_key' => $baseClientKey,
                     'component_product_doc_num' => $baseMaterial->doc_num,
-                    'unit_doc_num' => $unit->doc_num,
+                    'unit_doc_num' => $kilogram->doc_num,
                     'calculation_method' => ProductComponent::CalculationDirect,
-                    'quantity' => '100',
+                    'quantity' => '130',
                     'input_source' => ProductComponent::InputWeight,
                 ],
                 [
                     'client_key' => $dependentClientKey,
                     'component_product_doc_num' => $dependentMaterial->doc_num,
-                    'unit_doc_num' => $unit->doc_num,
+                    'unit_doc_num' => $kilogram->doc_num,
                     'calculation_method' => ProductComponent::CalculationPercentage,
-                    'quantity' => '10',
-                    'percentage' => ['stale-percentage'],
+                    'quantity' => '2',
                     'reference_component_key' => $baseClientKey,
+                    'input_source' => ProductComponent::InputPercentage,
+                ],
+                [
+                    'client_key' => $quantityClientKey,
+                    'component_product_doc_num' => $quantityMaterial->doc_num,
+                    'unit_doc_num' => $quantityPack->doc_num,
+                    'calculation_method' => ProductComponent::CalculationQuantity,
+                    'quantity' => '3.5',
+                    'input_source' => ProductComponent::InputWeight,
+                ],
+                [
+                    'client_key' => $countClientKey,
+                    'component_product_doc_num' => $countMaterial->doc_num,
+                    'unit_doc_num' => $countPiece->doc_num,
+                    'calculation_method' => ProductComponent::CalculationCount,
+                    'quantity' => '4',
                     'input_source' => ProductComponent::InputWeight,
                 ],
             ],
@@ -1911,26 +2046,53 @@ test('percentage bom rows round trip through product store edit and update endpo
         ->assertJsonPath('success', true);
 
     $product = Product::query()->where('doc_num', $store->json('data.doc_num'))->firstOrFail();
-    $base = ProductComponent::query()
+    $components = ProductComponent::query()
         ->where('product_id', $product->getKey())
-        ->where('component_product_id', $baseMaterial->getKey())
-        ->firstOrFail();
-    $dependent = ProductComponent::query()
-        ->where('product_id', $product->getKey())
-        ->where('component_product_id', $dependentMaterial->getKey())
-        ->firstOrFail();
+        ->with(['componentProduct', 'unit'])
+        ->get()
+        ->keyBy('calculation_method');
+    $base = $components[ProductComponent::CalculationDirect];
+    $dependent = $components[ProductComponent::CalculationPercentage];
+    $quantity = $components[ProductComponent::CalculationQuantity];
+    $count = $components[ProductComponent::CalculationCount];
+    $totalInKilograms = function () use ($product, $baseMaterial, $kilogram): string {
+        $conversions = app(ProductComponentUnitConversionService::class);
 
-    expect((string) $base->quantity)->toBe('100.00000000')
-        ->and((string) $dependent->quantity)->toBe('10.00000000')
-        ->and((string) $dependent->percentage)->toBe('10.00000000')
-        ->and($dependent->reference_component_id)->toBe($base->getKey());
+        return (string) ProductComponent::query()
+            ->where('product_id', $product->getKey())
+            ->with(['componentProduct', 'unit'])
+            ->get()
+            ->reduce(function (BigDecimal $total, ProductComponent $component) use ($conversions, $baseMaterial, $kilogram): BigDecimal {
+                $converted = $conversions->convert(
+                    $component->quantity,
+                    $component->componentProduct,
+                    $component->unit,
+                    $baseMaterial,
+                    $kilogram,
+                    8,
+                );
+
+                return $total->plus($converted);
+            }, BigDecimal::zero())
+            ->toScale(8);
+    };
+
+    expect((string) $base->quantity)->toBe('130.00000000')
+        ->and((string) $dependent->quantity)->toBe('2.60000000')
+        ->and((string) $dependent->percentage)->toBe('2.00000000')
+        ->and($dependent->reference_component_id)->toBe($base->getKey())
+        ->and((string) $quantity->quantity)->toBe('3.50000000')
+        ->and((string) $count->quantity)->toBe('4.00000000')
+        ->and($totalInKilograms())->toBe('135.35000000');
 
     $this->actingAs($actor)
         ->get(route('admin.products.edit', $product->doc_num))
         ->assertOk()
         ->assertSee('"calculation_method":"percentage"', false)
-        ->assertSee('"quantity_raw":"10.00000000"', false)
-        ->assertSee('"percentage_raw":"10.00000000"', false);
+        ->assertSee('"quantity_raw":"2.60000000"', false)
+        ->assertSee('"percentage_raw":"2.00000000"', false)
+        ->assertSee('"calculation_method":"quantity"', false)
+        ->assertSee('"calculation_method":"count"', false);
 
     $this->actingAs($actor)
         ->get(route('admin.products.show', $product->doc_num))
@@ -1939,49 +2101,92 @@ test('percentage bom rows round trip through product store edit and update endpo
         ->assertSee($baseMaterial->name)
         ->assertSee($dependentMaterial->name);
 
-    expect(file_get_contents(public_path('assets/js/modules/Core/products.js')))
-        ->toContain("referenceText + ' · ' + interpolateMessage(message('componentFormulaTemplate')");
+    $javascript = file_get_contents(public_path('assets/js/modules/Core/products.js'));
+
+    expect($javascript)
+        ->toContain('var referenceUnitWeight = decimalMultiply(referenceResult.quantity, percentageRatio, componentWorkingScale)')
+        ->toContain("if (targetUnit !== '')")
+        ->toContain('reference_weight: formatDecimal(referenceResult.quantity)')
+        ->not->toContain('convertedReferenceWeight');
+
+    $updateComponents = fn (string $weight, string $percentage): array => [
+        [
+            'public_id' => $base->public_id,
+            'client_key' => $base->public_id,
+            'component_product_doc_num' => $baseMaterial->doc_num,
+            'unit_doc_num' => $kilogram->doc_num,
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => $weight,
+            'input_source' => ProductComponent::InputWeight,
+        ],
+        [
+            'public_id' => $dependent->public_id,
+            'client_key' => $dependent->public_id,
+            'component_product_doc_num' => $dependentMaterial->doc_num,
+            'unit_doc_num' => $kilogram->doc_num,
+            'calculation_method' => ProductComponent::CalculationPercentage,
+            'quantity' => $percentage,
+            'reference_component_key' => $base->public_id,
+            'input_source' => ProductComponent::InputPercentage,
+        ],
+        [
+            'public_id' => $quantity->public_id,
+            'client_key' => $quantity->public_id,
+            'component_product_doc_num' => $quantityMaterial->doc_num,
+            'unit_doc_num' => $quantityPack->doc_num,
+            'calculation_method' => ProductComponent::CalculationQuantity,
+            'quantity' => '3.5',
+            'input_source' => ProductComponent::InputWeight,
+        ],
+        [
+            'public_id' => $count->public_id,
+            'client_key' => $count->public_id,
+            'component_product_doc_num' => $countMaterial->doc_num,
+            'unit_doc_num' => $countPiece->doc_num,
+            'calculation_method' => ProductComponent::CalculationCount,
+            'quantity' => '4',
+            'input_source' => ProductComponent::InputWeight,
+        ],
+    ];
 
     $this->actingAs($actor)
         ->putJson(route('admin.products.update', $product->doc_num), productPayload([
             'name' => $product->name,
-            'components' => [
-                [
-                    'public_id' => $base->public_id,
-                    'client_key' => $base->public_id,
-                    'component_product_doc_num' => $baseMaterial->doc_num,
-                    'unit_doc_num' => $unit->doc_num,
-                    'calculation_method' => ProductComponent::CalculationDirect,
-                    'quantity' => '200',
-                    'input_source' => ProductComponent::InputWeight,
-                ],
-                [
-                    'public_id' => $dependent->public_id,
-                    'client_key' => $dependent->public_id,
-                    'component_product_doc_num' => $dependentMaterial->doc_num,
-                    'unit_doc_num' => $unit->doc_num,
-                    'calculation_method' => ProductComponent::CalculationPercentage,
-                    'quantity' => ['stale-weight'],
-                    'percentage' => '10',
-                    'reference_component_key' => $base->public_id,
-                    'input_source' => ProductComponent::InputPercentage,
-                ],
-            ],
+            'components' => $updateComponents('200', '2'),
         ]))
         ->assertOk()
         ->assertJsonPath('success', true);
 
     expect((string) $base->refresh()->quantity)->toBe('200.00000000')
-        ->and((string) $dependent->refresh()->quantity)->toBe('20.00000000')
-        ->and((string) $dependent->percentage)->toBe('10.00000000')
+        ->and((string) $dependent->refresh()->quantity)->toBe('4.00000000')
+        ->and((string) $dependent->percentage)->toBe('2.00000000')
         ->and($dependent->reference_component_id)->toBe($base->getKey())
-        ->and((string) $dependent->quantity)->not->toContain(',');
+        ->and($totalInKilograms())->toBe('206.75000000');
 
     $this->actingAs($actor)
         ->get(route('admin.products.edit', $product->doc_num))
         ->assertOk()
-        ->assertSee('"quantity_raw":"20.00000000"', false)
-        ->assertSee('"percentage_raw":"10.00000000"', false);
+        ->assertSee('"quantity_raw":"4.00000000"', false)
+        ->assertSee('"percentage_raw":"2.00000000"', false);
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.products.update', $product->doc_num), productPayload([
+            'name' => $product->name,
+            'components' => $updateComponents('200', '5'),
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect((string) $dependent->refresh()->quantity)->toBe('10.00000000')
+        ->and((string) $dependent->percentage)->toBe('5.00000000')
+        ->and($totalInKilograms())->toBe('212.75000000');
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.edit', $product->doc_num))
+        ->assertOk()
+        ->assertSee('"quantity_raw":"10.00000000"', false)
+        ->assertSee('"percentage_raw":"5.00000000"', false)
+        ->assertSee('"reference_component_key":"'.$base->public_id.'"', false);
 });
 
 test('empty submitted product component rows are ignored', function () {

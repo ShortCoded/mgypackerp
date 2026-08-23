@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\DataTables\ChequesDataTable;
@@ -197,11 +198,15 @@ class ChequeController extends Controller
         ]);
     }
 
-    public function print(Request $request, string $cheque): JsonResponse
+    public function print(Request $request, string $cheque, CompanyPrintIdentityService $printIdentities): View
     {
-        $this->findInCurrentCompany($request, $cheque, true);
+        $record = $this->findInCurrentCompany($request, $cheque, true);
+        $record->loadMissing(['company', 'bankAccount.bank', 'bankAccount.account', 'currency', 'lines.account']);
 
-        return response()->json(['success' => false, 'message' => __('cheques.messages.print_not_implemented')], 501);
+        return view('modules.finance.cheques.print', [
+            'record' => $record,
+            'companyPrintIdentity' => $printIdentities->forCompany($record->company),
+        ]);
     }
 
     public function updateDocumentNumberSettings(UpdateChequeDocumentNumberSettingsRequest $request, FinanceDocumentNumberSettingsService $settings): JsonResponse

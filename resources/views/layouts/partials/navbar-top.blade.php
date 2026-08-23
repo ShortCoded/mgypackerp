@@ -4,7 +4,7 @@
     </button>
     @include('layouts.partials.brand', ['class' => 'me-1 me-sm-3'])
     <div class="collapse navbar-collapse scrollbar" id="navbarStandard">
-        <ul class="navbar-nav" data-top-nav-dropdowns="data-top-nav-dropdowns">
+        <ul class="navbar-nav" data-erp-top-navigation>
             @include('layouts.partials.menu.top-items', ['items' => $appMenuItems ?? app(\Modules\Core\Services\MenuService::class)->getMenu()])
         </ul>
     </div>

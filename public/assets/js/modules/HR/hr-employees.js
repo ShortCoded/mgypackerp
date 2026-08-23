@@ -1217,14 +1217,9 @@
     }
 
     function resetEmployeeSignaturePicker($form) {
-        const $field = $form.find('#hr-employee-signature-picker-field');
-
-        if ($field.length === 0) {
-            return;
+        if (window.AppArchiveImagePicker) {
+            window.AppArchiveImagePicker.reset($form);
         }
-
-        $form.find('[name="signature_archive_file_doc_num"]').val('').trigger('change');
-        clearEmployeePhotoPreview($field);
     }
 
     function handleEmployeePhotoSelected(payload) {
@@ -1266,45 +1261,6 @@
         clearEmployeePhotoPreview($field);
     }
 
-    function handleEmployeeSignatureSelected(payload) {
-        const data = payload || {};
-        const file = data.file || data;
-        const config = data.config || {};
-
-        if (config.collection !== 'employee_signature' || !file) {
-            return;
-        }
-
-        const publicId = String(file.public_id || data.public_id || '').trim();
-        const $hidden = config.targetInput ? $(config.targetInput).first() : $('[name="signature_archive_file_doc_num"]').first();
-        const $form = $hidden.closest('form');
-        const $field = config.uploader ? $(config.uploader).first() : $form.find('#hr-employee-signature-picker-field');
-
-        if (publicId === '' || $hidden.length === 0 || $field.length === 0) {
-            return;
-        }
-
-        $hidden.val(publicId).trigger('change').removeClass('is-invalid');
-        $form.find('[data-error-for="signature_archive_file_doc_num"]').text('');
-        renderEmployeePhotoPreview($field, file, data);
-    }
-
-    function handleEmployeeSignatureDeleted(payload) {
-        const data = payload || {};
-        const config = data.config || {};
-
-        if (config.collection !== 'employee_signature' || !data.was_selected) {
-            return;
-        }
-
-        const $hidden = config.targetInput ? $(config.targetInput).first() : $('[name="signature_archive_file_doc_num"]').first();
-        const $form = $hidden.closest('form');
-        const $field = config.uploader ? $(config.uploader).first() : $form.find('#hr-employee-signature-picker-field');
-
-        $hidden.val('').trigger('change');
-        clearEmployeePhotoPreview($field);
-    }
-
     function initFilePickerIntegrations() {
         $(document)
             .off('file-picker:selected.hrEmployeePhoto', '.js-product-image-picker-trigger')
@@ -1324,25 +1280,6 @@
                 const $field = $(this).closest('.js-product-image-picker-field');
 
                 $form.find('[name="photo_archive_file_doc_num"]').val('').trigger('change');
-                clearEmployeePhotoPreview($field);
-            })
-            .off('file-picker:selected.hrEmployeeSignature', '.js-product-image-picker-trigger')
-            .on('file-picker:selected.hrEmployeeSignature', '.js-product-image-picker-trigger', function (event, payload) {
-                handleEmployeeSignatureSelected(payload);
-            })
-            .off('file-picker:deleted.hrEmployeeSignature', '.js-product-image-picker-trigger')
-            .on('file-picker:deleted.hrEmployeeSignature', '.js-product-image-picker-trigger', function (event, payload) {
-                handleEmployeeSignatureDeleted(payload);
-            })
-            .off('click.hrEmployeeSignatureClear', '.js-hr-employee-signature-field .js-product-image-remove')
-            .on('click.hrEmployeeSignatureClear', '.js-hr-employee-signature-field .js-product-image-remove', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const $form = $(this).closest('form');
-                const $field = $(this).closest('.js-product-image-picker-field');
-
-                $form.find('[name="signature_archive_file_doc_num"]').val('').trigger('change');
                 clearEmployeePhotoPreview($field);
             })
             .off('file-picker:selected.hrEmployeeDocument', '.js-hr-document-file-picker')

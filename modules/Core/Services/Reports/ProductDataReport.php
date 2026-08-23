@@ -9,6 +9,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
@@ -93,7 +94,9 @@ class ProductDataReport
                 ...$this->productColumns(),
                 'report_components.id as component_line_id',
                 'report_components.public_id as component_public_id',
+                'report_components.calculation_method as component_calculation_method',
                 'report_components.quantity as component_quantity',
+                'report_components.percentage as component_percentage',
                 'report_components.notes as component_notes',
                 'report_components.created_at as component_created_at',
                 'component_products.doc_num as component_doc_num',
@@ -108,6 +111,7 @@ class ProductDataReport
             ])
             ->withCasts([
                 'component_quantity' => 'decimal:8',
+                'component_percentage' => 'decimal:8',
                 'component_equivalent_value' => 'decimal:6',
             ])
             ->withCount('components');
@@ -236,6 +240,8 @@ class ProductDataReport
             __('product_data_report.fields.component_doc_num'),
             __('product_data_report.fields.component_name'),
             __('product_data_report.fields.component_classification'),
+            __('product_data_report.fields.component_calculation_method'),
+            __('product_data_report.fields.component_calculation_value'),
             __('product_data_report.fields.component_quantity'),
             __('product_data_report.fields.component_unit'),
             __('product_data_report.fields.component_equivalent'),
@@ -258,6 +264,8 @@ class ProductDataReport
                 $display['component_doc_num'],
                 $display['component_name'],
                 $display['component_classification'],
+                $display['component_calculation_method'],
+                $display['component_calculation_value'],
                 $display['component_quantity'],
                 $display['component_unit'],
                 $display['component_equivalent'],
@@ -299,6 +307,8 @@ class ProductDataReport
                 $this->plainText($row->component_doc_num),
                 $this->plainText($row->component_name),
                 $this->classificationLabel($row->component_classification ?? null),
+                $this->componentCalculationMethodLabel($row->component_calculation_method ?? null),
+                $this->canonicalDecimal($this->componentCalculationValue($row)),
                 $this->canonicalDecimal($row->component_quantity ?? null),
                 $this->lookupLabel($row->component_unit_doc_num ?? null, $row->component_unit_name ?? null),
                 $this->canonicalEquivalentLabel($row->component_equivalent_value ?? null, $row->component_equivalent_unit_doc_num ?? null, $row->component_equivalent_unit_name ?? null),
@@ -354,6 +364,8 @@ class ProductDataReport
             'component_doc_num' => $this->plainText($row->component_doc_num),
             'component_name' => $this->plainText($row->component_name),
             'component_classification' => $this->classificationLabel($row->component_classification ?? null),
+            'component_calculation_method' => $this->componentCalculationMethodLabel($row->component_calculation_method ?? null),
+            'component_calculation_value' => $this->quantityLabel($this->componentCalculationValue($row)),
             'component_quantity' => $this->quantityLabel($row->component_quantity ?? null),
             'component_unit' => $this->lookupLabel($row->component_unit_doc_num ?? null, $row->component_unit_name ?? null),
             'component_equivalent' => $this->equivalentLabel($row->component_equivalent_value ?? null, $row->component_equivalent_unit_doc_num ?? null, $row->component_equivalent_unit_name ?? null),
@@ -742,6 +754,7 @@ class ProductDataReport
                 'component_products.name',
                 'component_products.barcode',
                 'component_products.item_classification',
+                'report_components.calculation_method',
                 'component_units.doc_num',
                 'component_units.name',
                 'component_product_units.doc_num',
@@ -932,6 +945,27 @@ class ProductDataReport
         }
 
         return $this->numbers->format($value);
+    }
+
+    private function componentCalculationMethodLabel(mixed $method): string
+    {
+        $method = trim((string) $method);
+        $key = match ($method) {
+            ProductComponent::CalculationDirect => 'products.components.direct',
+            ProductComponent::CalculationPercentage => 'products.components.percentage',
+            ProductComponent::CalculationQuantity => 'products.components.quantity',
+            ProductComponent::CalculationCount => 'products.components.count',
+            default => null,
+        };
+
+        return $key === null ? $method : __($key);
+    }
+
+    private function componentCalculationValue(Product $row): mixed
+    {
+        return $row->component_calculation_method === ProductComponent::CalculationPercentage
+            ? $row->component_percentage
+            : $row->component_quantity;
     }
 
     private function canonicalDecimal(mixed $value): ?string

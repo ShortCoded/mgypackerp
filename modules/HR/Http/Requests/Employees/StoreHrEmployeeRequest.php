@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
+use Modules\Core\Http\Requests\Concerns\ValidatesSelectableArchiveImages;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
@@ -20,6 +21,7 @@ use Modules\HR\Models\HrSection;
 class StoreHrEmployeeRequest extends FormRequest
 {
     use NormalizesNumericInput;
+    use ValidatesSelectableArchiveImages;
 
     /**
      * @var list<string>
@@ -347,18 +349,12 @@ class StoreHrEmployeeRequest extends FormRequest
 
     protected function validateSelectedSignature(Validator $validator): void
     {
-        if (! $this->filled('signature_archive_file_doc_num')) {
-            return;
-        }
-
-        $companyId = $this->companyId();
-        $file = $companyId
-            ? app(FilePickerService::class)->selectableFileByPublicId((string) $this->input('signature_archive_file_doc_num'), $companyId, FilePickerService::AcceptImage)
-            : null;
-
-        if (! $file) {
-            $validator->errors()->add('signature_archive_file_doc_num', __('hr.employees.validation.selected_signature_unavailable'));
-        }
+        $this->validateSelectableArchiveImage(
+            $validator,
+            'signature_archive_file_doc_num',
+            $this->companyId(),
+            __('hr.employees.validation.selected_signature_unavailable'),
+        );
     }
 
     protected function validateCurrencyAndPayBasis(Validator $validator): void

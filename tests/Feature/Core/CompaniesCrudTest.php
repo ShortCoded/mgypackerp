@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
+use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrArea;
@@ -46,6 +47,32 @@ function companyPayload(array $overrides = []): array
         'notes' => 'Core company notes',
         ...$overrides,
     ];
+}
+
+function companyAuthorizationImage(Company $company, string $docNum, string $fileName): ArchiveFile
+{
+    static $documentNumber = 900;
+
+    $documentNumber++;
+    $path = 'tests/company-authorization/'.$fileName;
+    Storage::disk('public')->put($path, 'image-content');
+
+    return ArchiveFile::query()->create([
+        'doc_number' => $documentNumber,
+        'doc_num' => $docNum,
+        'attachable_type' => (new Company)->getMorphClass(),
+        'attachable_id' => $company->getKey(),
+        'module' => 'core',
+        'record_type' => 'company_authorization',
+        'hidden_from_picker' => false,
+        'original_name' => $fileName,
+        'stored_name' => $fileName,
+        'disk' => 'public',
+        'path' => $path,
+        'mime_type' => 'image/png',
+        'extension' => 'png',
+        'size_bytes' => 13,
+    ]);
 }
 
 beforeEach(function (): void {
@@ -88,6 +115,10 @@ test('companies routes render index without internal ids', function () {
 test('companies schema uses document number as the company reference without separate code', function () {
     expect(Schema::hasColumn('companies', 'doc_number'))->toBeTrue()
         ->and(Schema::hasColumn('companies', 'doc_num'))->toBeTrue()
+        ->and(Schema::hasColumn('companies', 'authorized_signatory_name'))->toBeTrue()
+        ->and(Schema::hasColumn('companies', 'authorized_signatory_title'))->toBeTrue()
+        ->and(Schema::hasColumn('companies', 'company_stamp_archive_file_id'))->toBeTrue()
+        ->and(Schema::hasColumn('companies', 'authorized_signatory_signature_archive_file_id'))->toBeTrue()
         ->and(Schema::hasColumn('companies', 'code'))->toBeFalse();
 });
 
@@ -261,7 +292,7 @@ test('company update and edit remain available when configured company limit is 
 });
 
 test('company form uses separated cards and Falcon upload sections', function () {
-    $actor = coreCompanyCrudActor(['companies.create', 'companies.document_number.control', 'companies.main.control']);
+    $actor = coreCompanyCrudActor(['companies.create', 'companies.document_number.control', 'companies.main.control', 'file_manager.view']);
     $logoAccept = collect(config('archive.logo.allowed_extensions', ['jpg', 'jpeg', 'png', 'webp']))
         ->map(fn (string $extension): string => '.'.ltrim($extension, '.'))
         ->implode(',');
@@ -273,6 +304,7 @@ test('company form uses separated cards and Falcon upload sections', function ()
         ->get(route('admin.companies.create'))
         ->assertOk()
         ->assertSee(__('companies.sections.basic_information'))
+        ->assertSee(__('companies.sections.signature_authorization'))
         ->assertSee(__('companies.sections.legal_tax_information'))
         ->assertSee(__('companies.sections.contact_information'))
         ->assertSee(__('companies.sections.address'))
@@ -286,6 +318,12 @@ test('company form uses separated cards and Falcon upload sections', function ()
         ->assertSee('accept="'.$logoAccept.'"', false)
         ->assertSee('for="company-logo"', false)
         ->assertSee('name="favicon"', false)
+        ->assertSee('name="company_stamp_archive_file_doc_num"', false)
+        ->assertSee('name="authorized_signatory_name"', false)
+        ->assertSee('name="authorized_signatory_title"', false)
+        ->assertSee('name="authorized_signatory_signature_archive_file_doc_num"', false)
+        ->assertSee('data-picker-collection="company_stamp"', false)
+        ->assertSee('data-picker-collection="company_authorized_signature"', false)
         ->assertSee('for="company-favicon"', false)
         ->assertSee('accept="'.$faviconAccept.'"', false)
         ->assertSee(__('companies.favicon.help'))
@@ -314,6 +352,110 @@ test('company form uses separated cards and Falcon upload sections', function ()
         ->assertDontSee('currency_code', false)
         ->assertDontSee('fiscal_year_start_month', false)
         ->assertDontSee('vat_rate', false);
+});
+
+test('company authorization identity hydrates replaces removes validates and preserves no-op updates', function (): void {
+    Storage::fake('public');
+
+    $actor = coreCompanyCrudActor(['companies.view', 'companies.edit', 'file_manager.view']);
+    $company = Company::factory()->main()->create([
+        'name' => 'Authorization Company',
+        'email' => 'authorization-company@example.com',
+    ]);
+    $stamp = companyAuthorizationImage($company, 'ARCH-STAMP-001', 'company-stamp.png');
+    $signature = companyAuthorizationImage($company, 'ARCH-SIGN-001', 'authorized-signature.png');
+    $replacementStamp = companyAuthorizationImage($company, 'ARCH-STAMP-002', 'replacement-stamp.png');
+    $replacementSignature = companyAuthorizationImage($company, 'ARCH-SIGN-002', 'replacement-signature.png');
+
+    $payload = [
+        'name' => $company->name,
+        'email' => $company->email,
+        'status' => $company->status,
+        'authorized_signatory_name' => 'Nadia Hassan',
+        'authorized_signatory_title' => 'Finance Director',
+        'company_stamp_archive_file_doc_num' => $stamp->doc_num,
+        'authorized_signatory_signature_archive_file_doc_num' => $signature->doc_num,
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.companies.update', $company->doc_num), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $company->refresh();
+
+    expect($company->authorized_signatory_name)->toBe('Nadia Hassan')
+        ->and($company->authorized_signatory_title)->toBe('Finance Director')
+        ->and($company->company_stamp_archive_file_id)->toBe($stamp->getKey())
+        ->and($company->authorized_signatory_signature_archive_file_id)->toBe($signature->getKey());
+
+    $activityProperties = Activity::query()
+        ->where('action', 'companies.update')
+        ->latest('id')
+        ->firstOrFail()
+        ->properties
+        ->toArray();
+
+    expect(data_get($activityProperties, 'changes.company_stamp_archive_file_doc_num.new'))->toBe($stamp->doc_num)
+        ->and(data_get($activityProperties, 'changes.authorized_signatory_signature_archive_file_doc_num.new'))->toBe($signature->doc_num)
+        ->and(json_encode($activityProperties))->not->toContain('company_stamp_archive_file_id')
+        ->and(json_encode($activityProperties))->not->toContain('authorized_signatory_signature_archive_file_id');
+
+    foreach (['admin.companies.edit', 'admin.companies.show'] as $routeName) {
+        $this->actingAs($actor)
+            ->get(route($routeName, $company->doc_num))
+            ->assertOk()
+            ->assertSee('Nadia Hassan')
+            ->assertSee('Finance Director')
+            ->assertSee($stamp->doc_num)
+            ->assertSee($signature->doc_num)
+            ->assertSee(route('admin.file-manager.files.preview', $stamp->doc_num), false)
+            ->assertSee(route('admin.file-manager.files.preview', $signature->doc_num), false);
+    }
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.companies.update', $company->doc_num), $payload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.companies.update', $company->doc_num), [
+            ...$payload,
+            'company_stamp_archive_file_doc_num' => $replacementStamp->doc_num,
+            'authorized_signatory_signature_archive_file_doc_num' => $replacementSignature->doc_num,
+        ])
+        ->assertOk();
+
+    expect($company->refresh()->company_stamp_archive_file_id)->toBe($replacementStamp->getKey())
+        ->and($company->authorized_signatory_signature_archive_file_id)->toBe($replacementSignature->getKey());
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.companies.update', $company->doc_num), [
+            ...$payload,
+            'company_stamp_archive_file_doc_num' => '',
+            'authorized_signatory_signature_archive_file_doc_num' => '',
+        ])
+        ->assertOk();
+
+    expect($company->refresh()->company_stamp_archive_file_id)->toBeNull()
+        ->and($company->authorized_signatory_signature_archive_file_id)->toBeNull();
+
+    $otherCompany = Company::factory()->create(['name' => 'Other Authorization Company']);
+    $otherCompanyImage = companyAuthorizationImage($otherCompany, 'ARCH-OTHER-001', 'other-company.png');
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.companies.update', $company->doc_num), [
+            ...$payload,
+            'company_stamp_archive_file_doc_num' => $otherCompanyImage->doc_num,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['company_stamp_archive_file_doc_num']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.companies.show', $company->doc_num))
+        ->assertOk()
+        ->assertSee(__('companies.stamp.no_file_selected'))
+        ->assertSee(__('companies.signature.no_file_selected'));
 });
 
 test('company edit form uses post method spoofing for multipart logo uploads', function () {

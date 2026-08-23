@@ -200,7 +200,7 @@ final class ProductBomWeightResolver
                 return $fallbackUnit;
             }
 
-            if ($calculationMethod === ProductComponent::CalculationDirect) {
+            if ($calculationMethod !== ProductComponent::CalculationPercentage) {
                 return null;
             }
 
@@ -243,7 +243,7 @@ final class ProductBomWeightResolver
                 continue;
             }
 
-            if ($method === ProductComponent::CalculationDirect) {
+            if ($method !== ProductComponent::CalculationPercentage) {
                 continue;
             }
 
@@ -346,22 +346,33 @@ final class ProductBomWeightResolver
         $row = $rows[$clientKey];
         $index = $row['_index'];
 
-        if ($row['calculation_method'] === ProductComponent::CalculationDirect) {
-            $weight = $this->positiveScaledDecimal(
+        if ($row['calculation_method'] !== ProductComponent::CalculationPercentage) {
+            $valueType = match ($row['calculation_method']) {
+                ProductComponent::CalculationQuantity => 'quantity',
+                ProductComponent::CalculationCount => 'count',
+                default => 'weight',
+            };
+            $scale = $row['calculation_method'] === ProductComponent::CalculationCount
+                ? 0
+                : self::WeightScale;
+            $quantity = $this->positiveScaledDecimal(
                 $row['quantity'],
-                self::WeightScale,
+                $scale,
                 "components.{$index}.quantity",
-                __('products.components.quantity_gt_zero'),
+                __("products.components.{$valueType}_gt_zero"),
                 $errors,
+                $valueType === 'count'
+                    ? __('products.components.count_integer')
+                    : __("products.components.{$valueType}_precision"),
             );
 
-            if ($weight === null) {
+            if ($quantity === null) {
                 return null;
             }
 
             return $resolved[$clientKey] = [
                 ...$row,
-                'quantity' => $weight,
+                'quantity' => $quantity,
                 'percentage' => null,
                 'reference_component_key' => null,
                 'input_source' => ProductComponent::InputWeight,
@@ -389,22 +400,8 @@ final class ProductBomWeightResolver
             return null;
         }
 
-        $convertedReference = $this->conversions->convert(
-            $reference['quantity'],
-            $reference['component_product'],
-            $reference['unit'],
-            $row['component_product'],
-            $row['unit'],
-        );
-
-        if ($convertedReference === null) {
-            $errors["components.{$index}.reference_component_key"][] = __('products.components.incompatible_units');
-
-            return null;
-        }
-
         try {
-            $referenceDecimal = BigDecimal::of($convertedReference);
+            $referenceDecimal = BigDecimal::of($reference['quantity']);
 
             if (! $referenceDecimal->isGreaterThan(0)) {
                 $errors["components.{$index}.reference_component_key"][] = __('products.components.reference_weight_gt_zero');
@@ -419,9 +416,28 @@ final class ProductBomWeightResolver
                     "components.{$index}.percentage",
                     __('products.components.percentage_gt_zero'),
                     $errors,
+                    __('products.components.percentage_precision'),
                 );
 
                 if ($percentage === null) {
+                    return null;
+                }
+
+                $referenceUnitWeight = (string) $referenceDecimal
+                    ->multipliedBy($percentage)
+                    ->dividedBy('100', ProductComponentUnitConversionService::WorkScale, RoundingMode::HalfUp);
+                $weight = $this->conversions->convert(
+                    $referenceUnitWeight,
+                    $reference['component_product'],
+                    $reference['unit'],
+                    $row['component_product'],
+                    $row['unit'],
+                    self::WeightScale,
+                );
+
+                if ($weight === null) {
+                    $errors["components.{$index}.reference_component_key"][] = __('products.components.incompatible_units');
+
                     return null;
                 }
             } else {
@@ -429,28 +445,45 @@ final class ProductBomWeightResolver
                     $row['quantity'],
                     self::WeightScale,
                     "components.{$index}.quantity",
-                    __('products.components.quantity_gt_zero'),
+                    __('products.components.weight_gt_zero'),
                     $errors,
+                    __('products.components.weight_precision'),
                 );
 
                 if ($submittedWeight === null) {
                     return null;
                 }
 
+                $convertedReference = $this->conversions->convert(
+                    $reference['quantity'],
+                    $reference['component_product'],
+                    $reference['unit'],
+                    $row['component_product'],
+                    $row['unit'],
+                );
+
+                if ($convertedReference === null) {
+                    $errors["components.{$index}.reference_component_key"][] = __('products.components.incompatible_units');
+
+                    return null;
+                }
+
+                $convertedReferenceDecimal = BigDecimal::of($convertedReference);
+
                 $percentage = (string) BigDecimal::of($submittedWeight)
                     ->multipliedBy('100')
-                    ->dividedBy($referenceDecimal, self::PercentageScale, RoundingMode::HalfUp);
+                    ->dividedBy($convertedReferenceDecimal, self::PercentageScale, RoundingMode::HalfUp);
 
                 if (! $this->fitsStorage($percentage)) {
                     $errors["components.{$index}.percentage"][] = __('products.components.decimal_out_of_range');
 
                     return null;
                 }
-            }
 
-            $weight = (string) $referenceDecimal
-                ->multipliedBy($percentage)
-                ->dividedBy('100', self::WeightScale, RoundingMode::HalfUp);
+                $weight = (string) $convertedReferenceDecimal
+                    ->multipliedBy($percentage)
+                    ->dividedBy('100', self::WeightScale, RoundingMode::HalfUp);
+            }
 
             if (! BigDecimal::of($weight)->isGreaterThan(0)) {
                 $errors["components.{$index}.quantity"][] = __('products.components.resolved_weight_gt_zero');
@@ -474,7 +507,6 @@ final class ProductBomWeightResolver
             'quantity' => $weight,
             'percentage' => $percentage,
             'input_source' => ProductComponent::InputPercentage,
-            'converted_reference_quantity' => $this->canonicalDecimal($convertedReference),
         ];
     }
 
@@ -487,12 +519,19 @@ final class ProductBomWeightResolver
         string $field,
         string $message,
         array &$errors,
+        ?string $precisionMessage = null,
     ): ?string {
         try {
             $decimal = BigDecimal::of((string) $value);
 
-            if (! $decimal->isGreaterThan(0) || $decimal->getScale() > $scale) {
+            if (! $decimal->isGreaterThan(0)) {
                 $errors[$field][] = $message;
+
+                return null;
+            }
+
+            if ($decimal->strippedOfTrailingZeros()->getScale() > $scale) {
+                $errors[$field][] = $precisionMessage ?? $message;
 
                 return null;
             }
@@ -523,13 +562,6 @@ final class ProductBomWeightResolver
     private function nullableInteger(mixed $value): ?int
     {
         return $value === null || $value === '' ? null : (int) $value;
-    }
-
-    private function canonicalDecimal(mixed $value): string
-    {
-        $value = (string) $value;
-
-        return str_contains($value, '.') ? rtrim(rtrim($value, '0'), '.') : $value;
     }
 
     private function fitsStorage(string $value): bool

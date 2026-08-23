@@ -56,6 +56,8 @@ class ProductDataReportDataTable
             ->editColumn('component_doc_num', fn (Product $product): string => $this->text($this->row($product)['component_doc_num']))
             ->editColumn('component_name', fn (Product $product): string => $this->text($this->row($product)['component_name']))
             ->editColumn('component_classification', fn (Product $product): string => $this->classificationBadge($product->component_classification, $this->row($product)['component_classification']))
+            ->editColumn('component_calculation_method', fn (Product $product): string => $this->text($this->row($product)['component_calculation_method']))
+            ->addColumn('component_calculation_value', fn (Product $product): string => $this->text($this->row($product)['component_calculation_value']))
             ->editColumn('component_quantity', fn (Product $product): string => $this->text($this->row($product)['component_quantity']))
             ->editColumn('component_unit', fn (Product $product): string => $this->text($this->row($product)['component_unit']))
             ->editColumn('component_equivalent', fn (Product $product): string => $this->text($this->row($product)['component_equivalent']))
@@ -79,6 +81,7 @@ class ProductDataReportDataTable
             ->orderColumn('component_doc_num', 'component_products.doc_num $1')
             ->orderColumn('component_name', 'component_products.name $1')
             ->orderColumn('component_classification', 'component_products.item_classification $1')
+            ->orderColumn('component_calculation_method', 'report_components.calculation_method $1')
             ->orderColumn('component_quantity', 'report_components.quantity $1')
             ->orderColumn('component_unit', 'component_unit_name $1')
             ->orderColumn('created_at', 'products.created_at $1')
@@ -109,6 +112,7 @@ class ProductDataReportDataTable
                 'component_public_id',
                 'component_barcode',
                 'component_created_at',
+                'component_percentage',
                 'component_equivalent_value',
                 'component_equivalent_unit_doc_num',
                 'component_equivalent_unit_name',

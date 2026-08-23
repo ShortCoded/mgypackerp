@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Modules\Core\Models\Company;
 use Modules\Finance\Models\BankAccount;
 
@@ -207,6 +208,20 @@ class Account extends Model
     public function scopeForCompany(Builder $query, int $companyId): Builder
     {
         return $query->where($this->getTable().'.company_id', $companyId);
+    }
+
+    public function scopeEligibleForDirectPosting(Builder $query): Builder
+    {
+        return self::applyDirectPostingEligibility($query);
+    }
+
+    public static function applyDirectPostingEligibility(Builder|QueryBuilder $query): Builder|QueryBuilder
+    {
+        return $query
+            ->where('accounts.status', 'active')
+            ->where('accounts.is_postable', true)
+            ->where('accounts.is_group', false)
+            ->whereNull('accounts.deleted_at');
     }
 
     public function scopeOrdered(Builder $query): Builder

@@ -11,6 +11,8 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cheque;
+use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Purchases\Services\SupplierPaymentPostingService;
 
 class ChequeService
 {
@@ -19,12 +21,13 @@ class ChequeService
         private readonly CrudAuditService $audit,
         private readonly OperatingCompanyContextService $companies,
         private readonly FinanceAmountService $amounts,
+        private readonly SupplierPaymentPostingService $supplierPaymentPostings,
     ) {}
 
-    public function create(array $data): array
+    public function create(array $data, ?int $companyId = null): array
     {
-        return DB::transaction(function () use ($data): array {
-            $companyId = $this->companies->requireCompanyId();
+        return DB::transaction(function () use ($data, $companyId): array {
+            $companyId ??= $this->companies->requireCompanyId();
             $chequeType = (string) $data['cheque_type'];
             $record = Cheque::query()->create([
                 ...$this->values($data, $companyId),
@@ -252,9 +255,43 @@ class ChequeService
                 'status' => $status,
                 'updated_by' => auth()->id(),
             ])->save();
+            $this->synchronizeSupplierPayment($locked, $status);
 
             return $locked->refresh()->load(['bankAccount.currency', 'currency', 'lines.account']);
         });
+    }
+
+    private function synchronizeSupplierPayment(Cheque $cheque, string $status): void
+    {
+        $payment = SupplierPaymentContext::query()
+            ->with('journalEntry')
+            ->where('cheque_id', $cheque->getKey())
+            ->lockForUpdate()
+            ->first();
+
+        if (! $payment instanceof SupplierPaymentContext) {
+            return;
+        }
+
+        if ($status === Cheque::StatusIssued) {
+            $cheque->loadMissing('bankAccount.account');
+            $bankAccount = $cheque->bankAccount;
+            $account = $bankAccount?->account;
+            if (! $account instanceof Account || ! $bankAccount instanceof BankAccount) {
+                throw new DomainException(__('The issuing Bank Account requires a postable GL account.'));
+            }
+
+            $this->supplierPaymentPostings->post($payment, $account, (int) $bankAccount->getKey());
+
+            return;
+        }
+
+        if (in_array($status, [Cheque::StatusReturned, Cheque::StatusCancelled], true)) {
+            $reason = $status === Cheque::StatusReturned
+                ? __('Supplier payment cheque returned')
+                : (string) $cheque->cancel_reason;
+            $this->supplierPaymentPostings->reverse($payment, $reason);
+        }
     }
 
     private function document(string $chequeType, array $data, int $companyId, ?Cheque $current = null): array

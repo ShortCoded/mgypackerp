@@ -173,6 +173,7 @@ Route::middleware('auth')
             Route::post('/{cashVoucher}/cancel', 'cancel')->middleware('can:cash_receipt_vouchers.cancel')->name('cancel');
             Route::patch('/{cashVoucher}/restore', 'restore')->middleware('can:cash_receipt_vouchers.restore')->name('restore');
             Route::get('/{cashVoucher}/clone', 'clone')->middleware('can:cash_receipt_vouchers.clone')->name('clone');
+            Route::get('/{cashVoucher}/print', 'print')->middleware('can:cash_receipt_vouchers.print')->name('print');
             Route::get('/{cashVoucher}', 'show')->middleware('can:cash_receipt_vouchers.view')->name('show');
             Route::get('/{cashVoucher}/edit', 'edit')->middleware('can:cash_receipt_vouchers.edit')->name('edit');
             Route::put('/{cashVoucher}', 'update')->middleware('can:cash_receipt_vouchers.edit')->name('update');
@@ -190,6 +191,7 @@ Route::middleware('auth')
             Route::post('/{cashVoucher}/cancel', 'cancel')->middleware('can:cash_payment_vouchers.cancel')->name('cancel');
             Route::patch('/{cashVoucher}/restore', 'restore')->middleware('can:cash_payment_vouchers.restore')->name('restore');
             Route::get('/{cashVoucher}/clone', 'clone')->middleware('can:cash_payment_vouchers.clone')->name('clone');
+            Route::get('/{cashVoucher}/print', 'print')->middleware('can:cash_payment_vouchers.print')->name('print');
             Route::get('/{cashVoucher}', 'show')->middleware('can:cash_payment_vouchers.view')->name('show');
             Route::get('/{cashVoucher}/edit', 'edit')->middleware('can:cash_payment_vouchers.edit')->name('edit');
             Route::put('/{cashVoucher}', 'update')->middleware('can:cash_payment_vouchers.edit')->name('update');

@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -287,7 +288,7 @@ test('fresh schema defaults preserve legacy direct rows and inventory cost choic
         ->and($modelExplicitFalse->refresh()->cost_as_inventory)->toBeFalse();
 });
 
-test('percentage input is authoritative and accepts values above one hundred percent', function () {
+test('percentage input resolves from the reference effective weight and accepts values above one hundred percent', function () {
     $unit = productBomWeightUnit($this->bomWeightCompany, 'Kilogram');
     $product = productBomWeightProduct($this->bomWeightCompany);
     $baseMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
@@ -296,7 +297,7 @@ test('percentage input is authoritative and accepts values above one hundred per
     $baseKey = (string) Str::uuid();
 
     $components = $this->bomWeightService->sync($product, [
-        productBomWeightDirectRow($baseMaterial, $unit, '100', $baseKey, [
+        productBomWeightDirectRow($baseMaterial, $unit, '130', $baseKey, [
             'percentage' => '88',
             'reference_component_key' => (string) Str::uuid(),
         ]),
@@ -320,16 +321,19 @@ test('percentage input is authoritative and accepts values above one hundred per
 
     [$base, $twoPercent, $overHundred] = $components;
 
-    expect((string) $base->quantity)->toBe('100.00000000')
+    $twoRowTotal = BigDecimal::of((string) $base->quantity)->plus((string) $twoPercent->quantity);
+
+    expect((string) $base->quantity)->toBe('130.00000000')
         ->and($base->percentage)->toBeNull()
         ->and($base->reference_component_id)->toBeNull()
-        ->and((string) $twoPercent->quantity)->toBe('2.00000000')
+        ->and((string) $twoPercent->quantity)->toBe('2.60000000')
         ->and((string) $twoPercent->percentage)->toBe('2.00000000')
         ->and($twoPercent->reference_component_id)->toBe($base->getKey())
         ->and($twoPercent->updated_by)->toBeNull()
         ->and($twoPercent->updated_at)->toBeNull()
-        ->and((string) $overHundred->quantity)->toBe('125.00000000')
-        ->and((string) $overHundred->percentage)->toBe('125.00000000');
+        ->and((string) $overHundred->quantity)->toBe('162.50000000')
+        ->and((string) $overHundred->percentage)->toBe('125.00000000')
+        ->and((string) $twoRowTotal)->toBe('132.60000000');
 });
 
 test('weight input becomes the durable percentage and base changes recalculate it', function () {
@@ -391,7 +395,7 @@ test('weight input becomes the durable percentage and base changes recalculate i
         ->and((string) $dependent->refresh()->quantity)->toBe('20.00000000');
 });
 
-test('weight input derives percentage with one deterministic half-up rounding step', function () {
+test('legacy weight input derives percentage with one deterministic half-up rounding step', function () {
     $unit = productBomWeightUnit($this->bomWeightCompany, 'Kilogram');
     $product = productBomWeightProduct($this->bomWeightCompany);
     $baseMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
@@ -413,11 +417,6 @@ test('weight input derives percentage with one deterministic half-up rounding st
     expect((string) $dependent->percentage)->toBe('93.28125341')
         ->and((string) $dependent->quantity)->toBe('8097.84592033');
 
-    $javascript = file_get_contents(public_path('assets/js/modules/Core/products.js'));
-
-    expect($javascript)
-        ->toContain("var percentageNumerator = decimalMultiply(\n                    weight,\n                    '100',")
-        ->toContain("decimalDivide(\n                    percentageNumerator,\n                    convertedReferenceWeight,\n                    componentCalculationScale");
 });
 
 test('new forward uuid references and dependency chains resolve in graph order', function () {
@@ -431,14 +430,14 @@ test('new forward uuid references and dependency chains resolve in graph order',
     $lastKey = (string) Str::uuid();
 
     [$last, $middle, $base] = $this->bomWeightService->sync($product, [
-        productBomWeightPercentageRow($lastMaterial, $unit, $middleKey, '50', null, ProductComponent::InputPercentage, $lastKey),
-        productBomWeightPercentageRow($middleMaterial, $unit, $baseKey, '2', null, ProductComponent::InputPercentage, $middleKey),
+        productBomWeightPercentageRow($lastMaterial, $unit, $middleKey, '5', null, ProductComponent::InputPercentage, $lastKey),
+        productBomWeightPercentageRow($middleMaterial, $unit, $baseKey, '10', null, ProductComponent::InputPercentage, $middleKey),
         productBomWeightDirectRow($baseMaterial, $unit, '100', $baseKey),
     ]);
 
     expect((string) $base->quantity)->toBe('100.00000000')
-        ->and((string) $middle->quantity)->toBe('2.00000000')
-        ->and((string) $last->quantity)->toBe('1.00000000')
+        ->and((string) $middle->quantity)->toBe('10.00000000')
+        ->and((string) $last->quantity)->toBe('0.50000000')
         ->and($middle->reference_component_id)->toBe($base->getKey())
         ->and($last->reference_component_id)->toBe($middle->getKey());
 
@@ -617,14 +616,14 @@ test('same units and configured kilogram gram conversion resolve safely', functi
     $baseKey = (string) Str::uuid();
 
     [$base, $sameUnit, $converted] = $this->bomWeightService->sync($product, [
-        productBomWeightDirectRow($baseMaterial, $kilogram, '100', $baseKey),
-        productBomWeightPercentageRow($sameUnitMaterial, $kilogram, $baseKey, '2'),
-        productBomWeightPercentageRow($gramMaterial, $gram, $baseKey, '2'),
+        productBomWeightDirectRow($baseMaterial, $kilogram, '2', $baseKey),
+        productBomWeightPercentageRow($sameUnitMaterial, $kilogram, $baseKey, '10'),
+        productBomWeightPercentageRow($gramMaterial, $gram, $baseKey, '10'),
     ]);
 
-    expect((string) $base->quantity)->toBe('100.00000000')
-        ->and((string) $sameUnit->quantity)->toBe('2.00000000')
-        ->and((string) $converted->quantity)->toBe('2000.00000000');
+    expect((string) $base->quantity)->toBe('2.00000000')
+        ->and((string) $sameUnit->quantity)->toBe('0.20000000')
+        ->and((string) $converted->quantity)->toBe('200.00000000');
 
     $incompatibleProduct = productBomWeightProduct($this->bomWeightCompany);
     $incompatibleBaseKey = (string) Str::uuid();
@@ -746,17 +745,25 @@ test('cross company and deleted unit equivalences are never inferred by reused d
     expect(app(ProductComponentUnitConversionService::class)->productEdges($productWithDeletedEquivalent))->toBe([]);
 });
 
-test('cloning remaps percentage references exclusively to cloned lines', function () {
+test('cloning remaps percentage references and preserves quantity and count methods', function () {
     $unit = productBomWeightUnit($this->bomWeightCompany, 'Kilogram');
     $source = productBomWeightProduct($this->bomWeightCompany);
     $target = productBomWeightProduct($this->bomWeightCompany);
     $baseMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
     $dependentMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
+    $quantityMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
+    $countMaterial = productBomWeightMaterial($this->bomWeightCompany, $unit);
     $baseKey = (string) Str::uuid();
 
-    [$sourceBase, $sourceDependent] = $this->bomWeightService->sync($source, [
+    [$sourceBase, $sourceDependent, $sourceQuantity, $sourceCount] = $this->bomWeightService->sync($source, [
         productBomWeightDirectRow($baseMaterial, $unit, '100', $baseKey),
         productBomWeightPercentageRow($dependentMaterial, $unit, $baseKey, '2'),
+        productBomWeightDirectRow($quantityMaterial, $unit, '2.75', overrides: [
+            'calculation_method' => ProductComponent::CalculationQuantity,
+        ]),
+        productBomWeightDirectRow($countMaterial, $unit, '4', overrides: [
+            'calculation_method' => ProductComponent::CalculationCount,
+        ]),
     ]);
 
     $this->bomWeightService->clone($target, $source);
@@ -769,6 +776,14 @@ test('cloning remaps percentage references exclusively to cloned lines', functio
         ->where('product_id', $target->getKey())
         ->where('component_product_id', $dependentMaterial->getKey())
         ->firstOrFail();
+    $targetQuantity = ProductComponent::query()
+        ->where('product_id', $target->getKey())
+        ->where('component_product_id', $quantityMaterial->getKey())
+        ->firstOrFail();
+    $targetCount = ProductComponent::query()
+        ->where('product_id', $target->getKey())
+        ->where('component_product_id', $countMaterial->getKey())
+        ->firstOrFail();
 
     expect($targetBase->public_id)->not->toBe($sourceBase->public_id)
         ->and($targetDependent->public_id)->not->toBe($sourceDependent->public_id)
@@ -777,5 +792,11 @@ test('cloning remaps percentage references exclusively to cloned lines', functio
         ->and((string) $targetDependent->percentage)->toBe('2.00000000')
         ->and((string) $targetDependent->quantity)->toBe('2.00000000')
         ->and($targetDependent->reference_component_id)->toBe($targetBase->getKey())
-        ->and($targetDependent->reference_component_id)->not->toBe($sourceBase->getKey());
+        ->and($targetDependent->reference_component_id)->not->toBe($sourceBase->getKey())
+        ->and($targetQuantity->public_id)->not->toBe($sourceQuantity->public_id)
+        ->and($targetQuantity->calculation_method)->toBe(ProductComponent::CalculationQuantity)
+        ->and((string) $targetQuantity->quantity)->toBe('2.75000000')
+        ->and($targetCount->public_id)->not->toBe($sourceCount->public_id)
+        ->and($targetCount->calculation_method)->toBe(ProductComponent::CalculationCount)
+        ->and((string) $targetCount->quantity)->toBe('4.00000000');
 });

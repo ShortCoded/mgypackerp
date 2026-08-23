@@ -1,0 +1,18 @@
+@extends('layouts.app')
+@section('title', __('Goods Receipt Note'))
+@section('content')
+<form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.store', $record->doc_num) }}">
+    @csrf
+    <div class="alert alert-info">{{ __('Warehouse copy intentionally excludes purchase prices and commercial terms.') }}</div>
+    <div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Receive Purchase Order :document', ['document' => $record->doc_num]) }}</h5></div><div class="card-body">
+        @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+        <div class="row g-3"><div class="col-md-3"><label class="form-label">{{ __('Receipt date') }}</label><input class="form-control" type="date" name="document_date" value="{{ now()->toDateString() }}" required></div><div class="col-md-3"><label class="form-label">{{ __('Supplier delivery note') }}</label><input class="form-control" name="supplier_delivery_note"></div><div class="col-md-3"><label class="form-label">{{ __('Supplier delivery date') }}</label><input class="form-control" type="date" name="supplier_delivery_date"></div><div class="col-md-3"><label class="form-label">{{ __('Destination') }}</label><input class="form-control" value="{{ $record->branchStore?->name }}" readonly></div><div class="col-12"><label class="form-label">{{ __('Notes') }}</label><input class="form-control" name="notes"></div></div>
+    </div></div>
+    <div class="card mb-3"><div class="card-body p-0"><div class="table-responsive procurement-lines-scroll"><table class="table table-sm align-middle mb-0 procurement-lines-table"><thead class="bg-100"><tr><th>{{ __('Item') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Specification') }}</th><th class="text-end">{{ __('Remaining') }}</th><th>{{ __('Schedule') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Supplier lot') }}</th><th>{{ __('QC') }}</th></tr></thead><tbody>
+        @foreach($record->lines->reject(fn($line) => $line->product?->isService() || (float) $line->remaining_quantity <= 0) as $index => $line)
+            <tr><td>{{ $line->product?->name }}</td><td>{{ $line->unit?->name }}</td><td>{{ $line->specification ?: '—' }}</td><td class="text-end" dir="ltr">{{ $line->remaining_quantity }}</td><td><select class="form-select" name="lines[{{ $index }}][delivery_schedule_public_id]"><option value="">{{ __('Unscheduled') }}</option>@foreach($line->deliverySchedules->where('status', '!=', 'received')->where('status', '!=', 'cancelled') as $schedule)<option value="{{ $schedule->public_id }}">{{ $schedule->scheduled_date?->format('Y-m-d') }} / {{ (float) $schedule->scheduled_quantity - (float) $schedule->received_quantity }}</option>@endforeach</select></td><td><input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line->public_id }}"><x-forms.numeric-input name="lines[{{ $index }}][delivered_quantity]" :scale="8" min="0.00000001" step="0.00000001" /></td><td><input class="form-control" name="lines[{{ $index }}][supplier_lot_number]"></td><td>{{ $line->product?->requiresIncomingInspection() ? __('Inspection required') : __('Auto accepted') }}</td></tr>
+        @endforeach
+    </tbody></table></div></div></div>
+    <div class="d-flex justify-content-end"><button class="btn btn-primary">{{ __('Post physical receipt') }}</button></div>
+</form>
+@endsection

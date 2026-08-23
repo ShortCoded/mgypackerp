@@ -156,6 +156,7 @@ class SupplierService
             'commercial_register' => $data['commercial_register'] ?? null,
             'national_id' => $data['national_id'] ?? null,
             'contact_person' => $data['contact_person'] ?? null,
+            'payment_terms_days' => $data['payment_terms_days'] ?? null,
             'address' => $data['address'] ?? null,
             'country_id' => $this->locationId(HrCountry::class, $data['country_doc_num'] ?? null),
             'governorate_id' => $this->locationId(HrGovernorate::class, $data['governorate_doc_num'] ?? null),

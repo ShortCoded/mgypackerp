@@ -42,6 +42,10 @@
         'name',
         'legal_name',
         'commercial_name',
+        'authorized_signatory_name',
+        'authorized_signatory_title',
+        'company_stamp_archive_file_doc_num',
+        'authorized_signatory_signature_archive_file_doc_num',
         'status',
         'is_main',
         'notes',
@@ -229,6 +233,9 @@
         });
 
         $form.find('.js-company-location-select').val(null).trigger('change');
+        if (window.AppArchiveImagePicker && typeof window.AppArchiveImagePicker.reset === 'function') {
+            window.AppArchiveImagePicker.reset($form);
+        }
         $form.find('[name="logo"], [name="remove_logo"], [name="favicon"], [name="remove_favicon"]').val('').prop('checked', false);
         $form.find('.js-company-logo-uploader').attr('data-current-url', '').data('current-url', '');
         resetLogoUploader($form.find('.js-company-logo-uploader'));

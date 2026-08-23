@@ -36,7 +36,7 @@ class PurchaseOrderService
         return DB::transaction(function () use ($data): array {
             $context = $this->currentContext();
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context);
-            $calculation = $this->calculator->calculate($lines);
+            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? 0);
             $record = PurchaseOrder::query()->create([
                 ...$this->values($data, $context),
                 ...$calculation['order'],
@@ -64,11 +64,17 @@ class PurchaseOrderService
             $oldDocNumber = $locked->doc_number === null ? null : (int) $locked->doc_number;
             $oldDocNum = $locked->doc_num;
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context, $locked);
-            $calculation = $this->calculator->calculate($lines);
+            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? $locked->freight_amount);
             $values = [
                 ...$this->values($data, $context),
                 ...$calculation['order'],
             ];
+
+            foreach (['purchase_requisition_id', 'request_for_quotation_id', 'supplier_quotation_id', 'supplier_selection_id', 'purchase_type', 'payment_terms', 'internal_reference', 'direct_procurement_override', 'direct_procurement_reason'] as $sourceField) {
+                if (! array_key_exists($sourceField, $data)) {
+                    unset($values[$sourceField]);
+                }
+            }
 
             if (array_key_exists('doc_number', $data) && $data['doc_number']) {
                 $values = [...$values, ...$this->document($data, $context)];
@@ -334,6 +340,18 @@ class PurchaseOrderService
             'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
             'expected_delivery_date' => $data['expected_delivery_date'] ?? null,
             'supplier_reference' => $data['supplier_reference'] ?? null,
+            'purchase_requisition_id' => $data['purchase_requisition_id'] ?? null,
+            'request_for_quotation_id' => $data['request_for_quotation_id'] ?? null,
+            'supplier_quotation_id' => $data['supplier_quotation_id'] ?? null,
+            'supplier_selection_id' => $data['supplier_selection_id'] ?? null,
+            'purchase_type' => $data['purchase_type'] ?? 'standard',
+            'payment_terms' => filled($data['payment_terms'] ?? null)
+                ? $data['payment_terms']
+                : ($supplier->payment_terms_days !== null ? __('Net :days days', ['days' => $supplier->payment_terms_days]) : null),
+            'freight_amount' => $this->numbers->normalizeToScale($data['freight_amount'] ?? 0, 4) ?? '0.0000',
+            'internal_reference' => $data['internal_reference'] ?? null,
+            'direct_procurement_override' => (bool) ($data['direct_procurement_override'] ?? false),
+            'direct_procurement_reason' => $data['direct_procurement_reason'] ?? null,
             'notes' => $data['notes'] ?? null,
         ];
     }
@@ -406,11 +424,26 @@ class PurchaseOrderService
                 'line_number' => $index + 1,
                 'product_id' => $product->getKey(),
                 'unit_id' => $unit->getKey(),
+                'purchase_requisition_line_id' => $line['purchase_requisition_line_id'] ?? null,
+                'request_for_quotation_line_id' => $line['request_for_quotation_line_id'] ?? null,
+                'supplier_quotation_line_id' => $line['supplier_quotation_line_id'] ?? null,
+                'supplier_selection_line_id' => $line['supplier_selection_line_id'] ?? null,
                 'ordered_quantity' => $line['ordered_quantity'],
                 'received_quantity' => $line['received_quantity'],
                 'remaining_quantity' => $line['remaining_quantity'],
                 'unit_price' => $line['unit_price'],
                 'line_total' => $line['line_total'],
+                'description' => $line['description'] ?? null,
+                'discount_type' => $line['discount_type'],
+                'discount_value' => $line['discount_value'],
+                'discount_amount' => $line['discount_amount'],
+                'tax_rate' => $line['tax_rate'],
+                'tax_amount' => $line['tax_amount'],
+                'subtotal_amount' => $line['subtotal_amount'],
+                'total_before_tax' => $line['total_before_tax'],
+                'total_after_tax' => $line['total_after_tax'],
+                'required_delivery_date' => $line['required_delivery_date'] ?? null,
+                'specification' => $line['specification'] ?? null,
                 'product_snapshot' => $this->lineProductSnapshot($existingLine, $product, $unit),
                 'notes' => $line['notes'] ?? null,
             ];
@@ -501,7 +534,7 @@ class PurchaseOrderService
         return Product::query()
             ->with('mainImageUsage.file')
             ->active()
-            ->nonService()
+            ->purchasable()
             ->forCompany($companyId)
             ->where('products.doc_num', $docNum)
             ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')

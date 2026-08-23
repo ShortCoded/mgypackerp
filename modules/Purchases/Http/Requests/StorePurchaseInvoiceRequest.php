@@ -12,6 +12,7 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 
 class StorePurchaseInvoiceRequest extends FormRequest
@@ -30,6 +31,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
         $this->normalizeNumericInput([
             'exchange_rate',
             'header_discount_value',
+            'freight_amount',
+            'freight_tax_rate',
             'lines.*.quantity',
             'lines.*.unit_price',
             'lines.*.discount_value',
@@ -46,6 +49,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'company_id' => $context['company_id'],
             'financial_period_doc_num' => $financialPeriodDocNum,
             'supplier_doc_num' => $this->trimmed('supplier_doc_num'),
+            'purchase_order_doc_num' => $this->trimmed('purchase_order_doc_num'),
+            'purchase_type' => $this->trimmed('purchase_type') ?: 'standard',
+            'direct_procurement_override' => $this->boolean('direct_procurement_override'),
+            'direct_procurement_reason' => $this->trimmed('direct_procurement_reason'),
             'currency_doc_num' => $this->trimmed('currency_doc_num'),
             'cashbox_doc_num' => $this->trimmed('cashbox_doc_num'),
             'bank_account_doc_num' => $this->trimmed('bank_account_doc_num'),
@@ -57,6 +64,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'payment_source_type' => $this->trimmed('payment_source_type'),
             'header_discount_type' => $this->trimmed('header_discount_type'),
             'header_discount_value' => $this->decimalInput('header_discount_value', '0'),
+            'freight_amount' => $this->decimalInput('freight_amount', '0'),
+            'freight_tax_rate' => $this->decimalInput('freight_tax_rate', '0'),
             'notes' => $this->trimmed('notes'),
             'internal_notes' => $this->trimmed('internal_notes'),
             'lines' => $this->normalizedLines(),
@@ -88,7 +97,16 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     $fail(__('purchase_invoices.messages.invoice_date_invalid'));
                 }
             }],
-            'supplier_invoice_number' => ['nullable', 'string', 'max:100'],
+            'supplier_invoice_number' => ['nullable', 'string', 'max:100', $this->uniqueSupplierInvoiceRule()],
+            'purchase_order_doc_num' => [
+                'nullable',
+                'string',
+                Rule::exists('purchase_orders', 'doc_num')
+                    ->where(fn ($query) => $query->where('company_id', $companyId)->whereIn('status', ['approved', 'closed'])->whereNull('deleted_at')),
+            ],
+            'purchase_type' => ['required', Rule::in(['standard', 'service', 'direct'])],
+            'direct_procurement_override' => ['boolean'],
+            'direct_procurement_reason' => ['nullable', 'string', 'required_if:direct_procurement_override,1'],
             'supplier_invoice_date' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
                     $fail(__('purchase_invoices.messages.supplier_invoice_date_invalid'));
@@ -117,6 +135,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
             ],
             'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'header_discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'freight_tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'notes' => ['nullable', 'string'],
             'internal_notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
@@ -128,6 +148,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'lines.*.unit_doc_num' => ['required', 'string'],
+            'lines.*.purchase_order_line_public_id' => ['nullable', 'uuid', 'exists:purchase_order_lines,public_id'],
+            'lines.*.receipt_line_public_id' => ['nullable', 'uuid', 'exists:unpriced_inventory_receipt_lines,public_id'],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
@@ -189,6 +211,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
             $this->validateLines($validator);
             $this->validateDiscountsAndSchedule($validator);
             $this->validatePaymentSources($validator);
+            $this->validateProcurementSource($validator);
         });
     }
 
@@ -270,6 +293,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
             $product = Product::query()
                 ->with(['unit', 'equivalentUnit'])
                 ->active()
+                ->purchasable()
                 ->forCompany($companyId)
                 ->where('doc_num', $line['product_doc_num'] ?? null)
                 ->first();
@@ -283,7 +307,13 @@ class StorePurchaseInvoiceRequest extends FormRequest
     private function validateDiscountsAndSchedule(Validator $validator): void
     {
         $calculator = app(PurchaseInvoiceCalculationService::class);
-        $calculation = $calculator->calculate($this->input('lines', []), $this->input('header_discount_type'), $this->input('header_discount_value'));
+        $calculation = $calculator->calculate(
+            $this->input('lines', []),
+            $this->input('header_discount_type'),
+            $this->input('header_discount_value'),
+            $this->input('freight_amount'),
+            $this->input('freight_tax_rate'),
+        );
         $headerDiscountType = $this->input('header_discount_type');
         $headerDiscountValue = $calculator->number($this->input('header_discount_value'));
         $headerBase = $calculator->number($calculation['invoice']['subtotal_amount']) - $calculator->number($calculation['invoice']['line_discount_amount']);
@@ -368,6 +398,37 @@ class StorePurchaseInvoiceRequest extends FormRequest
         return $current instanceof PurchaseInvoice ? $rule->ignore($current->getKey()) : $rule;
     }
 
+    private function uniqueSupplierInvoiceRule(): mixed
+    {
+        $supplierId = Supplier::query()
+            ->where('company_id', $this->input('company_id'))
+            ->where('doc_num', $this->input('supplier_doc_num'))
+            ->value('id');
+        $rule = Rule::unique('purchase_invoices', 'supplier_invoice_number')
+            ->where(fn ($query) => $query
+                ->where('company_id', $this->input('company_id'))
+                ->where('supplier_id', $supplierId ?: 0)
+                ->whereNull('deleted_at'));
+        $current = $this->currentRecord();
+
+        return $current instanceof PurchaseInvoice ? $rule->ignore($current->getKey()) : $rule;
+    }
+
+    private function validateProcurementSource(Validator $validator): void
+    {
+        $hasPurchaseOrder = filled($this->input('purchase_order_doc_num'));
+        $isAuthorizedDirect = $this->boolean('direct_procurement_override')
+            && (bool) $this->user()?->can('purchases.direct_procurement.override');
+
+        if (! $hasPurchaseOrder && ! $isAuthorizedDirect) {
+            $validator->errors()->add('purchase_order_doc_num', __('A purchase order is required unless an authorized direct-procurement override is used.'));
+        }
+
+        if ($this->boolean('direct_procurement_override') && ! $isAuthorizedDirect) {
+            $validator->errors()->add('direct_procurement_override', __('You are not authorized to bypass the procurement source workflow.'));
+        }
+    }
+
     /**
      * @return list<array<string, mixed>>
      */
@@ -379,6 +440,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'public_id' => trim((string) ($line['public_id'] ?? '')) ?: null,
                 'product_doc_num' => trim((string) ($line['product_doc_num'] ?? '')) ?: null,
                 'unit_doc_num' => trim((string) ($line['unit_doc_num'] ?? '')) ?: null,
+                'purchase_order_line_public_id' => trim((string) ($line['purchase_order_line_public_id'] ?? '')) ?: null,
+                'receipt_line_public_id' => trim((string) ($line['receipt_line_public_id'] ?? '')) ?: null,
                 'quantity' => $this->decimalValue($line['quantity'] ?? null),
                 'unit_price' => $this->decimalValue($line['unit_price'] ?? null),
                 'discount_type' => trim((string) ($line['discount_type'] ?? '')) ?: null,

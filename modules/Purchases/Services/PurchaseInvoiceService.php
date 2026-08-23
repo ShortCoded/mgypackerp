@@ -3,6 +3,7 @@
 namespace Modules\Purchases\Services;
 
 use DomainException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\JournalEntryService;
@@ -11,6 +12,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
+use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
@@ -18,20 +20,26 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\Supplier;
 
 class PurchaseInvoiceService
 {
     public function __construct(
         private readonly CrudAuditService $audit,
+        private readonly DocumentNumberService $documents,
         private readonly OperatingContextService $operatingContext,
         private readonly PurchaseInvoiceCalculationService $calculator,
         private readonly ProductComponentUnitOptionsService $unitOptions,
         private readonly CashVoucherService $cashVouchers,
         private readonly JournalEntryService $journalEntries,
+        private readonly PurchaseInvoiceMatchingService $matching,
         private readonly NumericFormatService $numbers,
     ) {}
 
@@ -39,7 +47,13 @@ class PurchaseInvoiceService
     {
         return DB::transaction(function () use ($data): array {
             $context = $this->context($data);
-            $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['header_discount_type'] ?? null, $data['header_discount_value'] ?? 0);
+            $calculation = $this->calculator->calculate(
+                $data['lines'] ?? [],
+                $data['header_discount_type'] ?? null,
+                $data['header_discount_value'] ?? 0,
+                $data['freight_amount'] ?? 0,
+                $data['freight_tax_rate'] ?? 0,
+            );
             $record = PurchaseInvoice::query()->create([
                 ...$this->values($data, $context),
                 ...$calculation['invoice'],
@@ -65,7 +79,13 @@ class PurchaseInvoiceService
             $context = $this->context($data, $record);
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
-            $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['header_discount_type'] ?? null, $data['header_discount_value'] ?? 0);
+            $calculation = $this->calculator->calculate(
+                $data['lines'] ?? [],
+                $data['header_discount_type'] ?? null,
+                $data['header_discount_value'] ?? 0,
+                $data['freight_amount'] ?? 0,
+                $data['freight_tax_rate'] ?? 0,
+            );
             $values = [
                 ...$this->values($data, $context),
                 ...$calculation['invoice'],
@@ -101,10 +121,10 @@ class PurchaseInvoiceService
                 ->findOrFail($record->getKey());
 
             $this->assertApprovable($locked);
-            $journalEntry = $this->journalEntries->createPostedFromPurchaseInvoice(
-                $locked,
+            $this->matching->matchForPosting($locked);
+            $journalEntry = $this->journalEntries->createPostedFromSource(
+                $this->postingHeader($locked),
                 $this->postingLines($locked),
-                $this->supplierPayableAccount($locked),
             );
 
             $locked->forceFill([
@@ -170,6 +190,65 @@ class PurchaseInvoiceService
 
             return $this->load($locked->refresh());
         });
+    }
+
+    public function reverse(PurchaseInvoice $record, string $reason): PurchaseInvoice
+    {
+        return DB::transaction(function () use ($record, $reason): PurchaseInvoice {
+            $context = $this->operatingContext->snapshot(request());
+            $locked = PurchaseInvoice::query()
+                ->with(['journalEntry.lines', 'paymentAllocations.paymentContext', 'purchaseReturns'])
+                ->lockForUpdate()
+                ->findOrFail($record->getKey());
+
+            if (! in_array($locked->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
+                || $locked->reversal_journal_entry_id !== null
+                || ! $locked->journalEntry) {
+                throw new DomainException(__('Only an unreversed posted purchase invoice can be reversed.'));
+            }
+
+            if ($locked->paymentAllocations->contains(fn ($allocation): bool => $allocation->paymentContext?->isApproved())) {
+                throw new DomainException(__('Reverse or cancel approved Supplier payments before reversing this invoice.'));
+            }
+
+            if ($locked->purchaseReturns->contains(fn (PurchaseReturn $return): bool => $return->status === PurchaseReturn::StatusPosted)) {
+                throw new DomainException(__('Reverse posted Purchase Returns before reversing this invoice.'));
+            }
+
+            if ((int) ($context['company_id'] ?? 0) !== (int) $locked->company_id
+                || empty($context['financial_period_id'])) {
+                throw new DomainException(__('The active accounting context is required for invoice reversal.'));
+            }
+
+            $reversal = $this->journalEntries->createPostedReversalFromSource($locked->journalEntry, [
+                'entry_date' => now()->toDateString(),
+                'company_id' => (int) $locked->company_id,
+                'financial_period_id' => (int) $context['financial_period_id'],
+                'branch_id' => $locked->branch_id,
+                'currency_id' => $locked->currency_id,
+                'exchange_rate' => $locked->exchange_rate,
+                'description' => __('Purchase invoice reversal :document', ['document' => $locked->doc_num]),
+                'notes' => $reason,
+                'source_type' => 'purchase_invoice_reversal',
+                'source_id' => $locked->getKey(),
+                'source_doc_num' => $locked->doc_num,
+            ]);
+
+            $locked->forceFill([
+                'status' => PurchaseInvoice::StatusCancelled,
+                'reversal_journal_entry_id' => $reversal->getKey(),
+                'reversed_by' => auth()->id(),
+                'reversed_at' => now(),
+                'reversal_reason' => $reason,
+                'cancelled_by' => auth()->id(),
+                'cancelled_at' => now(),
+                'cancel_reason' => $reason,
+                'updated_by' => auth()->id(),
+            ])->save();
+            $locked->refreshPaymentTotals();
+
+            return $this->load($locked->refresh());
+        }, 3);
     }
 
     public function delete(PurchaseInvoice $record): void
@@ -253,8 +332,11 @@ class PurchaseInvoiceService
             'cashbox',
             'bankAccount',
             'journalEntry',
+            'purchaseOrder',
             'lines.product.unit',
             'lines.unit',
+            'lines.purchaseOrderLine.purchaseOrder',
+            'lines.receiptLine.receipt',
             'paymentSchedules.cashbox',
             'paymentSchedules.bankAccount',
             'paymentSchedules.cashVoucher',
@@ -325,12 +407,19 @@ class PurchaseInvoiceService
         $currency = $this->currency($context['company_id'], $data['currency_doc_num'] ?? null);
         $cashbox = $this->cashbox($context['company_id'], $data['cashbox_doc_num'] ?? null);
         $bankAccount = $this->bankAccount($context['company_id'], $data['bank_account_doc_num'] ?? null);
+        $purchaseOrder = $this->purchaseOrder($context['company_id'], $data['purchase_order_doc_num'] ?? null);
 
         return [
             'company_id' => $context['company_id'],
             'financial_period_id' => $context['financial_period_id'],
             'branch_id' => $context['branch_id'],
             'supplier_id' => $supplier?->getKey(),
+            'purchase_order_id' => $purchaseOrder?->getKey(),
+            'purchase_type' => $data['purchase_type'] ?? 'standard',
+            'matching_status' => 'not_matched',
+            'matching_notes' => null,
+            'direct_procurement_override' => (bool) ($data['direct_procurement_override'] ?? false),
+            'direct_procurement_reason' => $data['direct_procurement_reason'] ?? null,
             'invoice_date' => $data['invoice_date'],
             'supplier_invoice_number' => $data['supplier_invoice_number'] ?? null,
             'supplier_invoice_date' => $data['supplier_invoice_date'] ?? null,
@@ -376,12 +465,17 @@ class PurchaseInvoiceService
                 ?: $product->unit;
             $publicId = trim((string) ($line['public_id'] ?? ''));
             $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
+            $purchaseOrderLine = $this->purchaseOrderLine($record, $line['purchase_order_line_public_id'] ?? null);
+            $receiptLine = $this->receiptLine($purchaseOrderLine, $line['receipt_line_public_id'] ?? null);
             $values = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
                 'line_number' => $index + 1,
                 'product_id' => $product->getKey(),
                 'unit_id' => $unit?->getKey(),
+                'purchase_order_line_id' => $purchaseOrderLine?->getKey(),
+                'receipt_line_id' => $receiptLine?->getKey(),
+                'matched_quantity' => 0,
                 'quantity' => $line['quantity'],
                 'unit_price' => $line['unit_price'],
                 'discount_type' => $line['discount_type'] ?? null,
@@ -478,19 +572,40 @@ class PurchaseInvoiceService
     {
         $schedules = $data['payment_schedules'] ?? [];
 
-        if (($data['payment_type'] ?? null) !== PurchaseInvoice::PaymentTypeCash || $schedules !== []) {
+        if ($schedules !== []) {
             return $schedules;
+        }
+
+        if (($data['payment_type'] ?? null) === PurchaseInvoice::PaymentTypeCash) {
+            return [[
+                'public_id' => null,
+                'due_date' => $data['invoice_date'],
+                'amount' => $calculation['invoice']['total_amount'],
+                'payment_source_type' => PurchaseInvoice::SourceCashbox,
+                'cashbox_doc_num' => $data['cashbox_doc_num'] ?? null,
+                'bank_account_doc_num' => null,
+                'payment_date' => $data['invoice_date'],
+                'notes' => $data['notes'] ?? null,
+            ]];
+        }
+
+        $companyId = (int) ($this->operatingContext->snapshot(request())['company_id'] ?? 0);
+        $paymentTermsDays = Supplier::query()->forCompany($companyId)
+            ->where('doc_num', $data['supplier_doc_num'] ?? null)
+            ->value('payment_terms_days');
+        if ($paymentTermsDays === null) {
+            return [];
         }
 
         return [[
             'public_id' => null,
-            'due_date' => $data['invoice_date'],
+            'due_date' => Carbon::parse($data['invoice_date'])->addDays((int) $paymentTermsDays)->toDateString(),
             'amount' => $calculation['invoice']['total_amount'],
-            'payment_source_type' => PurchaseInvoice::SourceCashbox,
-            'cashbox_doc_num' => $data['cashbox_doc_num'] ?? null,
+            'payment_source_type' => PurchaseInvoice::SourceScheduled,
+            'cashbox_doc_num' => null,
             'bank_account_doc_num' => null,
-            'payment_date' => $data['invoice_date'],
-            'notes' => $data['notes'] ?? null,
+            'payment_date' => null,
+            'notes' => __('Inherited from Supplier payment terms.'),
         ]];
     }
 
@@ -547,6 +662,39 @@ class PurchaseInvoiceService
                 ? PurchaseInvoicePaymentSchedule::StatusPaid
                 : PurchaseInvoicePaymentSchedule::StatusVoucherDraft,
         ])->save();
+
+        $paymentContext = SupplierPaymentContext::query()->firstOrNew([
+            'cash_voucher_id' => $voucher->getKey(),
+        ]);
+        if (! $paymentContext->exists) {
+            $paymentContext->forceFill($this->nextSupplierPaymentDocument($record));
+        }
+        $paymentContext->forceFill([
+            'company_id' => $record->company_id,
+            'financial_period_id' => $record->financial_period_id,
+            'branch_id' => $record->branch_id,
+            'supplier_id' => $record->supplier_id,
+            'purchase_order_id' => $record->purchase_order_id,
+            'payment_method' => SupplierPaymentContext::MethodCash,
+            'payment_date' => $voucher->voucher_date,
+            'amount' => $voucher->amount,
+            'currency_id' => $voucher->currency_id,
+            'exchange_rate' => $voucher->exchange_rate,
+            'status' => $voucher->isApproved() ? SupplierPaymentContext::StatusApproved : SupplierPaymentContext::StatusDraft,
+            'is_advance' => false,
+            'allocated_amount' => $schedule->amount,
+            'reason' => $voucher->reason,
+            'notes' => $voucher->description,
+        ])->save();
+        SupplierPaymentAllocation::query()->updateOrCreate([
+            'supplier_payment_context_id' => $paymentContext->getKey(),
+            'purchase_invoice_id' => $record->getKey(),
+            'payment_schedule_id' => $schedule->getKey(),
+        ], [
+            'amount' => $schedule->amount,
+            'allocated_by' => auth()->id(),
+            'allocated_at' => now(),
+        ]);
     }
 
     private function deleteDraftLinkedVoucher(PurchaseInvoicePaymentSchedule $schedule): void
@@ -557,6 +705,17 @@ class PurchaseInvoiceService
         if ($voucher instanceof CashVoucher && $voucher->isDraft()) {
             $this->cashVouchers->delete(CashVoucher::TypePayment, $voucher);
         }
+    }
+
+    /** @return array{doc_number: int, doc_num: string} */
+    private function nextSupplierPaymentDocument(PurchaseInvoice $record): array
+    {
+        return $this->documents->nextForCompany(
+            'supplier_payments',
+            SupplierPaymentContext::class,
+            (int) $record->company_id,
+            fn ($query) => $query->where('financial_period_id', $record->financial_period_id),
+        );
     }
 
     /**
@@ -582,9 +741,25 @@ class PurchaseInvoiceService
         }
     }
 
-    /**
-     * @return list<array{account_id: int, debit_amount: string, description: string}>
-     */
+    /** @return array<string, mixed> */
+    private function postingHeader(PurchaseInvoice $record): array
+    {
+        return [
+            'entry_date' => $record->invoice_date,
+            'company_id' => (int) $record->company_id,
+            'financial_period_id' => (int) $record->financial_period_id,
+            'branch_id' => $record->branch_id,
+            'currency_id' => $record->currency_id,
+            'exchange_rate' => $record->exchange_rate,
+            'description' => __('purchase_invoices.journal.description', ['invoice' => $record->doc_num]),
+            'notes' => $record->notes,
+            'source_type' => 'purchase_invoice',
+            'source_id' => $record->getKey(),
+            'source_doc_num' => $record->doc_num,
+        ];
+    }
+
+    /** @return list<array<string, mixed>> */
     private function postingLines(PurchaseInvoice $record): array
     {
         $record->loadMissing('lines.product');
@@ -619,8 +794,21 @@ class PurchaseInvoiceService
             $debits[$key]['debit_amount'] += $amount;
         }
 
+        if ((float) $record->freight_amount > 0) {
+            $freightCode = (string) config('purchases.accounts.freight_expense', '526');
+            $freightAccount = $this->accountByCode((int) $record->company_id, $freightCode, 'purchase_debit_account_missing', ['code' => $freightCode]);
+            $key = (string) $freightAccount->getKey();
+            $debits[$key] ??= [
+                'account_id' => (int) $freightAccount->getKey(),
+                'debit_amount' => 0.0,
+                'description' => __('Freight expense'),
+            ];
+            $debits[$key]['debit_amount'] += (float) $record->freight_amount;
+        }
+
         if ((float) $record->tax_amount > 0) {
-            $taxAccount = $this->accountByCode((int) $record->company_id, '2131', 'input_vat_account_missing');
+            $taxCode = (string) config('purchases.accounts.recoverable_input_vat', '2131');
+            $taxAccount = $this->accountByCode((int) $record->company_id, $taxCode, 'input_vat_account_missing');
             $debits['tax'] = [
                 'account_id' => (int) $taxAccount->getKey(),
                 'debit_amount' => (float) $record->tax_amount,
@@ -628,14 +816,29 @@ class PurchaseInvoiceService
             ];
         }
 
-        return collect($debits)
+        $lines = collect($debits)
             ->map(fn (array $line): array => [
                 'account_id' => $line['account_id'],
                 'debit_amount' => number_format((float) $line['debit_amount'], 4, '.', ''),
+                'credit_amount' => '0.0000',
                 'description' => $line['description'],
+                'supplier_id' => $record->supplier_id,
+                'branch_id' => $record->branch_id,
             ])
             ->values()
             ->all();
+
+        $supplierAccount = $this->supplierPayableAccount($record);
+        $lines[] = [
+            'account_id' => (int) $supplierAccount->getKey(),
+            'debit_amount' => '0.0000',
+            'credit_amount' => $record->total_amount,
+            'description' => __('purchase_invoices.journal.supplier_payable'),
+            'supplier_id' => $record->supplier_id,
+            'branch_id' => $record->branch_id,
+        ];
+
+        return $lines;
     }
 
     private function purchaseDebitAccount(PurchaseInvoiceLine $line): Account
@@ -774,9 +977,44 @@ class PurchaseInvoiceService
         return Product::query()
             ->with(['unit', 'equivalentUnit'])
             ->active()
-            ->nonService()
+            ->purchasable()
             ->forCompany($companyId)
             ->where('doc_num', $docNum)
+            ->first();
+    }
+
+    private function purchaseOrder(int $companyId, ?string $docNum): ?PurchaseOrder
+    {
+        $docNum = trim((string) $docNum);
+
+        return $docNum === ''
+            ? null
+            : PurchaseOrder::query()->forCompany($companyId)->where('doc_num', $docNum)->first();
+    }
+
+    private function purchaseOrderLine(PurchaseInvoice $invoice, ?string $publicId): ?PurchaseOrderLine
+    {
+        $publicId = trim((string) $publicId);
+        if ($publicId === '') {
+            return null;
+        }
+
+        return PurchaseOrderLine::query()
+            ->where('purchase_order_id', $invoice->purchase_order_id)
+            ->where('public_id', $publicId)
+            ->first();
+    }
+
+    private function receiptLine(?PurchaseOrderLine $purchaseOrderLine, ?string $publicId): ?UnpricedInventoryReceiptLine
+    {
+        $publicId = trim((string) $publicId);
+        if ($publicId === '' || ! $purchaseOrderLine instanceof PurchaseOrderLine) {
+            return null;
+        }
+
+        return UnpricedInventoryReceiptLine::query()
+            ->where('purchase_order_line_id', $purchaseOrderLine->getKey())
+            ->where('public_id', $publicId)
             ->first();
     }
 

@@ -10,7 +10,7 @@
         </div>
         <hr class="my-2 d-none d-lg-block">
         <div class="collapse navbar-collapse scrollbar py-lg-2" id="navbarDoubleTop">
-            <ul class="navbar-nav" data-top-nav-dropdowns="data-top-nav-dropdowns">
+            <ul class="navbar-nav" data-erp-top-navigation>
                 @include('layouts.partials.menu.top-items', ['items' => $appMenuItems ?? app(\Modules\Core\Services\MenuService::class)->getMenu()])
             </ul>
         </div>

@@ -67,6 +67,7 @@ return [
         'permission' => null,
         'active' => [
             'admin.reports.suppliers.*',
+            'admin.purchases.procurement-cycle-report.*',
         ],
         'children' => [
             [
@@ -83,6 +84,22 @@ return [
                 ],
                 'active' => [
                     'admin.reports.suppliers.*',
+                ],
+                'children' => [],
+            ],
+            [
+                'label' => 'procurement_cycle_report',
+                'title' => 'Procurement Cycle Report',
+                'icon' => 'project-diagram',
+                'route' => 'admin.purchases.procurement-cycle-report.index',
+                'permission' => 'reports.purchases.view',
+                'keywords' => ['procurement cycle', 'purchasing status', 'purchase requirements', 'دورة المشتريات'],
+                'actions' => [
+                    'view' => 'reports.purchases.view',
+                    'export' => 'reports.purchases.export',
+                ],
+                'active' => [
+                    'admin.purchases.procurement-cycle-report.*',
                 ],
                 'children' => [],
             ],

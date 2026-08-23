@@ -107,6 +107,8 @@ function productNumericReportDataTableColumns(): array
             'component_doc_num',
             'component_name',
             'component_classification',
+            'component_calculation_method',
+            'component_calculation_value',
             'component_quantity',
             'component_unit',
             'component_equivalent',
@@ -136,7 +138,9 @@ test('product report display mapping groups values while export mapping stays ca
         'component_doc_num' => '00005678',
         'component_name' => 'Numeric Component',
         'component_classification' => Product::ClassificationRawMaterial,
+        'component_calculation_method' => ProductComponent::CalculationQuantity,
         'component_quantity' => '1234567.89000000',
+        'component_percentage' => null,
         'component_unit_doc_num' => 'Unit-00002',
         'component_unit_name' => 'Gram',
         'component_equivalent_value' => '0.00045800',
@@ -155,6 +159,8 @@ test('product report display mapping groups values while export mapping stays ca
     expect($display['reorder_point'])->toBe('1,250.5')
         ->and($display['equivalent'])->toBe('0.05 Unit-00002 / Gram')
         ->and($display['components_count'])->toBe('1,000')
+        ->and($display['component_calculation_method'])->toBe(__('products.components.quantity'))
+        ->and($display['component_calculation_value'])->toBe('1,234,567.89')
         ->and($display['component_quantity'])->toBe('1,234,567.89')
         ->and($display['component_equivalent'])->toBe('0.000458 Unit-00003 / Kilogram')
         ->and($summary[12])->toBe('1,250.5')
@@ -164,9 +170,27 @@ test('product report display mapping groups values while export mapping stays ca
         ->and($summaryExport[12])->toBe('1250.5')
         ->and($summaryExport[13])->toBe('0.05 Unit-00002 / Gram')
         ->and($summaryExport[15])->toBe(1000)
-        ->and($detailed[6])->toBe('1,234,567.89')
-        ->and($detailedExport[6])->toBe('1234567.89')
-        ->and($detailedExport[8])->toBe('0.000458 Unit-00003 / Kilogram');
+        ->and($detailed[6])->toBe(__('products.components.quantity'))
+        ->and($detailed[7])->toBe('1,234,567.89')
+        ->and($detailedExport[6])->toBe(__('products.components.quantity'))
+        ->and($detailedExport[7])->toBe('1234567.89')
+        ->and($detailedExport[10])->toBe('0.000458 Unit-00003 / Kilogram');
+
+    $product->component_calculation_method = ProductComponent::CalculationCount;
+    $product->component_quantity = '4.00000000';
+    $countExport = $report->exportMap($product, ['result_mode' => ProductDataReport::ModeDetailed]);
+
+    expect($countExport[6])->toBe(__('products.components.count'))
+        ->and($countExport[7])->toBe('4');
+
+    $product->component_calculation_method = ProductComponent::CalculationPercentage;
+    $product->component_percentage = '2.00000000';
+    $product->component_quantity = '2.60000000';
+    $percentageExport = $report->exportMap($product, ['result_mode' => ProductDataReport::ModeDetailed]);
+
+    expect($percentageExport[6])->toBe(__('products.components.percentage'))
+        ->and($percentageExport[7])->toBe('2')
+        ->and($percentageExport[8])->toBe('2.6');
 });
 
 test('product report DataTable displays grouped values and orders the raw numeric column', function (): void {
@@ -258,6 +282,7 @@ test('product XLSX keeps numeric cells and text identifiers while CSV stays cano
         'product_id' => $product->getKey(),
         'component_product_id' => $component->getKey(),
         'unit_id' => $equivalentUnit->getKey(),
+        'calculation_method' => ProductComponent::CalculationQuantity,
         'quantity' => '1234567.89000000',
     ]);
 
@@ -312,11 +337,15 @@ test('product XLSX keeps numeric cells and text identifiers while CSV stays cano
     expect($detailedSheet->getCell('A2')->getDataType())->toBe(DataType::TYPE_STRING)
         ->and($detailedSheet->getCell('D2')->getValue())->toBe('00005678')
         ->and($detailedSheet->getCell('D2')->getDataType())->toBe(DataType::TYPE_STRING)
-        ->and($detailedSheet->getCell('G2')->getValue())->toBe(1234567.89)
-        ->and($detailedSheet->getCell('G2')->getDataType())->toBe(DataType::TYPE_NUMERIC)
-        ->and($detailedSheet->getStyle('G2')->getNumberFormat()->getFormatCode())->toBe('#,##0.########')
-        ->and($detailedSheet->getCell('I2')->getValue())->toBe('0.000458 Unit-00003 / Kilogram')
-        ->and($detailedSheet->getCell('I2')->getDataType())->toBe(DataType::TYPE_STRING);
+        ->and($detailedSheet->getCell('G2')->getValue())->toBe(__('products.components.quantity'))
+        ->and($detailedSheet->getCell('G2')->getDataType())->toBe(DataType::TYPE_STRING)
+        ->and($detailedSheet->getCell('H2')->getValue())->toBe(1234567.89)
+        ->and($detailedSheet->getCell('H2')->getDataType())->toBe(DataType::TYPE_NUMERIC)
+        ->and($detailedSheet->getStyle('H2')->getNumberFormat()->getFormatCode())->toBe('#,##0.########')
+        ->and($detailedSheet->getCell('I2')->getValue())->toBe(1234567.89)
+        ->and($detailedSheet->getCell('I2')->getDataType())->toBe(DataType::TYPE_NUMERIC)
+        ->and($detailedSheet->getCell('K2')->getValue())->toBe('0.000458 Unit-00003 / Kilogram')
+        ->and($detailedSheet->getCell('K2')->getDataType())->toBe(DataType::TYPE_STRING);
 
     $detailedCsv = $this->actingAs($actor)
         ->withSession($this->productNumericReportContext['session'])
@@ -330,8 +359,10 @@ test('product XLSX keeps numeric cells and text identifiers while CSV stays cano
 
     $detailedCsvRow = str_getcsv($detailedCsvDataLine);
 
-    expect($detailedCsvRow[6])->toBe('1234567.89')
-        ->and($detailedCsvRow[8])->toBe('0.000458 Unit-00003 / Kilogram')
+    expect($detailedCsvRow[6])->toBe(__('products.components.quantity'))
+        ->and($detailedCsvRow[7])->toBe('1234567.89')
+        ->and($detailedCsvRow[8])->toBe('1234567.89')
+        ->and($detailedCsvRow[10])->toBe('0.000458 Unit-00003 / Kilogram')
         ->and($detailedCsvContents)->not->toContain('1,234,567.89');
 
     $pdf = $this->actingAs($actor)

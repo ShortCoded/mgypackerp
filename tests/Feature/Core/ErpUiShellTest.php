@@ -304,6 +304,7 @@ test('expanded screen breadcrumbs follow the accounting and costing domain hiera
 test('navigation styling provides readable interactive nested menus in both directions', function (): void {
     $dropdownTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-dropdown-items.blade.php'));
     $topTemplate = file_get_contents(resource_path('views/layouts/partials/menu/top-items.blade.php'));
+    $topNavbarTemplate = file_get_contents(resource_path('views/layouts/partials/navbar-top.blade.php'));
     $navigationStyles = file_get_contents(public_path('assets/css/user.css'));
     $navigationScript = file_get_contents(public_path('assets/js/modules/Core/layout.js'));
 
@@ -312,10 +313,22 @@ test('navigation styling provides readable interactive nested menus in both dire
             'erp-top-nav-branch',
             'erp-top-nav-item',
             'erp-top-nav-submenu',
-            'data-bs-display="static"',
+            'data-erp-menu-toggle',
+            'aria-controls=',
+            'aria-expanded="false"',
             'aria-current="page"',
         )
-        ->and($topTemplate)->toContain('erp-top-nav-menu', 'erp-top-nav-panel')
+        ->and($dropdownTemplate)->not->toContain('data-bs-toggle="dropdown"')
+        ->and($topTemplate)->toContain(
+            'erp-top-nav-menu',
+            'erp-top-nav-panel',
+            'data-erp-menu-toggle',
+            'aria-controls=',
+            'aria-expanded="false"',
+        )
+        ->and($topTemplate)->not->toContain('data-bs-toggle="dropdown"')
+        ->and($topNavbarTemplate)->toContain('data-erp-top-navigation')
+        ->and($topNavbarTemplate)->not->toContain('data-top-nav-dropdowns')
         ->and($navigationStyles)->toContain(
             '--erp-navigation-link-color: var(--falcon-gray-700)',
             '--erp-navigation-submenu-color: var(--falcon-gray-800)',
@@ -323,6 +336,15 @@ test('navigation styling provides readable interactive nested menus in both dire
             '--erp-navigation-submenu-active-bg: rgba(var(--falcon-primary-rgb), .12)',
             '.erp-top-nav-item:focus-visible',
             '.erp-top-nav-item[aria-disabled="true"]',
+            'inset-inline-start: calc(100% - .125rem)',
+            'inset-inline-end: calc(100% - .125rem)',
+            'margin-inline: 0',
+            'max-height: var(--erp-menu-available-height, calc(100dvh - 1.5rem))',
+            'overflow-y: auto',
+            'overscroll-behavior-y: contain',
+            'scrollbar-width: thin',
+            '.navbar-collapse:has(> [data-erp-top-navigation])',
+            'position: fixed',
             'html[dir="ltr"] .navbar-top',
             'html[dir="rtl"] .navbar-top',
             '@media (max-width: 991.98px)',
@@ -336,6 +358,24 @@ test('navigation styling provides readable interactive nested menus in both dire
         ->and($navigationScript)->toContain(
             'positionNestedTopMenu',
             'erp-top-nav-branch-flipped',
+            "owner.dataset.erpMenuState = 'closed'",
+            "openOwnerPath(owner, 'hover')",
+            "openOwnerPath(owner, 'pinned')",
+            '}, 150)',
+            '}, 350)',
+            "event.key === 'Enter'",
+            "event.key !== 'Escape' || !hasOpenMenus()",
+            "document.addEventListener('click'",
+            "event.pointerType === 'touch'",
+            "navigation.dataset.erpTopNavigationInitialized === 'true'",
+            "toggle.setAttribute('aria-expanded', 'true')",
+            "toggle.setAttribute('aria-expanded', 'false')",
+            'window.visualViewport',
+            "menu.style.setProperty('--erp-menu-available-height'",
+            'submenu.scrollHeight',
+            'scheduleOpenMenuPositioning',
+            "navigation.addEventListener('scroll'",
+            "window.visualViewport.addEventListener('resize'",
             "navigation.addEventListener('focusin'",
             "window.addEventListener('resize'",
         );

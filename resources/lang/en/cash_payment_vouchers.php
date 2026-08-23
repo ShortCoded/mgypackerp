@@ -7,6 +7,7 @@ return [
     'edit' => 'Edit Cash Payment Voucher',
     'view' => 'View Cash Payment Voucher',
     'clone' => 'Clone Cash Payment Voucher',
+    'print_title' => 'Print Cash Payment Voucher :doc',
     'sections' => [
         'basic' => 'Basic Data',
         'details' => 'Distribution',
@@ -50,6 +51,7 @@ return [
         'add_line' => 'Add Line',
         'approve' => 'Approve',
         'cancel' => 'Cancel',
+        'print' => 'Print',
         'save_new' => 'Save & New',
     ],
     'messages' => [

@@ -7,12 +7,15 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Purchases\Models\GoodsReceiptInspection;
+use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\Supplier;
 
 class UnpricedInventoryReceipt extends Model
@@ -43,6 +46,14 @@ class UnpricedInventoryReceipt extends Model
         'branch_hall_id',
         'branch_store_id',
         'supplier_id',
+        'purchase_order_id',
+        'supplier_delivery_note',
+        'received_at',
+        'qc_status',
+        'posting_status',
+        'received_by',
+        'posted_by',
+        'posted_at',
         'reference_number',
         'reference_date',
         'notes',
@@ -56,6 +67,7 @@ class UnpricedInventoryReceipt extends Model
         'closed_by',
         'cancelled_at',
         'cancelled_by',
+        'cancel_reason',
         'created_by',
         'updated_by',
         'deleted_by',
@@ -78,6 +90,8 @@ class UnpricedInventoryReceipt extends Model
             'approved' => 'boolean',
             'is_closed' => 'boolean',
             'approved_at' => 'datetime',
+            'received_at' => 'datetime',
+            'posted_at' => 'datetime',
             'closed_at' => 'datetime',
             'cancelled_at' => 'datetime',
             'created_at' => 'datetime',
@@ -145,6 +159,16 @@ class UnpricedInventoryReceipt extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class)->withTrashed();
+    }
+
+    public function purchaseOrder(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function inspection(): HasOne
+    {
+        return $this->hasOne(GoodsReceiptInspection::class, 'receipt_id');
     }
 
     public function lines(): HasMany

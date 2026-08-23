@@ -290,7 +290,7 @@ class PurchasesSelect2Service
         $query = Product::query()
             ->with(['unit', 'equivalentUnit', 'mainImageUsage.file'])
             ->active()
-            ->nonService()
+            ->purchasable()
             ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'));
 
         if ($user instanceof User) {

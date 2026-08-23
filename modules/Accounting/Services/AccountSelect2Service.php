@@ -22,8 +22,7 @@ class AccountSelect2Service
         $companyId = $this->companies->currentCompanyId($request);
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.doc_number', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance'])
-            ->where('accounts.status', 'active')
+            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
 
         if ($companyId === null) {
@@ -33,7 +32,9 @@ class AccountSelect2Service
         }
 
         if ($request->boolean('postable')) {
-            $query->where('accounts.is_postable', true)->where('accounts.is_group', false);
+            $query->eligibleForDirectPosting();
+        } else {
+            $query->active();
         }
 
         if ($request->boolean('group')) {
@@ -100,7 +101,7 @@ class AccountSelect2Service
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
-            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['accounts.doc_num', 'accounts.account_code', 'accounts.name']]);
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en']]);
         }
 
         return $this->select2->paginated($query, $request, fn (Account $account): array => $this->item($account));
@@ -131,7 +132,7 @@ class AccountSelect2Service
     {
         return [
             'id' => $account->doc_num,
-            'text' => trim(implode(' — ', array_filter([$account->account_code, $account->name]))),
+            'text' => $account->codeNameLabel(),
             'account_code' => $account->account_code,
             'account_type' => $account->account_type,
             'statement_type' => $account->statement_type,

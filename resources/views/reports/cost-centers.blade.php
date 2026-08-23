@@ -29,6 +29,8 @@
                     </td>
                     <td>{{ $row['is_group'] }}</td>
                     <td>{{ $row['parent_code'] }}</td>
+                    <td dir="ltr">{{ $row['default_account_doc_num'] }}</td>
+                    <td>{{ $row['default_account'] }}</td>
                     <td>{{ $row['status'] }}</td>
                 </tr>
             @empty

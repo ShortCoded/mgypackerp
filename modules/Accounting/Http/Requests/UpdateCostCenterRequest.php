@@ -5,6 +5,7 @@ namespace Modules\Accounting\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Services\OperatingCompanyContextService;
 
@@ -21,6 +22,7 @@ class UpdateCostCenterRequest extends FormRequest
             'cost_center_code' => trim((string) $this->input('cost_center_code')),
             'name' => trim((string) $this->input('name')),
             'parent_doc_num' => $this->filled('parent_doc_num') ? trim((string) $this->input('parent_doc_num')) : null,
+            'default_account_doc_num' => $this->filled('default_account_doc_num') ? trim((string) $this->input('default_account_doc_num')) : null,
             'is_group' => $this->boolean('is_group'),
         ]);
     }
@@ -50,6 +52,22 @@ class UpdateCostCenterRequest extends FormRequest
                         ->where('status', 'active')
                         ->where('is_group', true)
                         ->whereNull('deleted_at')),
+            ],
+            'default_account_doc_num' => [
+                'nullable',
+                'string',
+                Rule::exists('accounts', 'doc_num')
+                    ->where(fn ($query) => $query
+                        ->where('company_id', $companyId)
+                        ->where(function ($query) use ($costCenter): void {
+                            $query->where(function ($query): void {
+                                Account::applyDirectPostingEligibility($query);
+                            });
+
+                            if ($costCenter?->default_account_id !== null) {
+                                $query->orWhere('id', $costCenter->default_account_id);
+                            }
+                        })),
             ],
             'is_group' => ['boolean'],
             'status' => ['required', Rule::in(['active', 'inactive'])],

@@ -67,14 +67,31 @@
                     <div class="col">
                         <h5 class="mb-0">{{ $title }}</h5>
                     </div>
-                    <div class="col-auto">
-                        @include('modules.finance.partials.form-actions', [
+                <div class="col-auto">
+                    @include('modules.finance.partials.form-actions', [
                             'resource' => 'purchase_orders',
                             'routePrefix' => $routePrefix,
                             'canEditRecord' => ! ($record?->isLockedForEditing() ?? false),
                             'canDeleteRecord' => $record?->isDeletable() ?? false,
-                        ])
-                    </div>
+                    ])
+                    @if($mode === 'view' && $record?->isApproved())
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            @can('purchases.purchase_order_delivery_schedule.create')
+                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-order-delivery-schedule.create', $record->doc_num) }}">{{ __('Delivery schedule') }}</a>
+                            @endcan
+                            @can('purchases.goods_receipt_notes.create')
+                            @if((float) $record->total_remaining_quantity > 0)
+                                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Receive') }}</a>
+                            @endif
+                            @endcan
+                            @can('purchases.purchase_order_change_requests.create')
+                            @if(! $record->hasReceipts())
+                                <a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.purchases.purchase-order-change-requests.create', $record->doc_num) }}">{{ __('Request change') }}</a>
+                            @endif
+                            @endcan
+                        </div>
+                    @endif
+                </div>
                 </div>
             </div>
             <div class="card-body">
@@ -174,6 +191,16 @@
                         <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                     </div>
 
+                    <div class="col-md-2">
+                        <label class="form-label" for="freight_amount">{{ __('Freight') }}</label>
+                        @if($isReadonly)
+                            <x-forms.view-field for="freight_amount" :value="$numbers->format($record?->freight_amount ?? 0)" dir="ltr" input-class="text-end" />
+                        @else
+                            <x-forms.numeric-input class="text-end" id="freight_amount" name="freight_amount" :value="old('freight_amount', $record?->freight_amount ?? 0)" :scale="4" min="0" step="0.0001" />
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="freight_amount"></div>
+                    </div>
+
                     <div class="col-md-3">
                         <label class="form-label" for="expected_delivery_date">{{ __('purchase_orders.attributes.expected_delivery_date') }}</label>
                         @if($isReadonly)
@@ -194,6 +221,16 @@
                         <div class="invalid-feedback d-block" data-error-for="supplier_reference"></div>
                     </div>
 
+                    <div class="col-md-3">
+                        <label class="form-label" for="payment_terms">{{ __('Payment terms snapshot') }}</label>
+                        @if($isReadonly)
+                            <x-forms.view-field for="payment_terms" :value="$record?->payment_terms ?: __('common.empty_value')" />
+                        @else
+                            <input class="form-control" id="payment_terms" name="payment_terms" value="{{ old('payment_terms', $record?->payment_terms) }}" maxlength="255" placeholder="{{ __('Defaults from Supplier when blank') }}">
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="payment_terms"></div>
+                    </div>
+
                     <div class="col-12">
                         <label class="form-label" for="notes">{{ __('purchase_orders.attributes.notes') }}</label>
                         @if($isReadonly)
@@ -203,9 +240,54 @@
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
+                    @if($isCreateLike && ! $record?->purchase_requisition_id && auth()->user()?->can('purchases.direct_procurement.override'))
+                        <div class="col-md-4">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override'))>
+                                <label class="form-check-label" for="direct_procurement_override">{{ __('Authorized direct procurement override') }}</label>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label" for="direct_procurement_reason">{{ __('Direct procurement reason') }}</label>
+                            <input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason') }}">
+                            <div class="invalid-feedback d-block" data-error-for="direct_procurement_reason"></div>
+                        </div>
+                    @endif
                 </div>
             </div>
         </div>
+
+        @if($mode === 'view')
+            <div class="card mb-3">
+                <div class="card-header py-2"><h6 class="mb-0">{{ __('Document lineage') }}</h6></div>
+                <div class="card-body py-2 d-flex flex-wrap gap-2">
+                    @can('purchases.purchase_requisitions.view')
+                        @if($record->requisition)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-requisitions.show', $record->requisition->doc_num) }}">{{ __('Purchase Requisition') }}: <span dir="ltr">{{ $record->requisition->doc_num }}</span></a>@endif
+                    @endcan
+                    @can('purchases.request_for_quotations.view')
+                        @if($record->requestForQuotation)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.request-for-quotations.show', $record->requestForQuotation->doc_num) }}">{{ __('RFQ') }}: <span dir="ltr">{{ $record->requestForQuotation->doc_num }}</span></a>@endif
+                    @endcan
+                    @can('purchases.supplier_quotation_entry.view')
+                        @if($record->supplierQuotation)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.show', $record->supplierQuotation->doc_num) }}">{{ __('Supplier Quotation') }}: <span dir="ltr">{{ $record->supplierQuotation->doc_num }}</span></a>@endif
+                    @endcan
+                    @can('purchases.supplier_selection.view')
+                        @if($record->supplierSelection)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-selection.show', $record->supplierSelection->doc_num) }}">{{ __('Supplier Selection') }}: <span dir="ltr">{{ $record->supplierSelection->doc_num }}</span></a>@endif
+                    @endcan
+                    @can('purchases.goods_receipt_notes.view')
+                        @foreach($record->receipts as $receipt)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.show', $receipt->doc_num) }}">{{ __('GRN') }}: <span dir="ltr">{{ $receipt->doc_num }}</span></a>@endforeach
+                    @endcan
+                    @can('purchase_invoices.view')
+                        @foreach($record->purchaseInvoices as $invoice)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.show', $invoice->doc_num) }}">{{ __('Purchase Invoice') }}: <span dir="ltr">{{ $invoice->doc_num }}</span></a>@endforeach
+                    @endcan
+                    @can('purchases.purchase_returns.view')
+                        @foreach($record->purchaseReturns as $return)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.show', $return->doc_num) }}">{{ __('Purchase Return') }}: <span dir="ltr">{{ $return->doc_num }}</span></a>@endforeach
+                    @endcan
+                    @can('supplier_payments.view')
+                        @foreach($record->supplierPayments as $payment)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-payments.show', $payment->doc_num) }}">{{ __('Supplier Payment') }}: <span dir="ltr">{{ $payment->doc_num }}</span></a>@endforeach
+                    @endcan
+                </div>
+            </div>
+        @endif
 
         <div class="card mb-3">
             <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -226,6 +308,9 @@
                                 <th style="width: 13rem;">{{ __('purchase_orders.attributes.unit') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.ordered_quantity') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.unit_price') }}</th>
+                                <th style="width: 8rem;">{{ __('Discount type') }}</th>
+                                <th class="text-end" style="width: 8rem;">{{ __('Discount') }}</th>
+                                <th class="text-end" style="width: 8rem;">{{ __('Tax %') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.line_total') }}</th>
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.received_quantity') }}</th>
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.remaining_quantity') }}</th>
@@ -293,8 +378,34 @@
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                         @endif
                                     </td>
+                                    <td>
+                                        @if($isReadonly)
+                                            <span>{{ str($line['discount_type'] ?? 'fixed')->title() }}</span>
+                                        @else
+                                            <select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
+                                                <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('Fixed') }}</option>
+                                                <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('Percentage') }}</option>
+                                            </select>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)
+                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</div>
+                                        @else
+                                            <x-forms.numeric-input class="text-end js-line-discount-value" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" />
+                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.discount_value"></div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)
+                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['tax_rate'] ?? 0) }}</div>
+                                        @else
+                                            <x-forms.numeric-input class="text-end js-line-tax-rate" :name="'lines['.$index.'][tax_rate]'" :value="$line['tax_rate'] ?? 0" :scale="4" min="0" max="100" step="0.0001" />
+                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.tax_rate"></div>
+                                        @endif
+                                    </td>
                                     <td class="text-end fw-semibold js-line-total" dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</td>
-                                    <td class="text-end text-700" dir="ltr">{{ $numbers->format($line['received_quantity'] ?? 0) }}</td>
+                                    <td class="text-end text-700 js-line-received" dir="ltr">{{ $numbers->format($line['received_quantity'] ?? 0) }}</td>
                                     <td class="text-end text-700 js-line-remaining" dir="ltr">{{ $numbers->format($line['remaining_quantity'] ?? 0) }}</td>
                                     <td>
                                         @if($isReadonly)
@@ -392,8 +503,19 @@
                 <x-forms.numeric-input class="text-end js-line-unit-price" name="lines[__INDEX__][unit_price]" :scale="4" min="0" step="0.0001" required />
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
             </td>
+            <td>
+                <select class="form-select js-line-discount-type" name="lines[__INDEX__][discount_type]"><option value="fixed">{{ __('Fixed') }}</option><option value="percentage">{{ __('Percentage') }}</option></select>
+            </td>
+            <td>
+                <x-forms.numeric-input class="text-end js-line-discount-value" name="lines[__INDEX__][discount_value]" :scale="4" min="0" step="0.0001" value="0" />
+                <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.discount_value"></div>
+            </td>
+            <td>
+                <x-forms.numeric-input class="text-end js-line-tax-rate" name="lines[__INDEX__][tax_rate]" :scale="4" min="0" max="100" step="0.0001" value="0" />
+                <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.tax_rate"></div>
+            </td>
             <td class="text-end fw-semibold js-line-total">0</td>
-            <td class="text-end text-700">0</td>
+            <td class="text-end text-700 js-line-received">0</td>
             <td class="text-end text-700 js-line-remaining">0</td>
             <td>
                 <input class="form-control" name="lines[__INDEX__][notes]">

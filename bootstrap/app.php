@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\SetLocale;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -44,6 +45,31 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $isSalesCycleJson = static fn (Request $request): bool => ($request->is('admin/sales/*') || $request->is('admin/production/work-orders/*'))
+            && ($request->expectsJson() || $request->ajax());
+
+        $exceptions->render(function (DomainException $exception, Request $request) use ($isSalesCycleJson) {
+            if (! $isSalesCycleJson($request)) {
+                return null;
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], 422);
+        });
+
+        $exceptions->render(function (QueryException $exception, Request $request) use ($isSalesCycleJson) {
+            if (! $isSalesCycleJson($request)) {
+                return null;
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => __('The operation could not be completed safely. No changes were saved.'),
+            ], 500);
+        });
+
         $isLockScreenWrite = function (Request $request): bool {
             return $request->routeIs('lock-screen.store', 'lock-screen.unlock')
                 || $request->is('lock-screen', 'lock-screen/unlock');

@@ -3,7 +3,7 @@
 
     const responsiveControlTarget = 1;
     const protectedColumns = [0, 1, 2, 14];
-    const detailColumns = [16, 17, 18, 19, 20, 21, 22];
+    const detailColumns = [16, 17, 18, 19, 20, 21, 22, 23, 24];
     const defaultOrder = [[0, 'desc']];
     const allowedFilterNames = [
         'result_mode',
@@ -167,9 +167,11 @@
                 { data: 'component_doc_num', name: 'component_doc_num', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 6, createdCell: setPlainTextTitle },
                 { data: 'component_name', name: 'component_name', orderable: true, searchable: true, className: 'dt-text dt-ellipsis align-middle', responsivePriority: 7, width: '13rem', createdCell: setPlainTextTitle },
                 { data: 'component_classification', name: 'component_classification', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 8 },
-                { data: 'component_quantity', name: 'component_quantity', orderable: true, searchable: false, className: 'dt-number align-middle text-end white-space-nowrap', responsivePriority: 9 },
-                { data: 'component_unit', name: 'component_unit', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 10 },
-                { data: 'component_equivalent', name: 'component_equivalent', orderable: false, searchable: false, className: 'align-middle white-space-nowrap', responsivePriority: 11 },
+                { data: 'component_calculation_method', name: 'component_calculation_method', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 9 },
+                { data: 'component_calculation_value', name: 'component_calculation_value', orderable: false, searchable: false, className: 'dt-number align-middle text-end white-space-nowrap', responsivePriority: 10 },
+                { data: 'component_quantity', name: 'component_quantity', orderable: true, searchable: false, className: 'dt-number align-middle text-end white-space-nowrap', responsivePriority: 11 },
+                { data: 'component_unit', name: 'component_unit', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 12 },
+                { data: 'component_equivalent', name: 'component_equivalent', orderable: false, searchable: false, className: 'align-middle white-space-nowrap', responsivePriority: 13 },
                 { data: 'component_notes', name: 'component_notes', orderable: false, searchable: true, className: 'dt-text dt-ellipsis align-middle', responsivePriority: 130, createdCell: setPlainTextTitle },
                 { data: 'created_at', name: 'created_at', orderable: true, searchable: true, className: 'align-middle white-space-nowrap', responsivePriority: 140 }
             ],

@@ -14,13 +14,15 @@ class PurchaseOrderCalculationService
      * @param  list<array<string, mixed>>  $lines
      * @return array{order: array<string, string>, lines: list<array<string, mixed>>}
      */
-    public function calculate(array $lines): array
+    public function calculate(array $lines, mixed $freightAmount = 0): array
     {
         $calculatedLines = [];
         $totalOrderedQuantity = 0.0;
         $totalReceivedQuantity = 0.0;
         $totalRemainingQuantity = 0.0;
         $subtotalAmount = 0.0;
+        $totalAmount = 0.0;
+        $freightAmount = max(0, $this->number($freightAmount));
 
         foreach (array_values($lines) as $line) {
             $orderedQuantityInput = $line['ordered_quantity'] ?? 0;
@@ -30,7 +32,18 @@ class PurchaseOrderCalculationService
             $receivedQuantity = max(0, $this->number($receivedQuantityInput));
             $remainingQuantity = max(0, $orderedQuantity - $receivedQuantity);
             $unitPrice = $this->number($unitPriceInput);
-            $lineTotal = $orderedQuantity * $unitPrice;
+            $subtotal = $orderedQuantity * $unitPrice;
+            $discountType = in_array($line['discount_type'] ?? null, ['fixed', 'percentage'], true)
+                ? $line['discount_type']
+                : 'fixed';
+            $discountValue = max(0, $this->number($line['discount_value'] ?? 0));
+            $discountAmount = $discountType === 'percentage'
+                ? $subtotal * min(100, $discountValue) / 100
+                : min($subtotal, $discountValue);
+            $totalBeforeTax = max(0, $subtotal - $discountAmount);
+            $taxRate = min(100, max(0, $this->number($line['tax_rate'] ?? 0)));
+            $taxAmount = $totalBeforeTax * $taxRate / 100;
+            $lineTotal = $totalBeforeTax + $taxAmount;
 
             $calculatedLines[] = [
                 ...$line,
@@ -40,13 +53,22 @@ class PurchaseOrderCalculationService
                     : $this->formatQuantity(0),
                 'remaining_quantity' => $this->decimalQuantity($remainingQuantity),
                 'unit_price' => $this->formatAmount($unitPriceInput),
+                'discount_type' => $discountType,
+                'discount_value' => $this->formatAmount($discountValue),
+                'discount_amount' => $this->decimalAmount($discountAmount),
+                'tax_rate' => $this->formatAmount($taxRate),
+                'tax_amount' => $this->decimalAmount($taxAmount),
+                'subtotal_amount' => $this->decimalAmount($subtotal),
+                'total_before_tax' => $this->decimalAmount($totalBeforeTax),
+                'total_after_tax' => $this->decimalAmount($lineTotal),
                 'line_total' => $this->decimalAmount($lineTotal),
             ];
 
             $totalOrderedQuantity += $orderedQuantity;
             $totalReceivedQuantity += $receivedQuantity;
             $totalRemainingQuantity += $remainingQuantity;
-            $subtotalAmount += $lineTotal;
+            $subtotalAmount += $subtotal;
+            $totalAmount += $lineTotal;
         }
 
         return [
@@ -55,7 +77,8 @@ class PurchaseOrderCalculationService
                 'total_received_quantity' => $this->decimalQuantity($totalReceivedQuantity),
                 'total_remaining_quantity' => $this->decimalQuantity($totalRemainingQuantity),
                 'subtotal_amount' => $this->decimalAmount($subtotalAmount),
-                'total_amount' => $this->decimalAmount($subtotalAmount),
+                'freight_amount' => $this->formatAmount($freightAmount),
+                'total_amount' => $this->decimalAmount($totalAmount + $freightAmount),
             ],
             'lines' => $calculatedLines,
         ];

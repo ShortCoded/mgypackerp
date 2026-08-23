@@ -10,9 +10,12 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
 use Modules\Purchases\Http\Requests\BulkDeletePurchaseInvoicesRequest;
 use Modules\Purchases\Http\Requests\CancelPurchaseInvoiceRequest;
@@ -20,6 +23,7 @@ use Modules\Purchases\Http\Requests\StorePurchaseInvoiceRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceDocumentNumberSettingsRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 
 class PurchaseInvoiceController extends Controller
@@ -27,6 +31,7 @@ class PurchaseInvoiceController extends Controller
     public function __construct(
         private readonly PurchaseInvoiceService $service,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly OperatingContextService $operatingContext,
     ) {}
 
     public function index(DocumentNumberSettingsService $settings): View
@@ -189,12 +194,28 @@ class PurchaseInvoiceController extends Controller
         ]);
     }
 
-    public function print(PurchaseInvoice $purchaseInvoice): View
+    public function reverse(CancelPurchaseInvoiceRequest $request, PurchaseInvoice $purchaseInvoice): JsonResponse
+    {
+        try {
+            $record = $this->service->reverse($purchaseInvoice, (string) $request->validated('cancel_reason'));
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => __('Purchase Invoice reversed successfully.'),
+            'data' => ['doc_num' => $record->doc_num, 'urls' => $this->urls($record)],
+        ]);
+    }
+
+    public function print(PurchaseInvoice $purchaseInvoice, CompanyPrintIdentityService $printIdentities): View
     {
         $purchaseInvoice->loadMissing($this->service->defaultRelations());
 
         return view('modules.purchases.purchase-invoices.print', [
             'record' => $purchaseInvoice,
+            'companyPrintIdentity' => $printIdentities->forCompany($purchaseInvoice->company),
         ]);
     }
 
@@ -212,6 +233,33 @@ class PurchaseInvoiceController extends Controller
     private function form(string $mode, ?PurchaseInvoice $record = null, ?string $cloneSourceToken = null): View
     {
         $record?->loadMissing($this->service->defaultRelations());
+        if ($mode === 'view') {
+            $record?->loadMissing([
+                'purchaseOrder.requisition', 'purchaseOrder.requestForQuotation',
+                'lines.receiptLine.receipt', 'paymentAllocations.paymentContext', 'purchaseReturns',
+            ]);
+        }
+        $context = $this->operatingContext->snapshot(request());
+        $companyId = (int) ($context['company_id'] ?? 0);
+        $purchaseOrders = PurchaseOrder::query()->forCompany($companyId)
+            ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
+            ->with(['supplier', 'lines.product', 'lines.unit'])
+            ->withSum([
+                'purchaseInvoices as invoiced_freight_amount' => fn ($query) => $query
+                    ->where('status', '<>', PurchaseInvoice::StatusCancelled)
+                    ->when($record, fn ($invoiceQuery) => $invoiceQuery->whereKeyNot($record->getKey())),
+            ], 'freight_amount')
+            ->latest('document_date')
+            ->limit(100)
+            ->get();
+        $eligibleReceiptLines = UnpricedInventoryReceiptLine::query()
+            ->with(['receipt', 'product', 'unit', 'purchaseOrderLine.purchaseOrder'])
+            ->where('company_id', $companyId)
+            ->where('accepted_quantity', '>', 0)
+            ->whereNotNull('purchase_order_line_id')
+            ->latest('id')
+            ->limit(500)
+            ->get();
 
         return view('modules.purchases.purchase-invoices.form', [
             'mode' => $mode,
@@ -224,6 +272,8 @@ class PurchaseInvoiceController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'cloneSourceToken' => $cloneSourceToken,
             'metadata' => $this->metadata($record),
+            'procurementPurchaseOrders' => $purchaseOrders,
+            'eligibleReceiptLines' => $eligibleReceiptLines,
         ]);
     }
 
@@ -261,6 +311,7 @@ class PurchaseInvoiceController extends Controller
             'approve' => route('admin.purchases.purchase-invoices.approve', $record->doc_num),
             'close' => route('admin.purchases.purchase-invoices.close', $record->doc_num),
             'cancel' => route('admin.purchases.purchase-invoices.cancel', $record->doc_num),
+            'reverse' => route('admin.purchases.purchase-invoices.reverse', $record->doc_num),
             'print' => route('admin.purchases.purchase-invoices.print', $record->doc_num),
         ];
     }

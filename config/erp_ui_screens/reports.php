@@ -36,7 +36,7 @@ return [
         $screen('finance', 'treasury-transfers', 'Treasury Transfers', 'تحويلات الخزينة'),
         $screen('finance', 'customer-aging', 'Customer Aging', 'أعمار ديون العملاء'),
         $screen('finance', 'supplier-aging', 'Supplier Aging', 'أعمار ديون الموردين'),
-        $screen('sales', 'sales-orders', 'Sales Orders', 'أوامر البيع'),
+        [...$screen('sales', 'sales-orders', 'Sales Orders', 'أوامر البيع'), 'shell_enabled' => false],
         $screen('sales', 'sales-by-customer', 'Sales by Customer', 'المبيعات حسب العميل'),
         $screen('sales', 'sales-by-product', 'Sales by Product', 'المبيعات حسب المنتج'),
         $screen('sales', 'sales-by-employee', 'Sales by Employee', 'المبيعات حسب الموظف'),

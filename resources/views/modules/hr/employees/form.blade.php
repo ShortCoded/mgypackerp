@@ -394,69 +394,26 @@
                                         <div class="invalid-feedback d-block" data-error-for="photo_archive_file_doc_num"></div>
                                     </div>
 
-                                    <div class="col-md-6 product-image-field">
-                                        @php
-                                            $signatureFile = $employee?->signatureArchiveFile;
-                                            $signatureValue = old('signature_archive_file_doc_num', $signatureFile?->doc_num ?? '');
-                                            $signaturePreview = $signatureValue !== '' && $signatureFile?->doc_num === $signatureValue
-                                                ? route('admin.file-manager.files.preview', $signatureFile->doc_num)
-                                                : '';
-                                            $signatureFileLabel = $signaturePreview !== ''
-                                                ? ($signatureFile?->original_name ?? __('hr.employees.signature.existing_file'))
-                                                : __('hr.employees.signature.no_file_selected');
-                                        @endphp
-                                        <x-forms.label :for="$isView ? 'hr-employee-signature-preview' : 'hr-employee-signature-picker-button'" :label="__('hr.employees.attributes.signature_archive_file_doc_num')" />
-                                        @unless ($isView)
-                                            <input type="hidden" id="hr-employee-signature-archive-file-doc-num" name="signature_archive_file_doc_num" value="{{ $signatureValue }}">
-                                        @endunless
-                                        <div id="hr-employee-signature-picker-field"
-                                            class="p-3 border rounded-2 bg-body-tertiary product-image-picker-panel js-product-image-picker-field js-hr-employee-signature-field @if ($isView) opacity-75 @endif"
-                                            data-current-url="{{ $signaturePreview }}"
-                                            data-existing-url="{{ $signaturePreview }}"
-                                            data-existing-label="{{ __('hr.employees.signature.existing_file') }}"
-                                            data-no-image-label="{{ __('hr.employees.signature.no_file_selected') }}">
-                                            <div class="gap-3 d-flex flex-column flex-lg-row align-items-start">
-                                                <div id="hr-employee-signature-preview" class="overflow-hidden bg-white border d-flex align-items-center justify-content-center rounded-2 flex-shrink-0 product-image-preview-frame">
-                                                    <img class="w-100 h-100 object-fit-contain js-product-image-preview-image @if ($signaturePreview === '') d-none @endif"
-                                                        src="{{ $signaturePreview }}"
-                                                        alt="{{ __('hr.employees.attributes.signature_archive_file_doc_num') }}">
-                                                    <span class="fas fa-signature text-400 fs-5 js-product-image-placeholder @if ($signaturePreview !== '') d-none @endif"></span>
-                                                </div>
-
-                                                <div class="flex-1 min-w-0">
-                                                    <div class="fw-semibold js-product-image-file-name">{{ $signatureFileLabel }}</div>
-                                                    <div class="mt-1 small text-600">
-                                                        {{ __('hr.employees.signature.help') }}
-                                                    </div>
-                                                    @unless ($isView)
-                                                        @can('file_manager.view')
-                                                            <div class="flex-wrap gap-2 mt-2 d-flex">
-                                                                <button type="button"
-                                                                    id="hr-employee-signature-picker-button"
-                                                                    class="btn btn-falcon-primary btn-sm js-product-image-picker-trigger"
-                                                                    data-file-picker
-                                                                    data-picker-accept="image"
-                                                                    data-picker-max="1"
-                                                                    data-picker-title="{{ __('hr.employees.signature.select_from_file_manager') }}"
-                                                                    data-picker-target-input="#hr-employee-signature-archive-file-doc-num"
-                                                                    data-picker-uploader="#hr-employee-signature-picker-field"
-                                                                    data-picker-collection="employee_signature"
-                                                                    data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
-                                                                    data-picker-allow-create-folder="{{ auth()->user()?->can('file_manager.folders.create') ? 'true' : 'false' }}">
-                                                                    <span class="fas fa-images me-1"></span>{{ __('hr.employees.actions.select_signature') }}
-                                                                </button>
-                                                                <button type="button"
-                                                                    class="btn btn-falcon-default btn-sm text-danger js-product-image-remove @if ($signaturePreview === '') d-none @endif">
-                                                                    <span class="fas fa-times me-1"></span>{{ __('hr.employees.actions.remove_signature') }}
-                                                                </button>
-                                                            </div>
-                                                        @endcan
-                                                    @endunless
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="invalid-feedback d-block" data-error-for="signature_archive_file_doc_num"></div>
-                                    </div>
+                                    @php
+                                        $signatureFile = $employee?->signatureArchiveFile;
+                                        $signatureValue = old('signature_archive_file_doc_num', $signatureFile?->doc_num ?? '');
+                                    @endphp
+                                    <x-forms.archive-image-picker
+                                        class="col-md-6 product-image-field"
+                                        field-id="hr-employee-signature-archive-file-doc-num"
+                                        field-name="signature_archive_file_doc_num"
+                                        :value="$signatureValue"
+                                        :file="$signatureFile"
+                                        :is-view="$isView"
+                                        :label="__('hr.employees.attributes.signature_archive_file_doc_num')"
+                                        :existing-label="__('hr.employees.signature.existing_file')"
+                                        :empty-label="__('hr.employees.signature.no_file_selected')"
+                                        :help-text="__('hr.employees.signature.help')"
+                                        :select-title="__('hr.employees.signature.select_from_file_manager')"
+                                        :select-label="__('hr.employees.actions.select_signature')"
+                                        :remove-label="__('hr.employees.actions.remove_signature')"
+                                        collection="employee_signature"
+                                        icon="fas fa-signature" />
                                 </div>
                             </div>
 
@@ -1234,5 +1191,6 @@
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/file-picker.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Core/archive-image-picker-field.js') }}"></script>
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/HR/hr-employees.js') }}"></script>
 @endpush

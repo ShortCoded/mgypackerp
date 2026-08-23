@@ -32,8 +32,12 @@ class Company extends Model
         'name',
         'legal_name',
         'commercial_name',
+        'authorized_signatory_name',
+        'authorized_signatory_title',
         'logo',
         'favicon',
+        'company_stamp_archive_file_id',
+        'authorized_signatory_signature_archive_file_id',
         'status',
         'is_main',
         'notes',
@@ -203,6 +207,22 @@ class Company extends Model
     public function area(): BelongsTo
     {
         return $this->belongsTo(HrArea::class, 'area_id');
+    }
+
+    /**
+     * @return BelongsTo<ArchiveFile, $this>
+     */
+    public function companyStampArchiveFile(): BelongsTo
+    {
+        return $this->belongsTo(ArchiveFile::class, 'company_stamp_archive_file_id');
+    }
+
+    /**
+     * @return BelongsTo<ArchiveFile, $this>
+     */
+    public function authorizedSignatorySignatureArchiveFile(): BelongsTo
+    {
+        return $this->belongsTo(ArchiveFile::class, 'authorized_signatory_signature_archive_file_id');
     }
 
     /**

@@ -375,6 +375,10 @@ class CompanyController extends Controller
 
     private function formView(string $mode, ?Company $company = null, ?string $cloneSourceToken = null): View
     {
+        $company?->loadMissing([
+            'companyStampArchiveFile',
+            'authorizedSignatorySignatureArchiveFile',
+        ]);
         $documentNumberSettings = app(CompanyDocumentNumberSettingsService::class)->current();
         $canControlDocumentNumber = (bool) auth()->user()?->can('companies.document_number.control');
         $canControlMainCompany = (bool) auth()->user()?->can('companies.main.control');

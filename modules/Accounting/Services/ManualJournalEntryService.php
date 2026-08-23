@@ -9,9 +9,9 @@ use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
-use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\HR\Models\HrEmployee;
@@ -25,6 +25,7 @@ class ManualJournalEntryService
         private readonly CrudAuditService $audit,
         private readonly OperatingContextService $operatingContext,
         private readonly NumericFormatService $numbers,
+        private readonly FinancialPeriodService $financialPeriods,
     ) {}
 
     /**
@@ -324,15 +325,12 @@ class ManualJournalEntryService
 
     private function assertOpenPeriod(JournalEntry $record): void
     {
-        $period = FinancialPeriod::query()->whereKey($record->financial_period_id)->first();
-
-        if (! $period || $period->is_closed) {
-            throw new DomainException(__('journal_entries.messages.period_closed'));
-        }
-
-        if ($record->entry_date->lt($period->from_date) || $record->entry_date->gt($period->to_date)) {
-            throw new DomainException(__('journal_entries.messages.date_outside_period'));
-        }
+        $this->financialPeriods->resolveOpenForPostingDate(
+            (int) $record->company_id,
+            $record->entry_date,
+            expectedPeriodId: (int) $record->financial_period_id,
+            lockForUpdate: true,
+        );
     }
 
     /**

@@ -271,12 +271,17 @@ trait ValidatesProductPayload
                 $validator->errors()->add("components.{$index}.component_product_doc_num", __('products.components.component_item_required'));
             }
 
-            if ($method === ProductComponent::CalculationDirect) {
+            if (in_array($method, [
+                ProductComponent::CalculationDirect,
+                ProductComponent::CalculationQuantity,
+                ProductComponent::CalculationCount,
+            ], true)) {
                 $this->validateComponentCalculationValue(
                     $validator,
                     $index,
                     'quantity',
                     $quantity,
+                    $method,
                 );
             } elseif ($method === ProductComponent::CalculationPercentage) {
                 if (blank($component['reference_component_key'] ?? null)) {
@@ -293,7 +298,10 @@ trait ValidatesProductPayload
                 if ($authoritativeSource === null) {
                     $validator->errors()->add("components.{$index}.input_source", __('products.components.input_source_required'));
                 } else {
-                    $field = $authoritativeSource === ProductComponent::InputWeight
+                    $usesCanonicalPercentageValue = $authoritativeSource === ProductComponent::InputPercentage
+                        && ! $this->componentCalculationValueIsPresent($percentage)
+                        && $this->componentCalculationValueIsPresent($quantity);
+                    $field = $authoritativeSource === ProductComponent::InputWeight || $usesCanonicalPercentageValue
                         ? 'quantity'
                         : 'percentage';
                     $this->validateComponentCalculationValue(
@@ -301,6 +309,7 @@ trait ValidatesProductPayload
                         $index,
                         $field,
                         $field === 'quantity' ? $quantity : $percentage,
+                        $method,
                     );
                 }
             }
@@ -626,9 +635,7 @@ trait ValidatesProductPayload
             'equivalent_unit_doc_num.exists' => __('products.validation.equivalent_unit_exists'),
             'related_finished_product_doc_nums.array' => __('products.validation.related_finished_products_array'),
             'related_finished_product_doc_nums.*.string' => __('products.validation.related_finished_product_not_found'),
-            'components.*.quantity.numeric' => __('products.components.quantity_gt_zero'),
-            'components.*.quantity.gt' => __('products.components.quantity_gt_zero'),
-            'components.*.quantity.regex' => __('products.components.quantity_precision'),
+            'components.*.quantity.integer' => __('products.components.count_integer'),
             'components.*.percentage.numeric' => __('products.components.percentage_gt_zero'),
             'components.*.percentage.gt' => __('products.components.percentage_gt_zero'),
             'components.*.percentage.regex' => __('products.components.percentage_precision'),
@@ -884,13 +891,16 @@ trait ValidatesProductPayload
                     $component['quantity'] ?? null,
                     $component['percentage'] ?? null,
                 );
+            $percentageValue = $this->componentCalculationValueIsPresent($component['percentage'] ?? null)
+                ? $component['percentage']
+                : ($component['quantity'] ?? null);
             $quantity = ! $delete && $inputSource === ProductComponent::InputWeight
                 ? $this->normalizeNullableComponentQuantity($component['quantity'] ?? null)
                 : null;
             $percentage = ! $delete
                 && $calculationMethod === ProductComponent::CalculationPercentage
                 && $inputSource === ProductComponent::InputPercentage
-                    ? $this->normalizeNullableComponentQuantity($component['percentage'] ?? null)
+                    ? $this->normalizeNullableComponentQuantity($percentageValue)
                     : null;
 
             $normalized[] = [
@@ -903,7 +913,9 @@ trait ValidatesProductPayload
                 'calculation_method' => $calculationMethod,
                 'quantity' => $quantity,
                 'percentage' => $percentage,
-                'reference_component_key' => $this->blankToNull($component['reference_component_key'] ?? null),
+                'reference_component_key' => $calculationMethod === ProductComponent::CalculationPercentage
+                    ? $this->blankToNull($component['reference_component_key'] ?? null)
+                    : null,
                 'input_source' => $inputSource,
                 'notes' => $this->blankToNull($component['notes'] ?? null),
                 '_delete' => $delete,
@@ -954,7 +966,7 @@ trait ValidatesProductPayload
         mixed $quantity,
         mixed $percentage,
     ): ?string {
-        if ($calculationMethod === ProductComponent::CalculationDirect) {
+        if ($calculationMethod !== ProductComponent::CalculationPercentage) {
             return ProductComponent::InputWeight;
         }
 
@@ -996,23 +1008,29 @@ trait ValidatesProductPayload
         int|string $index,
         string $field,
         mixed $value,
+        string $calculationMethod,
     ): void {
+        $valueType = match (true) {
+            $field === 'percentage' || $calculationMethod === ProductComponent::CalculationPercentage => 'percentage',
+            $calculationMethod === ProductComponent::CalculationQuantity => 'quantity',
+            $calculationMethod === ProductComponent::CalculationCount => 'count',
+            default => 'weight',
+        };
+        $rules = $valueType === 'count'
+            ? ['bail', 'required', 'numeric', 'gt:0', 'regex:/^\d{1,10}(?:\.0{1,8})?$/']
+            : ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/'];
         $valueValidator = validator(
             ['value' => $value],
-            ['value' => ['bail', 'required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,10}|\d{0,10}\.\d{1,8})$/']],
+            ['value' => $rules],
             [
-                'value.required' => __($field === 'quantity'
-                    ? 'products.components.quantity_required'
-                    : 'products.components.percentage_required'),
-                'value.numeric' => __($field === 'quantity'
-                    ? 'products.components.quantity_gt_zero'
-                    : 'products.components.percentage_gt_zero'),
-                'value.gt' => __($field === 'quantity'
-                    ? 'products.components.quantity_gt_zero'
-                    : 'products.components.percentage_gt_zero'),
-                'value.regex' => __($field === 'quantity'
-                    ? 'products.components.quantity_precision'
-                    : 'products.components.percentage_precision'),
+                'value.required' => __("products.components.{$valueType}_required"),
+                'value.numeric' => __("products.components.{$valueType}_gt_zero"),
+                'value.integer' => __('products.components.count_integer'),
+                'value.gt' => __("products.components.{$valueType}_gt_zero"),
+                'value.min' => __("products.components.{$valueType}_gt_zero"),
+                'value.regex' => $valueType === 'count'
+                    ? __('products.components.count_integer')
+                    : __("products.components.{$valueType}_precision"),
             ],
         );
 

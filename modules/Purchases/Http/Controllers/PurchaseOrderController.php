@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingContextService;
@@ -196,13 +197,14 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    public function print(PurchaseOrder $purchaseOrder): View
+    public function print(PurchaseOrder $purchaseOrder, CompanyPrintIdentityService $printIdentities): View
     {
         $this->abortUnlessInCurrentContext($purchaseOrder);
         $purchaseOrder->loadMissing($this->service->defaultRelations());
 
         return view('modules.purchases.purchase-orders.print', [
             'record' => $purchaseOrder,
+            'companyPrintIdentity' => $printIdentities->forCompany($purchaseOrder->company),
         ]);
     }
 
@@ -220,6 +222,12 @@ class PurchaseOrderController extends Controller
     private function form(string $mode, ?PurchaseOrder $record = null): View
     {
         $record?->loadMissing($this->service->defaultRelations());
+        if ($mode === 'view') {
+            $record?->loadMissing([
+                'requisition', 'requestForQuotation', 'supplierQuotation', 'supplierSelection',
+                'deliverySchedules', 'receipts.inspection', 'purchaseInvoices', 'purchaseReturns', 'supplierPayments',
+            ]);
+        }
 
         return view('modules.purchases.purchase-orders.form', [
             'mode' => $mode,
@@ -423,6 +431,11 @@ class PurchaseOrderController extends Controller
             'received_quantity' => $line->received_quantity,
             'remaining_quantity' => $line->remaining_quantity,
             'unit_price' => $line->unit_price,
+            'discount_type' => $line->discount_type ?: 'fixed',
+            'discount_value' => $line->discount_value,
+            'discount_amount' => $line->discount_amount,
+            'tax_rate' => $line->tax_rate,
+            'tax_amount' => $line->tax_amount,
             'line_total' => $line->line_total,
             'notes' => $line->notes,
         ])->values()->all();
@@ -445,6 +458,11 @@ class PurchaseOrderController extends Controller
             'received_quantity' => '0',
             'remaining_quantity' => '0',
             'unit_price' => null,
+            'discount_type' => 'fixed',
+            'discount_value' => '0',
+            'discount_amount' => '0',
+            'tax_rate' => '0',
+            'tax_amount' => '0',
             'line_total' => '0',
             'notes' => null,
         ];

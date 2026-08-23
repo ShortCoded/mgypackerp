@@ -553,17 +553,38 @@
     let lineDiscount = 0;
     let taxableBeforeHeader = 0;
     let tax = 0;
+    const calculatedLines = [];
 
     $form.find('.js-purchase-invoice-line').each(function () {
-      const line = calculateLine($(this));
+      const $row = $(this);
+      const line = calculateLine($row);
       subtotal += line.subtotal;
       lineDiscount += line.lineDiscount;
       taxableBeforeHeader += line.taxable;
-      tax += line.tax;
+      calculatedLines.push({ $row: $row, line: line });
     });
 
     const headerDiscount = discountAmount($form.find('.js-purchase-invoice-header-discount-type').val(), $form.find('.js-purchase-invoice-header-discount-value').val(), taxableBeforeHeader);
-    const taxable = Math.max(0, taxableBeforeHeader - headerDiscount);
+    let allocatedHeaderDiscount = 0;
+    calculatedLines.forEach(function (entry, index) {
+      let share = taxableBeforeHeader > 0 ? headerDiscount * (entry.line.taxable / taxableBeforeHeader) : 0;
+      if (index === calculatedLines.length - 1) {
+        share = headerDiscount - allocatedHeaderDiscount;
+      }
+      allocatedHeaderDiscount += share;
+      const lineTaxable = Math.max(0, entry.line.taxable - share);
+      const taxRate = entry.line.taxable > 0 ? entry.line.tax / entry.line.taxable : 0;
+      const lineTax = lineTaxable * taxRate;
+      tax += lineTax;
+      entry.$row.find('.js-purchase-invoice-line-tax').text(formatAmount(lineTax));
+      entry.$row.find('.js-purchase-invoice-line-total').text(formatAmount(lineTaxable + lineTax));
+    });
+
+    const freight = number($form.find('.js-purchase-invoice-freight').val());
+    const freightTaxRate = number($form.find('.js-purchase-invoice-freight-tax-rate').val());
+    const freightTax = freight * Math.max(0, Math.min(100, freightTaxRate)) / 100;
+    tax += freightTax;
+    const taxable = Math.max(0, taxableBeforeHeader - headerDiscount) + freight;
     const total = taxable + tax;
     const paid = number($form.find('.js-purchase-invoice-paid').text());
     const scheduleTotal = calculateScheduleTotals($form, total);
@@ -571,12 +592,30 @@
     $form.find('.js-purchase-invoice-subtotal').text(formatAmount(subtotal));
     $form.find('.js-purchase-invoice-line-discounts').text(formatAmount(lineDiscount));
     $form.find('.js-purchase-invoice-header-discount').text(formatAmount(headerDiscount));
+    $form.find('.js-purchase-invoice-freight-total').text(formatAmount(freight));
+    $form.find('.js-purchase-invoice-freight-tax').text(formatAmount(freightTax));
     $form.find('.js-purchase-invoice-taxable').text(formatAmount(taxable));
     $form.find('.js-purchase-invoice-tax').text(formatAmount(tax));
     $form.find('.js-purchase-invoice-total').text(formatAmount(total));
     $form.find('.js-purchase-invoice-remaining').text(formatAmount(Math.max(0, total - paid)));
     $form.find('.js-purchase-invoice-schedule-total').text(formatAmount(scheduleTotal));
     $form.find('.js-purchase-invoice-schedule-difference').text(formatAmount(total - scheduleTotal));
+  }
+
+  function updateFreightMatch($form, fillRemaining) {
+    const $option = $form.find('#purchase_order_doc_num option:selected');
+    const approved = number($option.data('approved-freight'));
+    const invoiced = number($option.data('invoiced-freight'));
+    const remaining = Math.max(0, approved - invoiced);
+    const $freight = $form.find('.js-purchase-invoice-freight');
+
+    $form.find('.js-purchase-invoice-freight-match').text(
+      $option.val() ? 'Approved: ' + formatAmount(approved) + ' / Previously invoiced: ' + formatAmount(invoiced) + ' / Remaining: ' + formatAmount(remaining) : ''
+    );
+
+    if (fillRemaining && number($freight.val()) === 0) {
+      $freight.val(formatAmount(remaining));
+    }
   }
 
   function calculateScheduleTotals($form) {
@@ -623,6 +662,7 @@
     $row.find('.js-purchase-invoice-discount-value, .js-purchase-invoice-tax-rate').val('0');
     $row.find('select.js-purchase-invoice-product').empty();
     $row.find('select.js-purchase-invoice-unit').empty();
+    $row.find('select[name$="[purchase_order_line_public_id]"], select[name$="[receipt_line_public_id]"]').val('');
     $row.find('select.js-purchase-invoice-discount-type').val('fixed');
     $row.find('.js-purchase-invoice-line-subtotal, .js-purchase-invoice-line-discount, .js-purchase-invoice-line-tax, .js-purchase-invoice-line-total').text('0');
     initRepeaterRow($row);
@@ -653,6 +693,7 @@
     }
     renumberRows($tbody.find('.js-purchase-invoice-line'), 'lines');
     calculateTotals($form);
+    updateFreightMatch($form, false);
   }
 
   function addSchedule($form, duplicate) {
@@ -761,7 +802,12 @@
       populateUnitSelect($row, options);
     });
 
-    $form.on('change input', '.js-purchase-invoice-line-number, .js-purchase-invoice-discount-type, .js-purchase-invoice-header-discount-type, .js-purchase-invoice-header-discount-value, .js-purchase-invoice-schedule-amount', function () {
+    $form.on('change input', '.js-purchase-invoice-line-number, .js-purchase-invoice-discount-type, .js-purchase-invoice-header-discount-type, .js-purchase-invoice-header-discount-value, .js-purchase-invoice-freight, .js-purchase-invoice-freight-tax-rate, .js-purchase-invoice-schedule-amount', function () {
+      calculateTotals($form);
+    });
+
+    $form.on('change', '#purchase_order_doc_num', function () {
+      updateFreightMatch($form, true);
       calculateTotals($form);
     });
 

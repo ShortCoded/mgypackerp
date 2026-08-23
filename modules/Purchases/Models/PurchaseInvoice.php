@@ -103,6 +103,12 @@ class PurchaseInvoice extends Model
         'financial_period_id',
         'branch_id',
         'supplier_id',
+        'purchase_order_id',
+        'purchase_type',
+        'matching_status',
+        'matching_notes',
+        'direct_procurement_override',
+        'direct_procurement_reason',
         'invoice_date',
         'supplier_invoice_number',
         'supplier_invoice_date',
@@ -117,16 +123,21 @@ class PurchaseInvoice extends Model
         'header_discount_amount',
         'subtotal_amount',
         'line_discount_amount',
+        'freight_amount',
+        'freight_tax_rate',
+        'freight_tax_amount',
         'taxable_amount',
         'tax_amount',
         'total_amount',
         'paid_amount',
+        'credited_amount',
         'remaining_amount',
         'status',
         'payment_status',
         'notes',
         'internal_notes',
         'journal_entry_id',
+        'reversal_journal_entry_id',
         'created_by',
         'updated_by',
         'approved_by',
@@ -136,6 +147,9 @@ class PurchaseInvoice extends Model
         'cancelled_by',
         'cancelled_at',
         'cancel_reason',
+        'reversed_by',
+        'reversed_at',
+        'reversal_reason',
         'deleted_by',
         'restored_by',
         'restored_at',
@@ -158,14 +172,20 @@ class PurchaseInvoice extends Model
             'header_discount_amount' => 'decimal:4',
             'subtotal_amount' => 'decimal:4',
             'line_discount_amount' => 'decimal:4',
+            'freight_amount' => 'decimal:4',
+            'freight_tax_rate' => 'decimal:4',
+            'freight_tax_amount' => 'decimal:4',
             'taxable_amount' => 'decimal:4',
             'tax_amount' => 'decimal:4',
             'total_amount' => 'decimal:4',
             'paid_amount' => 'decimal:4',
+            'credited_amount' => 'decimal:4',
             'remaining_amount' => 'decimal:4',
+            'direct_procurement_override' => 'boolean',
             'approved_at' => 'datetime',
             'closed_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'reversed_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
@@ -220,22 +240,55 @@ class PurchaseInvoice extends Model
 
     public function refreshPaymentTotals(): self
     {
-        $paidAmount = (float) $this->paymentSchedules()
-            ->whereNull('purchase_invoice_payment_schedules.deleted_at')
-            ->whereHas('cashVoucher', fn ($query) => $query
-                ->where('status', \Modules\Finance\Models\CashVoucher::StatusApproved)
-                ->whereNull('deleted_at'))
+        $paidAmount = (float) $this->paymentAllocations()
+            ->whereHas('paymentContext', fn ($query) => $query->effectiveApproved())
             ->sum('amount');
+        $creditedAmount = (float) $this->purchaseReturns()
+            ->where('status', 'posted')
+            ->sum('total_amount');
+        $remainingCredit = $creditedAmount;
+        foreach ($this->paymentSchedules()->orderBy('line_number')->get() as $schedule) {
+            $schedulePaid = (float) $schedule->allocations()
+                ->whereHas('paymentContext', fn ($query) => $query->effectiveApproved())
+                ->sum('amount');
+            if ($schedule->status === PurchaseInvoicePaymentSchedule::StatusCancelled) {
+                $schedule->forceFill([
+                    'paid_amount' => number_format($schedulePaid, 4, '.', ''),
+                    'credited_amount' => '0.0000',
+                ])->save();
+
+                continue;
+            }
+
+            $scheduleCredit = min(max(0, (float) $schedule->amount - $schedulePaid), $remainingCredit);
+            $remainingCredit -= $scheduleCredit;
+            $scheduleSettled = $schedulePaid + $scheduleCredit;
+            $scheduleStatus = match (true) {
+                $scheduleCredit > 0 && $scheduleSettled >= (float) $schedule->amount - 0.0001 => PurchaseInvoicePaymentSchedule::StatusSettled,
+                $scheduleCredit > 0 => PurchaseInvoicePaymentSchedule::StatusPartiallySettled,
+                $schedulePaid >= (float) $schedule->amount - 0.0001 => PurchaseInvoicePaymentSchedule::StatusPaid,
+                $schedulePaid > 0 => 'partially_paid',
+                $schedule->status === PurchaseInvoicePaymentSchedule::StatusVoucherDraft => PurchaseInvoicePaymentSchedule::StatusVoucherDraft,
+                default => PurchaseInvoicePaymentSchedule::StatusScheduled,
+            };
+            $schedule->forceFill([
+                'paid_amount' => number_format($schedulePaid, 4, '.', ''),
+                'credited_amount' => number_format($scheduleCredit, 4, '.', ''),
+                'status' => $scheduleStatus,
+            ])->save();
+        }
         $totalAmount = (float) $this->total_amount;
-        $remainingAmount = max(0, $totalAmount - $paidAmount);
+        $settledAmount = $paidAmount + $creditedAmount;
+        $remainingAmount = max(0, $totalAmount - $settledAmount);
         $paymentStatus = match (true) {
-            $totalAmount > 0 && $paidAmount >= $totalAmount - 0.0001 => self::PaymentStatusPaid,
-            $paidAmount > 0 => self::PaymentStatusPartiallyPaid,
+            $totalAmount > 0 && $settledAmount >= $totalAmount - 0.0001 => self::PaymentStatusPaid,
+            $settledAmount > 0 => self::PaymentStatusPartiallyPaid,
             default => self::PaymentStatusUnpaid,
         };
 
         $this->forceFill([
             'paid_amount' => number_format($paidAmount, 4, '.', ''),
+            'credited_amount' => number_format($creditedAmount, 4, '.', ''),
             'remaining_amount' => number_format($remainingAmount, 4, '.', ''),
             'payment_status' => $paymentStatus,
         ])->save();
@@ -283,6 +336,16 @@ class PurchaseInvoice extends Model
         return $this->belongsTo(JournalEntry::class);
     }
 
+    public function reversalJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id');
+    }
+
+    public function purchaseOrder(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseInvoiceLine::class)->orderBy('line_number');
@@ -291,6 +354,16 @@ class PurchaseInvoice extends Model
     public function paymentSchedules(): HasMany
     {
         return $this->hasMany(PurchaseInvoicePaymentSchedule::class)->orderBy('line_number');
+    }
+
+    public function paymentAllocations(): HasMany
+    {
+        return $this->hasMany(SupplierPaymentAllocation::class);
+    }
+
+    public function purchaseReturns(): HasMany
+    {
+        return $this->hasMany(PurchaseReturn::class);
     }
 
     public function createdBy(): BelongsTo

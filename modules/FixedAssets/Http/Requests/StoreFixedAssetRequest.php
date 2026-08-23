@@ -49,6 +49,9 @@ class StoreFixedAssetRequest extends FormRequest
             'image_archive_file_doc_num' => $this->nullableTrim('image_archive_file_doc_num'),
             'remove_image' => $this->has('remove_image') ? $this->boolean('remove_image') : false,
             'entry_type' => $this->nullableTrim('entry_type'),
+            'source_type' => $this->nullableTrim('source_type'),
+            'source_id' => $this->filled('source_id') ? (int) $this->input('source_id') : null,
+            'source_doc_num' => $this->nullableTrim('source_doc_num'),
             'asset_group_account_doc_num' => $this->nullableTrim('asset_group_account_doc_num'),
             'credit_account_doc_num' => $this->nullableTrim('credit_account_doc_num'),
             'cost_center_doc_num' => $this->nullableTrim('cost_center_doc_num'),
@@ -89,6 +92,9 @@ class StoreFixedAssetRequest extends FormRequest
         return [
             'doc_number' => ['nullable', 'integer', 'min:1', $this->uniqueActiveRule('doc_number')],
             'entry_type' => ['required', Rule::in(FixedAsset::entryTypes())],
+            'source_type' => ['nullable', Rule::in(['purchase_invoice_line', 'manual_capitalization'])],
+            'source_id' => [Rule::requiredIf($this->filled('source_type')), 'nullable', 'integer', 'min:1'],
+            'source_doc_num' => [Rule::requiredIf($this->filled('source_type')), 'nullable', 'string', 'max:255'],
             'asset_date' => ['required', 'date'],
             'asset_name' => ['required', 'string', 'max:255', $this->uniqueActiveRule('asset_name')],
             'image_archive_file_doc_num' => ['nullable', 'string', 'max:255'],
@@ -124,7 +130,7 @@ class StoreFixedAssetRequest extends FormRequest
                 Rule::exists('currencies', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at')),
             ],
-            'status' => ['required', Rule::in(['active', 'inactive'])],
+            'status' => ['required', Rule::in([FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusInactive])],
             'description' => ['required', 'string'],
             'serial_number' => ['nullable', 'string', 'max:255', $this->uniqueActiveRule('serial_number')],
             'purchase_date' => ['required', 'date'],
@@ -168,6 +174,9 @@ class StoreFixedAssetRequest extends FormRequest
         return [
             'doc_number' => __('fixed_assets.attributes.doc_number'),
             'entry_type' => __('fixed_assets.attributes.entry_type'),
+            'source_type' => __('fixed_assets.attributes.source_document'),
+            'source_id' => __('fixed_assets.attributes.source_document'),
+            'source_doc_num' => __('fixed_assets.attributes.source_document'),
             'asset_date' => __('fixed_assets.attributes.asset_date'),
             'asset_name' => __('fixed_assets.attributes.asset_name'),
             'image' => __('fixed_assets.attributes.image'),
@@ -396,9 +405,9 @@ class StoreFixedAssetRequest extends FormRequest
 
     private function validateFinancialValues(Validator $validator): void
     {
-        $purchaseValue = $this->filled('purchase_value') ? (float) $this->input('purchase_value') : null;
-        $previousDepreciation = $this->filled('previous_depreciation') ? (float) $this->input('previous_depreciation') : null;
-        $salvageValue = $this->filled('salvage_value') ? (float) $this->input('salvage_value') : 0.0;
+        $purchaseValue = $this->filled('purchase_value') ? (string) $this->input('purchase_value') : null;
+        $previousDepreciation = $this->filled('previous_depreciation') ? (string) $this->input('previous_depreciation') : null;
+        $salvageValue = $this->filled('salvage_value') ? (string) $this->input('salvage_value') : '0';
         $usefulLife = $this->filled('useful_life') ? (float) $this->input('useful_life') : null;
         $annualDepreciationRate = $this->filled('annual_depreciation_rate') ? (float) $this->input('annual_depreciation_rate') : null;
 
@@ -406,20 +415,24 @@ class StoreFixedAssetRequest extends FormRequest
             return;
         }
 
-        if ($this->isDepreciable() && $purchaseValue !== null && $salvageValue >= $purchaseValue) {
+        if ($this->isDepreciable() && $purchaseValue !== null && bccomp($salvageValue, $purchaseValue, 4) > 0) {
             $validator->errors()->add('salvage_value', __('fixed_assets.messages.salvage_value_exceeds_purchase_value'));
         }
 
-        if ($previousDepreciation !== null && $previousDepreciation > 0 && ($purchaseValue === null || $purchaseValue <= 0)) {
+        if ($this->input('entry_type') === FixedAsset::EntryTypeNewAsset && $previousDepreciation !== null && bccomp($previousDepreciation, '0', 4) > 0) {
+            $validator->errors()->add('previous_depreciation', __('fixed_assets.messages.previous_depreciation_opening_only'));
+        }
+
+        if ($previousDepreciation !== null && bccomp($previousDepreciation, '0', 4) > 0 && ($purchaseValue === null || bccomp($purchaseValue, '0', 4) <= 0)) {
             $validator->errors()->add('previous_depreciation', __('fixed_assets.messages.previous_depreciation_exceeds_depreciable_base'));
         }
 
-        if ($previousDepreciation !== null && $purchaseValue !== null && $previousDepreciation > max(0.0, $purchaseValue - $salvageValue)) {
+        if ($previousDepreciation !== null && $purchaseValue !== null && bccomp($previousDepreciation, bcsub($purchaseValue, $salvageValue, 4), 4) > 0) {
             $validator->errors()->add('previous_depreciation', __('fixed_assets.messages.previous_depreciation_exceeds_depreciable_base'));
             $validator->errors()->add('previous_depreciation', __('fixed_assets.messages.previous_depreciation_plus_salvage_exceeds_purchase_value'));
         }
 
-        if ($previousDepreciation !== null && $previousDepreciation > 0 && ! $this->filled('previous_depreciation_until_date')) {
+        if ($previousDepreciation !== null && bccomp($previousDepreciation, '0', 4) > 0 && ! $this->filled('previous_depreciation_until_date')) {
             $validator->errors()->add('previous_depreciation_until_date', __('fixed_assets.messages.previous_depreciation_until_required'));
         }
 

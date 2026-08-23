@@ -15,7 +15,9 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\ExcelImportBatch;
 use Modules\Core\Models\ExcelImportRow;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -247,6 +249,155 @@ test('a valid product workbook is staged before atomically creating a new produc
     expect(Product::query()->count())->toBe(1)
         ->and(Product::query()->firstOrFail()->name)->toBe('Imported Chair')
         ->and($batch->refresh()->status)->toBe(ExcelImportBatch::StatusImported);
+});
+
+test('product import preserves all bom methods and percentage reference semantics', function (): void {
+    $context = excelImportContext();
+    $company = Company::query()->findOrFail($context[OperatingContextService::CompanyIdKey]);
+    $actor = excelImportActor(['products.create', 'products.import']);
+    $unit = ItemUnit::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9822,
+        'doc_num' => 'Unit-09822',
+        'name' => 'Import Piece',
+        'status' => 'active',
+    ]);
+    $quantityMaterial = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9822,
+        'doc_num' => 'RawMaterial-09822',
+        'name' => 'Imported Quantity Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $countMaterial = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9823,
+        'doc_num' => 'Packaging-09823',
+        'name' => 'Imported Count Material',
+        'item_classification' => Product::ClassificationPackaging,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $directMaterial = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9824,
+        'doc_num' => 'RawMaterial-09824',
+        'name' => 'Imported Direct Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $percentageMaterial = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9825,
+        'doc_num' => 'RawMaterial-09825',
+        'name' => 'Imported Percentage Material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $templateResponse = $this->actingAs($actor)
+        ->withSession($context)
+        ->get(route('admin.products.import.template'))
+        ->assertOk();
+    $workbook = IOFactory::load($templateResponse->baseResponse->getFile()->getPathname());
+    $productSheet = $workbook->getSheetByName('Products');
+    $componentSheet = $workbook->getSheetByName('Product Components');
+    $lookupValues = collect($workbook->getSheetByName('Lookups')->toArray())->flatten();
+
+    expect($lookupValues)
+        ->toContain(ProductComponent::CalculationQuantity)
+        ->toContain(ProductComponent::CalculationCount);
+
+    $productSheet->setCellValue('A3', 'bom-methods-001');
+    $productSheet->setCellValue('B3', 'Imported BOM Methods Product');
+    $productSheet->setCellValue('C3', Product::ClassificationFinishedProduct);
+    $productSheet->setCellValue('F3', 'active');
+
+    $componentSheet->setCellValue('A3', 'bom-methods-001');
+    $componentSheet->setCellValue('B3', 'direct-line');
+    $componentSheet->setCellValue('C3', $directMaterial->doc_num);
+    $componentSheet->setCellValue('D3', $unit->doc_num);
+    $componentSheet->setCellValue('E3', ProductComponent::CalculationDirect);
+    $componentSheet->setCellValue('F3', '130');
+
+    $componentSheet->setCellValue('A4', 'bom-methods-001');
+    $componentSheet->setCellValue('B4', 'percentage-line');
+    $componentSheet->setCellValue('C4', $percentageMaterial->doc_num);
+    $componentSheet->setCellValue('D4', $unit->doc_num);
+    $componentSheet->setCellValue('E4', ProductComponent::CalculationPercentage);
+    $componentSheet->setCellValue('G4', '2');
+    $componentSheet->setCellValue('H4', ProductComponent::InputPercentage);
+    $componentSheet->setCellValue('I4', 'direct-line');
+
+    $componentSheet->setCellValue('A5', 'bom-methods-001');
+    $componentSheet->setCellValue('B5', 'quantity-line');
+    $componentSheet->setCellValue('C5', $quantityMaterial->doc_num);
+    $componentSheet->setCellValue('D5', $unit->doc_num);
+    $componentSheet->setCellValue('E5', ProductComponent::CalculationQuantity);
+    $componentSheet->setCellValue('F5', '2.75');
+
+    $componentSheet->setCellValue('A6', 'bom-methods-001');
+    $componentSheet->setCellValue('B6', 'count-line');
+    $componentSheet->setCellValue('C6', $countMaterial->doc_num);
+    $componentSheet->setCellValue('D6', $unit->doc_num);
+    $componentSheet->setCellValue('E6', ProductComponent::CalculationCount);
+    $componentSheet->setCellValue('F6', '4');
+
+    $path = tempnam(sys_get_temp_dir(), 'product-components-import-');
+    (new Xlsx($workbook))->save($path);
+    $componentSheet->setCellValue('F6', '4.5');
+    $invalidPath = tempnam(sys_get_temp_dir(), 'invalid-product-components-import-');
+    (new Xlsx($workbook))->save($invalidPath);
+    $workbook->disconnectWorksheets();
+
+    $upload = UploadedFile::fake()->createWithContent('product-components.xlsx', file_get_contents($path));
+    $this->actingAs($actor)
+        ->withSession($context)
+        ->post(route('admin.products.import.store'), ['workbook' => $upload])
+        ->assertRedirect();
+
+    $batch = ExcelImportBatch::query()->latest('id')->firstOrFail();
+    expect($batch->status)->toBe(ExcelImportBatch::StatusReady);
+
+    $this->actingAs($actor)
+        ->withSession($context)
+        ->post(route('admin.products.import.confirm', $batch->public_uuid), ['confirmed' => '1'])
+        ->assertRedirect(route('admin.products.import.show', $batch->public_uuid));
+
+    $product = Product::query()->where('name', 'Imported BOM Methods Product')->firstOrFail();
+    $components = ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->get()
+        ->keyBy('calculation_method');
+
+    expect($components)->toHaveCount(4)
+        ->and((string) $components[ProductComponent::CalculationDirect]->quantity)->toBe('130.00000000')
+        ->and((string) $components[ProductComponent::CalculationPercentage]->percentage)->toBe('2.00000000')
+        ->and((string) $components[ProductComponent::CalculationPercentage]->quantity)->toBe('2.60000000')
+        ->and($components[ProductComponent::CalculationPercentage]->reference_component_id)
+        ->toBe($components[ProductComponent::CalculationDirect]->getKey())
+        ->and((string) $components[ProductComponent::CalculationQuantity]->quantity)->toBe('2.75000000')
+        ->and((string) $components[ProductComponent::CalculationCount]->quantity)->toBe('4.00000000');
+
+    $invalidUpload = UploadedFile::fake()->createWithContent('invalid-product-components.xlsx', file_get_contents($invalidPath));
+    $this->actingAs($actor)
+        ->withSession($context)
+        ->post(route('admin.products.import.store'), ['workbook' => $invalidUpload])
+        ->assertRedirect();
+
+    $invalidBatch = ExcelImportBatch::query()->latest('id')->firstOrFail();
+    $issueMessages = $invalidBatch->rows()
+        ->get()
+        ->pluck('issues')
+        ->flatten(1)
+        ->pluck('message');
+
+    expect($invalidBatch->status)->toBe(ExcelImportBatch::StatusInvalid)
+        ->and($issueMessages)->toContain(__('products.components.count_integer'))
+        ->and(Product::query()->where('name', 'Imported BOM Methods Product')->count())->toBe(1);
 });
 
 test('a fixed asset template submitted to products is invalid without creating products', function (): void {

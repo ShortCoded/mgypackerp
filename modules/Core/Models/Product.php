@@ -129,6 +129,17 @@ class Product extends Model
         ];
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function salesItemClassifications(): array
+    {
+        return [
+            self::ClassificationFinishedProduct,
+            self::ClassificationService,
+        ];
+    }
+
     public static function contextForClassification(?string $classification): string
     {
         return match ($classification) {
@@ -165,6 +176,44 @@ class Product extends Model
     public function isMaterial(): bool
     {
         return in_array($this->item_classification, self::materialClassifications(), true);
+    }
+
+    public function isSalesEligible(): bool
+    {
+        return in_array($this->item_classification, self::salesItemClassifications(), true);
+    }
+
+    public function isService(): bool
+    {
+        return $this->item_classification === self::ClassificationService;
+    }
+
+    public function isPurchasable(): bool
+    {
+        return in_array($this->item_classification, self::purchasableItemClassifications(), true);
+    }
+
+    public function requiresIncomingInspection(): bool
+    {
+        return in_array($this->item_classification, [
+            self::ClassificationRawMaterial,
+            self::ClassificationSemiFinished,
+            self::ClassificationPackaging,
+        ], true);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function purchasableItemClassifications(): array
+    {
+        return [
+            self::ClassificationRawMaterial,
+            self::ClassificationSemiFinished,
+            self::ClassificationPackaging,
+            self::ClassificationService,
+            self::ClassificationOther,
+        ];
     }
 
     protected function casts(): array
@@ -393,6 +442,24 @@ class Product extends Model
     public function scopeFinishedProducts(Builder $query): Builder
     {
         return $query->where($this->getTable().'.item_classification', self::ClassificationFinishedProduct);
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopeSalesEligible(Builder $query): Builder
+    {
+        return $query->whereIn($this->getTable().'.item_classification', self::salesItemClassifications());
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopePurchasable(Builder $query): Builder
+    {
+        return $query->whereIn($this->getTable().'.item_classification', self::purchasableItemClassifications());
     }
 
     /**

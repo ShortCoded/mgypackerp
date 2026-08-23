@@ -41,6 +41,8 @@ test('it normalizes valid grouped input to a canonical decimal string', function
     'leading decimal point' => ['.05', '0.05'],
     'negative leading decimal point' => ['-.0500', '-0.05'],
     'leading zeros' => ['0001250.500', '1250.5'],
+    'Arabic-Indic digits and separators' => ['١٬٢٥٠٫٥٠٠٠', '1250.5'],
+    'Eastern Arabic digits and separators' => ['۱٬۲۵۰٫۵۰۰۰', '1250.5'],
     'empty' => ['', null],
 ]);
 
@@ -115,6 +117,15 @@ test('request normalization supports form and JSON input including nested wildca
     expect($formRequest->input('amount'))->toBe('1250.5')
         ->and($formRequest->input('lines.0.quantity'))->toBe('0.0004582')
         ->and($formRequest->input('lines.1.quantity'))->toBe('1,2,3');
+
+    $formRequest->initialize([], [
+        'amount' => '١٬٢٥٠٫٥٠٠٠',
+        'lines' => [['quantity' => '۰٫۰۰۰۴۵۸۲۰']],
+    ], server: ['REQUEST_METHOD' => 'POST']);
+    $formRequest->normalizeTestValues();
+
+    expect($formRequest->input('amount'))->toBe('1250.5')
+        ->and($formRequest->input('lines.0.quantity'))->toBe('0.0004582');
 
     $jsonRequest = new class([], [], [], [], [], ['REQUEST_METHOD' => 'POST', 'CONTENT_TYPE' => 'application/json'], json_encode(['amount' => '2,500.5000', 'lines' => [['quantity' => '-0.0000']]], JSON_THROW_ON_ERROR)) extends FormRequest
     {

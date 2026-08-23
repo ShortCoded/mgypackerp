@@ -49,7 +49,12 @@ return [
         $screen('capacity-requirements-planning', 'Capacity Requirements Planning', 'تخطيط احتياجات الطاقة', 'planning'),
         $screen('machine-loading-plan', 'Machine Loading Plan', 'خطة تحميل الماكينات', 'planning'),
         $screen('mold-loading-plan', 'Mold Loading Plan', 'خطة تحميل الاسطمبات', 'planning'),
-        $screen('work-orders', 'Work Orders', 'أوامر التشغيل', 'work_orders'),
+        $screen('work-orders', 'Work Orders', 'أوامر التشغيل', 'work_orders', 'document', [
+            'shell_enabled' => false,
+            'permission_prefix' => 'production.work_orders',
+            'actions' => ['view', 'complete', 'print'],
+            'modes' => ['index', 'view'],
+        ]),
         $screen('work-order-lines', 'Work Order Lines', 'سطور أوامر التشغيل', 'work_orders'),
         $screen('work-order-materials', 'Work Order Materials', 'خامات أوامر التشغيل', 'work_orders'),
         $screen('work-order-operations', 'Work Order Operations', 'عمليات أوامر التشغيل', 'work_orders'),

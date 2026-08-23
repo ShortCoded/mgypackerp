@@ -191,6 +191,7 @@
         { data: 'cost_center_code', name: 'cost_center_code', className: 'align-middle white-space-nowrap dt-code' },
         { data: 'name', name: 'name', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
         { data: 'parent', name: 'parent', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
+        { data: 'default_account', name: 'default_account', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
         { data: 'is_group', name: 'is_group', className: 'align-middle white-space-nowrap text-center' },
         { data: 'status', name: 'status', className: 'align-middle white-space-nowrap' },
         { data: 'created_by', name: 'created_by', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
@@ -326,6 +327,7 @@
       cost_center_code: formFieldValue($form, 'cost_center_code'),
       name: formFieldValue($form, 'name'),
       parent_doc_num: formFieldValue($form, 'parent_doc_num'),
+      default_account_doc_num: formFieldValue($form, 'default_account_doc_num'),
       is_group: $form.find('[name="is_group"]').is(':checked') ? '1' : '0',
       status: formFieldValue($form, 'status'),
       notes: formFieldValue($form, 'notes')
@@ -374,6 +376,7 @@
   function resetCreateForm($form) {
     $form.find('[name="doc_number"], [name="cost_center_code"], [name="name"], [name="notes"]').val('');
     clearSelect2Field($form.find('[name="parent_doc_num"]'));
+    clearSelect2Field($form.find('[name="default_account_doc_num"]'));
     $form.find('[name="is_group"]').prop('checked', false);
     $form.find('[name="status"]').val('active');
     $form.find('input[name="submit_action"]').val('save');

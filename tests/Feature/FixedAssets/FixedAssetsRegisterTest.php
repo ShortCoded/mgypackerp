@@ -180,14 +180,14 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
     $menu = app(MenuService::class)->getMenu($actor);
     $labels = array_column($menu, 'label');
 
-    expect($labels)->toContain('accounting_costing')
+    expect($labels)->toContain('accounting_costing', 'fixed_assets')
         ->toContain('sales')
         ->toContain('purchases')
-        ->not->toContain('finance', 'fixed_assets')
+        ->not->toContain('finance')
         ->and(array_search('purchases', $labels, true))->toBeLessThan(array_search('accounting_costing', $labels, true));
 
-    $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
-    expect(collect($accountingCosting['children'])->pluck('label')->all())->toContain('fixed_assets_register')
+    $fixedAssets = collect($menu)->firstWhere('label', 'fixed_assets');
+    expect(json_encode($fixedAssets, JSON_THROW_ON_ERROR))->toContain('fixed_assets_register')
         ->and(app(PermissionRegistryService::class)->all())->toContain('fixed_assets.view');
 
     $blocked = fixedAssetsActor(['customers.view']);
@@ -245,7 +245,7 @@ test('Fixed Asset create form renders tabs and empty document number input', fun
         ->toContain('id="operation_date"')
         ->toContain('name="image_archive_file_doc_num"')
         ->toContain('id="fixed-asset-image-picker-button"')
-        ->toContain('class="col-12 fixed-asset-image-field" data-layout-row="basic-image"')
+        ->toContain('class="mb-4 col-12 fixed-asset-image-field" data-layout-row="basic-image"')
         ->toContain('id="depreciation_method"')
         ->toContain('id="salvage_value"')
         ->toContain('id="previous_depreciation_until_date"')
@@ -279,6 +279,7 @@ test('Fixed Asset form trims numeric values and defaults main currency exchange 
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Numeric Display Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '1000.5000',
         'previous_depreciation' => '100.2500',
         'previous_depreciation_until_date' => $context['period']->from_date->toDateString(),
@@ -535,6 +536,7 @@ test('Fixed Asset opening accumulated depreciation respects depreciable base and
 
     $excessDepreciationResponse = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Excess Depreciation Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '100',
         'salvage_value' => '10',
         'previous_depreciation' => '91',
@@ -549,6 +551,7 @@ test('Fixed Asset opening accumulated depreciation respects depreciable base and
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Fully Depreciated To Salvage Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '100',
         'salvage_value' => '10',
         'previous_depreciation' => '90',
@@ -561,6 +564,7 @@ test('Fixed Asset opening accumulated depreciation respects depreciable base and
 
     $negativePreviousResponse = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Negative Opening Depreciation Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'previous_depreciation' => '-1',
     ]))
         ->assertUnprocessable()
@@ -592,6 +596,7 @@ test('Fixed Asset opening accumulated depreciation respects depreciable base and
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Recalculated Net Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '300',
         'previous_depreciation' => '25',
         'previous_depreciation_until_date' => $context['period']->from_date->toDateString(),
@@ -637,16 +642,13 @@ test('Fixed Asset reporting fields validate and calculate depreciation readiness
     expect($negativeSalvageResponse->json('errors.salvage_value'))
         ->toContain(__('fixed_assets.messages.salvage_value_negative'));
 
-    $highSalvageResponse = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
-        'asset_name' => 'High Salvage Asset',
+    $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+        'asset_name' => 'Fully Residual Asset',
         'purchase_value' => '100',
         'salvage_value' => '100',
-    ]))
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['salvage_value']);
+    ]))->assertOk();
 
-    expect($highSalvageResponse->json('errors.salvage_value'))
-        ->toContain(__('fixed_assets.messages.salvage_value_exceeds_purchase_value'));
+    expect((float) FixedAsset::query()->where('asset_name', 'Fully Residual Asset')->firstOrFail()->net_value)->toBe(100.0);
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Missing Operation Date Asset',

@@ -17,7 +17,15 @@
             return expandScientificNotation(String(value));
         }
 
-        return String(value).trim();
+        return String(value).trim()
+            .replace(/[٠-٩]/g, function (digit) {
+                return String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit));
+            })
+            .replace(/[۰-۹]/g, function (digit) {
+                return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit));
+            })
+            .replace(/٫/g, '.')
+            .replace(/٬/g, ',');
     }
 
     function expandScientificNotation(value) {

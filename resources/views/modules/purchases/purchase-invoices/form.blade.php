@@ -52,6 +52,7 @@
     $selectedCurrency = old('currency_doc_num', $currencyOption['id'] ?? '');
     $selectedCashbox = old('cashbox_doc_num', $cashboxOption['id'] ?? '');
     $selectedBank = old('bank_account_doc_num', $bankOption['id'] ?? '');
+    $selectedPurchaseOrder = old('purchase_order_doc_num', $record?->purchaseOrder?->doc_num ?? '');
     $selectedPaymentType = old('payment_type', $record?->payment_type ?? PurchaseInvoice::PaymentTypeCredit);
     $selectedPaymentSource = old('payment_source_type', $record?->payment_source_type ?? PurchaseInvoice::SourceCashbox);
     $selectedHeaderDiscountType = old('header_discount_type', $record?->header_discount_type ?? 'fixed');
@@ -77,6 +78,8 @@
                 'unit_doc_num' => $unit?->doc_num ?? $productSnapshot['unit_doc_num'] ?? null,
                 'unit_label' => $unitLabel,
                 'unit_options' => $product ? $unitOptions->options($product) : [],
+                'purchase_order_line_public_id' => $line->purchaseOrderLine?->public_id,
+                'receipt_line_public_id' => $line->receiptLine?->public_id,
                 'quantity' => $numbers->format($line->quantity),
                 'unit_price' => $numbers->format($line->unit_price),
                 'discount_type' => $line->discount_type ?: 'fixed',
@@ -98,6 +101,8 @@
             'unit_doc_num' => null,
             'unit_label' => null,
             'unit_options' => [],
+            'purchase_order_line_public_id' => null,
+            'receipt_line_public_id' => null,
             'quantity' => null,
             'unit_price' => null,
             'discount_type' => 'fixed',
@@ -230,6 +235,26 @@
                 <div class="alert alert-danger">{{ __('purchase_invoices.messages.cancelled_edit_forbidden') }}</div>
             @endif
 
+            @if($mode === 'view')
+                <div class="border rounded p-2 mb-3">
+                    <h6 class="mb-2">{{ __('Document lineage') }}</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        @can('purchase_orders.view')
+                            @if($record->purchaseOrder)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-orders.show', $record->purchaseOrder->doc_num) }}">{{ __('Purchase Order') }}: <span dir="ltr">{{ $record->purchaseOrder->doc_num }}</span></a>@endif
+                        @endcan
+                        @can('purchases.goods_receipt_notes.view')
+                            @foreach($record->lines->pluck('receiptLine.receipt')->filter()->unique('id') as $receipt)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.show', $receipt->doc_num) }}">{{ __('GRN') }}: <span dir="ltr">{{ $receipt->doc_num }}</span></a>@endforeach
+                        @endcan
+                        @can('supplier_payments.view')
+                            @foreach($record->paymentAllocations->pluck('paymentContext')->filter()->unique('id') as $payment)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-payments.show', $payment->doc_num) }}">{{ __('Supplier Payment') }}: <span dir="ltr">{{ $payment->doc_num }}</span></a>@endforeach
+                        @endcan
+                        @can('purchases.purchase_returns.view')
+                            @foreach($record->purchaseReturns as $return)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.show', $return->doc_num) }}">{{ __('Purchase Return') }}: <span dir="ltr">{{ $return->doc_num }}</span></a>@endforeach
+                        @endcan
+                    </div>
+                </div>
+            @endif
+
             <ul class="nav nav-tabs" id="purchase-invoice-form-tabs" role="tablist">
                 @foreach(['basic', 'lines', 'payments', 'audit'] as $tab)
                     <li class="nav-item" role="presentation">
@@ -309,6 +334,29 @@
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="supplier_doc_num"></div>
                         </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label" for="purchase_order_doc_num">{{ __('Purchase Order / three-way match source') }}</label>
+                            @if($isReadonly)
+                                <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
+                            @else
+                                <select class="form-select" id="purchase_order_doc_num" name="purchase_order_doc_num">
+                                    <option value="">{{ __('Authorized direct procurement only') }}</option>
+                                    @foreach($procurementPurchaseOrders as $purchaseOrder)
+                                        <option value="{{ $purchaseOrder->doc_num }}"
+                                            data-approved-freight="{{ $purchaseOrder->freight_amount }}"
+                                            data-invoiced-freight="{{ $purchaseOrder->invoiced_freight_amount ?? 0 }}"
+                                            @selected($selectedPurchaseOrder === $purchaseOrder->doc_num)>{{ $purchaseOrder->doc_num }} / {{ $purchaseOrder->supplier?->name }}</option>
+                                    @endforeach
+                                </select>
+                            @endif
+                            <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
+                        </div>
+
+                        @if(! $isReadonly && auth()->user()?->can('purchases.direct_procurement.override'))
+                            <div class="col-md-4"><div class="form-check mt-4"><input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))><label class="form-check-label" for="direct_procurement_override">{{ __('Authorized direct procurement override') }}</label></div></div>
+                            <div class="col-md-8"><label class="form-label" for="direct_procurement_reason">{{ __('Override reason') }}</label><input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}"></div>
+                        @endif
 
                         <div class="col-md-3">
                             <label class="form-label" for="supplier_invoice_number">{{ __('purchase_invoices.attributes.supplier_invoice_number') }}</label>
@@ -432,6 +480,27 @@
                             <div class="invalid-feedback d-block" data-error-for="header_discount_value"></div>
                         </div>
 
+                        <div class="col-md-3">
+                            <label class="form-label" for="freight_amount">{{ __('Approved PO freight to invoice') }}</label>
+                            @if($isReadonly)
+                                <x-forms.view-field for="freight_amount" :value="$numbers->format($value('freight_amount', 0))" input-class="text-end" dir="ltr" />
+                            @else
+                                <x-forms.numeric-input class="text-end js-purchase-invoice-freight" id="freight_amount" name="freight_amount" :value="old('freight_amount', $record?->freight_amount ?? 0)" :scale="4" min="0" step="0.0001" />
+                            @endif
+                            <div class="form-text js-purchase-invoice-freight-match"></div>
+                            <div class="invalid-feedback d-block" data-error-for="freight_amount"></div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label" for="freight_tax_rate">{{ __('Freight tax rate') }}</label>
+                            @if($isReadonly)
+                                <x-forms.view-field for="freight_tax_rate" :value="$numbers->format($value('freight_tax_rate', 0))" input-class="text-end" dir="ltr" />
+                            @else
+                                <x-forms.numeric-input class="text-end js-purchase-invoice-freight-tax-rate" id="freight_tax_rate" name="freight_tax_rate" :value="old('freight_tax_rate', $record?->freight_tax_rate ?? 0)" :scale="4" min="0" max="100" step="0.0001" />
+                            @endif
+                            <div class="invalid-feedback d-block" data-error-for="freight_tax_rate"></div>
+                        </div>
+
                         <div class="col-12">
                             <label class="form-label" for="notes">{{ __('purchase_invoices.attributes.notes') }}</label>
                             @if($isReadonly)
@@ -472,6 +541,8 @@
                         <table class="table table-sm table-hover align-middle mb-0 purchase-invoice-lines js-purchase-invoice-lines">
                             <thead class="bg-200">
                                 <tr>
+                                    <th>{{ __('PO line') }}</th>
+                                    <th>{{ __('Accepted receipt line') }}</th>
                                     <th class="purchase-invoice-product-cell">{{ __('purchase_invoices.attributes.product') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.quantity') }}</th>
@@ -492,6 +563,20 @@
                             <tbody>
                                 @forelse($lineRows as $index => $line)
                                     <tr class="js-purchase-invoice-line" data-index="{{ $index }}">
+                                        <td>
+                                            @if($isReadonly)
+                                                <div class="form-control-plaintext" dir="ltr">{{ $line['purchase_order_line_public_id'] ?? '—' }}</div>
+                                            @else
+                                                <select class="form-select" name="lines[{{ $index }}][purchase_order_line_public_id]"><option value="">{{ __('Select') }}</option>@foreach($procurementPurchaseOrders->flatMap->lines as $purchaseOrderLine)<option value="{{ $purchaseOrderLine->public_id }}" @selected(($line['purchase_order_line_public_id'] ?? null) === $purchaseOrderLine->public_id)>{{ $purchaseOrderLine->purchaseOrder?->doc_num }} / {{ $purchaseOrderLine->product?->name }} / {{ $purchaseOrderLine->remaining_quantity }}</option>@endforeach</select>
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @if($isReadonly)
+                                                <div class="form-control-plaintext" dir="ltr">{{ $line['receipt_line_public_id'] ?? '—' }}</div>
+                                            @else
+                                                <select class="form-select" name="lines[{{ $index }}][receipt_line_public_id]"><option value="">{{ __('Service / no receipt') }}</option>@foreach($eligibleReceiptLines as $receiptLine)<option value="{{ $receiptLine->public_id }}" @selected(($line['receipt_line_public_id'] ?? null) === $receiptLine->public_id)>{{ $receiptLine->receipt?->doc_num }} / {{ $receiptLine->product?->name }} / {{ $receiptLine->accepted_quantity }}</option>@endforeach</select>
+                                            @endif
+                                        </td>
                                         <td>
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['product_label'] ?? null }}</div>
@@ -588,7 +673,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="{{ $isReadonly ? 12 : 13 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_lines') }}</td>
+                                        <td colspan="{{ $isReadonly ? 14 : 15 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_lines') }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -612,6 +697,14 @@
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.header_discount') }}</th>
                                             <td class="text-end js-purchase-invoice-header-discount" dir="ltr">{{ $numbers->format($record?->header_discount_amount ?? 0) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>{{ __('Freight') }}</th>
+                                            <td class="text-end js-purchase-invoice-freight-total" dir="ltr">{{ $numbers->format($record?->freight_amount ?? 0) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>{{ __('Freight VAT') }}</th>
+                                            <td class="text-end js-purchase-invoice-freight-tax" dir="ltr">{{ $numbers->format($record?->freight_tax_amount ?? 0) }}</td>
                                         </tr>
                                         <tr>
                                             <th>{{ __('purchase_invoices.totals.taxable') }}</th>

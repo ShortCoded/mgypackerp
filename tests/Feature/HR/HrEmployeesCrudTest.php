@@ -425,6 +425,28 @@ function hrEmployeePayload(array $fixtures, array $overrides = []): array
     ];
 }
 
+function hrEmployeeSignatureImage(Company $company): ArchiveFile
+{
+    Storage::disk('public')->put('tests/hr/employee-signature.png', 'image-content');
+
+    return ArchiveFile::query()->create([
+        'doc_number' => 990,
+        'doc_num' => 'ARCH-EMP-SIGN-990',
+        'attachable_type' => (new Company)->getMorphClass(),
+        'attachable_id' => $company->getKey(),
+        'module' => 'hr',
+        'record_type' => 'employee_signature',
+        'hidden_from_picker' => false,
+        'original_name' => 'employee-signature.png',
+        'stored_name' => 'employee-signature.png',
+        'disk' => 'public',
+        'path' => 'tests/hr/employee-signature.png',
+        'mime_type' => 'image/png',
+        'extension' => 'png',
+        'size_bytes' => 13,
+    ]);
+}
+
 test('HrEmployee permissions are discovered and assigned to admin role', function () {
     $this->seed(PermissionSeeder::class);
 
@@ -652,6 +674,46 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
     $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'document-types').'?q=Contract')
         ->assertOk()
         ->assertJsonPath('results.0.id', $fixtures['documentType']->doc_num);
+});
+
+test('HrEmployee signature continues to use the shared archive image picker and validation', function (): void {
+    Storage::fake('public');
+
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $signature = hrEmployeeSignatureImage($fixtures['company']);
+    $actor = hrEmployeeActor([...hrEmployeePermissions(), 'file_manager.view']);
+    $payload = hrEmployeePayload($fixtures, [
+        'signature_archive_file_doc_num' => $signature->doc_num,
+    ]);
+
+    $response = $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), $payload)
+        ->assertOk();
+
+    $employee = HrEmployee::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+
+    expect($employee->signature_archive_file_id)->toBe($signature->getKey());
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.edit', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('name="signature_archive_file_doc_num"', false)
+        ->assertSee('data-picker-collection="employee_signature"', false)
+        ->assertSee($signature->doc_num)
+        ->assertSee('assets/js/modules/Core/archive-image-picker-field.js', false);
+
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), [
+            ...$payload,
+            'biometric_mappings' => [[
+                ...$payload['biometric_mappings'][0],
+                'id' => $employee->biometricMappings()->firstOrFail()->getKey(),
+            ]],
+        ])
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
 });
 
 test('HrEmployee insurance and tax profiles validate persist hydrate filter and remain no-op safe', function (): void {

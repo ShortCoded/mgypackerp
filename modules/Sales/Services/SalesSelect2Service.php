@@ -146,6 +146,7 @@ class SalesSelect2Service
         return Product::query()
             ->with('mainImageUsage.file')
             ->active()
+            ->salesEligible()
             ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'))
             ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')
             ->leftJoin('item_categories', 'item_categories.id', '=', 'products.item_category_id')
@@ -161,6 +162,7 @@ class SalesSelect2Service
                 'products.name',
                 'products.image_path',
                 'products.barcode',
+                'products.item_classification',
                 'products.item_unit_id',
                 'item_units.doc_num as unit_doc_num',
                 'item_units.name as unit_name',
@@ -199,6 +201,7 @@ class SalesSelect2Service
                 'model' => $product->model_name,
                 'color' => $product->color_name,
                 'size' => $product->size_name,
+                'item_classification' => $product->item_classification,
             ],
         ];
     }

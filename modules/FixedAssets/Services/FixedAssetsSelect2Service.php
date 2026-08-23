@@ -13,6 +13,8 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Select2ResponseService;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\Sales\Models\Customer;
 
 class FixedAssetsSelect2Service
 {
@@ -45,13 +47,6 @@ class FixedAssetsSelect2Service
             ->where('accounts.is_postable', false)
             ->where('account_classifications.code', 'fixed_assets')
             ->where('accounts.id', '!=', $root->getKey())
-            ->where(function ($query) use ($root): void {
-                $query->where('accounts.parent_id', $root->getKey())
-                    ->orWhereIn('accounts.parent_id', Account::query()
-                        ->select('id')
-                        ->where('company_id', $root->company_id)
-                        ->where('parent_id', $root->getKey()));
-            })
             ->select(['accounts.doc_num', 'accounts.doc_number', 'accounts.account_code', 'accounts.name', 'accounts.name_en'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
 
@@ -60,6 +55,27 @@ class FixedAssetsSelect2Service
         return $this->select2->paginated($query, $request, fn (Account $account): array => [
             'id' => (string) $account->doc_num,
             'text' => Account::codeNameLabelFor($account->account_code, $account->name, $account->name_en),
+        ]);
+    }
+
+    public function assets(Request $request): array
+    {
+        $companyId = $this->companyId($request);
+
+        if ($companyId === null) {
+            return $this->empty();
+        }
+
+        $query = FixedAsset::query()
+            ->where('company_id', $companyId)
+            ->select(['doc_num', 'doc_number', 'asset_name', 'serial_number', 'status'])
+            ->orderBy('doc_number');
+
+        $this->applyTerms($query, $request, ['doc_num', 'asset_name', 'serial_number']);
+
+        return $this->select2->paginated($query, $request, fn (FixedAsset $asset): array => [
+            'id' => (string) $asset->doc_num,
+            'text' => trim(implode(' / ', array_filter([$asset->doc_num, $asset->asset_name, $asset->serial_number]))),
         ]);
     }
 
@@ -187,6 +203,29 @@ class FixedAssetsSelect2Service
             'id' => (string) $currency->doc_num,
             'text' => trim(implode(' / ', array_filter([$currency->code, $currency->name]))),
             'is_main' => (bool) $currency->is_main,
+        ]);
+    }
+
+    public function customers(Request $request): array
+    {
+        $companyId = $this->companyId($request);
+
+        if ($companyId === null) {
+            return $this->empty();
+        }
+
+        $query = Customer::query()
+            ->active()
+            ->forCompany($companyId)
+            ->select(['doc_num', 'doc_number', 'name', 'phone', 'mobile'])
+            ->orderBy('name')
+            ->orderBy('doc_number');
+
+        $this->applyTerms($query, $request, ['doc_num', 'name', 'phone', 'mobile']);
+
+        return $this->select2->paginated($query, $request, fn (Customer $customer): array => [
+            'id' => (string) $customer->doc_num,
+            'text' => trim(implode(' / ', array_filter([$customer->doc_num, $customer->name, $customer->phone ?: $customer->mobile]))),
         ]);
     }
 

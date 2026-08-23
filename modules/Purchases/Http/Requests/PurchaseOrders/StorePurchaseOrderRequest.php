@@ -31,8 +31,11 @@ class StorePurchaseOrderRequest extends FormRequest
     {
         $this->normalizeNumericInput([
             'exchange_rate',
+            'freight_amount',
             'lines.*.ordered_quantity',
             'lines.*.unit_price',
+            'lines.*.discount_value',
+            'lines.*.tax_rate',
         ]);
 
         $context = app(OperatingContextService::class)->snapshot($this);
@@ -49,8 +52,12 @@ class StorePurchaseOrderRequest extends FormRequest
             'currency_doc_num' => $this->trimmed('currency_doc_num'),
             'document_date' => $this->trimmed('document_date'),
             'exchange_rate' => $this->decimalInput('exchange_rate', '1'),
+            'freight_amount' => $this->decimalInput('freight_amount', '0'),
             'expected_delivery_date' => $this->trimmed('expected_delivery_date'),
             'supplier_reference' => $this->trimmed('supplier_reference'),
+            'payment_terms' => $this->trimmed('payment_terms'),
+            'direct_procurement_override' => $this->boolean('direct_procurement_override'),
+            'direct_procurement_reason' => $this->trimmed('direct_procurement_reason'),
             'notes' => $this->trimmed('notes'),
             'lines' => $this->normalizedLines(),
         ]);
@@ -84,12 +91,16 @@ class StorePurchaseOrderRequest extends FormRequest
                 }
             }],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
+            'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
             'expected_delivery_date' => ['nullable', function (string $attribute, mixed $value, Closure $fail): void {
                 if ($value !== null && $value !== '' && ! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
                     $fail(__('purchase_orders.messages.expected_delivery_date_invalid'));
                 }
             }],
             'supplier_reference' => ['nullable', 'string', 'max:120'],
+            'payment_terms' => ['nullable', 'string', 'max:255'],
+            'direct_procurement_override' => ['boolean'],
+            'direct_procurement_reason' => ['nullable', 'string', 'required_if:direct_procurement_override,1'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.public_id' => ['nullable', 'string'],
@@ -102,6 +113,9 @@ class StorePurchaseOrderRequest extends FormRequest
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.ordered_quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,12}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'between:0,100'],
             'lines.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
         ];
@@ -183,6 +197,7 @@ class StorePurchaseOrderRequest extends FormRequest
         $this->validateBranchStore($validator, $branch);
         $this->validateSupplier($validator, $companyId);
         $this->validateLines($validator, $companyId);
+        $this->validateDirectProcurement($validator, $current);
     }
 
     private function validateDateInsidePeriod(Validator $validator, ?FinancialPeriod $period): void
@@ -249,7 +264,7 @@ class StorePurchaseOrderRequest extends FormRequest
             $product = Product::query()
                 ->with(['unit', 'equivalentUnit'])
                 ->active()
-                ->nonService()
+                ->purchasable()
                 ->forCompany($companyId)
                 ->where('doc_num', $line['product_doc_num'] ?? null)
                 ->first();
@@ -261,6 +276,31 @@ class StorePurchaseOrderRequest extends FormRequest
             } elseif (trim((string) ($line['unit_doc_num'] ?? '')) !== '' && ! ItemUnit::query()->forCompany($companyId)->where('doc_num', $line['unit_doc_num'])->exists()) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_orders.messages.invalid_unit'));
             }
+
+            $subtotal = (float) ($line['ordered_quantity'] ?? 0) * (float) ($line['unit_price'] ?? 0);
+            $discountValue = (float) ($line['discount_value'] ?? 0);
+            if (($line['discount_type'] ?? 'fixed') === 'percentage' && $discountValue > 100) {
+                $validator->errors()->add("lines.{$index}.discount_value", __('Percentage discount cannot exceed 100%.'));
+            } elseif (($line['discount_type'] ?? 'fixed') === 'fixed' && $discountValue > $subtotal + 0.0001) {
+                $validator->errors()->add("lines.{$index}.discount_value", __('Fixed discount cannot exceed the line subtotal.'));
+            }
+        }
+    }
+
+    private function validateDirectProcurement(Validator $validator, ?PurchaseOrder $current): void
+    {
+        if ($current?->purchase_requisition_id !== null || $current?->supplier_selection_id !== null) {
+            return;
+        }
+
+        if (! $this->boolean('direct_procurement_override')) {
+            $validator->errors()->add('direct_procurement_override', __('Direct purchase orders require an explicit authorized override.'));
+
+            return;
+        }
+
+        if (! $this->user()?->can('purchases.direct_procurement.override')) {
+            $validator->errors()->add('direct_procurement_override', __('You are not authorized to bypass the procurement sourcing workflow.'));
         }
     }
 
@@ -289,6 +329,9 @@ class StorePurchaseOrderRequest extends FormRequest
                 'unit_doc_num' => trim((string) ($line['unit_doc_num'] ?? '')) ?: null,
                 'ordered_quantity' => $this->decimalValue($line['ordered_quantity'] ?? null),
                 'unit_price' => $this->decimalValue($line['unit_price'] ?? null),
+                'discount_type' => trim((string) ($line['discount_type'] ?? 'fixed')) ?: 'fixed',
+                'discount_value' => $this->decimalValue($line['discount_value'] ?? 0),
+                'tax_rate' => $this->decimalValue($line['tax_rate'] ?? 0),
                 'notes' => trim((string) ($line['notes'] ?? '')) ?: null,
             ])
             ->reject(fn (array $line): bool => $line['product_doc_num'] === null && $line['ordered_quantity'] === null && $line['unit_price'] === null)

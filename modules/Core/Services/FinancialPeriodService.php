@@ -3,6 +3,7 @@
 namespace Modules\Core\Services;
 
 use DomainException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\FinancialPeriod;
 
@@ -24,6 +25,40 @@ class FinancialPeriodService
         private readonly CrudAuditService $crudAudit,
         private readonly OperatingCompanyContextService $companyContext,
     ) {}
+
+    public function resolveOpenForPostingDate(
+        int $companyId,
+        Carbon|string $postingDate,
+        ?int $expectedPeriodId = null,
+        ?string $expectedPeriodDocNum = null,
+        bool $lockForUpdate = false,
+    ): FinancialPeriod {
+        $date = Carbon::parse($postingDate)->startOfDay();
+        $query = FinancialPeriod::query()
+            ->forCompany($companyId)
+            ->whereDate('from_date', '<=', $date->toDateString())
+            ->whereDate('to_date', '>=', $date->toDateString())
+            ->whereNull('deleted_at');
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $period = $query->first();
+
+        if (! $period instanceof FinancialPeriod
+            || ($expectedPeriodId !== null && (int) $period->getKey() !== $expectedPeriodId)
+            || ($expectedPeriodDocNum !== null && $period->doc_num !== $expectedPeriodDocNum)
+        ) {
+            throw new DomainException(__('journal_entries.messages.date_outside_period'));
+        }
+
+        if ($period->is_closed) {
+            throw new DomainException(__('journal_entries.messages.period_closed'));
+        }
+
+        return $period;
+    }
 
     /**
      * @param  array<string, mixed>  $data

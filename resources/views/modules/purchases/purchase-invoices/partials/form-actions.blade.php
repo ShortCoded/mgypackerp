@@ -44,6 +44,17 @@
                     <span class="fas fa-lock me-1"></span>{{ __('purchase_invoices.actions.close') }}
                 </button>
             @endcan
+            @can('purchase_invoices.cancel')
+                <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.reverse', $record->doc_num) }}" data-method="POST" data-action="cancel">
+                    <span class="fas fa-undo me-1"></span>{{ __('Reverse posted Invoice') }}
+                </button>
+            @endcan
+        @elseif($record->isClosed())
+            @can('purchase_invoices.cancel')
+                <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.reverse', $record->doc_num) }}" data-method="POST" data-action="cancel">
+                    <span class="fas fa-undo me-1"></span>{{ __('Reverse posted Invoice') }}
+                </button>
+            @endcan
         @endif
     @endif
 

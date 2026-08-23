@@ -13,6 +13,10 @@ $erpUiScreenIndexRoutes = collect($erpUiScreens->screens())
 Route::middleware(['auth', 'erp.expanded'])
     ->group(function () use ($erpUiScreenIndexRoutes, $erpUiScreens): void {
         foreach ($erpUiScreens->screens() as $screen) {
+            if ($screen->get('shell_enabled', true) === false) {
+                continue;
+            }
+
             if (Route::has($screen->route('index'))) {
                 continue;
             }

@@ -122,7 +122,7 @@ class FixedAssetExcelImportDefinition implements ExcelImportDefinition
 
         return [
             'EntryTypes' => ['title' => __('fixed_assets.attributes.entry_type'), 'rows' => $this->enumRows(FixedAsset::entryTypes(), 'fixed_assets.entry_types')],
-            'Statuses' => ['title' => __('fixed_assets.attributes.status'), 'rows' => $this->enumRows(['active', 'inactive'], 'fixed_assets.statuses')],
+            'Statuses' => ['title' => __('fixed_assets.attributes.status'), 'rows' => $this->enumRows(['draft', 'active', 'suspended', 'inactive'], 'fixed_assets.statuses')],
             'Booleans' => ['title' => __('excel_imports.lookups.booleans'), 'rows' => [
                 ['reference' => '1', 'label' => __('fixed_assets.booleans.yes')],
                 ['reference' => '0', 'label' => __('fixed_assets.booleans.no')],

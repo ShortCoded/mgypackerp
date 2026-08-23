@@ -14,6 +14,8 @@ use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Purchases\Services\SupplierPaymentPostingService;
 
 class CashVoucherService
 {
@@ -22,12 +24,13 @@ class CashVoucherService
         private readonly CrudAuditService $audit,
         private readonly OperatingCompanyContextService $companies,
         private readonly NumericFormatService $numbers,
+        private readonly SupplierPaymentPostingService $supplierPaymentPostings,
     ) {}
 
-    public function create(string $voucherType, array $data): array
+    public function create(string $voucherType, array $data, ?int $companyId = null): array
     {
-        return DB::transaction(function () use ($voucherType, $data): array {
-            $companyId = $this->companies->requireCompanyId();
+        return DB::transaction(function () use ($voucherType, $data, $companyId): array {
+            $companyId ??= $this->companies->requireCompanyId();
             $record = CashVoucher::query()->create([
                 ...$this->values($voucherType, $data, $companyId),
                 ...$this->document($voucherType, $data, $companyId),
@@ -154,10 +157,10 @@ class CashVoucherService
         });
     }
 
-    public function approve(string $voucherType, CashVoucher $record): CashVoucher
+    public function approve(string $voucherType, CashVoucher $record, ?int $companyId = null): CashVoucher
     {
-        return DB::transaction(function () use ($voucherType, $record): CashVoucher {
-            $companyId = $this->companies->requireCompanyId();
+        return DB::transaction(function () use ($voucherType, $record, $companyId): CashVoucher {
+            $companyId ??= $this->companies->requireCompanyId();
 
             /** @var CashVoucher $locked */
             $locked = CashVoucher::query()
@@ -175,6 +178,7 @@ class CashVoucherService
                 'approved_at' => now(),
                 'updated_by' => auth()->id(),
             ])->save();
+            $this->postSupplierPayment($locked);
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
@@ -209,6 +213,7 @@ class CashVoucherService
                 'cancel_reason' => $reason,
                 'updated_by' => auth()->id(),
             ])->save();
+            $this->reverseSupplierPayment($locked);
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
@@ -233,6 +238,45 @@ class CashVoucherService
             'distributed_units' => $distributedUnits,
             'remaining_units' => $remainingUnits,
         ];
+    }
+
+    private function postSupplierPayment(CashVoucher $voucher): void
+    {
+        $payment = SupplierPaymentContext::query()
+            ->with('journalEntry')
+            ->where('cash_voucher_id', $voucher->getKey())
+            ->lockForUpdate()
+            ->first();
+
+        if (! $payment instanceof SupplierPaymentContext || $payment->journal_entry_id !== null) {
+            return;
+        }
+
+        $voucher->loadMissing('cashbox.account');
+        $cashAccount = $voucher->cashbox?->account;
+        if (! $cashAccount instanceof Account) {
+            throw new DomainException(__('The cashbox posting account is required for Supplier payment approval.'));
+        }
+
+        $this->supplierPaymentPostings->post($payment, $cashAccount);
+    }
+
+    private function reverseSupplierPayment(CashVoucher $voucher): void
+    {
+        $payment = SupplierPaymentContext::query()
+            ->with('journalEntry')
+            ->where('cash_voucher_id', $voucher->getKey())
+            ->lockForUpdate()
+            ->first();
+        if (! $payment instanceof SupplierPaymentContext) {
+            return;
+        }
+
+        $this->supplierPaymentPostings->reverse(
+            $payment,
+            (string) $voucher->cancel_reason,
+            $voucher->cancelled_at?->toDateString(),
+        );
     }
 
     /**
@@ -510,6 +554,37 @@ class CashVoucherService
 
                 $schedule->purchaseInvoice?->refreshPaymentTotals();
             });
+
+        $payment = SupplierPaymentContext::query()
+            ->with(['allocations.paymentSchedule', 'allocations.purchaseInvoice'])
+            ->where('cash_voucher_id', $voucher->getKey())
+            ->first();
+
+        if (! $payment instanceof SupplierPaymentContext) {
+            return;
+        }
+
+        foreach ($payment->allocations as $allocation) {
+            $schedule = $allocation->paymentSchedule;
+            if ($schedule instanceof PurchaseInvoicePaymentSchedule) {
+                $paid = (float) $schedule->allocations()
+                    ->whereHas('paymentContext.cashVoucher', fn ($query) => $query
+                        ->where('status', CashVoucher::StatusApproved)
+                        ->whereNull('deleted_at'))
+                    ->sum('amount');
+                $schedule->forceFill([
+                    'paid_amount' => $this->normalizeDecimal($paid, 4),
+                    'status' => match (true) {
+                        $paid >= (float) $schedule->amount - 0.0001 => PurchaseInvoicePaymentSchedule::StatusPaid,
+                        $paid > 0 => 'partially_paid',
+                        default => PurchaseInvoicePaymentSchedule::StatusScheduled,
+                    },
+                    'updated_by' => auth()->id(),
+                ])->save();
+            }
+
+            $allocation->purchaseInvoice?->refreshPaymentTotals();
+        }
     }
 
     private function assertNotLinkedToClosedPurchaseInvoice(CashVoucher $voucher): void

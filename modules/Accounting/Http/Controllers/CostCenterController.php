@@ -240,7 +240,7 @@ class CostCenterController extends Controller
 
     private function form(string $mode, ?CostCenter $costCenter = null, ?string $cloneSourceToken = null): View
     {
-        $costCenter?->loadMissing('parent');
+        $costCenter?->loadMissing(['parent', 'defaultAccount']);
 
         return view('modules.accounting.cost-centers.form', [
             'mode' => $mode,

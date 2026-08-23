@@ -5,6 +5,7 @@ namespace Modules\Accounting\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Services\OperatingCompanyContextService;
 
@@ -21,6 +22,7 @@ class StoreCostCenterRequest extends FormRequest
             'cost_center_code' => trim((string) $this->input('cost_center_code')),
             'name' => trim((string) $this->input('name')),
             'parent_doc_num' => $this->filled('parent_doc_num') ? trim((string) $this->input('parent_doc_num')) : null,
+            'default_account_doc_num' => $this->filled('default_account_doc_num') ? trim((string) $this->input('default_account_doc_num')) : null,
             'is_group' => $this->boolean('is_group'),
         ]);
     }
@@ -49,6 +51,16 @@ class StoreCostCenterRequest extends FormRequest
                         ->where('is_group', true)
                         ->whereNull('deleted_at')),
             ],
+            'default_account_doc_num' => [
+                'nullable',
+                'string',
+                Rule::exists('accounts', 'doc_num')
+                    ->where(function ($query) use ($companyId): void {
+                        Account::applyDirectPostingEligibility(
+                            $query->where('accounts.company_id', $companyId)
+                        );
+                    }),
+            ],
             'is_group' => ['boolean'],
             'status' => ['required', Rule::in(['active', 'inactive'])],
             'notes' => ['nullable', 'string'],
@@ -75,6 +87,7 @@ class StoreCostCenterRequest extends FormRequest
             'cost_center_code' => __('cost_centers.attributes.cost_center_code'),
             'name' => __('cost_centers.attributes.name'),
             'parent_doc_num' => __('cost_centers.attributes.parent'),
+            'default_account_doc_num' => __('cost_centers.attributes.default_account'),
             'is_group' => __('cost_centers.attributes.is_group'),
             'status' => __('cost_centers.attributes.status'),
             'notes' => __('cost_centers.attributes.notes'),

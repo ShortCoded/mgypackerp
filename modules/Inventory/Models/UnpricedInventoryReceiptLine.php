@@ -12,6 +12,8 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
+use Modules\Purchases\Models\PurchaseOrderLine;
 
 class UnpricedInventoryReceiptLine extends Model
 {
@@ -28,8 +30,15 @@ class UnpricedInventoryReceiptLine extends Model
         'line_no',
         'product_id',
         'unit_id',
+        'purchase_order_line_id',
+        'delivery_schedule_id',
         'product_snapshot',
         'quantity',
+        'delivered_quantity',
+        'accepted_quantity',
+        'rejected_quantity',
+        'inventory_posted_quantity',
+        'supplier_lot_number',
         'notes',
         'created_by',
         'updated_by',
@@ -49,6 +58,10 @@ class UnpricedInventoryReceiptLine extends Model
     {
         return [
             'quantity' => 'decimal:8',
+            'delivered_quantity' => 'decimal:8',
+            'accepted_quantity' => 'decimal:8',
+            'rejected_quantity' => 'decimal:8',
+            'inventory_posted_quantity' => 'decimal:8',
             'product_snapshot' => 'array',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -69,6 +82,16 @@ class UnpricedInventoryReceiptLine extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class, 'unit_id')->withTrashed();
+    }
+
+    public function purchaseOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderLine::class);
+    }
+
+    public function deliverySchedule(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderDeliverySchedule::class, 'delivery_schedule_id');
     }
 
     public function company(): BelongsTo

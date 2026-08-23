@@ -240,6 +240,8 @@
                     <th>{{ __('product_data_report.fields.component_doc_num') }}</th>
                     <th>{{ __('product_data_report.fields.component_name') }}</th>
                     <th>{{ __('product_data_report.fields.component_classification') }}</th>
+                    <th>{{ __('product_data_report.fields.component_calculation_method') }}</th>
+                    <th>{{ __('product_data_report.fields.component_calculation_value') }}</th>
                     <th>{{ __('product_data_report.fields.component_quantity') }}</th>
                     <th>{{ __('product_data_report.fields.component_unit') }}</th>
                     <th>{{ __('product_data_report.fields.component_equivalent') }}</th>

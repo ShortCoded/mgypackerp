@@ -22,6 +22,10 @@
     $isMainValue = (bool) old('is_main', $company?->is_main ?? false);
     $logoPath = $company && ! $isClone && $company->logo ? Storage::disk('public')->url($company->logo) : null;
     $faviconPath = $company && ! $isClone && $company->favicon ? Storage::disk('public')->url($company->favicon) : null;
+    $companyStampFile = $company && ! $isClone ? $company->companyStampArchiveFile : null;
+    $companyStampValue = old('company_stamp_archive_file_doc_num', $companyStampFile?->doc_num ?? '');
+    $authorizedSignatureFile = $company && ! $isClone ? $company->authorizedSignatorySignatureArchiveFile : null;
+    $authorizedSignatureValue = old('authorized_signatory_signature_archive_file_doc_num', $authorizedSignatureFile?->doc_num ?? '');
     $locationSelectedUrl = $company && ! $isView ? route('admin.companies.location-selected', $company->doc_num) : null;
     $relationDocNum = fn (string $relation) => $company ? ($company->{$relation}()->value('doc_num') ?: '') : '';
     $relationName = fn (string $relation, string $legacyField) => $company ? ($company->{$relation}()->value('name') ?: $fieldValue($legacyField, '')) : '';
@@ -45,6 +49,10 @@
         'doc_number' => $canControlDocumentNumber ? (($isEdit || $isView) ? $company?->doc_number : '') : null,
         'legal_name' => $fieldValue('legal_name'),
         'commercial_name' => $fieldValue('commercial_name'),
+        'authorized_signatory_name' => $fieldValue('authorized_signatory_name'),
+        'authorized_signatory_title' => $fieldValue('authorized_signatory_title'),
+        'company_stamp_archive_file_doc_num' => $companyStampValue,
+        'authorized_signatory_signature_archive_file_doc_num' => $authorizedSignatureValue,
         'status' => $statusValue,
         'is_main' => $canControlMainCompany ? $isMainValue : null,
         'notes' => $fieldValue('notes'),
@@ -224,6 +232,67 @@
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="favicon"></div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="mb-3 text-700">{{ __('companies.sections.signature_authorization') }}</h6>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="company-authorized-signatory-name">{{ __('companies.fields.authorized_signatory_name') }}</label>
+                        @if ($isView)
+                            <x-forms.view-field for="company-authorized-signatory-name" :value="$fieldValue('authorized_signatory_name')" />
+                        @else
+                            <input id="company-authorized-signatory-name" name="authorized_signatory_name" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_name') }}">
+                        @endif
+                        <div class="invalid-feedback" data-error-for="authorized_signatory_name"></div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label" for="company-authorized-signatory-title">{{ __('companies.fields.authorized_signatory_title') }}</label>
+                        @if ($isView)
+                            <x-forms.view-field for="company-authorized-signatory-title" :value="$fieldValue('authorized_signatory_title')" />
+                        @else
+                            <input id="company-authorized-signatory-title" name="authorized_signatory_title" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_title') }}">
+                        @endif
+                        <div class="invalid-feedback" data-error-for="authorized_signatory_title"></div>
+                    </div>
+
+                    <x-forms.archive-image-picker
+                        class="col-md-6"
+                        field-id="company-stamp-archive-file-doc-num"
+                        field-name="company_stamp_archive_file_doc_num"
+                        :value="$companyStampValue"
+                        :file="$companyStampFile"
+                        :is-view="$isView"
+                        :label="__('companies.fields.company_stamp')"
+                        :existing-label="__('companies.stamp.existing_file')"
+                        :empty-label="__('companies.stamp.no_file_selected')"
+                        :help-text="__('companies.stamp.help')"
+                        :select-title="__('companies.stamp.select_from_file_manager')"
+                        :select-label="__('companies.actions.select_stamp')"
+                        :remove-label="__('companies.actions.remove_stamp')"
+                        collection="company_stamp"
+                        icon="fas fa-stamp" />
+
+                    <x-forms.archive-image-picker
+                        class="col-md-6"
+                        field-id="company-authorized-signatory-signature-archive-file-doc-num"
+                        field-name="authorized_signatory_signature_archive_file_doc_num"
+                        :value="$authorizedSignatureValue"
+                        :file="$authorizedSignatureFile"
+                        :is-view="$isView"
+                        :label="__('companies.fields.authorized_signatory_signature')"
+                        :existing-label="__('companies.signature.existing_file')"
+                        :empty-label="__('companies.signature.no_file_selected')"
+                        :help-text="__('companies.signature.help')"
+                        :select-title="__('companies.signature.select_from_file_manager')"
+                        :select-label="__('companies.actions.select_signature')"
+                        :remove-label="__('companies.actions.remove_signature')"
+                        collection="company_authorized_signature"
+                        icon="fas fa-signature" />
                 </div>
             </div>
         </div>
@@ -448,6 +517,10 @@
         </div>
     </form>
 
+    @unless ($isView)
+        <x-file-picker-modal />
+    @endunless
+
 @endsection
 
 @push('scripts')
@@ -470,5 +543,7 @@
         window.dataTableTranslations = @json(__('datatables'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Core/file-picker.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Core/archive-image-picker-field.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/companies.js') }}"></script>
 @endpush

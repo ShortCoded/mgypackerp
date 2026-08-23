@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\DataTables\CashVouchersDataTable;
@@ -184,6 +185,19 @@ abstract class AbstractCashVoucherController extends Controller
         ]);
     }
 
+    public function print(Request $request, string $cashVoucher, CompanyPrintIdentityService $printIdentities): View
+    {
+        $record = $this->findInCurrentCompany($request, $cashVoucher, true);
+        $record->loadMissing(['company', 'cashbox.account', 'currency', 'lines.account']);
+
+        return view('modules.finance.cash-vouchers.print', [
+            'record' => $record,
+            'routePrefix' => $this->routePrefix(),
+            'translationKey' => $this->translationKey(),
+            'companyPrintIdentity' => $printIdentities->forCompany($record->company),
+        ]);
+    }
+
     public function updateDocumentNumberSettings(UpdateCashVoucherDocumentNumberSettingsRequest $request, FinanceDocumentNumberSettingsService $settings): JsonResponse
     {
         $result = $settings->update($this->documentNumberKey(), $request->validated('prefix'), (int) $request->validated('padding'));
@@ -299,6 +313,7 @@ abstract class AbstractCashVoucherController extends Controller
             'restore' => route($this->routePrefix().'.restore', $record->doc_num),
             'approve' => route($this->routePrefix().'.approve', $record->doc_num),
             'cancel' => route($this->routePrefix().'.cancel', $record->doc_num),
+            'print' => route($this->routePrefix().'.print', $record->doc_num),
         ];
     }
 
