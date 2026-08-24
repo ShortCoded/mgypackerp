@@ -7,6 +7,8 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
+use Modules\Inventory\Models\OpeningStockPricing;
+use Modules\Inventory\Models\OpeningStockPricingLine;
 
 class InventoryOpeningStockPostingService
 {
@@ -39,6 +41,8 @@ class InventoryOpeningStockPostingService
             }
 
             $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
+            $valuation = $this->valuationForLine((int) $line->getKey());
+
             InventoryTransaction::query()->firstOrCreate(
                 ['posting_key' => "opening-stock:{$locked->id}:line:{$line->id}"],
                 [
@@ -61,11 +65,121 @@ class InventoryOpeningStockPostingService
                     'source_doc_num' => $locked->doc_num,
                     'source_line_type' => $line::class,
                     'source_line_id' => $line->getKey(),
-                    'unit_cost' => 0,
-                    'total_cost' => 0,
+                    'unit_cost' => $valuation['unit_cost'],
+                    'total_cost' => $valuation['total_cost'],
                     'created_by' => auth()->id(),
                 ],
             );
+        }
+    }
+
+    public function applyPricing(OpeningStockPricing $pricing): void
+    {
+        $lockedPricing = OpeningStockPricing::query()
+            ->with('lines.openingStockLine')
+            ->lockForUpdate()
+            ->findOrFail($pricing->getKey());
+
+        foreach ($lockedPricing->lines as $pricingLine) {
+            $openingLine = $pricingLine->openingStockLine;
+
+            if (! $openingLine) {
+                continue;
+            }
+
+            $movement = InventoryTransaction::query()
+                ->where('posting_key', "opening-stock:{$lockedPricing->opening_stock_id}:line:{$openingLine->getKey()}")
+                ->lockForUpdate()
+                ->first();
+
+            if (! $movement instanceof InventoryTransaction) {
+                continue;
+            }
+
+            $this->assertNoLaterMovement($movement);
+
+            $unitCost = bcmul((string) $pricingLine->unit_price, (string) $lockedPricing->exchange_rate, 8);
+            $totalCost = bcmul((string) $pricingLine->line_total, (string) $lockedPricing->exchange_rate, 4);
+
+            $movement->forceFill([
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
+            ])->save();
+        }
+    }
+
+    public function clearPricing(OpeningStockPricing $pricing): void
+    {
+        $lockedPricing = OpeningStockPricing::query()
+            ->withTrashed()
+            ->with('lines.openingStockLine')
+            ->lockForUpdate()
+            ->findOrFail($pricing->getKey());
+
+        foreach ($lockedPricing->lines as $pricingLine) {
+            $openingLine = $pricingLine->openingStockLine;
+
+            if (! $openingLine) {
+                continue;
+            }
+
+            $movement = InventoryTransaction::query()
+                ->where('posting_key', "opening-stock:{$lockedPricing->opening_stock_id}:line:{$openingLine->getKey()}")
+                ->lockForUpdate()
+                ->first();
+
+            if (! $movement instanceof InventoryTransaction) {
+                continue;
+            }
+
+            $this->assertNoLaterMovement($movement);
+            $movement->forceFill(['unit_cost' => null, 'total_cost' => null])->save();
+        }
+    }
+
+    /** @return array{unit_cost: string|null, total_cost: string|null} */
+    private function valuationForLine(int $openingStockLineId): array
+    {
+        $pricing = OpeningStockPricingLine::query()
+            ->join('inventory_opening_stock_pricings', 'inventory_opening_stock_pricings.id', '=', 'inventory_opening_stock_pricing_lines.pricing_id')
+            ->where('inventory_opening_stock_pricing_lines.opening_stock_line_id', $openingStockLineId)
+            ->whereNull('inventory_opening_stock_pricing_lines.deleted_at')
+            ->whereNull('inventory_opening_stock_pricings.deleted_at')
+            ->select([
+                'inventory_opening_stock_pricing_lines.unit_price',
+                'inventory_opening_stock_pricing_lines.line_total',
+                'inventory_opening_stock_pricings.exchange_rate',
+            ])
+            ->first();
+
+        if (! $pricing) {
+            return ['unit_cost' => null, 'total_cost' => null];
+        }
+
+        return [
+            'unit_cost' => bcmul((string) $pricing->unit_price, (string) $pricing->exchange_rate, 8),
+            'total_cost' => bcmul((string) $pricing->line_total, (string) $pricing->exchange_rate, 4),
+        ];
+    }
+
+    private function assertNoLaterMovement(InventoryTransaction $openingMovement): void
+    {
+        $hasLaterMovement = InventoryTransaction::query()
+            ->where('company_id', $openingMovement->company_id)
+            ->where('branch_store_id', $openingMovement->branch_store_id)
+            ->where('product_id', $openingMovement->product_id)
+            ->where('id', '!=', $openingMovement->getKey())
+            ->where(function ($query) use ($openingMovement): void {
+                $query->whereDate('transaction_date', '>', $openingMovement->transaction_date)
+                    ->orWhere(function ($sameDate) use ($openingMovement): void {
+                        $sameDate->whereDate('transaction_date', $openingMovement->transaction_date)
+                            ->where('id', '>', $openingMovement->getKey());
+                    });
+            })
+            ->exists();
+
+        if ($hasLaterMovement) {
+            throw new DomainException('Opening stock pricing cannot change after a later Inventory movement exists for the same product and store.');
         }
     }
 }

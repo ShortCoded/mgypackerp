@@ -9,6 +9,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryReservationService;
@@ -20,6 +21,7 @@ use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\QualityInspectionType;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Services\SalesUnitConversionService;
 
@@ -30,6 +32,7 @@ class ProductionCycleService
         private readonly SalesUnitConversionService $units,
         private readonly InventoryReservationService $reservations,
         private readonly InventoryMovementService $movements,
+        private readonly ProductionCostService $costs,
     ) {}
 
     /**
@@ -340,6 +343,7 @@ class ProductionCycleService
                         'quantity' => $consumption['quantity'],
                         'warehouse_location_id' => $reservation->warehouse_location_id,
                         'destination_warehouse_location_id' => $reservation->warehouse_location_id,
+                        'batch_lot' => $reservation->batch_lot,
                         'inventory_reservation_id' => $reservation->getKey(),
                         'source_line_type' => ProductionMaterialRequirement::class,
                         'source_line_id' => $requirement->getKey(),
@@ -407,12 +411,14 @@ class ProductionCycleService
                     throw new DomainException('Material return exceeds the unaccounted issued quantity.');
                 }
 
+                $position = $this->materialPosition($requirement, $warehouseLocationId);
                 $lines[] = [
                     'product_id' => $requirement->product_id,
                     'unit_id' => $requirement->unit_id,
                     'quantity' => $quantity,
-                    'warehouse_location_id' => $warehouseLocationId,
-                    'destination_warehouse_location_id' => $warehouseLocationId,
+                    'warehouse_location_id' => $position['warehouse_location_id'],
+                    'destination_warehouse_location_id' => $position['warehouse_location_id'],
+                    'batch_lot' => $position['batch_lot'],
                     'source_line_type' => ProductionMaterialRequirement::class,
                     'source_line_id' => $requirement->getKey(),
                 ];
@@ -585,6 +591,16 @@ class ProductionCycleService
                 throw new DomainException('Quality inspections require a running or held production run.');
             }
 
+            $inspectionTypeId = $data['quality_inspection_type_id'] ?? null;
+
+            if ($inspectionTypeId !== null && ! QualityInspectionType::query()
+                ->whereKey($inspectionTypeId)
+                ->where('company_id', $locked->company_id)
+                ->where('is_active', true)
+                ->exists()) {
+                throw new DomainException('The selected quality inspection type is not active for the operating company.');
+            }
+
             $numbers = $this->documents->nextForCompany(
                 'quality_inspections',
                 ProductionQualityInspection::class,
@@ -598,7 +614,7 @@ class ProductionCycleService
                 'branch_id' => $locked->branch_id,
                 'production_order_id' => $locked->production_order_id,
                 'production_run_id' => $locked->getKey(),
-                'quality_inspection_type_id' => $data['quality_inspection_type_id'] ?? null,
+                'quality_inspection_type_id' => $inspectionTypeId,
                 'version' => 1,
                 'inspection_date' => $data['inspection_date'] ?? now()->toDateString(),
                 'sampled_at' => $data['sampled_at'] ?? now(),
@@ -645,6 +661,14 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with(['requirements', 'order'])->lockForUpdate()->findOrFail($run->getKey());
             $consumptionLines = [];
             $wasteLines = [];
+            $requirementIds = $locked->requirements->modelKeys();
+            $submittedRequirementIds = array_map('intval', array_keys($accountingByRequirementId));
+            sort($requirementIds);
+            sort($submittedRequirementIds);
+
+            if ($requirementIds !== $submittedRequirementIds) {
+                throw new DomainException('Material accounting lines must belong exclusively to this production run.');
+            }
 
             foreach ($locked->requirements as $requirement) {
                 $accounting = $accountingByRequirementId[$requirement->getKey()] ?? null;
@@ -671,10 +695,12 @@ class ProductionCycleService
                     throw new DomainException('Consumed plus waste must exactly reconcile issued less returned material.');
                 }
 
+                $position = $this->materialPosition($requirement, $warehouseLocationId);
                 $baseLine = [
                     'product_id' => $requirement->product_id,
                     'unit_id' => $requirement->unit_id,
-                    'warehouse_location_id' => $warehouseLocationId,
+                    'warehouse_location_id' => $position['warehouse_location_id'],
+                    'batch_lot' => $position['batch_lot'],
                     'source_line_type' => ProductionMaterialRequirement::class,
                     'source_line_id' => $requirement->getKey(),
                 ];
@@ -708,9 +734,10 @@ class ProductionCycleService
                 ], $wasteLines);
             }
 
-            foreach ($accountingByRequirementId as $requirementId => $accounting) {
-                ProductionMaterialRequirement::query()->whereKey($requirementId)->increment('consumed_quantity', (string) $accounting['consumed_quantity']);
-                ProductionMaterialRequirement::query()->whereKey($requirementId)->increment('waste_quantity', (string) $accounting['waste_quantity']);
+            foreach ($locked->requirements as $requirement) {
+                $accounting = $accountingByRequirementId[$requirement->getKey()];
+                $requirement->increment('consumed_quantity', (string) $accounting['consumed_quantity']);
+                $requirement->increment('waste_quantity', (string) $accounting['waste_quantity']);
             }
 
             return $documents;
@@ -726,8 +753,8 @@ class ProductionCycleService
         return DB::transaction(function () use ($run, $branchStoreId, $baseQuantity, $warehouseLocationId): InventoryDocument {
             $locked = ProductionRun::query()->with(['order', 'orderLine'])->lockForUpdate()->findOrFail($run->getKey());
 
-            if (! in_array($locked->status, [ProductionRun::StatusRunning, ProductionRun::StatusHeld], true)) {
-                throw new DomainException('Finished goods can only be received from an active production run.');
+            if ($locked->status !== ProductionRun::StatusRunning) {
+                throw new DomainException('Finished goods can only be received from a running production run that is not on quality hold.');
             }
 
             $remainingGood = bcsub((string) $locked->good_base_quantity, (string) $locked->received_base_quantity, 8);
@@ -736,18 +763,44 @@ class ProductionCycleService
                 throw new DomainException('Finished-goods receipt exceeds recorded good output.');
             }
 
-            $materialCost = (string) DB::table('inventory_document_lines')
-                ->join('inventory_documents', 'inventory_documents.id', '=', 'inventory_document_lines.inventory_document_id')
-                ->where('inventory_documents.production_run_id', $locked->getKey())
-                ->whereIn('inventory_documents.document_type', [
-                    InventoryDocument::TypeMaterialConsumption,
-                    InventoryDocument::TypeProductionWaste,
-                ])
-                ->where('inventory_documents.status', InventoryDocument::StatusPosted)
-                ->sum('inventory_document_lines.total_cost');
-            $unitCost = bccomp((string) $locked->good_base_quantity, '0', 8) > 0
-                ? bcdiv($materialCost, (string) $locked->good_base_quantity, 8)
-                : '0';
+            foreach ($locked->requirements as $requirement) {
+                $issuedLessReturned = bcsub(
+                    bcadd((string) $requirement->issued_quantity, (string) $requirement->additional_issued_quantity, 8),
+                    (string) $requirement->returned_quantity,
+                    8,
+                );
+                $accounted = bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8);
+
+                if (bccomp($issuedLessReturned, $accounted, 8) !== 0) {
+                    throw new DomainException('All issued material must be consumed, returned, or recorded as waste before finished goods are received.');
+                }
+            }
+
+            $finalInspectionRequired = QualityInspectionType::query()
+                ->where('company_id', $locked->company_id)
+                ->where('is_final_production', true)
+                ->where('is_active', true)
+                ->exists();
+            $latestFinalInspection = $finalInspectionRequired
+                ? $locked->inspections()
+                    ->whereHas('qualityType', fn ($query) => $query->where('is_final_production', true))
+                    ->reorder()
+                    ->latest('sampled_at')
+                    ->latest('id')
+                    ->first()
+                : null;
+
+            if ($finalInspectionRequired && $latestFinalInspection?->result !== 'passed') {
+                throw new DomainException('A final passed quality inspection is required before finished goods become available.');
+            }
+
+            $receiptCost = $this->costs->receiptCost($locked, $baseQuantity);
+
+            if (bccomp($receiptCost, '0', 8) <= 0) {
+                throw new DomainException('Finished goods cannot be received without a positive reconciled WIP material value.');
+            }
+
+            $unitCost = bcdiv($receiptCost, $baseQuantity, 8);
             $document = $this->movements->createAndPost([
                 ...$this->movementContext($locked, $branchStoreId),
                 'document_type' => InventoryDocument::TypeProductionReceipt,
@@ -929,6 +982,29 @@ class ProductionCycleService
             'source_doc_num' => $run->run_number,
             'production_order_id' => $run->production_order_id,
             'production_run_id' => $run->getKey(),
+        ];
+    }
+
+    /** @return array{warehouse_location_id: int|null, batch_lot: string|null} */
+    private function materialPosition(ProductionMaterialRequirement $requirement, ?int $fallbackLocationId): array
+    {
+        $positions = InventoryReservation::query()
+            ->where('production_material_requirement_id', $requirement->getKey())
+            ->select(['warehouse_location_id', 'batch_lot'])
+            ->distinct()
+            ->get();
+
+        if ($positions->count() > 1) {
+            throw new DomainException('A material requirement spanning multiple batches or locations must be split before return or accountability.');
+        }
+
+        $position = $positions->first();
+
+        return [
+            'warehouse_location_id' => $position?->warehouse_location_id === null
+                ? $fallbackLocationId
+                : (int) $position->warehouse_location_id,
+            'batch_lot' => $position?->batch_lot,
         ];
     }
 

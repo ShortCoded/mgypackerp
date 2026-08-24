@@ -27,6 +27,7 @@ class OpeningStockPricingService
         private readonly OperatingContextService $operatingContext,
         private readonly ProductImageResolver $productImages,
         private readonly NumericFormatService $numbers,
+        private readonly InventoryOpeningStockPostingService $openingStockPosting,
     ) {}
 
     public function create(array $data): array
@@ -41,6 +42,7 @@ class OpeningStockPricingService
 
             $totalAmount = $this->syncLines($record, $data['lines'] ?? [], $context);
             $record->forceFill(['total_amount' => number_format($totalAmount, 4, '.', '')])->save();
+            $this->openingStockPosting->applyPricing($record);
             $this->audit->clearCreationUpdateAudit($record);
 
             return ['record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product'])];
@@ -69,6 +71,7 @@ class OpeningStockPricingService
                 'is_closed' => true,
                 'status' => OpeningStockPricing::StatusClosed,
             ]);
+            $this->openingStockPosting->applyPricing($record);
 
             return [
                 'record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product']),
@@ -83,6 +86,7 @@ class OpeningStockPricingService
         DB::transaction(function () use ($record): void {
             $this->assertInCurrentContext($record, $this->currentContext());
             $this->assertDeletable($record);
+            $this->openingStockPosting->clearPricing($record);
             $this->audit->softDelete($record);
 
             $record->refresh()->lines()->get()->each(function (OpeningStockPricingLine $line): void {

@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Currency;
@@ -19,6 +20,7 @@ use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\QuotationsDataTable;
 use Modules\Sales\Http\Requests\BulkDeleteQuotationsRequest;
@@ -303,20 +305,20 @@ class QuotationController extends Controller
         ], 201);
     }
 
-    public function print(Quotation $quotation, CompanyPrintIdentityService $printIdentity): View
+    public function print(Quotation $quotation, CompanyPrintIdentityService $printIdentity, ReportPdfService $pdf): Response
     {
         $quotation->load(['company', 'branch', 'customer', 'currency', 'salesPerson', 'currentRevision.lines.product', 'currentRevision.lines.unit', 'currentRevision.paymentMilestones']);
 
-        return $this->printView($quotation, $quotation->currentRevision, $printIdentity);
+        return $this->printView($quotation, $quotation->currentRevision, $printIdentity, $pdf);
     }
 
-    public function printRevision(Quotation $quotation, QuotationRevision $revision, CompanyPrintIdentityService $printIdentity): View
+    public function printRevision(Quotation $quotation, QuotationRevision $revision, CompanyPrintIdentityService $printIdentity, ReportPdfService $pdf): Response
     {
         abort_unless((int) $revision->quotation_id === (int) $quotation->getKey(), 404);
         $quotation->load(['company', 'branch', 'customer', 'currency', 'salesPerson']);
         $revision->load(['lines.product', 'lines.unit', 'paymentMilestones']);
 
-        return $this->printView($quotation, $revision, $printIdentity);
+        return $this->printView($quotation, $revision, $printIdentity, $pdf);
     }
 
     public function destroyAttachment(Request $request, QuotationAttachment $attachment): JsonResponse
@@ -371,15 +373,16 @@ class QuotationController extends Controller
         ]);
     }
 
-    private function printView(Quotation $quotation, ?QuotationRevision $revision, CompanyPrintIdentityService $printIdentity): View
+    private function printView(Quotation $quotation, ?QuotationRevision $revision, CompanyPrintIdentityService $printIdentity, ReportPdfService $pdf): Response
     {
         abort_unless($revision instanceof QuotationRevision, 404);
 
-        return view('modules.sales.quotations.print', [
+        return $pdf->stream('reports.sales.quotation', [
+            'title' => __('quotations.print.title').' — '.$quotation->doc_num.' / '.$revision->revision_code,
             'record' => $quotation,
             'revision' => $revision,
             'companyPrintIdentity' => $quotation->print_identity_snapshot ?: $printIdentity->forCompany($quotation->company),
-        ]);
+        ], str('sales-quotation-'.$quotation->doc_num.'-'.$revision->revision_code)->slug().'.pdf');
     }
 
     private function statusAction(Request $request, Quotation $quotation, string $action, callable $callback, string $message): JsonResponse

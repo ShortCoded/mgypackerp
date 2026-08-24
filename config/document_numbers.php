@@ -367,7 +367,7 @@ return [
         'scope' => 'company',
     ],
     'issued_cheques' => [
-        'prefix' => 'ICH-',
+        'prefix' => 'OCH-',
         'padding' => 5,
         'column' => 'doc_num',
         'number_column' => 'doc_number',

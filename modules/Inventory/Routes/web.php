@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Inventory\Http\Controllers\InventoryAccountingController;
 use Modules\Inventory\Http\Controllers\InventoryDocumentController;
 use Modules\Inventory\Http\Controllers\InventoryReportController;
 use Modules\Inventory\Http\Controllers\OpeningStockController;
@@ -13,33 +14,45 @@ Route::middleware('auth')
     ->prefix('admin/inventory')
     ->as('admin.inventory.')
     ->group(function (): void {
+        Route::prefix('accounting')->name('accounting.')->controller(InventoryAccountingController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:inventory.accounting.view')->name('index');
+            Route::post('/', 'store')->middleware('can:inventory.accounting.configure')->name('store');
+            Route::get('/select2/accounts', 'accounts')->middleware('can:inventory.accounting.view')->name('accounts');
+            Route::get('/select2/cost-centers', 'costCenters')->middleware('can:inventory.accounting.view')->name('cost-centers');
+        });
         Route::get('/warehouse-locations', [WarehouseLocationController::class, 'index'])
-            ->middleware('can:inventory.opening_stocks.view')
+            ->middleware('can:inventory.locations.view')
             ->name('warehouse-locations.index');
         Route::post('/warehouse-locations', [WarehouseLocationController::class, 'store'])
-            ->middleware('can:inventory.opening_stocks.create')
+            ->middleware('can:inventory.locations.manage')
             ->name('warehouse-locations.store');
         Route::patch('/warehouse-locations/{warehouseLocation}/status', [WarehouseLocationController::class, 'status'])
-            ->middleware('can:inventory.opening_stocks.edit')
+            ->middleware('can:inventory.locations.manage')
             ->name('warehouse-locations.status');
         Route::prefix('documents')->name('documents.')->controller(InventoryDocumentController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:inventory.opening_stocks.view')->name('index');
-            Route::get('/create', 'create')->middleware('can:inventory.opening_stocks.create')->name('create');
-            Route::post('/', 'store')->middleware('can:inventory.opening_stocks.create')->name('store');
-            Route::get('/{inventoryDocument}/print', 'print')->middleware('can:inventory.opening_stocks.view')->name('print');
-            Route::post('/{inventoryDocument}/reverse', 'reverse')->middleware('can:inventory.opening_stocks.approve')->name('reverse');
-            Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.opening_stocks.view')->name('show');
+            Route::get('/', 'index')->middleware('can:inventory.documents.view')->name('index');
+            Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');
+            Route::post('/', 'store')->middleware('can:inventory.documents.create')->name('store');
+            Route::get('/{inventoryDocument}/print', 'print')->middleware('can:inventory.documents.print')->name('print');
+            Route::post('/{inventoryDocument}/reverse', 'reverse')->middleware('can:inventory.documents.reverse')->name('reverse');
+            Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.documents.view')->name('show');
         });
         Route::get('/reports/operations', [InventoryReportController::class, 'index'])
-            ->middleware('can:inventory.opening_stocks.view')
+            ->middleware('can:inventory.reports.operational')
             ->name('reports.index');
+        Route::get('/reports/operations/export.xlsx', [InventoryReportController::class, 'export'])
+            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->name('reports.export');
+        Route::get('/reports/operations/print', [InventoryReportController::class, 'print'])
+            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->name('reports.print');
         Route::prefix('stock-counts')->name('stock-counts.')->controller(StockCountController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:inventory.opening_stocks.view')->name('index');
-            Route::post('/', 'store')->middleware('can:inventory.opening_stocks.create')->name('store');
-            Route::get('/{stockCount}/print', 'print')->middleware('can:inventory.opening_stocks.view')->name('print');
-            Route::post('/{stockCount}/record', 'record')->middleware('can:inventory.opening_stocks.edit')->name('record');
-            Route::post('/{stockCount}/approve', 'approve')->middleware('can:inventory.opening_stocks.approve')->name('approve');
-            Route::get('/{stockCount}', 'show')->middleware('can:inventory.opening_stocks.view')->name('show');
+            Route::get('/', 'index')->middleware('can:inventory.stock_counts.view')->name('index');
+            Route::post('/', 'store')->middleware('can:inventory.stock_counts.create')->name('store');
+            Route::get('/{stockCount}/print', 'print')->middleware('can:inventory.stock_counts.print')->name('print');
+            Route::post('/{stockCount}/record', 'record')->middleware('can:inventory.stock_counts.record')->name('record');
+            Route::post('/{stockCount}/approve', 'approve')->middleware('can:inventory.stock_counts.approve')->name('approve');
+            Route::get('/{stockCount}', 'show')->middleware('can:inventory.stock_counts.view')->name('show');
         });
 
         Route::get('/select2/opening-stock-products', [OpeningStockController::class, 'products'])
@@ -112,6 +125,7 @@ Route::middleware('auth')
             Route::post('/{openingStock}/approve', 'approve')->middleware('can:inventory.opening_stocks.approve')->name('approve');
             Route::patch('/{openingStock}/restore', 'restore')->middleware('can:inventory.opening_stocks.restore')->name('restore');
             Route::get('/{openingStock}/clone', 'clone')->middleware('can:inventory.opening_stocks.clone')->name('clone');
+            Route::get('/{openingStock}/print', 'print')->middleware('can:inventory.opening_stocks.view')->name('print');
             Route::get('/{openingStock}', 'show')->withTrashed()->middleware('can:inventory.opening_stocks.view')->name('show');
             Route::get('/{openingStock}/edit', 'edit')->middleware('can:inventory.opening_stocks.edit')->name('edit');
             Route::put('/{openingStock}', 'update')->middleware('can:inventory.opening_stocks.edit')->name('update');

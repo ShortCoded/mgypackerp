@@ -22,8 +22,8 @@ use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\FixedAssets\Services\FixedAssetBookValueService;
-use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
+use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetPdfService;
 use Modules\FixedAssets\Services\FixedAssetScheduleService;
 
@@ -189,6 +189,6 @@ class FixedAssetLifecycleController extends Controller
         return $this->pdf->stream('reports.fixed-assets.disposition', $disposal->company, [
             'title' => $title,
             'disposal' => $disposal,
-        ], 'asset-'.$disposal->disposition_type.'-'.$disposal->doc_num.'.pdf');
+        ], 'asset-'.str_replace('_', '-', $disposal->disposition_type).'-'.$disposal->doc_num.'.pdf');
     }
 }

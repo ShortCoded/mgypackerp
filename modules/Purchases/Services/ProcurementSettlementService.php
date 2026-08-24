@@ -212,13 +212,15 @@ class ProcurementSettlementService
                 }
                 $orderLine = PurchaseOrderLine::query()->findOrFail($receiptLine->purchase_order_line_id);
                 $unitPrice = $invoiceLine instanceof PurchaseInvoiceLine && (float) $invoiceLine->quantity > 0
-                    ? (float) $invoiceLine->total_before_tax / (float) $invoiceLine->quantity
+                    ? $this->invoiceLineNetUnitValue($invoice, $invoiceLine)
                     : (float) $orderLine->total_before_tax / max((float) $orderLine->ordered_quantity, 0.00000001);
                 $taxPerUnit = $invoiceLine instanceof PurchaseInvoiceLine && (float) $invoiceLine->quantity > 0
                     ? (float) $invoiceLine->tax_amount / (float) $invoiceLine->quantity
                     : 0.0;
                 $tax = $taxPerUnit * $quantity;
-                $lineTotal = $unitPrice * $quantity + $tax;
+                $storedUnitPrice = $this->amount($unitPrice);
+                $storedTax = $this->amount($tax);
+                $lineTotal = $this->amount((float) $storedUnitPrice * $quantity + (float) $storedTax);
 
                 $return->lines()->create([
                     'purchase_order_line_id' => $orderLine->getKey(),
@@ -228,14 +230,14 @@ class ProcurementSettlementService
                     'unit_id' => $receiptLine->unit_id,
                     'quantity' => $this->quantity($quantity),
                     'from_quarantine' => $fromQuarantine,
-                    'unit_price' => $this->amount($unitPrice),
-                    'tax_amount' => $this->amount($tax),
-                    'line_total' => $this->amount($lineTotal),
+                    'unit_price' => $storedUnitPrice,
+                    'tax_amount' => $storedTax,
+                    'line_total' => $lineTotal,
                     'reason' => $input['reason'] ?? null,
                 ]);
                 $return->receipt_id ??= $receiptLine->receipt_id;
                 $totalQuantity += $quantity;
-                $totalAmount += $lineTotal;
+                $totalAmount += (float) $lineTotal;
             }
 
             $return->forceFill([
@@ -255,7 +257,7 @@ class ProcurementSettlementService
     {
         return DB::transaction(function () use ($purchaseReturn): PurchaseReturn {
             $context = $this->context();
-            $return = PurchaseReturn::query()->with(['lines.receiptLine', 'purchaseInvoice'])->lockForUpdate()->findOrFail($purchaseReturn->getKey());
+            $return = PurchaseReturn::query()->with(['lines.receiptLine', 'purchaseInvoice', 'purchaseOrder'])->lockForUpdate()->findOrFail($purchaseReturn->getKey());
             if ((int) $return->company_id !== $context['company_id'] || (int) $return->financial_period_id !== $context['financial_period_id']) {
                 throw new DomainException(__('The purchase return is outside the active operating context.'));
             }
@@ -279,6 +281,11 @@ class ProcurementSettlementService
                         throw new DomainException(__('Return quantity exceeds currently available unreserved stock.'));
                     }
 
+                    $inventoryUnitCost = bcmul(
+                        (string) $line->unit_price,
+                        (string) ($return->purchaseInvoice?->exchange_rate ?? $return->purchaseOrder?->exchange_rate ?? 1),
+                        8,
+                    );
                     InventoryTransaction::query()->firstOrCreate([
                         'posting_key' => "purchase-return:{$line->getKey()}",
                     ], [
@@ -298,8 +305,8 @@ class ProcurementSettlementService
                         'source_line_type' => $line::class,
                         'source_line_id' => $line->getKey(),
                         'supplier_id' => $return->supplier_id,
-                        'unit_cost' => $line->unit_price,
-                        'total_cost' => bcmul((string) $line->quantity, (string) $line->unit_price, 8),
+                        'unit_cost' => $inventoryUnitCost,
+                        'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
                         'created_by' => auth()->id(),
                     ]);
                 }
@@ -332,7 +339,7 @@ class ProcurementSettlementService
         return DB::transaction(function () use ($purchaseReturn, $reason): PurchaseReturn {
             $context = $this->context();
             $return = PurchaseReturn::query()
-                ->with(['lines', 'journalEntry.lines', 'purchaseInvoice'])
+                ->with(['lines', 'journalEntry.lines', 'purchaseInvoice', 'purchaseOrder'])
                 ->lockForUpdate()
                 ->findOrFail($purchaseReturn->getKey());
             if ((int) $return->company_id !== $context['company_id'] || $return->status !== PurchaseReturn::StatusPosted) {
@@ -360,6 +367,11 @@ class ProcurementSettlementService
                     continue;
                 }
 
+                $inventoryUnitCost = bcmul(
+                    (string) $line->unit_price,
+                    (string) ($return->purchaseInvoice?->exchange_rate ?? $return->purchaseOrder?->exchange_rate ?? 1),
+                    8,
+                );
                 InventoryTransaction::query()->firstOrCreate([
                     'posting_key' => "purchase-return-reversal:{$line->getKey()}",
                 ], [
@@ -379,8 +391,8 @@ class ProcurementSettlementService
                     'source_line_type' => $line::class,
                     'source_line_id' => $line->getKey(),
                     'supplier_id' => $return->supplier_id,
-                    'unit_cost' => $line->unit_price,
-                    'total_cost' => bcmul((string) $line->quantity, (string) $line->unit_price, 8),
+                    'unit_cost' => $inventoryUnitCost,
+                    'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
                     'created_by' => auth()->id(),
                 ]);
             }
@@ -726,6 +738,17 @@ class ProcurementSettlementService
         if ($quantity > $available + 0.00000001) {
             throw new DomainException(__('Return quantity exceeds the material received and still returnable.'));
         }
+    }
+
+    private function invoiceLineNetUnitValue(PurchaseInvoice $invoice, PurchaseInvoiceLine $line): float
+    {
+        $lineBase = (float) $line->total_before_tax;
+        $invoiceLineBase = (float) $invoice->lines()->sum('total_before_tax');
+        $headerDiscountShare = $invoiceLineBase > 0
+            ? (float) $invoice->header_discount_amount * ($lineBase / $invoiceLineBase)
+            : 0.0;
+
+        return max(0, $lineBase - $headerDiscountShare) / max((float) $line->quantity, 0.00000001);
     }
 
     private function assertChangedQuantityWithinSource(PurchaseOrderLine $line, float $quantity): void

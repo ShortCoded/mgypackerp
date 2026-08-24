@@ -265,7 +265,7 @@ test('opening stock save uses operating company period branch and closes new doc
             'unit_id' => $untrustedUnit->getKey(),
             'branch_id' => 999999,
             'lines' => [
-                ['product_doc_num' => $product->doc_num, 'unit_id' => $untrustedUnit->getKey(), 'quantity' => '12.7500', 'product_snapshot' => ['name' => 'Client Fake']],
+                ['product_doc_num' => $product->doc_num, 'unit_id' => $untrustedUnit->getKey(), 'quantity' => '12.7500', 'stock_status' => 'qc_hold', 'batch_lot' => 'OPEN-RAW-001', 'product_snapshot' => ['name' => 'Client Fake']],
             ],
         ]))
         ->assertOk()
@@ -285,7 +285,9 @@ test('opening stock save uses operating company period branch and closes new doc
         ->and($line->product_snapshot['item_classification'])->toBe(__('products.classifications.'.Product::ClassificationFinishedProduct))
         ->and($line->product_snapshot)->not->toHaveKeys(['id', 'product_id', 'company_id'])
         ->and($line->product_snapshot['name'])->not->toBe('Client Fake')
-        ->and((string) $line->quantity)->toBe('12.7500');
+        ->and((string) $line->quantity)->toBe('12.7500')
+        ->and($line->stock_status)->toBe('qc_hold')
+        ->and($line->batch_lot)->toBe('OPEN-RAW-001');
 });
 
 test('opening stock product snapshot is preserved on quantity edits and regenerated when product changes', function (): void {

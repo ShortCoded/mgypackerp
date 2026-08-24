@@ -385,6 +385,8 @@
   function rowValues($row) {
     return {
       quantity: $row.find('.js-opening-stock-quantity').val() || '',
+      stockStatus: $row.find('.js-opening-stock-status').val() || 'available',
+      batchLot: $row.find('.js-opening-stock-batch').val() || '',
       notes: $row.find('.js-opening-stock-line-notes').val() || ''
     };
   }
@@ -417,6 +419,8 @@
 
     if (values) {
       $row.find('.js-opening-stock-quantity').val(values.quantity || '');
+      $row.find('.js-opening-stock-status').val(values.stockStatus || 'available');
+      $row.find('.js-opening-stock-batch').val(values.batchLot || '');
       $row.find('.js-opening-stock-line-notes').val(values.notes || '');
     }
 
@@ -441,7 +445,8 @@
     $row.find('.js-opening-stock-product').val(null).trigger('change');
     $row.find('input[type="hidden"][name$="[public_id]"]').val('');
     $row.find('input[type="hidden"][name$="[_delete]"]').val('0');
-    $row.find('.js-opening-stock-quantity, .js-opening-stock-line-notes').val('');
+    $row.find('.js-opening-stock-quantity, .js-opening-stock-batch, .js-opening-stock-line-notes').val('');
+    $row.find('.js-opening-stock-status').val('available');
     setUnit($row, '');
     syncProductInfoButton($row);
     focusProduct($row);
@@ -507,6 +512,8 @@
     const fields = $form.find([
       '.js-opening-stock-product',
       '.js-opening-stock-quantity',
+      '.js-opening-stock-status',
+      '.js-opening-stock-batch',
       '.js-opening-stock-line-notes',
       '.js-opening-stock-product-info',
       '.js-opening-stock-product-create',

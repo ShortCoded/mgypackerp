@@ -128,4 +128,80 @@
         overflow-wrap: break-word;
         vertical-align: top;
     }
+
+    .document-identity-table,
+    .document-meta-table,
+    .document-totals-table,
+    .document-authorization-table {
+        border-collapse: collapse;
+        margin-bottom: 9px;
+        width: 100%;
+    }
+
+    .document-identity-table td,
+    .document-meta-table td,
+    .document-totals-table th,
+    .document-totals-table td {
+        border: 1px solid #d8e2ef;
+        padding: 5px;
+        vertical-align: top;
+    }
+
+    .document-identity-table {
+        color: #475569;
+        font-size: 7.8px;
+    }
+
+    .document-title-row {
+        margin-bottom: 9px;
+    }
+
+    .document-title-row h1 {
+        font-size: 16px;
+        margin: 0 0 3px;
+    }
+
+    .document-status {
+        background: #edf2f9;
+        border: 1px solid #d8e2ef;
+        display: inline-block;
+        padding: 3px 6px;
+    }
+
+    .document-authorization-table {
+        margin-top: 16px;
+        page-break-inside: avoid;
+    }
+
+    .document-authorization-table td {
+        border-top: 1px solid #94a3b8;
+        height: 80px;
+        padding: 8px;
+        text-align: center;
+        vertical-align: top;
+        width: 50%;
+    }
+
+    .document-authorization-table img {
+        max-height: 55px;
+        max-width: 120px;
+    }
+
+    .report-table thead {
+        display: table-header-group;
+    }
+
+    .report-table tr,
+    .document-meta-table,
+    .document-totals-table {
+        page-break-inside: avoid;
+    }
+
+    .text-end {
+        text-align: right;
+    }
+
+    [dir="rtl"] .text-end {
+        text-align: left;
+    }
 </style>

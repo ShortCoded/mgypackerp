@@ -7,11 +7,14 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\StockCount;
 use Modules\Inventory\Services\StockCountService;
@@ -21,6 +24,8 @@ class StockCountController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly StockCountService $service,
+        private readonly CompanyPrintIdentityService $printIdentity,
+        private readonly ReportPdfService $pdf,
     ) {}
 
     public function index(Request $request): View
@@ -28,7 +33,13 @@ class StockCountController extends Controller
         $context = $this->requiredContext($request);
 
         return view('modules.inventory.stock-counts.index', [
-            'records' => StockCount::query()->where('company_id', $context['company_id'])->with('branchStore')->latest('count_date')->paginate(30),
+            'records' => StockCount::query()
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->with('branchStore')
+                ->latest('count_date')
+                ->paginate(30),
             'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->orderBy('position')->get(),
             'products' => Product::query()->forCompany($context['company_id'])->active()->nonService()->orderBy('name')->limit(500)->get(),
             'stockStatuses' => [
@@ -59,13 +70,16 @@ class StockCountController extends Controller
         return $this->respond($request, ['doc_num' => $count->doc_num, 'url' => $url], $url, 201);
     }
 
-    public function show(StockCount $stockCount): View
+    public function show(Request $request, StockCount $stockCount): View
     {
+        $this->assertInCurrentContext($request, $stockCount);
+
         return view('modules.inventory.stock-counts.show', ['record' => $stockCount->load(['lines.product', 'lines.unit', 'branchStore', 'adjustmentDocument'])]);
     }
 
     public function record(Request $request, StockCount $stockCount): JsonResponse|RedirectResponse
     {
+        $this->assertInCurrentContext($request, $stockCount);
         $data = $request->validate([
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.line_id' => ['required', 'integer', 'exists:inventory_stock_count_lines,id'],
@@ -81,14 +95,22 @@ class StockCountController extends Controller
 
     public function approve(Request $request, StockCount $stockCount): JsonResponse|RedirectResponse
     {
+        $this->assertInCurrentContext($request, $stockCount);
         $documents = $this->guard(fn (): array => $this->service->approve($stockCount));
 
         return $this->respond($request, ['documents' => collect($documents)->pluck('doc_num')->all()], route('admin.inventory.stock-counts.show', $stockCount));
     }
 
-    public function print(StockCount $stockCount): View
+    public function print(Request $request, StockCount $stockCount): Response
     {
-        return view('modules.inventory.stock-counts.print', ['record' => $stockCount->load(['lines.product', 'lines.unit', 'branchStore'])]);
+        $this->assertInCurrentContext($request, $stockCount);
+        $record = $stockCount->load(['company', 'lines.product', 'lines.unit', 'branchStore', 'warehouseLocation', 'adjustmentDocument']);
+
+        return $this->pdf->stream('reports.inventory.stock-count', [
+            'title' => __('Physical Stock Count').' — '.$record->doc_num,
+            'record' => $record,
+            'companyPrintIdentity' => $this->printIdentity->forCompany($record->company),
+        ], str('stock-count-'.$record->doc_num)->slug().'.pdf');
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */
@@ -98,6 +120,18 @@ class StockCountController extends Controller
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Operating context is required.');
 
         return ['company_id' => $context['company_id'], 'financial_period_id' => $context['financial_period_id'], 'branch_id' => $context['branch_id']];
+    }
+
+    private function assertInCurrentContext(Request $request, StockCount $stockCount): void
+    {
+        $context = $this->requiredContext($request);
+
+        abort_unless(
+            (int) $stockCount->company_id === $context['company_id']
+            && (int) $stockCount->financial_period_id === $context['financial_period_id']
+            && (int) $stockCount->branch_id === $context['branch_id'],
+            404,
+        );
     }
 
     private function guard(callable $callback): mixed

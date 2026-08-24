@@ -7,6 +7,7 @@ use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
@@ -22,6 +23,8 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Models\Customer;
@@ -36,6 +39,53 @@ use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesReturnService;
 use Spatie\Permission\Models\Permission;
+use Symfony\Component\Process\Process;
+
+function salesPdfText(string $content): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'sales-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdftotext', '-layout', $path, '-']);
+        $process->mustRun();
+
+        return $process->getOutput();
+    } finally {
+        @unlink($path);
+    }
+}
+
+function salesPdfPageCount(string $content): int
+{
+    $path = tempnam(sys_get_temp_dir(), 'sales-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdfinfo', $path]);
+        $process->mustRun();
+        preg_match('/^Pages:\s+(\d+)$/m', $process->getOutput(), $matches);
+
+        return (int) ($matches[1] ?? 0);
+    } finally {
+        @unlink($path);
+    }
+}
+
+function salesPdfImageCount(string $content): int
+{
+    $path = tempnam(sys_get_temp_dir(), 'sales-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdfimages', '-list', $path]);
+        $process->mustRun();
+
+        return preg_match_all('/^\s*\d+\s+\d+\s+/m', $process->getOutput());
+    } finally {
+        @unlink($path);
+    }
+}
 
 /** @return array<string, mixed> */
 function salesCycleFixture(): array
@@ -190,16 +240,349 @@ test('stock sale, mixed service, installments, collection, and quality returns r
     $defectiveReturn = $returns->receive($defectiveReturn);
     $returns->inspect($defectiveReturn, [['sales_return_line_id' => $defectiveReturn->lines->first()->getKey(), 'scrap_quantity' => '10']]);
     $returns->close($defectiveReturn->fresh());
-    expect((string) InventoryTransaction::query()->where('product_id', $fixture['finished']->getKey())->sum(DB::raw('quantity_in - quantity_out')))->toBe('20');
+    expect((string) InventoryTransaction::query()->where('product_id', $fixture['finished']->getKey())->sum(DB::raw('quantity_in - quantity_out')))->toBe('30');
     expect(JournalEntry::query()->where('source_type', 'sales_return_cogs')->count())->toBe(1)
         ->and((float) DB::table('journal_entry_lines')->whereIn('journal_entry_id', JournalEntry::query()->where('source_type', 'sales_return_cogs')->pluck('id'))->sum('debit_amount'))->toEqual(100.0)
-        ->and(InventoryTransaction::query()->where('transaction_type', 'sales_return_receipt')->count())->toBe(1);
+        ->and(InventoryTransaction::query()->where('transaction_type', 'sales_return_receipt')->count())->toBe(2);
+    $stockByStatus = app(InventoryAvailabilityService::class)->statusPosition(
+        $fixture['company']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['finished']->getKey(),
+    );
+    expect($stockByStatus[InventoryTransaction::StatusAvailable])->toBe('20.00000000')
+        ->and($stockByStatus[InventoryTransaction::StatusScrap])->toBe('10.00000000');
     $customerLedger = DB::table('journal_entry_lines')->where('customer_id', $fixture['customer']->getKey())
         ->selectRaw('coalesce(sum(debit_amount), 0) as debits, coalesce(sum(credit_amount), 0) as credits')->first();
     expect((float) $customerLedger->debits)->toEqual(1100.0)
         ->and((float) $customerLedger->credits)->toEqual(1470.0)
         ->and(bcsub((string) $customerLedger->debits, (string) $customerLedger->credits, 4))->toBe('-370.0000');
     expect(fn () => $returns->create($invoice, SalesReturn::ReasonOther, null, [['customer_invoice_line_id' => $invoiceGoodsLine->getKey(), 'quantity' => '31']]))->toThrow(DomainException::class);
+});
+
+test('fully paid invoice credit remains a customer credit and conserves every return disposition', function () {
+    $fixture = salesCycleFixture();
+    $orders = app(SalesOrderService::class);
+    $fulfillment = app(SalesFulfillmentService::class);
+    $invoices = app(CustomerInvoiceService::class);
+    $receipts = app(CustomerReceiptService::class);
+    $returns = app(SalesReturnService::class);
+
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Taxable finished goods return',
+            'quantity' => '10',
+            'unit_price' => '100',
+            'discount_amount' => 0,
+            'tax_amount' => '140',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Paid in full',
+            'amount' => '1140',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $orderLine = $order->lines->sole();
+    $delivery = $fulfillment->deliver($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '10',
+    ]]);
+    $invoice = $invoices->post($invoices->createFromOrder($order->fresh(), [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'delivery_line_id' => $delivery->lines->sole()->getKey(),
+        'quantity' => '10',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '1140',
+    ]], $delivery));
+    $receipts->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '1140',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $invoice->paymentSchedules->sole()->getKey(),
+        'amount' => '1140',
+    ]]);
+    $invoice = $invoice->fresh();
+    expect($invoice->remaining_amount)->toBe('0.0000')
+        ->and($invoice->paid_amount)->toBe('1140.0000');
+    expect(fn () => $orders->reopen($order->fresh(), 'Unsafe fulfilled-order mutation.'))
+        ->toThrow(DomainException::class, 'cannot be reopened');
+    expect(fn () => $invoices->reopen($invoice, 'Unsafe paid-invoice mutation.'))
+        ->toThrow(DomainException::class, 'Only an unsettled posted invoice may be reopened.');
+
+    $return = $returns->create($invoice->fresh(), SalesReturn::ReasonManufacturingDefect, 'Three pieces require quarantine.', [[
+        'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
+        'quantity' => '10',
+    ]]);
+    $returns->authorize($return);
+    $return = $returns->receive($return);
+    $return = $returns->inspect($return, [[
+        'sales_return_line_id' => $return->lines->sole()->getKey(),
+        'saleable_quantity' => '7',
+        'quarantine_quantity' => '3',
+        'rework_quantity' => '0',
+        'scrap_quantity' => '0',
+    ]]);
+    $return = $returns->close($return);
+    $returnLine = $return->lines->sole();
+    $creditNote = $return->creditNote;
+
+    $invoice = $invoice->fresh();
+    expect($returnLine->saleable_quantity)->toBe('7.00000000')
+        ->and($returnLine->quarantine_quantity)->toBe('3.00000000')
+        ->and($returnLine->rework_quantity)->toBe('0.00000000')
+        ->and($returnLine->scrap_quantity)->toBe('0.00000000')
+        ->and(bcadd(bcadd($returnLine->saleable_quantity, $returnLine->quarantine_quantity, 8), bcadd($returnLine->rework_quantity, $returnLine->scrap_quantity, 8), 8))->toBe('10.00000000')
+        ->and($returnLine->original_unit_cost)->toBe('5.00000000')
+        ->and($creditNote->total_amount)->toBe('1140.0000')
+        ->and($creditNote->posting_status)->toBe('posted')
+        ->and($creditNote->is_closed)->toBeTrue()
+        ->and($creditNote->isEditable())->toBeFalse()
+        ->and($invoice->remaining_amount)->toBe('0.0000')
+        ->and($invoice->credited_amount)->toBe('1140.0000');
+    expect(fn () => $returns->close($return))->toThrow(DomainException::class, 'required authorization and quality stages');
+    expect(JournalEntry::query()->where('source_type', 'customer_credit_note')->where('source_id', $creditNote->getKey())->count())->toBe(1);
+
+    $creditJournal = $creditNote->journalEntry()->with('lines.account.classification')->firstOrFail();
+    $creditLines = $creditJournal->lines->mapWithKeys(fn ($line): array => [
+        $line->account->classification->code => [
+            'debit' => $line->debit_amount,
+            'credit' => $line->credit_amount,
+        ],
+    ]);
+    expect($creditJournal->source_type)->toBe('customer_credit_note')
+        ->and($creditLines['sales_returns'])->toBe(['debit' => '1000.0000', 'credit' => '0.0000'])
+        ->and($creditLines['tax_payable'])->toBe(['debit' => '140.0000', 'credit' => '0.0000'])
+        ->and($creditLines['accounts_receivable'])->toBe(['debit' => '0.0000', 'credit' => '1140.0000'])
+        ->and($creditJournal->lines->sum('debit_amount'))->toEqual(1140.0)
+        ->and($creditJournal->lines->sum('credit_amount'))->toEqual(1140.0);
+
+    $costJournal = JournalEntry::query()->with('lines.account.classification')
+        ->where('source_type', 'sales_return_cogs')
+        ->where('source_id', $return->getKey())
+        ->sole();
+    $costLines = $costJournal->lines->mapWithKeys(fn ($line): array => [
+        $line->account->classification->code => [
+            'debit' => $line->debit_amount,
+            'credit' => $line->credit_amount,
+        ],
+    ]);
+    expect($costLines['inventory'])->toBe(['debit' => '35.0000', 'credit' => '0.0000'])
+        ->and($costLines['cost_of_goods_sold'])->toBe(['debit' => '0.0000', 'credit' => '35.0000']);
+
+    $returnTransactions = InventoryTransaction::query()
+        ->where('transaction_type', 'sales_return_receipt')
+        ->where('product_id', $fixture['finished']->getKey())
+        ->get();
+    $returnByStatus = $returnTransactions->groupBy('stock_status')
+        ->map(fn ($transactions): string => bcadd((string) $transactions->sum('quantity_in'), '0', 8));
+    expect($returnTransactions)->toHaveCount(2)
+        ->and($returnByStatus[InventoryTransaction::StatusAvailable])->toBe('7.00000000')
+        ->and($returnByStatus[InventoryTransaction::StatusQuarantine])->toBe('3.00000000')
+        ->and($returnTransactions->sum('quantity_in'))->toEqual(10.0)
+        ->and($returnTransactions->every(fn (InventoryTransaction $transaction): bool => $transaction->unit_cost === '5.00000000'))->toBeTrue();
+
+    $availability = app(InventoryAvailabilityService::class)->forProduct(
+        $fixture['company']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['finished']->getKey(),
+    );
+    expect($availability['on_hand'])->toBe('97.00000000')
+        ->and($availability['available'])->toBe('97.00000000')
+        ->and($availability['physical_on_hand'])->toBe('100.00000000');
+
+    $reportBalances = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+    ])->keyBy('stock_status');
+    expect((string) $reportBalances[InventoryTransaction::StatusAvailable]->on_hand)->toBe('97')
+        ->and((string) $reportBalances[InventoryTransaction::StatusQuarantine]->on_hand)->toBe('3');
+
+    $customerLedger = DB::table('journal_entry_lines')
+        ->where('customer_id', $fixture['customer']->getKey())
+        ->selectRaw('coalesce(sum(debit_amount), 0) as debits, coalesce(sum(credit_amount), 0) as credits')
+        ->first();
+    expect((float) $customerLedger->debits)->toEqual(1140.0)
+        ->and((float) $customerLedger->credits)->toEqual(2280.0)
+        ->and(bcsub((string) $customerLedger->debits, (string) $customerLedger->credits, 4))->toBe('-1140.0000');
+
+    $statement = app(LedgerQueryService::class)->accountLedger([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'account_id' => $fixture['customer']->account_id,
+        'from_date' => $fixture['period']->from_date->toDateString(),
+        'to_date' => $fixture['period']->to_date->toDateString(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ]);
+    expect($statement['period'])->toBe(['debit' => '1140.0000', 'credit' => '2280.0000'])
+        ->and($statement['ending'])->toBe(['debit' => '0.0000', 'credit' => '1140.0000']);
+});
+
+test('service-only direct sale invoices and collects without inventory reservation production or COGS', function () {
+    $fixture = salesCycleFixture();
+    $orders = app(SalesOrderService::class);
+    $invoices = app(CustomerInvoiceService::class);
+    $receipts = app(CustomerReceiptService::class);
+    $initialInventoryTransactions = InventoryTransaction::query()->count();
+
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Service-only direct order',
+            'quantity' => '2',
+            'unit_price' => '500',
+            'discount_amount' => 0,
+            'tax_amount' => '140',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Service settlement',
+            'amount' => '1140',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $orderLine = $order->lines->sole();
+    $invoice = $invoices->post($invoices->createFromOrder($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '2',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '1140',
+    ]]));
+    $receipt = $receipts->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '1140',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $invoice->paymentSchedules->sole()->getKey(),
+        'amount' => '1140',
+    ]]);
+
+    $invoiceLines = $invoice->journalEntry()->with('lines.account.classification')->firstOrFail()->lines
+        ->mapWithKeys(fn ($line): array => [
+            $line->account->classification->code => [
+                'debit' => $line->debit_amount,
+                'credit' => $line->credit_amount,
+            ],
+        ]);
+    expect($order->quotation_id)->toBeNull()
+        ->and($orderLine->isService())->toBeTrue()
+        ->and($invoice->delivery_document_id)->toBeNull()
+        ->and($invoiceLines['accounts_receivable'])->toBe(['debit' => '1140.0000', 'credit' => '0.0000'])
+        ->and($invoiceLines['service_revenue'])->toBe(['debit' => '0.0000', 'credit' => '1000.0000'])
+        ->and($invoiceLines['tax_payable'])->toBe(['debit' => '0.0000', 'credit' => '140.0000'])
+        ->and($receipt->status)->toBe(CustomerReceipt::StatusApproved)
+        ->and($invoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and(InventoryReservation::query()->count())->toBe(0)
+        ->and(ProductionOrder::query()->count())->toBe(0)
+        ->and(InventoryTransaction::query()->count())->toBe($initialInventoryTransactions)
+        ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->orWhere('source_type', 'sales_return_cogs')->count())->toBe(0);
+});
+
+test('closed period rejects invoice receipt and credit posting without partial state', function () {
+    $fixture = salesCycleFixture();
+    $orders = app(SalesOrderService::class);
+    $invoices = app(CustomerInvoiceService::class);
+    $returns = app(SalesReturnService::class);
+
+    $draftOrder = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Closed-period draft invoice',
+            'quantity' => '1',
+            'unit_price' => '100',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Draft invoice due',
+            'amount' => '100',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $draftInvoice = $invoices->createFromOrder($draftOrder, [[
+        'sales_order_line_id' => $draftOrder->lines->sole()->getKey(),
+        'quantity' => '1',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '100',
+    ]]);
+
+    $postedOrder = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Closed-period receipt and credit source',
+            'quantity' => '1',
+            'unit_price' => '200',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Posted invoice due',
+            'amount' => '200',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $postedInvoice = $invoices->post($invoices->createFromOrder($postedOrder, [[
+        'sales_order_line_id' => $postedOrder->lines->sole()->getKey(),
+        'quantity' => '1',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '200',
+    ]]));
+    $return = $returns->authorize($returns->create($postedInvoice, SalesReturn::ReasonOther, 'Closed-period credit proof.', [[
+        'customer_invoice_line_id' => $postedInvoice->lines->sole()->getKey(),
+        'quantity' => '1',
+    ]]));
+
+    $fixture['period']->update(['is_closed' => true]);
+    $journalCount = JournalEntry::query()->count();
+    $creditNoteCount = CustomerInvoice::query()->where('document_type', CustomerInvoice::TypeCreditNote)->count();
+    $periodClosedMessage = __('journal_entries.messages.period_closed');
+
+    expect(fn () => $invoices->post($draftInvoice))->toThrow(DomainException::class, $periodClosedMessage);
+    expect(fn () => app(CustomerReceiptService::class)->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '200',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $postedInvoice->paymentSchedules->sole()->getKey(),
+        'amount' => '200',
+    ]]))->toThrow(DomainException::class, $periodClosedMessage);
+    expect(fn () => $returns->close($return))->toThrow(DomainException::class, $periodClosedMessage);
+
+    expect($draftInvoice->fresh()->posting_status)->toBe('unposted')
+        ->and($draftInvoice->journal_entry_id)->toBeNull()
+        ->and(CustomerReceipt::query()->count())->toBe(0)
+        ->and(CashVoucher::query()->count())->toBe(0)
+        ->and(CustomerInvoice::query()->where('document_type', CustomerInvoice::TypeCreditNote)->count())->toBe($creditNoteCount)
+        ->and($return->fresh()->status)->toBe(SalesReturn::StatusAuthorized)
+        ->and($return->credit_note_id)->toBeNull()
+        ->and(JournalEntry::query()->count())->toBe($journalCount);
 });
 
 test('sales eligibility exposes only finished products and services and rejects internal items server side', function () {
@@ -335,7 +718,7 @@ test('reservation oversubscription is rejected and an audited release restores r
         ->and($fulfillment->reserve($line->fresh(), '100')->transaction_quantity)->toBe('100.00000000');
 });
 
-test('production demand preserves order-line lineage and increments produced quantity only from receipts', function () {
+test('production demand preserves order-line lineage and has no direct completion bypass', function () {
     $fixture = salesCycleFixture();
     $payload = salesCycleOrderPayload($fixture, [
         'lines' => [['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'description' => 'Long production run', 'quantity' => '150', 'unit_price' => '10']],
@@ -350,17 +733,12 @@ test('production demand preserves order-line lineage and increments produced qua
         ->and($orderLine->fresh()->produced_quantity)->toBe('0.00000000')
         ->and(array_intersect(['unit_price', 'line_total', 'total_amount'], $production->getFillable()))->toBe([]);
 
-    $productionLine = $production->lines->first();
-    app(SalesProductionDemandService::class)->receiveCompletion($production, $fixture['store']->getKey(), [['production_order_line_id' => $productionLine->getKey(), 'quantity' => '25']]);
-    expect($orderLine->fresh()->produced_quantity)->toBe('25.00000000')->and($production->fresh()->status)->toBe(ProductionOrder::StatusPartiallyCompleted);
-    app(SalesProductionDemandService::class)->receiveCompletion($production->fresh(), $fixture['store']->getKey(), [['production_order_line_id' => $productionLine->getKey(), 'quantity' => '25']]);
-    expect($orderLine->fresh()->produced_quantity)->toBe('50.00000000')->and($production->fresh()->status)->toBe(ProductionOrder::StatusCompleted);
+    expect(method_exists(SalesProductionDemandService::class, 'receiveCompletion'))->toBeFalse()
+        ->and(app('router')->getRoutes()->getByName('admin.production.work-orders.complete'))->toBeNull()
+        ->and(app('router')->getRoutes()->getByName('admin.sales.production-requests.complete'))->toBeNull()
+        ->and($orderLine->fresh()->produced_quantity)->toBe('0.00000000')
+        ->and($production->fresh()->status)->toBe(ProductionOrder::StatusDraft);
 
-    $fulfillment = app(SalesFulfillmentService::class);
-    $fulfillment->reserve($orderLine->fresh(), '150');
-    $delivery = $fulfillment->deliver($order->fresh(), [['sales_order_line_id' => $orderLine->getKey(), 'quantity' => '150']]);
-    expect($delivery->lines->first()->source_line_id)->toBe($orderLine->getKey())
-        ->and($orderLine->fresh()->delivered_quantity)->toBe('150.00000000');
 });
 
 test('credit hold requires a separately audited authorized override reason', function () {
@@ -401,10 +779,10 @@ test('implemented sales cycle routes are not shadowed by UI shell placeholders',
 
 test('restricted production and warehouse browser responses do not expose commercial values', function () {
     $fixture = salesCycleFixture();
-    foreach (['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve'] as $permission) {
+    foreach (['production.orders.view', 'production.orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
-    $fixture['user']->givePermissionTo(['production.work_orders.view', 'production.work_orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve']);
+    $fixture['user']->givePermissionTo(['production.orders.view', 'production.orders.print', 'sales_deliveries.view', 'sales_deliveries.print', 'sales_orders.production', 'sales_orders.reserve']);
     $payload = salesCycleOrderPayload($fixture, [
         'lines' => [[
             'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
@@ -429,7 +807,7 @@ test('restricted production and warehouse browser responses do not expose commer
         ->assertOk()->assertSee('Sealed export carton')->assertDontSee('987.6543')->assertDontSee('Credit limit');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.sales.production-requests.show', $production))
-        ->assertOk()->assertSee('Finished-goods store')->assertSee($fixture['store']->name)->assertDontSee('987.6543');
+        ->assertOk()->assertSee('Canonical manufacturing execution')->assertDontSee('Post Production Receipt')->assertDontSee('987.6543');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.production.work-orders.print', $production))
         ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price');
@@ -472,12 +850,237 @@ test('authorized users can load the concrete create edit collection reporting an
         ->assertOk()->assertSee('Correct Sales Invoice')->assertSee('Corrected quantity');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.customer-receipts.create', ['invoice' => $invoice->doc_num]))
         ->assertOk()->assertSee('Customer Receipt / Collection')->assertSee('Cheque')->assertSee('Bank transfer');
-    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.print', $draftOrder))
-        ->assertOk()->assertSee('Sales Order')->assertSee('Unit price');
-    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.print'))
-        ->assertOk()->assertSee('Sales Cycle Operational Report');
+    $orderPdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.print', $draftOrder));
+    $orderPdf->assertOk()->assertHeader('content-type', 'application/pdf')->assertHeader('content-disposition', 'inline; filename="sales-order-'.$draftOrder->doc_num.'.pdf"');
+    expect($orderPdf->getContent())->toStartWith('%PDF-');
+    $reportPdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.print'));
+    $reportPdf->assertOk()->assertHeader('content-type', 'application/pdf')->assertHeader('content-disposition', 'inline; filename="sales-cycle-operational-report.pdf"');
+    expect($reportPdf->getContent())->toStartWith('%PDF-');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.export'))
         ->assertOk()->assertDownload();
+});
+
+test('every formal sales document streams canonical inline mPDF with operational price privacy', function () {
+    $fixture = salesCycleFixture();
+    CustomerCommercialAgreement::query()->where('customer_id', $fixture['customer']->getKey())->update(['credit_limit' => '20000']);
+    $permissions = [
+        'sales_orders.print', 'sales_orders.view_prices', 'sales_orders.production',
+        'sales_deliveries.print', 'customer_invoices.print', 'customer_invoices.view_prices',
+        'customer_receipts.print', 'sales_returns.print', 'reports.sales.sales_orders.print',
+        'production.orders.print', 'cash_receipt_vouchers.print', 'cheques.print',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+
+    $orders = app(SalesOrderService::class);
+    $fulfillment = app(SalesFulfillmentService::class);
+    $invoices = app(CustomerInvoiceService::class);
+    $receipts = app(CustomerReceiptService::class);
+    $returns = app(SalesReturnService::class);
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Privacy-controlled finished item',
+            'quantity' => '10',
+            'unit_price' => '876.54',
+            'discount_amount' => 0,
+            'tax_amount' => 0,
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Full settlement',
+            'amount' => '8765.40',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $orderLine = $order->lines->sole();
+    $production = app(SalesProductionDemandService::class)->create($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '10',
+    ]]);
+    $delivery = $fulfillment->deliver($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '10',
+    ]]);
+    $invoice = $invoices->post($invoices->createFromOrder($order->fresh(), [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'delivery_line_id' => $delivery->lines->sole()->getKey(),
+        'quantity' => '10',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '8765.40',
+    ]], $delivery));
+    $identityImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZrcAAAAASUVORK5CYII=';
+    $invoice->update(['print_identity_snapshot' => [
+        ...($invoice->print_identity_snapshot ?? []),
+        'name' => 'Sales PDF Identity Company',
+        'legal_name' => 'Sales PDF Legal Identity',
+        'logo_source' => $identityImage,
+        'authorized_signatory_name' => 'PDF Authorized Signatory',
+        'authorized_signatory_title' => 'Finance Director',
+        'authorized_signatory_signature_source' => $identityImage,
+        'company_stamp_source' => $identityImage,
+    ]]);
+    $schedule = $invoice->paymentSchedules->sole();
+    $cashReceipt = $receipts->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '3500',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $schedule->getKey(),
+        'amount' => '3500',
+    ]]);
+    $chequeReceipt = $receipts->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cheque',
+        'bank_account_id' => $fixture['bankAccount']->getKey(),
+        'reference_no' => 'CHQ-PDF-001',
+        'cheque_due_date' => now()->addWeek()->toDateString(),
+        'external_bank_name' => 'PDF Fixture Bank',
+        'amount' => '5265.40',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $schedule->getKey(),
+        'amount' => '5265.40',
+    ]]);
+    $return = $returns->create($invoice, SalesReturn::ReasonManufacturingDefect, 'PDF disposition proof.', [[
+        'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
+        'quantity' => '10',
+    ]]);
+    $returns->authorize($return);
+    $return = $returns->receive($return);
+    $return = $returns->inspect($return, [[
+        'sales_return_line_id' => $return->lines->sole()->getKey(),
+        'saleable_quantity' => '7',
+        'quarantine_quantity' => '3',
+    ]]);
+    $return = $returns->close($return);
+    $session = salesCycleSession($fixture);
+
+    $routes = [
+        'sales order' => route('admin.sales.sales-orders.print', $order),
+        'sales-origin production request' => route('admin.sales.production-requests.print', $production),
+        'production work order' => route('admin.production.work-orders.print', $production),
+        'delivery note' => route('admin.sales.delivery-notes.print', $delivery),
+        'sales invoice' => route('admin.sales.sales-invoices.print', $invoice),
+        'payment schedule' => route('admin.sales.sales-invoices.payment-schedule.print', $invoice),
+        'cash customer receipt' => route('admin.sales.customer-receipts.print', $cashReceipt),
+        'cheque customer receipt' => route('admin.sales.customer-receipts.print', $chequeReceipt),
+        'canonical finance cash voucher' => route('admin.finance.cash-receipt-vouchers.print', $cashReceipt->cashVoucher),
+        'canonical finance received cheque' => route('admin.finance.cheques.print', $chequeReceipt->cheque),
+        'sales return' => route('admin.sales.sales-returns.print', $return),
+        'return quality disposition' => route('admin.sales.sales-returns.quality-disposition.print', $return),
+        'sales credit note' => route('admin.sales.sales-invoices.print', $return->creditNote),
+        'sales operational report' => route('admin.reports.sales.sales-orders.print'),
+    ];
+    $responses = [];
+    foreach ($routes as $name => $url) {
+        $response = $this->actingAs($fixture['user'])->withSession($session)->get($url);
+        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+        expect($response->headers->get('content-disposition'))->toStartWith('inline; filename=')
+            ->and($response->getContent())->toStartWith('%PDF-');
+        $responses[$name] = $response;
+    }
+
+    $invoiceText = salesPdfText($responses['sales invoice']->getContent());
+    expect($invoiceText)->toContain('Unit price')->toContain('876.54')
+        ->toContain('Sales PDF Legal Identity')->toContain('PDF Authorized Signatory')->toContain('Finance Director')
+        ->and(salesPdfImageCount($responses['sales invoice']->getContent()))->toBeGreaterThanOrEqual(3);
+    foreach (['sales-origin production request', 'production work order', 'delivery note', 'return quality disposition'] as $operationalDocument) {
+        $text = salesPdfText($responses[$operationalDocument]->getContent());
+        expect($text)->not->toContain('Unit price')->not->toContain('876.54');
+    }
+    expect(salesPdfText($responses['cash customer receipt']->getContent()))->toContain($cashReceipt->cashVoucher->doc_num)
+        ->and(salesPdfText($responses['cheque customer receipt']->getContent()))->toContain($chequeReceipt->cheque->doc_num);
+});
+
+test('sales PDF routes enforce print authorization', function () {
+    $fixture = salesCycleFixture();
+    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture));
+
+    $this->actingAs($fixture['user'])
+        ->withSession(salesCycleSession($fixture))
+        ->get(route('admin.sales.sales-orders.print', $order))
+        ->assertForbidden();
+});
+
+test('25-line sales order and invoice remain complete across English and Arabic mPDF pages', function () {
+    $fixture = salesCycleFixture();
+    $permissions = ['sales_orders.print', 'sales_orders.view_prices', 'customer_invoices.print', 'customer_invoices.view_prices'];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+
+    $lines = collect(range(1, 25))->map(fn (int $lineNumber): array => [
+        'product_id' => $fixture['service']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'description' => sprintf('STRESS-LINE-%02d English multi-page service description with preserved totals and Arabic content وصف عربي متعدد الصفحات للتحقق من اكتمال السطر', $lineNumber),
+        'quantity' => '1',
+        'unit_price' => '10',
+        'discount_amount' => 0,
+        'tax_amount' => 0,
+    ])->all();
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => $lines,
+        'payment_schedules' => [[
+            'title' => '25-line total',
+            'amount' => '250',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $invoiceLines = $order->lines->map(fn ($line): array => [
+        'sales_order_line_id' => $line->getKey(),
+        'quantity' => '1',
+    ])->all();
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder($order, $invoiceLines, [[
+        'due_date' => now()->toDateString(),
+        'amount' => '250',
+    ]]));
+
+    $baseSession = salesCycleSession($fixture);
+    foreach (['en', 'ar'] as $locale) {
+        $session = [...$baseSession, 'locale' => $locale];
+        $orderPdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.print', $order));
+        $invoicePdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.print', $invoice));
+
+        foreach ([$orderPdf, $invoicePdf] as $response) {
+            $response->assertOk()->assertHeader('content-type', 'application/pdf');
+            expect($response->headers->get('content-disposition'))->toStartWith('inline; filename=')
+                ->and($response->getContent())->toStartWith('%PDF-')
+                ->and(salesPdfPageCount($response->getContent()))->toBeGreaterThan(1);
+            $text = salesPdfText($response->getContent());
+            foreach (range(1, 25) as $lineNumber) {
+                expect($text)->toContain(sprintf('STRESS-LINE-%02d', $lineNumber));
+            }
+            expect($text)->toContain('250');
+        }
+
+        $orderText = salesPdfText($orderPdf->getContent());
+        $invoiceText = salesPdfText($invoicePdf->getContent());
+        foreach ([$orderText, $invoiceText] as $text) {
+            $linePages = collect(explode("\f", $text))->filter(fn (string $page): bool => str_contains($page, 'STRESS-LINE'));
+            expect($linePages)->toHaveCount(2)
+                ->and($linePages->every(fn (string $page): bool => str_contains($page, '#')))->toBeTrue()
+                ->and(preg_match_all('/\d+\/\d+/', $text))->toBeGreaterThan(1);
+        }
+    }
 });
 
 test('sales operational report renders order, sales, aging, and return analyses in the selected context', function () {

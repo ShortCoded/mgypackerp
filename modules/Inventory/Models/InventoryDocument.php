@@ -125,6 +125,11 @@ class InventoryDocument extends Model
         return $this->belongsTo(JournalEntry::class);
     }
 
+    public function reversalJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id');
+    }
+
     public function lines(): HasMany
     {
         return $this->hasMany(InventoryDocumentLine::class)->orderBy('line_number');

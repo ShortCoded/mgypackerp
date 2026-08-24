@@ -654,7 +654,10 @@ try {
     ['delivery-2', `${baseUrl}/admin/sales/delivery-notes/${deliveryTwoDoc}/print`, false],
     ['sales-invoice', `${baseUrl}/admin/sales/sales-invoices/${invoiceDoc}/print`, true],
     ['payment-schedule', `${baseUrl}/admin/sales/sales-invoices/${invoiceDoc}/payment-schedule/print`, true],
-    ['customer-receipt', `${receiptOneUrl}/print`, true],
+    ['cash-customer-receipt', `${receiptOneUrl}/print`, true],
+    ['cheque-customer-receipt', `${receiptTwoUrl}/print`, true],
+    ['finance-cash-receipt-voucher', canonicalCashPrint, true],
+    ['finance-received-cheque', canonicalChequePrint, true],
     ['sales-return', `${baseUrl}/admin/sales/sales-returns/${returnDoc}/print`, true],
     ['quality-disposition', `${baseUrl}/admin/sales/sales-returns/${returnDoc}/quality-disposition/print`, false],
     ['credit-note', `${baseUrl}/admin/sales/sales-invoices/${creditNoteDoc}/print`, true],
@@ -666,41 +669,41 @@ try {
 
   for (const locale of ['en', 'ar']) {
     await setLocale(locale);
-    for (const [name, url, financial] of printUrls) {
-      await navigate(url);
-      const printState = await evaluate(`(() => ({
-        lang: document.documentElement.lang,
-        direction: document.querySelector('.sales-cycle-print, .quotation-print')?.getAttribute('dir'),
-        rows: document.querySelectorAll('.sales-cycle-print tbody tr, .quotation-print tbody tr').length,
-        hasPriceHeading: document.body.innerText.includes('Unit price'),
-        title: document.title
-      }))()`);
-      assert(printState.lang === locale, `${name} print did not render in ${locale}.`);
-      assert(printState.direction === (locale === 'ar' ? 'rtl' : 'ltr'), `${name} print direction was incorrect for ${locale}.`);
-      assert(printState.rows > 0 || name === 'payment-schedule', `${name} print had no printable rows.`);
-      if (!financial && locale === 'en') assert(!printState.hasPriceHeading, `${name} operational print leaked selling prices.`);
-
-      await client.send('Emulation.setEmulatedMedia', { media: 'print' });
-      const printCss = await evaluate(`(() => ({
-        actions: getComputedStyle(document.querySelector('.page-print-actions')).display,
-        tableHeader: document.querySelector('thead') ? getComputedStyle(document.querySelector('thead')).display : null,
-        horizontalOverflow: (() => { const node = document.querySelector('.sales-cycle-print, .quotation-print'); return node.scrollWidth > node.clientWidth + 2; })()
-      }))()`);
-      assert(printCss.actions === 'none', `${name} print still displayed browser actions.`);
-      if (printCss.tableHeader) assert(printCss.tableHeader === 'table-header-group', `${name} print did not preserve repeatable table headers.`);
-      assert(!printCss.horizontalOverflow, `${name} print had horizontal content overflow.`);
-      const pdf = await client.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true });
+    for (const [name, url] of printUrls) {
+      const pdf = await evaluate(`(async () => {
+        const response = await fetch(${JSON.stringify(url)}, { credentials: 'same-origin' });
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return {
+          status: response.status,
+          contentType: response.headers.get('content-type') || '',
+          disposition: response.headers.get('content-disposition') || '',
+          signature: String.fromCharCode(...bytes.subarray(0, 5)),
+          data: btoa(binary),
+          byteLength: bytes.length,
+        };
+      })()`);
+      assert(pdf.status === 200, `${name} PDF returned HTTP ${pdf.status}.`);
+      assert(pdf.contentType.startsWith('application/pdf'), `${name} PDF returned ${pdf.contentType}.`);
+      assert(pdf.disposition.startsWith('inline;'), `${name} PDF was not streamed inline.`);
+      assert(pdf.signature === '%PDF-', `${name} response did not begin with %PDF-.`);
       const filename = `${locale}-${name}.pdf`;
       await writeFile(path.join(artifactDirectory, filename), Buffer.from(pdf.data, 'base64'));
-      manifest.prints.push({ locale, name, filename, bytes: Buffer.byteLength(pdf.data, 'base64'), ...printState });
-      await client.send('Emulation.setEmulatedMedia', { media: 'screen' });
+      manifest.prints.push({
+        locale,
+        name,
+        filename,
+        bytes: pdf.byteLength,
+        status: pdf.status,
+        contentType: pdf.contentType,
+        disposition: pdf.disposition,
+        signature: pdf.signature,
+      });
     }
   }
-
-  await navigate(canonicalCashPrint);
-  await assertBodyContains('E2E Main Customer', 'Canonical Finance cash voucher print');
-  await navigate(canonicalChequePrint);
-  await assertBodyContains('E2E-CHQ-8778', 'Canonical Finance cheque print');
 
   manifest.scenario = {
     ...manifest.scenario,

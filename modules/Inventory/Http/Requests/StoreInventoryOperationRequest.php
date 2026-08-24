@@ -10,7 +10,14 @@ class StoreInventoryOperationRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        $permission = match ($this->input('document_type')) {
+            InventoryDocument::TypeTransfer => 'inventory.documents.transfer',
+            InventoryDocument::TypeAdjustmentIn, InventoryDocument::TypeAdjustmentOut => 'inventory.documents.adjust',
+            InventoryDocument::TypeDamage, InventoryDocument::TypeScrap => 'inventory.documents.damage_scrap',
+            default => null,
+        };
+
+        return $permission !== null && (bool) $this->user()?->can($permission);
     }
 
     /** @return array<string, mixed> */
@@ -40,7 +47,12 @@ class StoreInventoryOperationRequest extends FormRequest
             'lines.*.warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.destination_warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],
-            'lines.*.unit_cost' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.unit_cost' => [
+                Rule::requiredIf(fn (): bool => $this->input('document_type') === InventoryDocument::TypeAdjustmentIn),
+                'nullable',
+                'numeric',
+                'gt:0',
+            ],
             'lines.*.notes' => ['nullable', 'string'],
         ];
     }

@@ -3,6 +3,14 @@
 @section('title', $record->run_number)
 
 @section('content')
+    @php
+        $relatedDocuments = collect([
+            ['label' => __('Production Order'), 'number' => $record->order?->doc_num, 'url' => $record->order ? route('admin.production.work-orders.show', $record->order) : null, 'permission' => 'production.orders.view'],
+            ['label' => __('Sales Requirement / Order'), 'number' => $record->order?->salesOrder?->doc_num, 'url' => $record->order?->salesOrder ? route('admin.sales.sales-orders.show', $record->order->salesOrder) : null, 'permission' => 'sales_orders.view'],
+            ...$record->inventoryDocuments->map(fn ($document) => ['label' => str($document->document_type)->replace('_', ' ')->title(), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => $document->status])->all(),
+            ...$record->inspections->map(fn ($inspection) => ['label' => __('QC Sample'), 'number' => $inspection->doc_num, 'url' => null, 'permission' => null, 'meta' => $inspection->result])->all(),
+        ]);
+    @endphp
     @if ($errors->any())
         <div class="alert alert-danger"><ul class="mb-0">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
@@ -10,7 +18,7 @@
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between">
             <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ str($record->status)->title() }}</span></div>
-            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a>
+            @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
         </div>
         <div class="card-body"><div class="row g-2">
             <div class="col-md-3"><strong>{{ __('Order') }}:</strong> {{ $record->order?->doc_num }}</div>
@@ -19,6 +27,8 @@
             <div class="col-md-3"><strong>{{ __('Good / Received') }}:</strong> {{ $record->good_base_quantity }} / {{ $record->received_base_quantity }}</div>
         </div></div>
     </div>
+
+    <x-related-documents :documents="$relatedDocuments" />
 
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('Material Reconciliation') }}</h5></div>
@@ -82,7 +92,7 @@
         <div class="col-lg-4"><form class="card h-100" method="POST" enctype="multipart/form-data" action="{{ route('admin.production.runs.inspect', $record) }}">
             @csrf
             <div class="card-header"><h6 class="mb-0">{{ __('In-Process Quality Sample') }}</h6></div>
-            <div class="card-body"><select class="form-select mb-2" name="result"><option value="passed">{{ __('Passed') }}</option><option value="conditional">{{ __('Conditional') }}</option><option value="failed">{{ __('Failed / Hold') }}</option></select><input class="form-control mb-2" name="notes" placeholder="{{ __('Observation') }}"><input class="form-control" type="file" name="evidence_file" accept="image/*" capture="environment"></div>
+            <div class="card-body">@if($qualityInspectionTypes->isNotEmpty())<select class="form-select mb-2" name="quality_inspection_type_id" required>@foreach($qualityInspectionTypes as $type)<option value="{{ $type->id }}">{{ $type->code }} — {{ $type->name }}{{ $type->is_final_production ? ' · '.__('Final production QC') : '' }}</option>@endforeach</select>@else<div class="alert alert-info py-2">{{ __('No active inspection type is configured; final QC is not required for receipt.') }}</div>@endif<select class="form-select mb-2" name="result"><option value="passed">{{ __('Passed') }}</option><option value="conditional">{{ __('Conditional') }}</option><option value="failed">{{ __('Failed / Hold') }}</option></select><input class="form-control mb-2" name="notes" placeholder="{{ __('Observation') }}"><input class="form-control" type="file" name="evidence_file" accept="image/*" capture="environment"></div>
             <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ __('Record QC sample') }}</button></div>
         </form></div>
 

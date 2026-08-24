@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
@@ -183,9 +184,7 @@ class SalesReturnService
             if ($locked->lines->where('is_service', false)->contains(fn (SalesReturnLine $line): bool => $line->quality_disposition === null)) {
                 throw new DomainException('Every physical return line requires a quality disposition.');
             }
-            if ($locked->returnInventoryDocument) {
-                $this->inventoryPosting->post($locked->returnInventoryDocument);
-            }
+            $this->postDispositionInventory($locked);
             $locked->update(['status' => SalesReturn::StatusInspected, 'inspected_by' => auth()->id(), 'inspected_at' => now(), 'updated_by' => auth()->id()]);
             $this->recordStatus($locked, SalesReturn::StatusReceived, SalesReturn::StatusInspected);
             $this->audit->record($locked, 'sales_return.inspected');
@@ -268,6 +267,96 @@ class SalesReturnService
             $credit = $this->amounts->compare($remaining, $schedule->outstanding_amount) > 0 ? $schedule->outstanding_amount : $remaining;
             $schedule->increment('credited_amount', $credit);
             $remaining = $this->amounts->subtract($remaining, $credit);
+        }
+    }
+
+    private function postDispositionInventory(SalesReturn $return): void
+    {
+        $return->loadMissing(['lines.product', 'returnInventoryDocument.lines']);
+        $dispositions = [
+            SalesReturnLine::DispositionSaleable => ['quantity' => 'saleable_quantity', 'base' => 'saleable_base_quantity', 'status' => InventoryTransaction::StatusAvailable],
+            SalesReturnLine::DispositionQuarantine => ['quantity' => 'quarantine_quantity', 'base' => 'quarantine_base_quantity', 'status' => InventoryTransaction::StatusQuarantine],
+            SalesReturnLine::DispositionRework => ['quantity' => 'rework_quantity', 'base' => 'rework_base_quantity', 'status' => InventoryTransaction::StatusRework],
+            SalesReturnLine::DispositionScrap => ['quantity' => 'scrap_quantity', 'base' => 'scrap_base_quantity', 'status' => InventoryTransaction::StatusScrap],
+        ];
+
+        foreach ($dispositions as $disposition => $profile) {
+            $lines = $return->lines
+                ->where('is_service', false)
+                ->filter(fn (SalesReturnLine $line): bool => $this->amounts->compare($line->{$profile['base']}, '0', 8) > 0)
+                ->values();
+
+            if ($disposition === SalesReturnLine::DispositionSaleable) {
+                $document = $return->returnInventoryDocument;
+                if (! $document instanceof InventoryDocument) {
+                    continue;
+                }
+                $document->update([
+                    'destination_stock_status' => $profile['status'],
+                    'movement_reason' => 'sales_return_saleable',
+                    'purpose' => 'Sales return accepted as saleable stock',
+                ]);
+                $this->inventoryPosting->post($document);
+
+                continue;
+            }
+
+            if ($lines->isEmpty()) {
+                continue;
+            }
+
+            $numbers = $this->documents->nextForCompany(
+                'inventory_documents',
+                InventoryDocument::class,
+                (int) $return->company_id,
+                fn ($query) => $query->where('financial_period_id', $return->financial_period_id),
+            );
+            $document = InventoryDocument::query()->create([
+                ...$numbers,
+                'company_id' => $return->company_id,
+                'financial_period_id' => $return->financial_period_id,
+                'branch_id' => $return->branch_id,
+                'branch_store_id' => $return->branch_store_id,
+                'document_type' => InventoryDocument::TypeSalesReturnReceipt,
+                'document_date' => $return->return_date,
+                'destination_stock_status' => $profile['status'],
+                'movement_reason' => "sales_return_{$disposition}",
+                'purpose' => "Sales return quality disposition: {$disposition}",
+                'source_document_type' => SalesReturn::class,
+                'source_document_id' => $return->getKey(),
+                'source_doc_num' => $return->doc_num,
+                'customer_id' => $return->customer_id,
+                'status' => InventoryDocument::StatusDraft,
+                'created_by' => auth()->id(),
+            ]);
+
+            foreach ($lines as $index => $line) {
+                $document->lines()->create([
+                    'company_id' => $return->company_id,
+                    'financial_period_id' => $return->financial_period_id,
+                    'line_number' => $index + 1,
+                    'product_id' => $line->product_id,
+                    'unit_id' => $line->product?->item_unit_id,
+                    'transaction_unit_id' => $line->unit_id,
+                    'conversion_factor' => $line->conversion_factor,
+                    'transaction_quantity' => $line->{$profile['quantity']},
+                    'base_quantity' => $line->{$profile['base']},
+                    'quantity' => $line->{$profile['base']},
+                    'reference_quantity' => $line->{$profile['quantity']},
+                    'source_line_type' => SalesReturnLine::class,
+                    'source_line_id' => $line->getKey(),
+                    'source_line_public_id' => $line->public_id,
+                    'unit_cost' => $line->original_unit_cost,
+                    'product_snapshot' => [
+                        'quality_disposition' => $disposition,
+                        'original_sales_return' => $return->doc_num,
+                        'original_unit_cost' => $line->original_unit_cost,
+                    ],
+                    'created_by' => auth()->id(),
+                ]);
+            }
+
+            $this->inventoryPosting->post($document);
         }
     }
 

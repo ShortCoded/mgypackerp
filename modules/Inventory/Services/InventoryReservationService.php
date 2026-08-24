@@ -52,16 +52,15 @@ class InventoryReservationService
                 throw new DomainException('Production reservations require an active location in the selected store.');
             }
             $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
-            $position = $this->availability->forProduct(
+            $stockPosition = $this->availableStockPosition(
                 (int) $order->company_id,
                 $branchStoreId,
                 (int) $locked->product_id,
-                null,
+                $reserveQuantity,
                 $warehouseLocationId,
-                InventoryTransaction::StatusAvailable,
             );
 
-            if (bccomp($reserveQuantity, $position['available'], 8) > 0) {
+            if ($stockPosition === null) {
                 throw new DomainException('The production reservation exceeds available stock.');
             }
 
@@ -70,7 +69,8 @@ class InventoryReservationService
                 'financial_period_id' => $order->financial_period_id,
                 'branch_id' => $order->branch_id,
                 'branch_store_id' => $branchStoreId,
-                'warehouse_location_id' => $warehouseLocationId,
+                'warehouse_location_id' => $stockPosition['warehouse_location_id'],
+                'batch_lot' => $stockPosition['batch_lot'],
                 'production_order_id' => $order->getKey(),
                 'production_run_id' => $run->getKey(),
                 'production_material_requirement_id' => $locked->getKey(),
@@ -89,6 +89,48 @@ class InventoryReservationService
 
             return $reservation->refresh();
         });
+    }
+
+    /** @return array{warehouse_location_id: int|null, batch_lot: string|null}|null */
+    private function availableStockPosition(
+        int $companyId,
+        int $branchStoreId,
+        int $productId,
+        string $quantity,
+        ?int $warehouseLocationId,
+    ): ?array {
+        $positions = InventoryTransaction::query()
+            ->where('company_id', $companyId)
+            ->where('branch_store_id', $branchStoreId)
+            ->where('product_id', $productId)
+            ->where('stock_status', InventoryTransaction::StatusAvailable)
+            ->when($warehouseLocationId !== null, fn ($query) => $query->where('warehouse_location_id', $warehouseLocationId))
+            ->groupBy(['warehouse_location_id', 'batch_lot'])
+            ->havingRaw('sum(quantity_in - quantity_out) > 0')
+            ->orderByRaw('min(transaction_date), min(id)')
+            ->get(['warehouse_location_id', 'batch_lot']);
+
+        foreach ($positions as $position) {
+            $available = $this->availability->forProduct(
+                $companyId,
+                $branchStoreId,
+                $productId,
+                null,
+                $position->warehouse_location_id,
+                InventoryTransaction::StatusAvailable,
+                $position->batch_lot,
+                true,
+            );
+
+            if (bccomp($quantity, $available['available'], 8) <= 0) {
+                return [
+                    'warehouse_location_id' => $position->warehouse_location_id === null ? null : (int) $position->warehouse_location_id,
+                    'batch_lot' => $position->batch_lot,
+                ];
+            }
+        }
+
+        return null;
     }
 
     /** @return list<array{reservation: InventoryReservation, quantity: string}> */

@@ -6,13 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Sales\Exports\SalesCycleReportExport;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
@@ -193,9 +197,17 @@ class SalesCycleReportController extends Controller
         return view('modules.sales.cycle.report', compact('quotations', 'openOrders', 'orderHistory', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'aging', 'returns', 'returnAnalysis', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
-    public function print(Request $request): View
+    public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response
     {
-        return $this->index($request);
+        $data = $this->index($request)->getData();
+        $context = $this->context->snapshot($request);
+        $company = Company::query()->findOrFail($context['company_id']);
+
+        return $pdf->stream('reports.sales.cycle', [
+            ...$data,
+            'title' => __('Sales Cycle Operational Report'),
+            'companyPrintIdentity' => $printIdentity->forCompany($company),
+        ], 'sales-cycle-operational-report.pdf');
     }
 
     public function export(Request $request): BinaryFileResponse

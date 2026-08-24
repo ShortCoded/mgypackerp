@@ -64,6 +64,7 @@ const client = new DevToolsClient(target.webSocketDebuggerUrl);
 await client.ready;
 
 let loadCount = 0;
+let csrfToken = '';
 const errors = { javascript: [], console: [], failedXhr: [], dataTable: [], select2: [], responses500: [], sqlState: [] };
 client.on('Page.loadEventFired', () => { loadCount += 1; });
 client.on('Runtime.exceptionThrown', ({ exceptionDetails }) => errors.javascript.push(exceptionDetails?.exception?.description || exceptionDetails?.text || 'Unhandled JavaScript exception'));
@@ -117,6 +118,8 @@ async function navigate(route) {
   await waitUntil(() => loadCount > before, `Navigation did not complete: ${url}`);
   await waitUntil(() => evaluate(`document.readyState === 'complete' && Boolean(document.body)`), `Page was not ready: ${url}`);
   await sleep(150);
+  const renderedCsrfToken = await evaluate(`document.querySelector('meta[name="csrf-token"]')?.content || document.querySelector('input[name="_token"]')?.value || ''`);
+  if (renderedCsrfToken) csrfToken = renderedCsrfToken;
   const body = await evaluate('document.body.innerText');
   if (/SQLSTATE\[|Stack trace:|Internal Server Error/i.test(body)) errors.sqlState.push(url);
   return evaluate('location.href');
@@ -133,18 +136,21 @@ async function submitNavigation(selector, context) {
   assert(submitted, `${context}: form not found`);
   await waitUntil(() => loadCount > before, `${context}: navigation did not occur`);
   await waitUntil(() => evaluate(`document.readyState === 'complete'`), `${context}: redirected page did not finish`);
+  const renderedCsrfToken = await evaluate(`document.querySelector('meta[name="csrf-token"]')?.content || document.querySelector('input[name="_token"]')?.value || ''`);
+  if (renderedCsrfToken) csrfToken = renderedCsrfToken;
 }
 
 async function post(route, entries = [], { expectedError = false, file = false } = {}) {
   const result = await evaluate(`(async () => {
     const data = new FormData();
-    data.append('_token', document.querySelector('meta[name="csrf-token"]')?.content || document.querySelector('input[name="_token"]')?.value || '');
+    const requestCsrfToken = document.querySelector('meta[name="csrf-token"]')?.content || document.querySelector('input[name="_token"]')?.value || ${JSON.stringify(csrfToken)};
+    data.append('_token', requestCsrfToken);
     for (const [name, value] of ${JSON.stringify(entries)}) data.append(name, value);
     if (${file}) {
       const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n0sAAAAASUVORK5CYII='), (character) => character.charCodeAt(0));
       data.append('evidence_file', new File([bytes], 'qc-evidence.png', { type: 'image/png' }));
     }
-    const response = await fetch(${JSON.stringify(`${baseUrl}${route}`)}, { method: 'POST', body: data, headers: { Accept: 'application/json' } });
+    const response = await fetch(${JSON.stringify(`${baseUrl}${route}`)}, { method: 'POST', body: data, headers: { Accept: 'application/json', 'X-CSRF-TOKEN': requestCsrfToken } });
     const text = await response.text();
     let payload = null;
     try { payload = JSON.parse(text); } catch (error) {}
@@ -161,11 +167,17 @@ async function post(route, entries = [], { expectedError = false, file = false }
 
 async function postVisibleForm(actionFragment, overrides = []) {
   const result = await evaluate(`(async () => {
-    const form = Array.from(document.forms).find((candidate) => candidate.action.includes(${JSON.stringify(actionFragment)}));
+    const form = Array.from(document.forms).find((candidate) =>
+      candidate.hasAttribute('action')
+        && candidate.method.toLowerCase() !== 'get'
+        && candidate.action.includes(${JSON.stringify(actionFragment)})
+    );
     if (!form) return { missing: true };
     const data = new FormData(form);
+    const requestCsrfToken = data.get('_token') || document.querySelector('meta[name="csrf-token"]')?.content || ${JSON.stringify(csrfToken)};
+    data.set('_token', requestCsrfToken);
     for (const [name, value] of ${JSON.stringify(overrides)}) data.set(name, value);
-    const response = await fetch(form.action, { method: 'POST', body: data, headers: { Accept: 'application/json' } });
+    const response = await fetch(form.action, { method: 'POST', body: data, headers: { Accept: 'application/json', 'X-CSRF-TOKEN': requestCsrfToken } });
     const text = await response.text();
     let payload = null;
     try { payload = JSON.parse(text); } catch (error) {}
@@ -176,14 +188,112 @@ async function postVisibleForm(actionFragment, overrides = []) {
   return result;
 }
 
-async function printPdf(filename) {
-  const pdf = await client.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true });
-  await writeFile(path.join(artifactDirectory, filename), Buffer.from(pdf.data, 'base64'));
+async function streamPdf(route, filename, visuallyOpen = true) {
+  const url = route.startsWith('http') ? route : `${baseUrl}${route}`;
+  const { cookies } = await client.send('Network.getAllCookies');
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/pdf',
+      Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '),
+    },
+  });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get('content-type') || '';
+  const disposition = response.headers.get('content-disposition') || '';
+  assert(response.ok, `mPDF stream ${route} failed ${response.status}: ${bytes.toString('utf8', 0, 1000)}`);
+  assert(contentType.includes('application/pdf'), `${route} did not stream application/pdf: ${contentType}`);
+  assert(disposition.toLowerCase().includes('inline'), `${route} was not inline: ${disposition}`);
+  assert(bytes.subarray(0, 5).toString('ascii') === '%PDF-', `${route} did not return an mPDF PDF signature.`);
+  await writeFile(path.join(artifactDirectory, filename), bytes);
+
+  if (visuallyOpen) {
+    await client.send('Page.navigate', { url });
+    await sleep(500);
+  }
+}
+
+async function downloadAuthenticated(route, filename, expectedContentType, expectedMagic) {
+  const url = route.startsWith('http') ? route : `${baseUrl}${route}`;
+  const { cookies } = await client.send('Network.getAllCookies');
+  const response = await fetch(url, {
+    headers: { Cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ') },
+  });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assert(response.ok, `Download ${route} failed ${response.status}: ${bytes.toString('utf8', 0, 1000)}`);
+  assert((response.headers.get('content-type') || '').includes(expectedContentType), `${route} returned the wrong content type.`);
+  assert(bytes.subarray(0, expectedMagic.length).toString('binary') === expectedMagic, `${route} returned the wrong file signature.`);
+  await writeFile(path.join(artifactDirectory, filename), bytes);
 }
 
 async function assertBody(text, context) {
   const body = await evaluate('document.body.innerText');
   assert(body.includes(text), `${context} did not contain ${text}`);
+}
+
+async function assertBodyInsensitive(text, context) {
+  const body = await evaluate('document.body.innerText');
+  assert(body.toLowerCase().includes(text.toLowerCase()), `${context} did not contain ${text}`);
+}
+
+async function remoteOption(selector, query, extra = {}) {
+  const option = await evaluate(`(async () => {
+    const field = document.querySelector(${JSON.stringify(selector)});
+    if (!field?.dataset.url) return null;
+    const url = new URL(field.dataset.url, location.origin);
+    url.searchParams.set('q', ${JSON.stringify(query)});
+    for (const [name, value] of Object.entries(${JSON.stringify(extra)})) url.searchParams.set(name, value);
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    const payload = await response.json();
+    const result = (payload.results || []).find((item) => String(item.text || '').includes(${JSON.stringify(query)})) || payload.results?.[0];
+    return result ? { id: String(result.id), text: String(result.text || '') } : null;
+  })()`);
+  assert(option?.id, `Remote option ${query} was not available for ${selector}`);
+  return option;
+}
+
+async function openSalesOrder(customerName) {
+  await navigate(`/admin/sales/sales-orders?customer=${encodeURIComponent(customerName)}`);
+  const url = await evaluate(`(() => {
+    const row = Array.from(document.querySelectorAll('tbody tr')).find((candidate) => candidate.innerText.includes(${JSON.stringify(customerName)}));
+    return row?.querySelector('td a')?.href || null;
+  })()`);
+  assert(url, `Approved Sales order for ${customerName} was not visible.`);
+  await navigate(url);
+  await assertBody('Approved', `${customerName} approved Sales order`);
+  return new URL(url).pathname;
+}
+
+async function createProductionRequirement(customerName, quantity) {
+  const salesOrderUrl = await openSalesOrder(customerName);
+  const result = await postVisibleForm('/production-requests', [['lines[0][quantity]', String(quantity)]]);
+  assert(result.payload?.data?.url, `${customerName}: Production requirement URL was missing.`);
+  const productionUrl = new URL(result.payload.data.url).pathname;
+  await navigate(productionUrl);
+  await assertBody('Sales Order', `${customerName} Production requirement lineage`);
+  return { salesOrderUrl, productionUrl, productionDoc: productionUrl.split('/').pop() };
+}
+
+async function logoutCurrentUser() {
+  const status = await evaluate(`(async () => {
+    const data = new FormData();
+    const requestCsrfToken = document.querySelector('meta[name="csrf-token"]')?.content || ${JSON.stringify(csrfToken)};
+    data.append('_token', requestCsrfToken);
+    const response = await fetch(${JSON.stringify(`${baseUrl}/logout`)}, { method: 'POST', body: data, headers: { 'X-CSRF-TOKEN': requestCsrfToken } });
+    return response.status;
+  })()`);
+  assert(status >= 200 && status < 400, `Logout failed with ${status}.`);
+}
+
+async function loginAs(username, password = 'e2e-password') {
+  await navigate('/login');
+  await setField('[name="login"]', username);
+  await setField('[name="password"]', password);
+  await submitNavigation('form', `${username} login`);
+  assert(!(await evaluate('location.pathname')).includes('/login'), `${username} login failed.`);
+}
+
+async function browserResponseStatus(route) {
+  return evaluate(`fetch(${JSON.stringify(`${baseUrl}${route}`)}, { headers: { Accept: 'text/html' } }).then((response) => response.status)`);
 }
 
 if (process.env.MFG_E2E_POSTCHECK_ONLY === '1') {
@@ -203,18 +313,14 @@ if (process.env.MFG_E2E_POSTCHECK_ONLY === '1') {
       await submitNavigation('form', 'Login');
       await navigate('/admin/production/reports/operations');
     }
-    for (const text of [run1Number, run2Number, 'Material Variance']) await assertBody(text, 'Production report');
+    for (const text of [run1Number, run2Number, 'Material Requirements, Consumption and Variance']) await assertBody(text, 'Production report');
     await navigate(`/admin/production/work-orders/${orderDoc}`);
     await assertBody('Completed', 'Completed production order');
-    await navigate(`/admin/inventory/documents/${receiptDoc}/print`);
-    await printPdf('finished-goods-receipt-en.pdf');
-    await navigate(`/admin/production/runs/${run1Id}/print`);
-    await printPdf('production-run-en.pdf');
+    await streamPdf(`/admin/inventory/documents/${receiptDoc}/print`, 'finished-goods-receipt-en.pdf');
+    await streamPdf(`/admin/production/runs/${run1Id}/print`, 'production-run-en.pdf');
     await navigate('/lang/ar');
-    await navigate(`/admin/production/runs/${run1Id}/print`);
-    await printPdf('production-run-ar.pdf');
-    await navigate(`/admin/inventory/documents/${receiptDoc}/print`);
-    await printPdf('finished-goods-receipt-ar.pdf');
+    await streamPdf(`/admin/production/runs/${run1Id}/print`, 'production-run-ar.pdf');
+    await streamPdf(`/admin/inventory/documents/${receiptDoc}/print`, 'finished-goods-receipt-ar.pdf');
 
     await client.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await navigate(`/admin/production/runs/${run1Id}`);
@@ -252,20 +358,118 @@ try {
     assert(!/ERP UI Shell|interface only|placeholder/i.test(body), `Shell content remained visible at ${route}`);
   }
 
-  await navigate('/admin/production/runs');
-  const masterIds = await evaluate(`(() => {
-    const byText = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((option) => option.text.includes(text))?.value;
-    return { product: byText('product_id', 'E2E Plastic Product'), unit: byText('unit_id', 'Carton') };
-  })()`);
-  assert(masterIds.product && masterIds.unit, 'Make-to-stock product/unit options were not available.');
-  const orderResult = await post('/admin/production/work-orders/make-to-stock', [
-    ['product_id', masterIds.product], ['unit_id', masterIds.unit], ['quantity', '10'], ['priority', 'high'], ['overproduction_tolerance_percent', '0'], ['production_notes', 'MFG browser E2E 10 cartons / 1000 pieces'],
+  await navigate('/admin/inventory/accounting');
+  const accountingAccounts = {
+    raw: await remoteOption('#raw_material_inventory_account_doc_num', '1131'),
+    packaging: await remoteOption('#packaging_inventory_account_doc_num', '1134'),
+    wip: await remoteOption('#wip_account_doc_num', '1132'),
+    finished: await remoteOption('#finished_goods_inventory_account_doc_num', '1133'),
+    waste: await remoteOption('#production_waste_account_doc_num', '551'),
+    gain: await remoteOption('#inventory_adjustment_gain_account_doc_num', '432'),
+  };
+  await postVisibleForm('/inventory/accounting', [
+    ['raw_material_inventory_account_doc_num', accountingAccounts.raw.id],
+    ['packaging_inventory_account_doc_num', accountingAccounts.packaging.id],
+    ['semi_finished_inventory_account_doc_num', accountingAccounts.wip.id],
+    ['finished_goods_inventory_account_doc_num', accountingAccounts.finished.id],
+    ['wip_account_doc_num', accountingAccounts.wip.id],
+    ['production_waste_account_doc_num', accountingAccounts.waste.id],
+    ['recoverable_scrap_inventory_account_doc_num', accountingAccounts.packaging.id],
+    ['warehouse_damage_loss_account_doc_num', accountingAccounts.waste.id],
+    ['inventory_adjustment_gain_account_doc_num', accountingAccounts.gain.id],
+    ['inventory_adjustment_loss_account_doc_num', accountingAccounts.waste.id],
+    ['production_variance_account_doc_num', accountingAccounts.waste.id],
   ]);
-  const orderUrl = new URL(orderResult.payload.data.url).pathname;
-  const orderDoc = orderUrl.split('/').pop();
+  await navigate('/admin/inventory/accounting');
+  await assertBodyInsensitive('moving weighted average', 'Inventory accounting configuration reload');
+  assert((await evaluate('document.querySelectorAll("select option:checked").length')) >= 9, 'Inventory accounting mappings did not reload.');
+
+  const openingProducts = [
+    ['Product-E2E-MFG-PP', '1000', 'E2E-PP-OPENING'],
+    ['Product-E2E-MFG-MB', '100', 'E2E-MB-OPENING'],
+    ['Product-E2E-MFG-CARTON', '500', 'E2E-CARTON-OPENING'],
+    ...Array.from({ length: 7 }, (_, index) => [
+      `Product-E2E-PACK-${String(index + 1).padStart(2, '0')}`,
+      index === 3 ? '1005' : '1000',
+      index === 0 ? 'WRAP-CUSTOMER-A-001' : `PACK-COMP-${String(index + 1).padStart(2, '0')}`,
+    ]),
+    ...Array.from({ length: 25 }, (_, index) => [
+      `Product-E2E-25-COMP-${String(index + 1).padStart(2, '0')}`,
+      '5',
+      `STRESS-${String(index + 1).padStart(2, '0')}`,
+    ]),
+  ];
+  await navigate('/admin/inventory/opening-stocks/create');
+  const openingOverrides = [
+    ['branch_store_uuid', '00000000-0000-4000-8000-000000000091'],
+    ['notes', 'Browser-created deterministic Inventory opening quantities'],
+    ...openingProducts.flatMap(([productDocNum, quantity, batch], index) => [
+      [`lines[${index}][product_doc_num]`, productDocNum],
+      [`lines[${index}][quantity]`, quantity],
+      [`lines[${index}][stock_status]`, 'available'],
+      [`lines[${index}][batch_lot]`, batch],
+    ]),
+  ];
+  const openingResult = await postVisibleForm('/opening-stocks', openingOverrides);
+  const openingDoc = openingResult.payload?.data?.doc_num;
+  assert(openingDoc, 'Browser Opening Stock did not return a document number.');
+  await navigate(openingResult.payload.data.urls.show);
+  for (const text of ['E2E PP Raw Material', 'TEST Printed Wrapper — Customer A', 'TEST Stress Component 25']) await assertBody(text, 'Opening Stock reload');
+  await post(`/admin/inventory/opening-stocks/${openingDoc}/approve`);
+  await streamPdf(`/admin/inventory/opening-stocks/${openingDoc}/print`, 'opening-stock-en.pdf');
+
+  await navigate('/admin/inventory/opening-stock-pricings/create');
+  const pricingBranch = await remoteOption('#branch_doc_num', 'Main Branch');
+  const pricingCurrency = await remoteOption('#currency_doc_num', 'EGP');
+  const remainingPricingLines = await evaluate(`(async () => {
+    const form = document.querySelector('.js-opening-stock-pricing-form');
+    const url = new URL(form.dataset.remainingLinesUrl, location.origin);
+    url.searchParams.set('branch_doc_num', ${JSON.stringify(pricingBranch.id)});
+    url.searchParams.set('opening_stock_doc_num', ${JSON.stringify(openingDoc)});
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    const payload = await response.json();
+    return payload.data?.lines || [];
+  })()`);
+  assert(remainingPricingLines.length === openingProducts.length, `Expected ${openingProducts.length} Opening Stock pricing lines, got ${remainingPricingLines.length}.`);
+  const priceFor = (text) => text.includes('Product-E2E-MFG-PP') ? '2' : text.includes('Product-E2E-MFG-MB') ? '8' : text.includes('Product-E2E-MFG-CARTON') ? '0.5' : '1';
+  const pricingResult = await postVisibleForm('/opening-stock-pricings', [
+    ['branch_doc_num', pricingBranch.id],
+    ['opening_stock_doc_num', openingDoc],
+    ['currency_doc_num', pricingCurrency.id],
+    ['exchange_rate', '1'],
+    ['notes', 'Browser-applied canonical moving-average opening valuation'],
+    ...remainingPricingLines.flatMap((line, index) => [
+      [`lines[${index}][opening_stock_line_public_id]`, String(line.id)],
+      [`lines[${index}][unit_price]`, priceFor(String(line.text || ''))],
+    ]),
+  ]);
+  assert(pricingResult.payload?.data?.doc_num, 'Opening Stock Pricing did not persist.');
+
+  await navigate('/admin/finance/opening-balances/create');
+  const openingBalanceCurrency = await remoteOption('#currency_doc_num', 'EGP');
+  const openingBalanceRaw = await remoteOption('select[name="lines[0][account_doc_num]"]', '1131');
+  const openingBalancePackaging = await remoteOption('select[name="lines[0][account_doc_num]"]', '1134');
+  const openingBalanceEquity = await remoteOption('select[name="lines[0][account_doc_num]"]', '34');
+  const financeOpeningResult = await postVisibleForm('/opening-balances', [
+    ['currency_doc_num', openingBalanceCurrency.id],
+    ['exchange_rate', '1'],
+    ['description', 'Finance-owned Inventory opening value for browser-created quantities'],
+    ['lines[0][account_doc_num]', openingBalanceRaw.id], ['lines[0][transaction_type]', 'debit'], ['lines[0][amount]', '2925'],
+    ['lines[1][account_doc_num]', openingBalancePackaging.id], ['lines[1][transaction_type]', 'debit'], ['lines[1][amount]', '7255'],
+    ['lines[2][account_doc_num]', openingBalanceEquity.id], ['lines[2][transaction_type]', 'credit'], ['lines[2][amount]', '10180'],
+  ]);
+  const financeOpeningDoc = financeOpeningResult.payload?.data?.doc_num;
+  assert(financeOpeningDoc, 'Finance Opening Balance did not persist.');
+  await post(`/admin/finance/opening-balances/${financeOpeningDoc}/approve`);
+
+  const primaryDemand = await createProductionRequirement('E2E Sales-Origin Customer', '10');
+  const orderDoc = primaryDemand.productionDoc;
+  const orderUrl = `/admin/production/work-orders/${orderDoc}`;
   await navigate(orderUrl);
+  await assertBody('Sales Order', 'Sales-origin Production order');
   await assertBody('1000.00000000', 'Production order base quantity');
-  await printPdf('production-order-en.pdf');
+  await streamPdf(`${orderUrl}/print`, 'production-order-en.pdf');
+  await navigate(orderUrl);
   await post(`/admin/production/work-orders/${orderDoc}/release`);
 
   await navigate('/admin/production/runs');
@@ -336,14 +540,155 @@ try {
   const receipt4 = await post(`/admin/production/runs/${run2Doc}/receive`, [['branch_store_id', run2Stores.finished], ['base_quantity', '300']]);
   await post(`/admin/production/runs/${run2Doc}/complete`);
 
+  const packingDemandA = await createProductionRequirement('E2E Packing Customer A', '1000');
+  const packingDemandB = await createProductionRequirement('E2E Packing Customer B', '1000');
+  await post(`/admin/production/work-orders/${packingDemandA.productionDoc}/release`);
+  await post(`/admin/production/work-orders/${packingDemandB.productionDoc}/release`);
+  await navigate('/admin/production/runs');
+  const packingPlanningIds = await evaluate(`(() => {
+    const option = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((item) => item.text.includes(text))?.value;
+    return {
+      lineA: option('production_order_line_id', ${JSON.stringify(packingDemandA.productionDoc)}),
+      lineB: option('production_order_line_id', ${JSON.stringify(packingDemandB.productionDoc)}),
+      machine: option('production_machine_id', 'E2E-PACK-LINE-02'),
+      mold: option('production_mold_id', 'E2E-PACK-FORMAT-KIT'),
+      shift: option('production_shift_id', 'E2E-SHIFT-A'),
+    };
+  })()`);
+  assert(Object.values(packingPlanningIds).every(Boolean), `Packing planning options incomplete: ${JSON.stringify(packingPlanningIds)}`);
+  const packingRun1Result = await post('/admin/production/runs', [
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '400'], ['planned_start_at', '2026-09-02T08:00'], ['planned_end_at', '2026-09-02T11:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-400'],
+  ]);
+  const packingRun2Result = await post('/admin/production/runs', [
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '600'], ['planned_start_at', '2026-09-02T11:00'], ['planned_end_at', '2026-09-02T16:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-600'],
+  ]);
+  const packingRunBResult = await post('/admin/production/runs', [
+    ['production_order_line_id', packingPlanningIds.lineB], ['planned_quantity', '1000'], ['planned_start_at', '2026-09-03T08:00'], ['planned_end_at', '2026-09-03T16:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-B-BLOCKED'],
+  ]);
+  const packingRun1Url = new URL(packingRun1Result.payload.data.url).pathname;
+  const packingRun2Url = new URL(packingRun2Result.payload.data.url).pathname;
+  const packingRunBUrl = new URL(packingRunBResult.payload.data.url).pathname;
+  const packingRun1Doc = packingRun1Url.split('/').pop();
+  const packingRun2Doc = packingRun2Url.split('/').pop();
+  const packingRunBDoc = packingRunBUrl.split('/').pop();
+  await navigate(packingRun1Url);
+  const packingStores = await evaluate(`(() => {
+    const options = Array.from(document.querySelector('[name="branch_store_id"]').options);
+    return { raw: options.find((option) => option.text.includes('E2E Raw Material Store'))?.value, finished: options.find((option) => option.text.includes('E2E Finished Goods Store'))?.value };
+  })()`);
+  assert(packingStores.raw && packingStores.finished, 'Packing production stores were missing.');
+  await post(`/admin/production/runs/${packingRun1Doc}/reserve`, [['branch_store_id', packingStores.raw]]);
+  await post(`/admin/production/runs/${packingRun2Doc}/reserve`, [['branch_store_id', packingStores.raw]]);
+  await post(`/admin/production/runs/${packingRunBDoc}/reserve`, [['branch_store_id', packingStores.raw]], { expectedError: true });
+
+  async function completePackingRun(runUrl, runDoc, goodQuantity, withForkDamage = false) {
+    await post(`/admin/production/runs/${runDoc}/issue`, [['branch_store_id', packingStores.raw]]);
+    await navigate(runUrl);
+    const packingRequirementCount = await evaluate('document.querySelectorAll(\'form[action*="account-materials"] input[name$="[requirement_id]"]\').length');
+    assert(packingRequirementCount === 7, `${runDoc}: Expected seven real packing components, got ${packingRequirementCount}.`);
+    if (withForkDamage) {
+      const forkRequirement = await evaluate(`(() => {
+        const form = document.querySelector('form[action*="account-materials"]');
+        const row = Array.from(form.querySelectorAll('input[name$="[requirement_id]"]')).map((field) => field.closest('.row')).find((candidate) => candidate.innerText.includes('TEST Kit Fork'));
+        return row?.querySelector('input[name$="[requirement_id]"]')?.value || null;
+      })()`);
+      assert(forkRequirement, 'Packing fork requirement was not visible.');
+      await post(`/admin/production/runs/${runDoc}/issue`, [['branch_store_id', packingStores.raw], ['additional', '1'], ['lines[0][requirement_id]', forkRequirement], ['lines[0][quantity]', '5']]);
+    }
+    await post(`/admin/production/runs/${runDoc}/setup/start`);
+    await post(`/admin/production/runs/${runDoc}/setup/complete`);
+    await post(`/admin/production/runs/${runDoc}/start`);
+    await post(`/admin/production/runs/${runDoc}/progress`, [['good_base_quantity', String(goodQuantity)], ['notes', 'Packing browser output']]);
+    await navigate(runUrl);
+    const materialOverrides = withForkDamage ? await evaluate(`(() => {
+      const form = document.querySelector('form[action*="account-materials"]');
+      const row = Array.from(form.querySelectorAll('input[name$="[requirement_id]"]')).map((field) => field.closest('.row')).find((candidate) => candidate.innerText.includes('TEST Kit Fork'));
+      const consumed = row.querySelector('input[name$="[consumed_quantity]"]');
+      const waste = row.querySelector('input[name$="[waste_quantity]"]');
+      return [[consumed.name, String(Number(consumed.value) - 5)], [waste.name, '5']];
+    })()`) : [];
+    await postVisibleForm('/account-materials', materialOverrides);
+    await post(`/admin/production/runs/${runDoc}/inspect`, [['result', 'passed'], ['notes', 'Packing final inspection passed']]);
+    const receipts = [];
+    if (String(goodQuantity) === '400') {
+      receipts.push(await post(`/admin/production/runs/${runDoc}/receive`, [['branch_store_id', packingStores.finished], ['base_quantity', '200']]));
+      receipts.push(await post(`/admin/production/runs/${runDoc}/receive`, [['branch_store_id', packingStores.finished], ['base_quantity', '200']]));
+    } else {
+      receipts.push(await post(`/admin/production/runs/${runDoc}/receive`, [['branch_store_id', packingStores.finished], ['base_quantity', String(goodQuantity)]]));
+    }
+    await post(`/admin/production/runs/${runDoc}/complete`);
+    return receipts.map((receipt) => receipt.payload.data.doc_num);
+  }
+
+  const packingReceiptDocs = [
+    ...await completePackingRun(packingRun1Url, packingRun1Doc, '400', true),
+    ...await completePackingRun(packingRun2Url, packingRun2Doc, '600'),
+  ];
+  await navigate(`/admin/production/work-orders/${packingDemandA.productionDoc}`);
+  await assertBody('Completed', 'Packing Production order');
+
   await navigate('/admin/inventory/documents/create');
   const movementIds = await evaluate(`(() => {
     const option = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((item) => item.text.includes(text))?.value;
-    return { rawStore: option('branch_store_id', 'E2E Raw Material Store'), finishedStore: option('destination_branch_store_id', 'E2E Finished Goods Store'), raw: option('lines[0][product_id]', 'E2E PP Raw Material'), packaging: option('lines[0][product_id]', 'E2E Packaging Carton') };
+    const productOptions = Array.from(document.querySelector('[name="lines[0][product_id]"]').options);
+    return {
+      rawStore: option('branch_store_id', 'E2E Raw Material Store'),
+      finishedStore: option('destination_branch_store_id', 'E2E Finished Goods Store'),
+      raw: option('lines[0][product_id]', 'E2E PP Raw Material'),
+      packaging: option('lines[0][product_id]', 'E2E Packaging Carton'),
+      stress: Array.from({ length: 25 }, (_, index) => productOptions.find((item) => item.text.includes('TEST Stress Component ' + String(index + 1).padStart(2, '0')))?.value),
+    };
   })()`);
-  await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.finishedStore], ['document_type', 'inventory_transfer'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E transfer'], ['source_stock_status', 'available'], ['destination_stock_status', 'available'], ['lines[0][product_id]', movementIds.packaging], ['lines[0][quantity]', '5']]);
-  await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.rawStore], ['document_type', 'inventory_damage'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damage'], ['source_stock_status', 'available'], ['destination_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
-  await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_scrap'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damaged disposition'], ['source_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
+  assert(movementIds.stress.every(Boolean), `The 25 stress products were not available: ${JSON.stringify(movementIds.stress)}`);
+  const dynamicLineCount = await evaluate(`(() => {
+    const add = document.querySelector('[data-add-inventory-line]');
+    for (let index = 1; index < 25; index += 1) add.click();
+    return document.querySelectorAll('[data-inventory-line]').length;
+  })()`);
+  assert(dynamicLineCount === 25, `The browser Inventory form rendered ${dynamicLineCount} lines instead of 25.`);
+  const stressDocumentResult = await postVisibleForm('/inventory/documents', [
+    ['branch_store_id', movementIds.rawStore],
+    ['destination_branch_store_id', movementIds.rawStore],
+    ['document_type', 'inventory_adjustment_in'],
+    ['movement_reason', 'Browser 25-line valued Inventory stress document'],
+    ['source_stock_status', 'available'],
+    ['destination_stock_status', 'available'],
+    ...movementIds.stress.flatMap((productId, index) => [
+      [`lines[${index}][product_id]`, productId],
+      [`lines[${index}][quantity]`, '5'],
+      [`lines[${index}][unit_cost]`, '1'],
+    ]),
+  ]);
+  const stressDocumentDoc = stressDocumentResult.payload?.data?.doc_num;
+  assert(stressDocumentDoc, 'The browser 25-line Inventory document did not persist.');
+  await navigate(stressDocumentResult.payload.data.url);
+  assert((await evaluate('document.querySelectorAll("tbody tr").length')) >= 25, 'The reloaded Inventory document did not show all 25 lines.');
+  await streamPdf(`/admin/inventory/documents/${stressDocumentDoc}/print`, 'inventory-25-line-en.pdf');
+
+  const stressDemand = await createProductionRequirement('E2E Stress Customer', '1');
+  await post(`/admin/production/work-orders/${stressDemand.productionDoc}/release`);
+  await navigate('/admin/production/runs');
+  const stressPlanningIds = await evaluate(`(() => {
+    const option = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((item) => item.text.includes(text))?.value;
+    return { line: option('production_order_line_id', ${JSON.stringify(stressDemand.productionDoc)}), machine: option('production_machine_id', 'E2E-MACHINE-01'), mold: option('production_mold_id', 'E2E-MOLD-01') };
+  })()`);
+  assert(Object.values(stressPlanningIds).every(Boolean), `25-component planning options incomplete: ${JSON.stringify(stressPlanningIds)}`);
+  const stressRunResult = await post('/admin/production/runs', [
+    ['production_order_line_id', stressPlanningIds.line], ['planned_quantity', '1'], ['planned_start_at', '2026-09-04T08:00'], ['planned_end_at', '2026-09-04T10:00'], ['production_machine_id', stressPlanningIds.machine], ['production_mold_id', stressPlanningIds.mold], ['batch_lot', 'E2E-25-COMPONENT-RUN'],
+  ]);
+  const stressRunUrl = new URL(stressRunResult.payload.data.url).pathname;
+  const stressRunDoc = stressRunUrl.split('/').pop();
+  await navigate(stressRunUrl);
+  assert((await evaluate('document.querySelectorAll(\'form[action*="account-materials"] input[name$="[requirement_id]"]\').length')) === 25, 'The real BOM did not generate 25 Production material requirements.');
+  await post(`/admin/production/runs/${stressRunDoc}/reserve`, [['branch_store_id', movementIds.rawStore]]);
+  await post(`/admin/production/runs/${stressRunDoc}/issue`, [['branch_store_id', movementIds.rawStore]]);
+  await navigate(stressRunUrl);
+  await assertBody('TEST Stress Component 25', '25-component Material Issue lineage');
+  await streamPdf(`${stressRunUrl}/materials/print`, 'production-25-component-materials-en.pdf');
+
+  const transferResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.finishedStore], ['document_type', 'inventory_transfer'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E transfer'], ['source_stock_status', 'available'], ['destination_stock_status', 'available'], ['lines[0][product_id]', movementIds.packaging], ['lines[0][quantity]', '5']]);
+  const damageResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.rawStore], ['document_type', 'inventory_damage'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damage'], ['source_stock_status', 'available'], ['destination_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
+  const scrapResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_scrap'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damaged disposition'], ['source_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
   await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_adjustment_out'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E negative stock guard'], ['source_stock_status', 'available'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '99999']], { expectedError: true });
 
   await navigate('/admin/inventory/stock-counts');
@@ -358,24 +703,97 @@ try {
   })()`);
   await post(`${countUrl}/record`, [['lines[0][line_id]', countEntries.id], ['lines[0][physical_quantity]', countEntries.physical], ['lines[0][variance_reason]', 'MFG E2E verified shortage']]);
   await post(`${countUrl}/approve`);
+  await streamPdf(`${countUrl}/print`, 'stock-count-variance-en.pdf');
+  await streamPdf(`/admin/inventory/documents/${transferResult.payload.data.doc_num}/print`, 'inventory-transfer-en.pdf');
+  await streamPdf(`/admin/inventory/documents/${damageResult.payload.data.doc_num}/print`, 'inventory-damage-en.pdf');
+  await streamPdf(`/admin/inventory/documents/${scrapResult.payload.data.doc_num}/print`, 'inventory-scrap-en.pdf');
 
   await navigate('/admin/inventory/reports/operations');
-  for (const text of ['E2E PP Raw Material', 'E2E Plastic Product', 'Production']) await assertBody(text, 'Inventory report');
+  for (const text of ['E2E PP Raw Material', 'TEST Sales-Origin Plastic Product', 'TEST Customer Kit', 'Production']) await assertBody(text, 'Inventory report');
+  const reconciliationStatuses = await evaluate(`(() => {
+    const heading = Array.from(document.querySelectorAll('h5')).find((node) => node.innerText.includes('General Ledger Reconciliation'));
+    return Array.from(heading?.closest('.card')?.querySelectorAll('tbody .badge') || []).map((node) => node.innerText.trim());
+  })()`);
+  assert(reconciliationStatuses.length === 5 && reconciliationStatuses.every((status) => status === 'Reconciled'), `GL reconciliation was not zero: ${JSON.stringify(reconciliationStatuses)}`);
+  await downloadAuthenticated('/admin/inventory/reports/operations/export.xlsx', 'inventory-operations.xlsx', 'spreadsheetml', 'PK');
+  await streamPdf('/admin/inventory/reports/operations/print', 'inventory-operations-en.pdf');
   await navigate('/admin/production/reports/operations');
-  for (const text of [run1Number, run2Number, 'Material Variance']) await assertBody(text, 'Production report');
+  for (const text of [run1Number, run2Number, packingRun1Result.payload.data.run_number, 'Material Requirements, Consumption and Variance']) await assertBody(text, 'Production report');
+  await downloadAuthenticated('/admin/production/reports/operations/export.xlsx', 'production-operations.xlsx', 'spreadsheetml', 'PK');
+  await streamPdf('/admin/production/reports/operations/print', 'production-operations-en.pdf');
   await navigate(orderUrl);
   await assertBody('Completed', 'Completed production order');
 
   const receiptDocs = [receipt1, receipt2, receipt3, receipt4].map((result) => result.payload.data.doc_num);
-  await navigate(`/admin/inventory/documents/${receiptDocs[0]}/print`);
-  await printPdf('finished-goods-receipt-en.pdf');
-  await navigate(`${run1Url}/print`);
-  await printPdf('production-run-en.pdf');
+  await navigate(`/admin/inventory/documents/${receiptDocs[0]}`);
+  const backwardRunUrl = await evaluate('Array.from(document.querySelectorAll(\'a[href*="/admin/production/runs/"]\')).map((link) => link.href)[0] || null');
+  assert(backwardRunUrl, 'Finished Goods receipt did not link backward to its Production run.');
+  await navigate(backwardRunUrl);
+  const backwardOrderUrl = await evaluate('Array.from(document.querySelectorAll(\'a[href*="/admin/production/work-orders/"]\')).map((link) => link.href)[0] || null');
+  const backwardSalesUrl = await evaluate('Array.from(document.querySelectorAll(\'a[href*="/admin/sales/sales-orders/"]\')).map((link) => link.href)[0] || null');
+  assert(backwardOrderUrl && backwardSalesUrl, 'Production run did not expose Production Order and Sales Order backward lineage.');
+  await navigate(backwardOrderUrl);
+  await assertBody(orderDoc, 'Backward Production Order navigation');
+  await navigate(backwardSalesUrl);
+  await assertBody(orderDoc, 'Backward Sales Order navigation');
+  await navigate(run2Url);
+  const runDocumentLinks = await evaluate(`(() => {
+    const heading = Array.from(document.querySelectorAll('h6')).find((node) => node.innerText.includes('Related documents and source lineage'));
+    const links = Array.from(heading?.closest('.card')?.querySelectorAll('.col-md-4') || []).map((column) => ({
+      label: column.querySelector('strong')?.innerText.trim() || '',
+      href: column.querySelector('a[href*="/admin/inventory/documents/"]')?.href || null,
+    })).filter((item) => item.href);
+    return Object.fromEntries(links.map((item) => [item.label, item.href]));
+  })()`);
+  for (const label of ['Material Issue', 'Additional Material Issue', 'Material Return', 'Production Waste', 'Production Receipt']) {
+    assert(runDocumentLinks[label], `Run lineage did not expose ${label}.`);
+  }
+  await navigate(runDocumentLinks['Material Issue']);
+  await assertBody(run2Number, 'Material Issue to Production run lineage');
+
+  await streamPdf(`${orderUrl}/requirement/print`, 'production-requirement-en.pdf');
+  await streamPdf(`${run1Url}/materials/print`, 'material-requirement-en.pdf');
+  await streamPdf(`${run1Url}/quality/print`, 'in-process-qc-en.pdf');
+  await streamPdf(`${run1Url}/completion/print`, 'production-completion-en.pdf');
+  await streamPdf(runDocumentLinks['Material Issue'].replace(/\/$/, '') + '/print', 'material-issue-en.pdf');
+  await streamPdf(runDocumentLinks['Additional Material Issue'].replace(/\/$/, '') + '/print', 'additional-material-issue-en.pdf');
+  await streamPdf(runDocumentLinks['Material Return'].replace(/\/$/, '') + '/print', 'material-return-en.pdf');
+  await streamPdf(`/admin/inventory/documents/${receiptDocs[0]}/print`, 'finished-goods-receipt-en.pdf');
+  await streamPdf(`${run1Url}/print`, 'production-run-en.pdf');
+
+  await navigate('/admin/inventory/reports/operations');
+  await logoutCurrentUser();
+  await loginAs('e2e_warehouse');
+  await navigate('/admin/inventory/reports/operations');
+  assert(!(await evaluate('document.documentElement.innerHTML.includes("<th>Value</th>")')), 'Warehouse user received financial Inventory values.');
+  assert((await browserResponseStatus('/admin/production/reports/operations')) === 403, 'Warehouse user accessed Production reports.');
+  assert((await browserResponseStatus('/admin/inventory/accounting')) === 403, 'Warehouse user accessed Inventory accounting configuration.');
+
+  await logoutCurrentUser();
+  await loginAs('e2e_planner');
+  assert((await browserResponseStatus('/admin/production/runs')) === 200, 'Planner could not access Production planning.');
+  assert((await browserResponseStatus('/admin/inventory/documents/create')) === 403, 'Planner accessed warehouse document creation.');
+  assert((await browserResponseStatus('/admin/production/reports/operations')) === 403, 'Planner accessed restricted Production cost reporting.');
+
+  await logoutCurrentUser();
+  await loginAs('e2e_quality');
+  assert((await browserResponseStatus(run1Url)) === 200, 'Quality user could not access the Production run QC workspace.');
+  assert((await browserResponseStatus('/admin/inventory/documents/create')) === 403, 'Quality user accessed warehouse document creation.');
+  assert((await browserResponseStatus('/admin/inventory/reports/operations')) === 403, 'Quality user accessed Inventory reporting.');
+
+  await logoutCurrentUser();
+  await loginAs('e2e_cost');
+  await navigate('/admin/inventory/reports/operations');
+  assert((await evaluate('document.documentElement.innerHTML.includes("<th>Value</th>")')), 'Cost user did not receive authorized Inventory values.');
+  assert((await browserResponseStatus('/admin/production/reports/operations')) === 200, 'Cost user could not access Production financial reporting.');
+  assert((await browserResponseStatus('/admin/inventory/accounting')) === 200, 'Cost user could not view Inventory accounting configuration.');
+  assert((await browserResponseStatus('/admin/inventory/documents/create')) === 403, 'Cost user accessed warehouse document creation.');
+
+  await logoutCurrentUser();
+  await loginAs('admin', 'admin');
   await navigate('/lang/ar');
-  await navigate(`${run1Url}/print`);
-  await printPdf('production-run-ar.pdf');
-  await navigate(`/admin/inventory/documents/${receiptDocs[0]}/print`);
-  await printPdf('finished-goods-receipt-ar.pdf');
+  await streamPdf(`${run1Url}/print`, 'production-run-ar.pdf');
+  await streamPdf(`/admin/inventory/documents/${receiptDocs[0]}/print`, 'finished-goods-receipt-ar.pdf');
 
   await client.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await navigate(run1Url);
@@ -384,13 +802,27 @@ try {
 
   const result = {
     navigation: { opened: visibleRoutes.length, routes: visibleRoutes },
+    accounting: { valuation: 'moving weighted average', browser_configured: true, reconciliation: reconciliationStatuses },
+    openingStock: { doc_num: openingDoc, pricing_doc_num: pricingResult.payload.data.doc_num, finance_opening_balance: financeOpeningDoc, browser_created_lines: openingProducts.length },
+    salesOrigin: { sales_order_url: primaryDemand.salesOrderUrl, production_requirement_url: primaryDemand.productionUrl, real_fk_lineage: true },
     order: { doc_num: orderDoc, target_cartons: '10', target_base_pieces: '1000.00000000', status: 'completed' },
     runs: [{ run: run1Number, planned_cartons: '4', good_base: '400' }, { run: run2Number, planned_cartons: '6', good_base: '600' }],
     bom: { raw_kg: '100.00000000', masterbatch_kg: '2.00000000', packaging_cartons: '10.00000000' },
     finishedGoodsReceipts: receiptDocs,
+    secondFactory: { order: packingDemandA.productionDoc, blocked_cross_order_run: packingRunBResult.payload.data.run_number, runs: [packingRun1Result.payload.data.run_number, packingRun2Result.payload.data.run_number], finished_goods_receipts: packingReceiptDocs, customer_specific_wrapper: true, additional_fork_issue: '5', waste: '5' },
+    stress: { inventory_document: stressDocumentDoc, inventory_lines: 25, production_run: stressRunResult.payload.data.run_number, bom_requirements: 25, material_issue_posted: true },
     inventoryOperations: { transfer: '5 packaging cartons', damage: '1 kg', scrap: '1 kg', count_variance: '-1 kg', over_issue_rejected: true },
     quality: { samples: 4, failed_hold_pass_resume: true, image_uploaded: true, mobile: mobileQc },
-    prints: ['production-order-en.pdf', 'finished-goods-receipt-en.pdf', 'production-run-en.pdf', 'production-run-ar.pdf', 'finished-goods-receipt-ar.pdf'],
+    permissions: { warehouse: 'financial values hidden', planner: 'warehouse blocked', quality: 'QC-only workspace', cost: 'financial reports visible, warehouse blocked' },
+    exports: ['inventory-operations.xlsx', 'production-operations.xlsx'],
+    prints: [
+      'opening-stock-en.pdf', 'production-order-en.pdf', 'production-requirement-en.pdf', 'production-run-en.pdf',
+      'material-requirement-en.pdf', 'material-issue-en.pdf', 'additional-material-issue-en.pdf', 'material-return-en.pdf',
+      'in-process-qc-en.pdf', 'production-completion-en.pdf', 'finished-goods-receipt-en.pdf', 'inventory-transfer-en.pdf',
+      'inventory-damage-en.pdf', 'inventory-scrap-en.pdf', 'stock-count-variance-en.pdf', 'inventory-25-line-en.pdf',
+      'production-25-component-materials-en.pdf', 'inventory-operations-en.pdf', 'production-operations-en.pdf',
+      'production-run-ar.pdf', 'finished-goods-receipt-ar.pdf',
+    ],
     errors,
   };
   for (const [category, values] of Object.entries(errors)) assert(values.length === 0, `${category} errors: ${JSON.stringify(values)}`);

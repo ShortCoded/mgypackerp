@@ -14,6 +14,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 
 class StoreOpeningStockRequest extends FormRequest
@@ -38,6 +39,8 @@ class StoreOpeningStockRequest extends FormRequest
                 'public_id' => isset($line['public_id']) ? trim((string) $line['public_id']) : null,
                 'product_doc_num' => isset($line['product_doc_num']) ? trim((string) $line['product_doc_num']) : null,
                 'quantity' => isset($line['quantity']) ? trim((string) $line['quantity']) : null,
+                'stock_status' => isset($line['stock_status']) ? trim((string) $line['stock_status']) : InventoryTransaction::StatusAvailable,
+                'batch_lot' => isset($line['batch_lot']) ? trim((string) $line['batch_lot']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
                 '_delete' => filter_var($line['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
@@ -84,6 +87,13 @@ class StoreOpeningStockRequest extends FormRequest
             'lines.*.public_id' => ['nullable', 'string'],
             'lines.*.product_doc_num' => ['nullable', 'string'],
             'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,11}(?:\.\d{1,4})?$/D'],
+            'lines.*.stock_status' => ['required', Rule::in([
+                InventoryTransaction::StatusAvailable,
+                InventoryTransaction::StatusQcHold,
+                InventoryTransaction::StatusQuarantine,
+                InventoryTransaction::StatusDamaged,
+            ])],
+            'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],
@@ -202,9 +212,10 @@ class StoreOpeningStockRequest extends FormRequest
 
             $productDocNum = trim((string) ($line['product_doc_num'] ?? ''));
             $quantity = $line['quantity'] ?? null;
+            $batchLot = trim((string) ($line['batch_lot'] ?? ''));
             $notes = trim((string) ($line['notes'] ?? ''));
 
-            if ($productDocNum === '' && ($quantity === null || $quantity === '') && $notes === '') {
+            if ($productDocNum === '' && ($quantity === null || $quantity === '') && $batchLot === '' && $notes === '') {
                 continue;
             }
 
@@ -268,6 +279,8 @@ class StoreOpeningStockRequest extends FormRequest
             'lines' => __('inventory.opening_stocks.attributes.lines'),
             'lines.*.product_doc_num' => __('inventory.opening_stocks.attributes.product'),
             'lines.*.quantity' => __('inventory.opening_stocks.attributes.quantity'),
+            'lines.*.stock_status' => __('inventory.opening_stocks.attributes.stock_status'),
+            'lines.*.batch_lot' => __('inventory.opening_stocks.attributes.batch_lot'),
             'lines.*.notes' => __('inventory.opening_stocks.attributes.line_notes'),
         ];
     }
@@ -289,6 +302,7 @@ class StoreOpeningStockRequest extends FormRequest
             ->filter(function (array $line): bool {
                 return trim((string) ($line['product_doc_num'] ?? '')) !== ''
                     || trim((string) ($line['quantity'] ?? '')) !== ''
+                    || trim((string) ($line['batch_lot'] ?? '')) !== ''
                     || trim((string) ($line['notes'] ?? '')) !== '';
             })
             ->values()

@@ -20,6 +20,7 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
@@ -126,6 +127,7 @@ class PurchaseInvoiceService
                 $this->postingHeader($locked),
                 $this->postingLines($locked),
             );
+            $this->applyInventoryValuation($locked);
 
             $locked->forceFill([
                 'status' => PurchaseInvoice::StatusApproved,
@@ -233,6 +235,7 @@ class PurchaseInvoiceService
                 'source_id' => $locked->getKey(),
                 'source_doc_num' => $locked->doc_num,
             ]);
+            $this->applyInventoryValuation($locked, reverse: true);
 
             $locked->forceFill([
                 'status' => PurchaseInvoice::StatusCancelled,
@@ -763,23 +766,12 @@ class PurchaseInvoiceService
     private function postingLines(PurchaseInvoice $record): array
     {
         $record->loadMissing('lines.product');
-        $lineBaseTotal = $record->lines->sum(fn (PurchaseInvoiceLine $line): float => (float) $line->total_before_tax);
-        $headerDiscount = (float) $record->header_discount_amount;
         $debits = [];
-        $allocatedHeaderDiscount = 0.0;
-        $lastIndex = max(0, $record->lines->count() - 1);
+        $netAmounts = $this->netAmountsByLine($record);
 
-        foreach ($record->lines->values() as $index => $line) {
+        foreach ($record->lines as $line) {
             $account = $this->purchaseDebitAccount($line);
-            $lineBase = (float) $line->total_before_tax;
-            $share = $lineBaseTotal > 0 ? $headerDiscount * ($lineBase / $lineBaseTotal) : 0.0;
-
-            if ($index === $lastIndex) {
-                $share = $headerDiscount - $allocatedHeaderDiscount;
-            }
-
-            $allocatedHeaderDiscount += $share;
-            $amount = max(0, $lineBase - $share);
+            $amount = (float) ($netAmounts[$line->getKey()] ?? 0);
 
             if ($amount <= 0) {
                 continue;
@@ -839,6 +831,71 @@ class PurchaseInvoiceService
         ];
 
         return $lines;
+    }
+
+    private function applyInventoryValuation(PurchaseInvoice $record, bool $reverse = false): void
+    {
+        $record->loadMissing('lines.product');
+        $netAmounts = $this->netAmountsByLine($record);
+
+        foreach ($record->lines as $line) {
+            if ($line->receipt_line_id === null || $line->product?->isService()) {
+                continue;
+            }
+
+            $movement = InventoryTransaction::query()
+                ->where('posting_key', "purchase-receipt:{$line->receipt_line_id}")
+                ->lockForUpdate()
+                ->first();
+
+            if (! $movement instanceof InventoryTransaction || bccomp((string) $movement->quantity_in, '0', 8) <= 0) {
+                throw new DomainException(__('The accepted goods receipt Inventory movement is missing for invoice valuation.'));
+            }
+
+            $lineAmount = bcmul(
+                (string) ($netAmounts[$line->getKey()] ?? '0.0000'),
+                (string) $record->exchange_rate,
+                4,
+            );
+            $currentTotal = bcadd((string) ($movement->total_cost ?? 0), '0', 4);
+            $newTotal = $reverse
+                ? bcsub($currentTotal, $lineAmount, 4)
+                : bcadd($currentTotal, $lineAmount, 4);
+
+            if (bccomp($newTotal, '0', 4) < 0) {
+                throw new DomainException(__('Purchase Invoice reversal would make the receipt valuation negative.'));
+            }
+
+            $isUnvalued = bccomp($newTotal, '0', 4) === 0;
+            $movement->forceFill([
+                'unit_cost' => $isUnvalued ? null : bcdiv($newTotal, (string) $movement->quantity_in, 8),
+                'total_cost' => $isUnvalued ? null : $newTotal,
+            ])->save();
+        }
+    }
+
+    /** @return array<int, string> */
+    private function netAmountsByLine(PurchaseInvoice $record): array
+    {
+        $lineBaseTotal = $record->lines->sum(fn (PurchaseInvoiceLine $line): float => (float) $line->total_before_tax);
+        $headerDiscount = (float) $record->header_discount_amount;
+        $allocatedHeaderDiscount = 0.0;
+        $lastIndex = max(0, $record->lines->count() - 1);
+        $amounts = [];
+
+        foreach ($record->lines->values() as $index => $line) {
+            $lineBase = (float) $line->total_before_tax;
+            $share = $lineBaseTotal > 0 ? $headerDiscount * ($lineBase / $lineBaseTotal) : 0.0;
+
+            if ($index === $lastIndex) {
+                $share = $headerDiscount - $allocatedHeaderDiscount;
+            }
+
+            $allocatedHeaderDiscount += $share;
+            $amounts[$line->getKey()] = number_format(max(0, $lineBase - $share), 4, '.', '');
+        }
+
+        return $amounts;
     }
 
     private function purchaseDebitAccount(PurchaseInvoiceLine $line): Account

@@ -101,13 +101,29 @@
         @endif
     @endif
 @elseif($kind === 'production_request')
-    @if(! in_array($record->status, ['completed', 'cancelled'], true))
-    <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Production output completion') }}</h6></div><div class="card-body"><form class="js-sales-cycle-action" action="{{ route(request()->routeIs('admin.production.*') ? 'admin.production.work-orders.complete' : 'admin.sales.production-requests.complete', $record) }}" method="POST">@csrf
-        <div class="mb-3"><label class="form-label">{{ __('Finished-goods store') }}</label><select class="form-select" name="branch_store_uuid" required>@foreach($stores as $store)<option value="{{ $store->public_uuid }}" @selected($record->salesOrder?->branchStore?->is($store))>{{ $store->name }}</option>@endforeach</select></div>
-        @foreach($record->lines as $index => $line)<div class="row g-2 align-items-end mb-2"><div class="col-md-8"><label class="form-label small">{{ $line->product?->name }} · {{ $line->quantity }} {{ $line->unit?->name }}</label><div class="small text-600">{{ collect($line->specifications ?? [])->filter()->map(fn($value, $key) => str($key)->replace('_', ' ')->title().': '.$value)->join(' · ') }}</div><input type="hidden" name="lines[{{ $index }}][production_order_line_public_id]" value="{{ $line->public_id }}"></div><div class="col-md-4"><input class="form-control form-control-sm text-end" name="lines[{{ $index }}][quantity]" inputmode="decimal" required></div></div>@endforeach
-        <button class="btn btn-success btn-sm" type="submit">{{ __('Post Production Receipt') }}</button>
-    </form></div></div>
-    @endif
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">{{ __('Canonical manufacturing execution') }}</h6>
+            @can('production.work_orders.view')
+                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.production.runs.index', ['production_order' => $record->doc_num]) }}">{{ __('Plan or review runs') }}</a>
+            @endcan
+        </div>
+        <div class="card-body">
+            <p class="text-700 mb-3">{{ __('Finished goods can only be received from a production run after material accountability, WIP costing, and a passed final quality inspection.') }}</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead><tr><th>{{ __('Run') }}</th><th>{{ __('Product') }}</th><th>{{ __('Status') }}</th><th class="text-end">{{ __('Planned') }}</th><th class="text-end">{{ __('Received') }}</th></tr></thead>
+                    <tbody>
+                        @forelse($record->runs as $run)
+                            <tr><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->doc_num }}</a></td><td>{{ $run->product?->name }}</td><td>{{ $run->status }}</td><td class="text-end">{{ $run->planned_base_quantity }}</td><td class="text-end">{{ $run->received_base_quantity }}</td></tr>
+                        @empty
+                            <tr><td colspan="5" class="text-center text-600">{{ __('No production runs have been planned yet.') }}</td></tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 @elseif(in_array($kind, ['invoice', 'credit_note'], true))
     <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Invoice actions') }}</h6></div><div class="card-body"><div class="d-flex flex-wrap gap-2 mb-3">
         @if($kind === 'invoice' && $record->isEditable()) @can('customer_invoices.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.sales-invoices.edit', $record) }}">{{ __('Edit Correction') }}</a>@endcan @endif

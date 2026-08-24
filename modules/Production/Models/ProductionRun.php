@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Inventory\Models\InventoryDocument;
 
 class ProductionRun extends Model
 {
@@ -132,5 +133,10 @@ class ProductionRun extends Model
     public function inspections(): HasMany
     {
         return $this->hasMany(ProductionQualityInspection::class, 'production_run_id')->orderBy('sampled_at');
+    }
+
+    public function inventoryDocuments(): HasMany
+    {
+        return $this->hasMany(InventoryDocument::class, 'production_run_id')->orderBy('document_date')->orderBy('id');
     }
 }

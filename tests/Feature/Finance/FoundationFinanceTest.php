@@ -2244,10 +2244,13 @@ test('OpeningBalance approval posts one protected journal entry and blocks direc
         ->and($openingBalance->journalEntry)->not->toBeNull()
         ->and($openingBalance->journalEntry->company_id)->toBe($company->id)
         ->and($openingBalance->journalEntry->financial_period_id)->toBe($period->id)
+        ->and($openingBalance->journalEntry->branch_id)->toBe($branch->id)
         ->and($openingBalance->journalEntry->source_type)->toBe('opening_balance')
         ->and($openingBalance->journalEntry->is_system_generated)->toBeTrue()
         ->and($openingBalance->journalEntry->is_posted)->toBeTrue()
-        ->and($openingBalance->journalEntry->lines)->toHaveCount(2);
+        ->and($openingBalance->journalEntry->lines)->toHaveCount(2)
+        ->and($openingBalance->journalEntry->lines->every(fn ($line): bool => (int) $line->branch_id === (int) $branch->id))->toBeTrue()
+        ->and($openingBalance->lines()->where('branch_id', $branch->id)->count())->toBe(2);
 
     expect(JournalEntry::query()->where('source_type', 'opening_balance')->where('source_id', $openingBalance->id)->count())->toBe(1);
 

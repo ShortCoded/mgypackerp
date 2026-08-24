@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -16,10 +17,12 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\Services\FinanceDocumentNumberSettingsService;
 use Modules\Inventory\DataTables\OpeningStocksDataTable;
@@ -38,6 +41,8 @@ class OpeningStockController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingContextService $operatingContext,
         private readonly NumericFormatService $numbers,
+        private readonly CompanyPrintIdentityService $printIdentity,
+        private readonly ReportPdfService $pdf,
     ) {}
 
     public function index(Request $request, FinanceDocumentNumberSettingsService $settings): View
@@ -67,6 +72,19 @@ class OpeningStockController extends Controller
         abort_if($record->trashed() && ! $request->user()?->can('inventory.opening_stocks.view_trashed'), 404);
 
         return $this->form($request, 'view', $record);
+    }
+
+    public function print(Request $request, string $openingStock): Response
+    {
+        $record = $this->findInCurrentContext($request, $openingStock, true)->load([
+            'company', 'branch', 'branchHall', 'branchStore', 'lines.product', 'lines.warehouseLocation', 'approvedBy',
+        ]);
+
+        return $this->pdf->stream('reports.inventory.opening-stock', [
+            'title' => __('inventory.opening_stocks.title').' — '.$record->doc_num,
+            'record' => $record,
+            'companyPrintIdentity' => $this->printIdentity->forCompany($record->company),
+        ], str('opening-stock-'.$record->doc_num)->slug().'.pdf');
     }
 
     public function edit(Request $request, string $openingStock): View
@@ -331,13 +349,15 @@ class OpeningStockController extends Controller
                     'imageUrl' => $snapshot['image_url'] ?? ($product instanceof Product ? app(ProductImageResolver::class)->url($product) : null),
                     'unit' => $unitLabel,
                     'quantity' => $this->numbers->format($line->quantity),
+                    'stock_status' => $line->stock_status,
+                    'batch_lot' => $line->batch_lot,
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
         }
 
         if ($lines === [] && $mode !== 'view') {
-            return [['public_id' => null, 'product_doc_num' => null, 'product_label' => null, 'unit' => null, 'quantity' => null, 'notes' => null]];
+            return [['public_id' => null, 'product_doc_num' => null, 'product_label' => null, 'unit' => null, 'quantity' => null, 'stock_status' => 'available', 'batch_lot' => null, 'notes' => null]];
         }
 
         return array_values($lines);

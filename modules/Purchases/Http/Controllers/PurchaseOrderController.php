@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\BreadcrumbService;
@@ -15,6 +16,7 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Purchases\DataTables\PurchaseOrdersDataTable;
 use Modules\Purchases\Http\Requests\PurchaseOrders\BulkDeletePurchaseOrdersRequest;
 use Modules\Purchases\Http\Requests\PurchaseOrders\CancelPurchaseOrderRequest;
@@ -197,15 +199,19 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    public function print(PurchaseOrder $purchaseOrder, CompanyPrintIdentityService $printIdentities): View
+    public function print(PurchaseOrder $purchaseOrder, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $this->abortUnlessInCurrentContext($purchaseOrder);
         $purchaseOrder->loadMissing($this->service->defaultRelations());
+        $identity = $printIdentities->forCompany($purchaseOrder->company);
 
-        return view('modules.purchases.purchase-orders.print', [
+        return $pdf->stream('modules.purchases.purchase-orders.print', [
+            'title' => __('purchase_orders.print_title', ['doc' => $purchaseOrder->doc_num]),
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
             'record' => $purchaseOrder,
-            'companyPrintIdentity' => $printIdentities->forCompany($purchaseOrder->company),
-        ]);
+        ], str('purchase-order-'.$purchaseOrder->doc_num)->slug().'.pdf');
     }
 
     public function updateDocumentNumberSettings(UpdatePurchaseOrderDocumentNumberSettingsRequest $request, DocumentNumberSettingsService $settings): JsonResponse

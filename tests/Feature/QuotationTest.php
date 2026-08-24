@@ -21,6 +21,38 @@ use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\SalesOrder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\Process\Process;
+
+function quotationPdfText(string $content): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'quotation-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdftotext', '-layout', $path, '-']);
+        $process->mustRun();
+
+        return $process->getOutput();
+    } finally {
+        @unlink($path);
+    }
+}
+
+function quotationPdfPageCount(string $content): int
+{
+    $path = tempnam(sys_get_temp_dir(), 'quotation-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdfinfo', $path]);
+        $process->mustRun();
+        preg_match('/^Pages:\s+(\d+)$/m', $process->getOutput(), $matches);
+
+        return (int) ($matches[1] ?? 0);
+    } finally {
+        @unlink($path);
+    }
+}
 
 function quotationActor(array $permissions): User
 {
@@ -442,11 +474,11 @@ test('accepted quotation converts once into a fully linked sales order without r
     $this->actingAs($actor)->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
     $this->actingAs($actor)->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
 
-    $this->actingAs($actor)
-        ->get(route('admin.sales.quotations.print', $quotation))
-        ->assertOk()
-        ->assertSee('Canonical quoted line')
-        ->assertSee('Export carton');
+    $quotationPdf = $this->actingAs($actor)->get(route('admin.sales.quotations.print', $quotation));
+    $quotationPdf->assertOk()->assertHeader('content-type', 'application/pdf');
+    expect($quotationPdf->headers->get('content-disposition'))->toStartWith('inline; filename=')
+        ->and($quotationPdf->getContent())->toStartWith('%PDF-')
+        ->and(quotationPdfText($quotationPdf->getContent()))->toContain('Canonical quoted line')->toContain('Export carton');
 
     $response = $this->actingAs($actor)
         ->postJson(route('admin.sales.quotations.convert', $quotation))
@@ -489,6 +521,45 @@ test('accepted quotation converts once into a fully linked sales order without r
 
     expect(SalesOrder::query()->count())->toBe(1)
         ->and($response->json('data.url'))->toContain($order->doc_num);
+});
+
+test('25-line quotation remains complete across English and Arabic mPDF pages', function (): void {
+    $lines = collect(range(1, 25))->map(fn (int $lineNumber): array => [
+        'product_doc_num' => 'Product-00901',
+        'description' => sprintf('QUOTE-STRESS-%02d English multi-page quotation description with Arabic content وصف عربي متعدد الصفحات لاختبار اكتمال عرض السعر', $lineNumber),
+        'unit_doc_num' => 'Unit-00501',
+        'quantity' => '1',
+        'unit_price' => '10',
+        'discount_type' => null,
+        'discount_value' => '0',
+        'tax_rate' => '14',
+        'requested_date' => now()->addMonth()->toDateString(),
+        'specifications' => ['packaging' => 'Stress carton', 'customer_specification' => 'Preserve every row'],
+        'notes' => 'Multi-page line',
+        'warehouse_notes' => 'No clipping',
+        'production_notes' => 'Keep row together',
+    ])->all();
+    ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp(['quotations.print'], ['lines' => $lines]);
+
+    foreach (['en', 'ar'] as $locale) {
+        $response = $this->actingAs($actor)
+            ->withSession(['locale' => $locale])
+            ->get(route('admin.sales.quotations.print', $quotation));
+        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+        expect($response->headers->get('content-disposition'))->toStartWith('inline; filename=')
+            ->and($response->getContent())->toStartWith('%PDF-')
+            ->and(quotationPdfPageCount($response->getContent()))->toBeGreaterThan(1);
+
+        $text = quotationPdfText($response->getContent());
+        foreach (range(1, 25) as $lineNumber) {
+            expect($text)->toContain(sprintf('QUOTE-STRESS-%02d', $lineNumber));
+        }
+        $linePages = collect(explode("\f", $text))->filter(fn (string $page): bool => str_contains($page, 'QUOTE-STRESS'));
+        expect($linePages->count())->toBeGreaterThan(1)
+            ->and($linePages->every(fn (string $page): bool => str_contains($page, '#')))->toBeTrue()
+            ->and(preg_match_all('/\d+\/\d+/', $text))->toBeGreaterThan(1)
+            ->and($text)->toContain('285');
+    }
 });
 
 test('quotation rejects forged internal inventory products server side', function (): void {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
@@ -14,6 +15,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Inventory\Models\InventoryDocument;
@@ -23,7 +25,6 @@ use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Http\Requests\AmendCustomerInvoiceRequest;
-use Modules\Sales\Http\Requests\CompleteProductionRequest;
 use Modules\Sales\Http\Requests\CreateDeliveryRequest;
 use Modules\Sales\Http\Requests\CreateProductionDemandRequest;
 use Modules\Sales\Http\Requests\InspectSalesReturnRequest;
@@ -53,7 +54,11 @@ use Modules\Sales\Services\SalesReturnService;
 
 class SalesCycleController extends Controller
 {
-    public function __construct(private readonly OperatingContextService $context, private readonly CompanyPrintIdentityService $printIdentity) {}
+    public function __construct(
+        private readonly OperatingContextService $context,
+        private readonly CompanyPrintIdentityService $printIdentity,
+        private readonly ReportPdfService $pdf,
+    ) {}
 
     public function orders(Request $request): View
     {
@@ -186,7 +191,7 @@ class SalesCycleController extends Controller
 
     public function showProduction(ProductionOrder $productionOrder): View
     {
-        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit']);
+        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit', 'runs.product']);
 
         return view('modules.sales.cycle.show', [
             'kind' => 'production_request',
@@ -403,62 +408,74 @@ class SalesCycleController extends Controller
         return response()->json(['data' => $service->close($salesReturn)]);
     }
 
-    public function completeProduction(CompleteProductionRequest $request, ProductionOrder $productionOrder, SalesProductionDemandService $service): JsonResponse
-    {
-        $store = BranchStore::query()
-            ->where('branch_id', $productionOrder->branch_id)
-            ->where('public_uuid', $request->validated('branch_store_uuid'))
-            ->firstOrFail();
-        $lines = collect($request->validated('lines'))->map(fn (array $row): array => [
-            'production_order_line_id' => $productionOrder->lines()->where('public_id', $row['production_order_line_public_id'])->firstOrFail()->getKey(),
-            'quantity' => $row['quantity'],
-        ])->all();
-        $document = $service->receiveCompletion($productionOrder, $store->getKey(), $lines);
-
-        return response()->json(['data' => [
-            'doc_num' => $document->doc_num,
-            'url' => route('admin.sales.production-requests.show', $productionOrder),
-        ]], 201);
-    }
-
-    public function printOrder(SalesOrder $salesOrder): View
+    public function printOrder(SalesOrder $salesOrder): Response
     {
         return $this->print('sales_order', $salesOrder->load(['company', 'customer', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
     }
 
-    public function printInvoice(CustomerInvoice $customerInvoice): View
+    public function printInvoice(CustomerInvoice $customerInvoice): Response
     {
         return $this->print($customerInvoice->document_type, $customerInvoice->load(['company', 'customer', 'order', 'delivery', 'deliveries', 'originalInvoice', 'salesReturn', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
     }
 
-    public function printReceipt(CustomerReceipt $customerReceipt): View
+    public function printReceipt(CustomerReceipt $customerReceipt): Response
     {
-        return $this->print('customer_receipt', $customerReceipt->load(['company', 'customer', 'currency', 'cashbox', 'bankAccount', 'cashVoucher', 'cheque', 'order', 'allocations.invoice', 'allocations.invoiceSchedule']), true);
+        $receipt = $customerReceipt->load([
+            'company', 'customer', 'currency', 'cashbox', 'bankAccount',
+            'cashVoucher.company', 'cashVoucher.cashbox.account', 'cashVoucher.currency', 'cashVoucher.lines.account',
+            'cheque.company', 'cheque.bankAccount.bank', 'cheque.bankAccount.account', 'cheque.currency', 'cheque.lines.account',
+            'order', 'allocations.invoice', 'allocations.invoiceSchedule',
+        ]);
+        $identity = $receipt->print_identity_snapshot ?: $this->printIdentity->forCompany($receipt->company);
+
+        if ($receipt->cashVoucher) {
+            return $this->pdf->stream('modules.finance.cash-vouchers.print', [
+                'title' => __('cash_receipt_vouchers.print_title', ['doc' => $receipt->cashVoucher->doc_num]),
+                'record' => $receipt->cashVoucher,
+                'routePrefix' => 'admin.finance.cash-receipt-vouchers',
+                'translationKey' => 'cash_receipt_vouchers',
+                'companyName' => $identity['legal_name'] ?: $identity['name'],
+                'companyLogoPath' => $identity['logo_source'],
+                'companyPrintIdentity' => $identity,
+            ], str('cash-customer-receipt-'.$receipt->doc_num)->slug().'.pdf', 'P');
+        }
+
+        if ($receipt->cheque) {
+            return $this->pdf->stream('modules.finance.cheques.print', [
+                'title' => __('Received Cheque').' — '.$receipt->cheque->doc_num,
+                'record' => $receipt->cheque,
+                'companyName' => $identity['legal_name'] ?: $identity['name'],
+                'companyLogoPath' => $identity['logo_source'],
+                'companyPrintIdentity' => $identity,
+            ], str('cheque-customer-receipt-'.$receipt->doc_num)->slug().'.pdf', 'P');
+        }
+
+        return $this->print('customer_receipt', $receipt, true);
     }
 
-    public function printReturn(SalesReturn $salesReturn): View
+    public function printReturn(SalesReturn $salesReturn): Response
     {
         return $this->print('sales_return', $salesReturn->load(['company', 'customer', 'invoice', 'delivery', 'returnInventoryDocument', 'creditNote', 'inspectedBy', 'lines.product', 'lines.unit']), true);
     }
 
-    public function printDelivery(InventoryDocument $inventoryDocument): View
+    public function printDelivery(InventoryDocument $inventoryDocument): Response
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
         return $this->print('sales_delivery', $inventoryDocument->load(['company', 'customer', 'salesOrder', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']), false);
     }
 
-    public function printProduction(ProductionOrder $productionOrder): View
+    public function printProduction(ProductionOrder $productionOrder): Response
     {
         return $this->print('production_request', $productionOrder->load(['company', 'salesOrder', 'lines.product', 'lines.unit']), false);
     }
 
-    public function printPaymentSchedule(CustomerInvoice $customerInvoice): View
+    public function printPaymentSchedule(CustomerInvoice $customerInvoice): Response
     {
         return $this->print('payment_schedule', $customerInvoice->load(['company', 'customer', 'order', 'paymentSchedules']), true);
     }
 
-    public function printQualityDisposition(SalesReturn $salesReturn): View
+    public function printQualityDisposition(SalesReturn $salesReturn): Response
     {
         return $this->print('quality_disposition', $salesReturn->load(['company', 'customer', 'invoice', 'returnInventoryDocument', 'inspectedBy', 'lines.product', 'lines.unit']), false);
     }
@@ -568,7 +585,7 @@ class SalesCycleController extends Controller
         ]);
     }
 
-    private function print(string $kind, object $record, bool $financial): View
+    private function print(string $kind, object $record, bool $financial): Response
     {
         $pricePermission = match ($kind) {
             'sales_order' => 'sales_orders.view_prices',
@@ -577,12 +594,27 @@ class SalesCycleController extends Controller
             default => null,
         };
 
-        return view('modules.sales.cycle.print', [
-            'kind' => $kind, 'record' => $record,
+        $title = match ($kind) {
+            'sales_order' => __('Sales Order'),
+            'invoice' => __('Sales Invoice'),
+            'credit_note' => __('Sales Credit Note'),
+            'customer_receipt' => __('Customer Receipt'),
+            'sales_return' => __('Sales Return'),
+            'sales_delivery' => __('Delivery Note'),
+            'production_request' => __('Production Request'),
+            'payment_schedule' => __('Payment Schedule'),
+            'quality_disposition' => __('Return Quality Disposition'),
+            default => str($kind)->replace('_', ' ')->title()->toString(),
+        };
+
+        return $this->pdf->stream('reports.sales.document', [
+            'title' => $title.' — '.$record->doc_num,
+            'kind' => $kind,
+            'record' => $record,
             'showPrices' => $financial
                 && ($pricePermission === null || (bool) request()->user()?->can($pricePermission)),
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
-        ]);
+        ], str($kind.'-'.$record->doc_num)->slug().'.pdf');
     }
 
     private function created(object $record, string $route, array $extra = []): JsonResponse

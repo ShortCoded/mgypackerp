@@ -18,6 +18,8 @@ class InventoryTransaction extends Model
 
     public const StatusQuarantine = 'quarantine';
 
+    public const StatusRework = 'rework';
+
     public const StatusProductionStaging = 'production_staging';
 
     public const StatusWip = 'wip';

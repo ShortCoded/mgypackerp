@@ -13,7 +13,11 @@ use Modules\Inventory\Models\InventoryTransaction;
 
 class InventoryDocumentPostingService
 {
-    public function __construct(private readonly InventoryAvailabilityService $availability) {}
+    public function __construct(
+        private readonly InventoryAvailabilityService $availability,
+        private readonly InventoryValuationService $valuation,
+        private readonly InventoryAccountingPostingService $accounting,
+    ) {}
 
     public function post(InventoryDocument $document): InventoryDocument
     {
@@ -50,17 +54,27 @@ class InventoryDocumentPostingService
 
             foreach ($locked->lines as $line) {
                 Product::query()->lockForUpdate()->findOrFail($line->product_id);
+                $this->assertChronologicalPosting($locked, $line);
                 $quantity = (string) $line->quantity;
 
                 if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
                 }
 
-                $unitCost = (string) ($line->unit_cost ?: $this->availability->averageCost(
-                    (int) $locked->company_id,
-                    (int) $locked->branch_store_id,
-                    (int) $line->product_id,
-                ));
+                $unitCost = bccomp((string) $line->unit_cost, '0', 8) > 0
+                    ? (string) $line->unit_cost
+                    : $this->valuation->movingAverageUnitCost(
+                        (int) $locked->company_id,
+                        (int) $locked->branch_store_id,
+                        (int) $line->product_id,
+                        $profile['outbound'] ? $profile['source_status'] : null,
+                        $line->warehouse_location_id ?? $locked->warehouse_location_id,
+                        $line->batch_lot,
+                        $profile['source_status'] === InventoryTransaction::StatusProductionStaging
+                            ? $locked->production_run_id
+                            : null,
+                        $locked->document_date,
+                    );
 
                 if ($profile['outbound']) {
                     $this->assertPositionCanIssue($locked, $line, $quantity, $profile['source_status']);
@@ -99,6 +113,8 @@ class InventoryDocumentPostingService
                     'total_cost' => bcmul($quantity, $unitCost, 8),
                 ]);
             }
+
+            $this->accounting->post($locked->refresh()->load('lines.product'));
 
             $locked->update([
                 'status' => InventoryDocument::StatusPosted,
@@ -150,9 +166,11 @@ class InventoryDocumentPostingService
                         null,
                         $transaction->warehouse_location_id,
                         (string) $transaction->stock_status,
+                        $transaction->batch_lot,
+                        true,
                     );
 
-                    if (bccomp((string) $transaction->quantity_in, $position['on_hand'], 8) > 0) {
+                    if (bccomp((string) $transaction->quantity_in, $position['available'], 8) > 0) {
                         throw new DomainException('The document cannot be reversed because its received stock has already been consumed or moved.');
                     }
                 }
@@ -177,6 +195,8 @@ class InventoryDocumentPostingService
                     ],
                 );
             }
+
+            $this->accounting->reverse($locked);
 
             $locked->update([
                 'status' => InventoryDocument::StatusReversed,
@@ -247,10 +267,12 @@ class InventoryDocumentPostingService
             null,
             $line->warehouse_location_id ?? $document->warehouse_location_id,
             $stockStatus,
+            $line->batch_lot,
+            true,
         );
 
-        if (bccomp($quantity, $position['on_hand'], 8) > 0) {
-            throw new DomainException('The inventory movement exceeds stock on hand in the selected store, location, and status.');
+        if (bccomp($quantity, $position['available'], 8) > 0) {
+            throw new DomainException('The inventory movement exceeds unreserved stock in the selected store, location, batch, and status.');
         }
     }
 
@@ -298,5 +320,21 @@ class InventoryDocumentPostingService
                 'created_by' => auth()->id(),
             ],
         );
+    }
+
+    private function assertChronologicalPosting(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+    ): void {
+        $hasLaterMovement = InventoryTransaction::query()
+            ->where('company_id', $document->company_id)
+            ->where('branch_store_id', $document->branch_store_id)
+            ->where('product_id', $line->product_id)
+            ->whereDate('transaction_date', '>', $document->document_date)
+            ->exists();
+
+        if ($hasLaterMovement) {
+            throw new DomainException('Backdated inventory posting is blocked because later valued movements already exist for this product and store.');
+        }
     }
 }

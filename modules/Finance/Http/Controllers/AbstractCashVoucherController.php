@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -14,6 +15,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\DataTables\CashVouchersDataTable;
 use Modules\Finance\Http\Requests\CashVouchers\BulkDeleteCashVouchersRequest;
@@ -185,17 +187,21 @@ abstract class AbstractCashVoucherController extends Controller
         ]);
     }
 
-    public function print(Request $request, string $cashVoucher, CompanyPrintIdentityService $printIdentities): View
+    public function print(Request $request, string $cashVoucher, CompanyPrintIdentityService $printIdentities, ReportPdfService $pdf): Response
     {
         $record = $this->findInCurrentCompany($request, $cashVoucher, true);
         $record->loadMissing(['company', 'cashbox.account', 'currency', 'lines.account']);
+        $identity = $printIdentities->forCompany($record->company);
 
-        return view('modules.finance.cash-vouchers.print', [
+        return $pdf->stream('modules.finance.cash-vouchers.print', [
+            'title' => __($this->translationKey().'.print_title', ['doc' => $record->doc_num]),
             'record' => $record,
             'routePrefix' => $this->routePrefix(),
             'translationKey' => $this->translationKey(),
-            'companyPrintIdentity' => $printIdentities->forCompany($record->company),
-        ]);
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
+        ], str(($record->isReceipt() ? 'cash-receipt-' : 'cash-payment-').$record->doc_num)->slug().'.pdf', 'P');
     }
 
     public function updateDocumentNumberSettings(UpdateCashVoucherDocumentNumberSettingsRequest $request, FinanceDocumentNumberSettingsService $settings): JsonResponse

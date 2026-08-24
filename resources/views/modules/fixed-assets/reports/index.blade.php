@@ -28,7 +28,7 @@
         </div>
     </div>
     <div class="card">
-        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h6 class="mb-0">{{ $report['title'] }}</h6><div class="d-flex gap-2">@can('fixed_assets.print')<a target="_blank" class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.print', request()->query()) }}">{{ __('common.actions.print') }}</a><a target="_blank" class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.pdf', request()->query()) }}">PDF</a>@endcan @can('fixed_assets.export')<a class="btn btn-falcon-success btn-sm" href="{{ route('admin.fixed-assets.reports.excel', request()->query()) }}">Excel</a>@endcan</div></div>
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h6 class="mb-0">{{ $report['title'] }}</h6><div class="d-flex gap-2">@can('fixed_assets.print')<a target="_blank" class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.pdf', request()->query()) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('fixed_assets.pdf.print_pdf') }}</a>@endcan @can('fixed_assets.export')<a class="btn btn-falcon-success btn-sm" href="{{ route('admin.fixed-assets.reports.excel', request()->query()) }}">Excel</a>@endcan</div></div>
         <div class="card-body p-0"><x-fixed-asset-report-table :report="$report" /></div>
     </div>
 @endsection

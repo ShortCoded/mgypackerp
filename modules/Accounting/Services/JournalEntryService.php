@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Services;
 
 use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
@@ -29,12 +30,14 @@ class JournalEntryService
         return DB::transaction(function () use ($openingBalance): JournalEntry {
             $now = now();
             $userId = auth()->id();
+            $branchIds = $openingBalance->lines->pluck('branch_id')->filter()->unique()->values();
 
             $journalEntry = JournalEntry::query()->create([
                 ...$this->documents->next('journal_entries', JournalEntry::class),
                 'entry_date' => $openingBalance->document_date,
                 'company_id' => $openingBalance->company_id,
                 'financial_period_id' => $openingBalance->financial_period_id,
+                'branch_id' => $branchIds->count() === 1 ? $branchIds->first() : null,
                 'currency_id' => $openingBalance->currency_id,
                 'exchange_rate' => $openingBalance->exchange_rate,
                 'description' => $openingBalance->description,
@@ -236,62 +239,81 @@ class JournalEntryService
             throw new DomainException('A system journal entry requires at least one line.');
         }
 
-        return DB::transaction(function () use ($header, $lines): JournalEntry {
-            $this->financialPeriods->resolveOpenForPostingDate(
-                (int) $header['company_id'],
-                $header['entry_date'],
-                expectedPeriodId: (int) $header['financial_period_id'],
-                lockForUpdate: true,
-            );
+        try {
+            return DB::transaction(function () use ($header, $lines): JournalEntry {
+                $this->financialPeriods->resolveOpenForPostingDate(
+                    (int) $header['company_id'],
+                    $header['entry_date'],
+                    expectedPeriodId: (int) $header['financial_period_id'],
+                    lockForUpdate: true,
+                );
+
+                $existing = JournalEntry::query()
+                    ->where('company_id', $header['company_id'])
+                    ->where('source_type', $header['source_type'])
+                    ->where('source_id', $header['source_id'])
+                    ->where('status', JournalEntry::StatusPosted)
+                    ->lockForUpdate()
+                    ->first();
+                if ($existing instanceof JournalEntry) {
+                    return $existing;
+                }
+
+                $debit = '0';
+                $credit = '0';
+                foreach ($lines as $line) {
+                    $debit = bcadd($debit, (string) $line['debit_amount'], 4);
+                    $credit = bcadd($credit, (string) $line['credit_amount'], 4);
+                }
+                if (bccomp($debit, $credit, 4) !== 0) {
+                    throw new DomainException('The system journal entry is not balanced.');
+                }
+
+                $now = now();
+                $userId = auth()->id();
+                $journalEntry = JournalEntry::query()->create([
+                    ...$this->documents->next('journal_entries', JournalEntry::class),
+                    ...$header,
+                    'exchange_rate' => $header['exchange_rate'] ?? 1,
+                    'status' => JournalEntry::StatusPosted,
+                    'is_system_generated' => true,
+                    'is_posted' => true,
+                    'posted_at' => $now,
+                    'posted_by' => $userId,
+                    'approved' => true,
+                    'approved_at' => $now,
+                    'approved_by' => $userId,
+                    'created_by' => $userId,
+                ]);
+
+                foreach ($lines as $index => $line) {
+                    $journalEntry->lines()->create([
+                        ...$line,
+                        'line_no' => $index + 1,
+                        'branch_id' => $line['branch_id'] ?? ($header['branch_id'] ?? null),
+                    ]);
+                }
+
+                return $journalEntry->refresh();
+            });
+        } catch (QueryException $exception) {
+            if (($exception->errorInfo[0] ?? null) !== '23505') {
+                throw $exception;
+            }
 
             $existing = JournalEntry::query()
                 ->where('company_id', $header['company_id'])
                 ->where('source_type', $header['source_type'])
                 ->where('source_id', $header['source_id'])
                 ->where('status', JournalEntry::StatusPosted)
-                ->lockForUpdate()
                 ->first();
-            if ($existing instanceof JournalEntry) {
-                return $existing;
+
+            if (! $existing instanceof JournalEntry) {
+                throw $exception;
             }
 
-            $debit = '0';
-            $credit = '0';
-            foreach ($lines as $line) {
-                $debit = bcadd($debit, (string) $line['debit_amount'], 4);
-                $credit = bcadd($credit, (string) $line['credit_amount'], 4);
-            }
-            if (bccomp($debit, $credit, 4) !== 0) {
-                throw new DomainException('The system journal entry is not balanced.');
-            }
-
-            $now = now();
-            $userId = auth()->id();
-            $journalEntry = JournalEntry::query()->create([
-                ...$this->documents->next('journal_entries', JournalEntry::class),
-                ...$header,
-                'exchange_rate' => $header['exchange_rate'] ?? 1,
-                'status' => JournalEntry::StatusPosted,
-                'is_system_generated' => true,
-                'is_posted' => true,
-                'posted_at' => $now,
-                'posted_by' => $userId,
-                'approved' => true,
-                'approved_at' => $now,
-                'approved_by' => $userId,
-                'created_by' => $userId,
-            ]);
-
-            foreach ($lines as $index => $line) {
-                $journalEntry->lines()->create([
-                    ...$line,
-                    'line_no' => $index + 1,
-                    'branch_id' => $line['branch_id'] ?? ($header['branch_id'] ?? null),
-                ]);
-            }
-
-            return $journalEntry->refresh();
-        });
+            return $existing;
+        }
     }
 
     /**
@@ -299,31 +321,34 @@ class JournalEntryService
      */
     public function createPostedReversalFromSource(JournalEntry $original, array $header): JournalEntry
     {
-        $original->loadMissing('lines');
+        return DB::transaction(function () use ($original, $header): JournalEntry {
+            $locked = JournalEntry::query()->with('lines')->lockForUpdate()->findOrFail($original->getKey());
 
-        if (! $original->is_posted || $original->status !== JournalEntry::StatusPosted) {
-            throw new DomainException('Only a posted journal entry can be reversed.');
-        }
+            if ($locked->reversed_entry_id !== null) {
+                return JournalEntry::query()->findOrFail($locked->reversed_entry_id);
+            }
 
-        $lines = $original->lines->map(fn ($line): array => [
-            'account_id' => (int) $line->account_id,
-            'debit_amount' => $line->credit_amount,
-            'credit_amount' => $line->debit_amount,
-            'description' => $header['description'],
-            'customer_id' => $line->customer_id,
-            'supplier_id' => $line->supplier_id,
-            'employee_id' => $line->employee_id,
-            'bank_account_id' => $line->bank_account_id,
-            'cost_center_id' => $line->cost_center_id,
-            'branch_id' => $line->branch_id,
-        ])->all();
+            if (! $locked->is_posted || $locked->status !== JournalEntry::StatusPosted) {
+                throw new DomainException('Only a posted journal entry can be reversed.');
+            }
 
-        $reversal = $this->createPostedFromSource($header, $lines);
+            $lines = $locked->lines->map(fn ($line): array => [
+                'account_id' => (int) $line->account_id,
+                'debit_amount' => $line->credit_amount,
+                'credit_amount' => $line->debit_amount,
+                'description' => $header['description'],
+                'customer_id' => $line->customer_id,
+                'supplier_id' => $line->supplier_id,
+                'employee_id' => $line->employee_id,
+                'bank_account_id' => $line->bank_account_id,
+                'cost_center_id' => $line->cost_center_id,
+                'branch_id' => $line->branch_id,
+            ])->all();
 
-        if ($original->reversed_entry_id === null) {
-            $original->forceFill(['reversed_entry_id' => $reversal->getKey()])->save();
-        }
+            $reversal = $this->createPostedFromSource($header, $lines);
+            $locked->forceFill(['reversed_entry_id' => $reversal->getKey()])->save();
 
-        return $reversal;
+            return $reversal;
+        });
     }
 }

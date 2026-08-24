@@ -10,8 +10,8 @@ use Modules\Core\Models\Company;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\FixedAssets\Exports\FixedAssetReportExport;
-use Modules\FixedAssets\Services\FixedAssetReportService;
 use Modules\FixedAssets\Services\FixedAssetPdfService;
+use Modules\FixedAssets\Services\FixedAssetReportService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -59,6 +59,6 @@ class FixedAssetReportController extends Controller
         return $pdf->stream('reports.fixed-assets', $company, [
             'title' => $report['title'],
             'report' => $report,
-        ], 'fixed-assets-'.$report['type'].'.pdf', 'L');
+        ], 'fixed-assets-'.str_replace('_', '-', $report['type']).'.pdf', 'L');
     }
 }

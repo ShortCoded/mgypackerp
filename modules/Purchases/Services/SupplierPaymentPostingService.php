@@ -82,6 +82,84 @@ class SupplierPaymentPostingService
         return $journalEntry;
     }
 
+    public function paymentPaperAccount(int $companyId): Account
+    {
+        $accountCode = (string) config('purchases.accounts.supplier_payment_papers');
+        $account = Account::query()
+            ->forCompany($companyId)
+            ->eligibleForDirectPosting()
+            ->where('account_code', $accountCode)
+            ->where('account_type', Account::TypeLiability)
+            ->first();
+
+        if (! $account instanceof Account) {
+            throw new DomainException(__('The Supplier Payment Papers account is not configured as an active postable liability account.'));
+        }
+
+        return $account;
+    }
+
+    public function clearIssuedCheque(
+        SupplierPaymentContext $payment,
+        Account $bankAccount,
+        int $bankAccountId,
+        Carbon|string|null $clearingDate = null,
+    ): JournalEntry {
+        $existing = JournalEntry::query()
+            ->where('source_type', 'supplier_cheque_clearing')
+            ->where('source_id', $payment->getKey())
+            ->lockForUpdate()
+            ->first();
+
+        if ($existing instanceof JournalEntry) {
+            return $existing;
+        }
+
+        if ($bankAccount->trashed()
+            || ! $bankAccount->is_postable
+            || $bankAccount->is_group
+            || $bankAccount->status !== 'active') {
+            throw new DomainException(__('The issuing Bank Account requires an active postable GL account.'));
+        }
+
+        $paymentPaperAccount = $this->paymentPaperAccount((int) $payment->company_id);
+        $entryDate = Carbon::parse($clearingDate ?? now())->toDateString();
+        $period = $this->financialPeriods->resolveOpenForPostingDate(
+            (int) $payment->company_id,
+            $entryDate,
+            lockForUpdate: true,
+        );
+
+        return $this->journalEntries->createPostedFromSource([
+            'entry_date' => $entryDate,
+            'company_id' => (int) $payment->company_id,
+            'financial_period_id' => (int) $period->getKey(),
+            'branch_id' => $payment->branch_id,
+            'currency_id' => $payment->currency_id,
+            'exchange_rate' => $payment->exchange_rate,
+            'description' => __('Supplier outgoing cheque clearing :document', ['document' => $payment->doc_num]),
+            'notes' => $payment->notes,
+            'source_type' => 'supplier_cheque_clearing',
+            'source_id' => $payment->getKey(),
+            'source_doc_num' => $payment->doc_num,
+        ], [[
+            'account_id' => (int) $paymentPaperAccount->getKey(),
+            'debit_amount' => $payment->amount,
+            'credit_amount' => '0.0000',
+            'description' => __('Supplier Payment Papers cleared'),
+            'supplier_id' => $payment->supplier_id,
+            'branch_id' => $payment->branch_id,
+        ], [
+            'account_id' => (int) $bankAccount->getKey(),
+            'debit_amount' => '0.0000',
+            'credit_amount' => $payment->amount,
+            'description' => __('Outgoing Supplier cheque cleared through Bank Account'),
+            'supplier_id' => $payment->supplier_id,
+            'bank_account_id' => $bankAccountId,
+            'branch_id' => $payment->branch_id,
+        ]]);
+    }
+
     public function reverse(SupplierPaymentContext $payment, string $reason, Carbon|string|null $reversalDate = null): ?JournalEntry
     {
         $payment->loadMissing('journalEntry');

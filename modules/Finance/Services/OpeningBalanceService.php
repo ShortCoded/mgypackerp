@@ -31,7 +31,7 @@ class OpeningBalanceService
                 'is_closed' => true,
                 'created_by' => auth()->id(),
             ]);
-            $this->syncLines($record, $data['lines'] ?? []);
+            $this->syncLines($record, $data['lines'] ?? [], $context['branch_id']);
             $this->audit->clearCreationUpdateAudit($record);
 
             return ['record' => $record->refresh()->load(['lines.account'])];
@@ -65,7 +65,7 @@ class OpeningBalanceService
             }
 
             $this->audit->saveUpdate($record, $values);
-            $this->syncLines($record->refresh(), $data['lines'] ?? []);
+            $this->syncLines($record->refresh(), $data['lines'] ?? [], $context['branch_id']);
 
             return [
                 'record' => $record->refresh()->load(['lines.account']),
@@ -119,7 +119,7 @@ class OpeningBalanceService
     }
 
     /**
-     * @param  array{company_id: int, financial_period_id: int}  $context
+     * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      * @return array{doc_number: int, doc_num: string}
      */
     private function document(array $data, array $context): array
@@ -130,7 +130,7 @@ class OpeningBalanceService
     }
 
     /**
-     * @param  array{company_id: int, financial_period_id: int}  $context
+     * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      * @return array<string, mixed>
      */
     private function values(array $data, array $context): array
@@ -171,7 +171,7 @@ class OpeningBalanceService
     /**
      * @param  list<array<string, mixed>>  $lines
      */
-    private function syncLines(OpeningBalance $record, array $lines): void
+    private function syncLines(OpeningBalance $record, array $lines, ?int $branchId): void
     {
         $record->lines()->delete();
 
@@ -194,7 +194,7 @@ class OpeningBalanceService
                 'employee_id' => $line['employee_id'] ?? null,
                 'bank_account_id' => $line['bank_account_id'] ?? null,
                 'cost_center_id' => $line['cost_center_id'] ?? null,
-                'branch_id' => $line['branch_id'] ?? null,
+                'branch_id' => $line['branch_id'] ?? $branchId,
             ]);
         }
     }
@@ -244,7 +244,7 @@ class OpeningBalanceService
     }
 
     /**
-     * @param  array{company_id: int, financial_period_id: int}  $context
+     * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      */
     private function assertInCurrentContext(OpeningBalance $record, array $context): void
     {
@@ -290,7 +290,7 @@ class OpeningBalanceService
     }
 
     /**
-     * @return array{company_id: int, financial_period_id: int}
+     * @return array{company_id: int, financial_period_id: int, branch_id: int|null}
      */
     private function currentContext(): array
     {
@@ -303,6 +303,7 @@ class OpeningBalanceService
         return [
             'company_id' => (int) $context['company_id'],
             'financial_period_id' => (int) $context['financial_period_id'],
+            'branch_id' => $context['branch_id'] ? (int) $context['branch_id'] : null,
         ];
     }
 

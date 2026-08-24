@@ -1,0 +1,47 @@
+<?php
+
+return [
+    'title' => 'Inventory & Manufacturing Accounting',
+    'help' => 'Central posting accounts for inventory valuation, production WIP, waste, and authorized variances.',
+    'historical' => 'historical saved mapping',
+    'valuation_methods' => [
+        'moving_average' => 'Perpetual moving weighted average (net quantity and net inventory value)',
+    ],
+    'fields' => [
+        'valuation_method' => 'Valuation method',
+        'raw_material_inventory_account_doc_num' => 'Raw Material Inventory Account',
+        'packaging_inventory_account_doc_num' => 'Manufacturing Supplies / Packaging Inventory Account',
+        'semi_finished_inventory_account_doc_num' => 'Semi-finished Inventory Account',
+        'finished_goods_inventory_account_doc_num' => 'Finished Goods Inventory Account',
+        'wip_account_doc_num' => 'Work in Process Account',
+        'production_waste_account_doc_num' => 'Production Waste / Loss Account',
+        'recoverable_scrap_inventory_account_doc_num' => 'Recoverable Scrap Inventory Account',
+        'warehouse_damage_loss_account_doc_num' => 'Warehouse Damage / Inventory Loss Account',
+        'inventory_adjustment_gain_account_doc_num' => 'Inventory Adjustment Gain Account',
+        'inventory_adjustment_loss_account_doc_num' => 'Inventory Adjustment Loss Account',
+        'production_variance_account_doc_num' => 'Production Variance Account',
+        'production_cost_center_doc_num' => 'Production Cost Center',
+        'rawMaterialInventoryAccount' => 'Raw Material Inventory Account',
+        'packagingInventoryAccount' => 'Manufacturing Supplies / Packaging Inventory Account',
+        'semiFinishedInventoryAccount' => 'Semi-finished Inventory Account',
+        'finishedGoodsInventoryAccount' => 'Finished Goods Inventory Account',
+        'wipAccount' => 'Work in Process Account',
+        'productionWasteAccount' => 'Production Waste / Loss Account',
+        'recoverableScrapInventoryAccount' => 'Recoverable Scrap Inventory Account',
+        'warehouseDamageLossAccount' => 'Warehouse Damage / Inventory Loss Account',
+        'inventoryAdjustmentGainAccount' => 'Inventory Adjustment Gain Account',
+        'inventoryAdjustmentLossAccount' => 'Inventory Adjustment Loss Account',
+        'productionVarianceAccount' => 'Production Variance Account',
+    ],
+    'messages' => [
+        'saved' => 'Inventory accounting configuration saved.',
+    ],
+    'errors' => [
+        'configuration_required' => 'Inventory accounting cannot be posted because the company accounting mapping is not configured.',
+        'account_unavailable' => ':event cannot be posted because :account is not configured as an active, postable account.',
+        'non_inventory_product' => ':event cannot be posted for a service or unsupported product classification.',
+        'main_currency_required' => 'Inventory accounting cannot be posted because the company main currency is not configured.',
+        'zero_cost' => ':event cannot be posted because the canonical inventory value is zero.',
+        'cost_center_unavailable' => ':event cannot be posted because the saved production cost center is no longer an active posting cost center.',
+    ],
+];

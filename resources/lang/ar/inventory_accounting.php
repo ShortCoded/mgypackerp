@@ -1,0 +1,47 @@
+<?php
+
+return [
+    'title' => 'حسابات المخزون والتصنيع',
+    'help' => 'إعداد مركزي لحسابات تقييم المخزون والإنتاج تحت التشغيل والهالك وفروق الجرد المعتمدة.',
+    'historical' => 'ربط تاريخي محفوظ',
+    'valuation_methods' => [
+        'moving_average' => 'المتوسط المرجح المتحرك الدائم (صافي الكمية وصافي قيمة المخزون)',
+    ],
+    'fields' => [
+        'valuation_method' => 'طريقة التقييم',
+        'raw_material_inventory_account_doc_num' => 'حساب مخزون المواد الخام',
+        'packaging_inventory_account_doc_num' => 'حساب مخزون مستلزمات التصنيع والتعبئة',
+        'semi_finished_inventory_account_doc_num' => 'حساب مخزون نصف المصنع',
+        'finished_goods_inventory_account_doc_num' => 'حساب مخزون الإنتاج التام',
+        'wip_account_doc_num' => 'حساب الإنتاج تحت التشغيل',
+        'production_waste_account_doc_num' => 'حساب هالك وخسائر الإنتاج',
+        'recoverable_scrap_inventory_account_doc_num' => 'حساب مخزون الخردة القابلة للاسترداد',
+        'warehouse_damage_loss_account_doc_num' => 'حساب تلف وخسائر المخزون',
+        'inventory_adjustment_gain_account_doc_num' => 'حساب أرباح تسوية المخزون',
+        'inventory_adjustment_loss_account_doc_num' => 'حساب خسائر تسوية المخزون',
+        'production_variance_account_doc_num' => 'حساب انحراف الإنتاج',
+        'production_cost_center_doc_num' => 'مركز تكلفة الإنتاج',
+        'rawMaterialInventoryAccount' => 'حساب مخزون المواد الخام',
+        'packagingInventoryAccount' => 'حساب مخزون مستلزمات التصنيع والتعبئة',
+        'semiFinishedInventoryAccount' => 'حساب مخزون نصف المصنع',
+        'finishedGoodsInventoryAccount' => 'حساب مخزون الإنتاج التام',
+        'wipAccount' => 'حساب الإنتاج تحت التشغيل',
+        'productionWasteAccount' => 'حساب هالك وخسائر الإنتاج',
+        'recoverableScrapInventoryAccount' => 'حساب مخزون الخردة القابلة للاسترداد',
+        'warehouseDamageLossAccount' => 'حساب تلف وخسائر المخزون',
+        'inventoryAdjustmentGainAccount' => 'حساب أرباح تسوية المخزون',
+        'inventoryAdjustmentLossAccount' => 'حساب خسائر تسوية المخزون',
+        'productionVarianceAccount' => 'حساب انحراف الإنتاج',
+    ],
+    'messages' => [
+        'saved' => 'تم حفظ إعدادات حسابات المخزون.',
+    ],
+    'errors' => [
+        'configuration_required' => 'لا يمكن الترحيل المحاسبي للمخزون لأن ربط حسابات الشركة غير مكتمل.',
+        'account_unavailable' => 'لا يمكن ترحيل :event لأن :account غير محدد كحساب نشط قابل للترحيل.',
+        'non_inventory_product' => 'لا يمكن ترحيل :event لصنف خدمي أو تصنيف صنف غير مدعوم.',
+        'main_currency_required' => 'لا يمكن ترحيل حسابات المخزون لأن العملة الرئيسية للشركة غير محددة.',
+        'zero_cost' => 'لا يمكن ترحيل :event لأن قيمة المخزون وفق طريقة التقييم المعتمدة تساوي صفراً.',
+        'cost_center_unavailable' => 'لا يمكن ترحيل :event لأن مركز تكلفة الإنتاج المحفوظ لم يعد مركزاً نشطاً صالحاً للترحيل.',
+    ],
+];

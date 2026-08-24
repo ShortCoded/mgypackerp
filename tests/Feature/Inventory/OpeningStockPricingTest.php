@@ -8,6 +8,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
@@ -15,11 +16,13 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
 use Modules\Inventory\Models\OpeningStockPricing;
 use Modules\Inventory\Models\OpeningStockPricingLine;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryOpeningStockPostingService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -490,6 +493,43 @@ test('opening stock pricing preserves accepted exchange rate and unit price prec
 
     expect($capturedExchangeRate)->toBe('999999999999.999999')
         ->and($capturedUnitPrice)->toBe('12345678901.2345');
+});
+
+test('browser pricing values the approved opening stock ledger in base currency without creating a journal', function (): void {
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $currency = openingStockPricingCurrency($context['company'], false);
+    $product = openingStockPricingProduct($context['company']);
+    $store = BranchStore::query()->create([
+        'branch_id' => $context['branch']->getKey(),
+        'name' => 'Opening Raw Materials',
+        'position' => 1,
+    ]);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 72);
+    $openingStock->forceFill([
+        'branch_store_id' => $store->getKey(),
+        'approved' => true,
+        'status' => OpeningStock::StatusApproved,
+    ])->save();
+
+    $this->actingAs($actor);
+    app(InventoryOpeningStockPostingService::class)->post($openingStock);
+
+    $movement = InventoryTransaction::query()->where('source_id', $openingStock->getKey())->firstOrFail();
+    $journalCount = JournalEntry::query()->count();
+
+    expect($movement->unit_cost)->toBeNull()
+        ->and($movement->total_cost)->toBeNull();
+
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $movement->refresh();
+
+    expect((string) $movement->unit_cost)->toBe('525.00000000')
+        ->and((string) $movement->total_cost)->toBe('1050.00000000')
+        ->and(JournalEntry::query()->count())->toBe($journalCount);
 });
 
 test('unpriced inventory receipt preserves maximum accepted quantity precision before persistence', function (): void {

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Storage;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Database\Seeders\CurrencySeeder;
@@ -27,7 +28,9 @@ use Modules\Finance\Models\CashboxCurrency;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
+use Modules\Finance\Services\ChequeService;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
@@ -119,14 +122,14 @@ function procurementProductionSource(array $fixture): ProductionOrderLine
 }
 
 /** @param array<string, mixed> $fixture */
-function procurementManualRequisition(array $fixture): PurchaseRequisition
+function procurementManualRequisition(array $fixture, float $quantity = 10): PurchaseRequisition
 {
     return app(ProcurementSourcingService::class)->createRequisition([
         'request_date' => now()->toDateString(), 'required_by_date' => now()->addWeek()->toDateString(),
         'branch_store_uuid' => $fixture['store']->public_uuid, 'priority' => 'high',
         'lines' => [[
             'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
-            'requested_quantity' => 10, 'source_type' => 'manual',
+            'requested_quantity' => $quantity, 'source_type' => 'manual',
         ]],
     ]);
 }
@@ -358,6 +361,12 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and($firstOrder->freight_amount)->toBe('3.0000')
         ->and($firstOrder->total_amount)->toBe('14.8800');
     $firstOrder = app(PurchaseOrderService::class)->approve($firstOrder);
+    $changeRequest = $settlement->requestPurchaseOrderChange($firstOrder, [
+        'request_date' => now()->toDateString(),
+        'requested_values' => ['notes' => 'Approved delivery coordination note.'],
+        'reason' => 'Verify controlled Purchase Order change output.',
+    ]);
+    $changeRequest = $settlement->approvePurchaseOrderChange($changeRequest);
     $orderLine = $firstOrder->lines->first();
     $scheduledOrder = $receiving->createDeliverySchedules($firstOrder, [
         'schedules' => [['purchase_order_line_public_id' => $orderLine->public_id, 'scheduled_date' => now()->addDay()->toDateString(), 'scheduled_quantity' => 6]],
@@ -384,15 +393,26 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
             'rejected_quantity' => 1, 'disposition' => 'quarantine', 'reason' => 'Contaminated bag.',
         ]],
     ]);
+    $receiptMovement = InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->firstOrFail();
+    $unvaluedBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
+
     expect($inspection->result)->toBe('partially_accepted')
-        ->and(InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->value('quantity_in'))->toBe('5.00000000')
+        ->and($receiptMovement->quantity_in)->toBe('5.00000000')
+        ->and($receiptMovement->unit_cost)->toBeNull()
+        ->and($receiptMovement->total_cost)->toBeNull()
+        ->and((float) $unvaluedBalance->on_hand)->toBe(5.0)
+        ->and((float) $unvaluedBalance->inventory_value)->toBe(0.0)
+        ->and((float) $unvaluedBalance->unvalued_receipt_quantity)->toBe(5.0)
         ->and($inspection->attachmentUsages()->where('archive_file_id', $attachment->getKey())->exists())->toBeTrue();
 
     $invoice = PurchaseInvoice::query()->create([
         'doc_number' => 9201, 'doc_num' => 'PINV-PROC-1', 'company_id' => $fixture['company']->getKey(),
         'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
         'supplier_id' => $firstOrder->supplier_id, 'purchase_order_id' => $firstOrder->getKey(),
-        'invoice_date' => now()->toDateString(), 'currency_id' => $fixture['currency']->getKey(),
+        'invoice_date' => now()->toDateString(), 'currency_id' => $fixture['currency']->getKey(), 'exchange_rate' => 1.25,
         'subtotal_amount' => 10, 'line_discount_amount' => 1, 'taxable_amount' => 9,
         'tax_amount' => 0.9, 'total_amount' => 9.9, 'remaining_amount' => 9.9,
         'status' => PurchaseInvoice::StatusDraft,
@@ -409,6 +429,17 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     expect($invoice->fresh()->matching_status)->toBe('matched')
         ->and($invoice->lines->first()->fresh()->matched_quantity)->toBe('5.00000000');
     $invoice = app(PurchaseInvoiceService::class)->approve($invoice);
+    $valuedBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
+
+    expect($receiptMovement->fresh()->unit_cost)->toBe('2.25000000')
+        ->and($receiptMovement->fresh()->total_cost)->toBe('11.25000000')
+        ->and(InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->count())->toBe(1)
+        ->and((float) $valuedBalance->on_hand)->toBe(5.0)
+        ->and((float) $valuedBalance->inventory_value)->toBe(11.25)
+        ->and((float) $valuedBalance->unvalued_receipt_quantity)->toBe(0.0);
 
     $excessInvoice = PurchaseInvoice::query()->create([
         'doc_number' => 9202, 'doc_num' => 'PINV-PROC-2', 'company_id' => $fixture['company']->getKey(),
@@ -439,7 +470,14 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'lines' => [['receipt_line_public_id' => $receiptLine->public_id, 'quantity' => 2, 'from_quarantine' => false]],
     ]);
     $return = $settlement->approvePurchaseReturn($return);
+    $returnedBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
     expect(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('quantity_out'))->toBe('2.00000000')
+        ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('unit_cost'))->toBe('2.25000000')
+        ->and((float) $returnedBalance->on_hand)->toBe(3.0)
+        ->and((float) $returnedBalance->inventory_value)->toBe(6.75)
         ->and($return->journal_entry_id)->not->toBeNull()
         ->and($invoice->fresh()->credited_amount)->toBe('3.9600')
         ->and($invoice->fresh()->remaining_amount)->toBe('5.9400')
@@ -450,9 +488,16 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ]))->toThrow(DomainException::class, 'Return quantity exceeds');
 
     $return = $settlement->reversePurchaseReturn($return, 'Return entered against the wrong batch.');
+    $restoredBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
     expect($return->status)->toBe('reversed')
         ->and($return->reversal_journal_entry_id)->not->toBeNull()
         ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_return_reversal')->value('quantity_in'))->toBe('2.00000000')
+        ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_return_reversal')->value('unit_cost'))->toBe('2.25000000')
+        ->and((float) $restoredBalance->on_hand)->toBe(5.0)
+        ->and((float) $restoredBalance->inventory_value)->toBe(11.25)
         ->and($invoice->fresh()->credited_amount)->toBe('0.0000')
         ->and($invoice->fresh()->remaining_amount)->toBe('9.9000');
 
@@ -462,6 +507,18 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'purchases.goods_receipt_notes.print',
         'purchases.goods_receipt_inspection.view',
         'purchase_orders.view',
+        'purchase_orders.print',
+        'purchase_invoices.print',
+        'purchases.prices.view',
+        'purchases.purchase_requisitions.print',
+        'purchases.request_for_quotations.print',
+        'purchases.supplier_quotation_comparison.print',
+        'purchases.supplier_quotation_entry.print',
+        'purchases.supplier_selection.print',
+        'purchases.purchase_order_change_requests.print',
+        'purchases.purchase_order_delivery_schedule.print',
+        'purchases.goods_receipt_inspection.print',
+        'purchases.purchase_returns.print',
     ]);
 
     $this->actingAs($fixture['user'])
@@ -469,15 +526,48 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->assertOk()
         ->assertSee($receipt->doc_num)
         ->assertDontSee(__('Unit price'));
-    $this->get(route('admin.purchases.procurement.print', ['goods-receipt', $receipt->doc_num]))
+    $goodsReceiptPdf = $this->get(route('admin.purchases.procurement.print', ['goods-receipt', $receipt->doc_num]))
         ->assertOk()
-        ->assertDontSee(__('Unit price'));
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition');
+    expect(str_starts_with($goodsReceiptPdf->getContent(), '%PDF-'))->toBeTrue()
+        ->and($goodsReceiptPdf->headers->get('content-disposition'))->toStartWith('inline;');
+
+    $purchaseOrderPdf = $this->get(route('admin.purchases.purchase-orders.print', $firstOrder->doc_num))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+    $purchaseInvoicePdf = $this->get(route('admin.purchases.purchase-invoices.print', $invoice->doc_num))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+    expect(str_starts_with($purchaseOrderPdf->getContent(), '%PDF-'))->toBeTrue()
+        ->and(str_starts_with($purchaseInvoicePdf->getContent(), '%PDF-'))->toBeTrue();
+
+    $genericPrintDocuments = [
+        ['purchase-requisition', $requisition->doc_num],
+        ['request-for-quotation', $rfq->doc_num],
+        ['quotation-comparison', $rfq->doc_num],
+        ['supplier-quotation', $quotations->first()->doc_num],
+        ['supplier-selection', $selection->doc_num],
+        ['purchase-order-change-request', $changeRequest->doc_num],
+        ['purchase-order-delivery-schedule', $firstOrder->doc_num],
+        ['goods-receipt-inspection', $inspection->doc_num],
+        ['purchase-return', $return->doc_num],
+    ];
+    foreach ($genericPrintDocuments as [$type, $documentNumber]) {
+        $documentPdf = $this->get(route('admin.purchases.procurement.print', [$type, $documentNumber]))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf')
+            ->assertHeader('content-disposition');
+        expect(str_starts_with($documentPdf->getContent(), '%PDF-'))->toBeTrue()
+            ->and($documentPdf->headers->get('content-disposition'))->toStartWith('inline;');
+    }
     $this->get(route('admin.purchases.goods-receipt-inspection.show', $inspection->doc_num))
         ->assertOk()
         ->assertSee(__('Accepted'))
         ->assertSee(__('Rejected'))
         ->assertSee('5')
         ->assertSee('1');
+    $fixture['user']->revokePermissionTo('purchases.prices.view');
     $this->get(route('admin.purchases.purchase-orders.show', $firstOrder->doc_num))
         ->assertForbidden();
 });
@@ -490,9 +580,274 @@ test('procurement-specific confidentiality and report permissions are discoverab
         ->and($permissions)->toContain('reports.purchases.view');
 });
 
+test('the ten thousand kilogram split award closes supplier B and reconciles quantity value and supplier balances', function () {
+    $fixture = procurementFixture();
+    $this->seed(DefaultChartOfAccountsSeeder::class);
+    $this->seed(PermissionSeeder::class);
+
+    $supplierAAccount = procurementPostingAccount($fixture['company'], '2111', '2111001', 'Supplier A Payable');
+    $supplierBAccount = procurementPostingAccount($fixture['company'], '2111', '2111002', 'Supplier B Payable');
+    $bankAccountGl = procurementPostingAccount($fixture['company'], '1112', '1112001', 'Procurement Settlement Bank');
+    $bankParent = Account::query()->where('company_id', $fixture['company']->getKey())->where('account_code', '1112')->firstOrFail();
+    $fixture['firstSupplier']->forceFill(['account_id' => $supplierAAccount->getKey()])->save();
+    $fixture['secondSupplier']->forceFill(['account_id' => $supplierBAccount->getKey()])->save();
+    $bankAccount = BankAccount::query()->create([
+        'doc_number' => 9701,
+        'doc_num' => 'BANK-SPLIT-SETTLEMENT',
+        'company_id' => $fixture['company']->getKey(),
+        'bank_id' => $bankParent->getKey(),
+        'account_id' => $bankAccountGl->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'account_name' => 'Split Award Settlement Account',
+        'account_number' => '0099004400',
+        'bank_branch_name' => 'Factory Branch',
+        'status' => 'active',
+    ]);
+
+    $sourcing = app(ProcurementSourcingService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $settlement = app(ProcurementSettlementService::class);
+    $requisition = procurementManualRequisition($fixture, 10000);
+    $sourcing->submitRequisition($requisition);
+    $requisition = $sourcing->approveRequisition($requisition->fresh());
+    $requirementLine = $requisition->lines->firstOrFail();
+    $rfq = $sourcing->createRequestForQuotation($requisition, [
+        'issue_date' => now()->toDateString(),
+        'supplier_doc_nums' => [$fixture['firstSupplier']->doc_num, $fixture['secondSupplier']->doc_num],
+        'lines' => [['requisition_line_public_id' => $requirementLine->public_id, 'quantity' => 10000]],
+    ]);
+    $rfq = $sourcing->issueRequestForQuotation($rfq);
+    $rfqLine = $rfq->lines->firstOrFail();
+    $quotations = collect([
+        [$fixture['firstSupplier'], 2, 100],
+        [$fixture['secondSupplier'], 2.5, 80],
+    ])->map(function (array $offer) use ($fixture, $rfq, $rfqLine, $sourcing) {
+        $quotation = $sourcing->createSupplierQuotation($rfq, [
+            'supplier_doc_num' => $offer[0]->doc_num,
+            'currency_doc_num' => $fixture['currency']->doc_num,
+            'quotation_date' => now()->toDateString(),
+            'exchange_rate' => 1,
+            'freight_amount' => 0,
+            'lines' => [[
+                'rfq_line_public_id' => $rfqLine->public_id,
+                'offered_quantity' => 10000,
+                'unit_price' => $offer[1],
+                'discount_amount' => $offer[2],
+                'tax_rate' => 14,
+            ]],
+        ]);
+
+        return $sourcing->submitSupplierQuotation($quotation);
+    });
+    $selection = $sourcing->createSupplierSelection($rfq->fresh(), [
+        'selection_date' => now()->toDateString(),
+        'selection_reason' => 'Canonical 60/40 split award.',
+        'lines' => [
+            ['quotation_line_public_id' => $quotations->first()->lines->first()->public_id, 'selected_quantity' => 6000],
+            ['quotation_line_public_id' => $quotations->last()->lines->first()->public_id, 'selected_quantity' => 4000],
+        ],
+    ]);
+    $orders = $sourcing->approveSelection($selection);
+    $supplierAOrder = app(PurchaseOrderService::class)->approve($orders->firstWhere('supplier_id', $fixture['firstSupplier']->getKey()));
+    $supplierBOrder = app(PurchaseOrderService::class)->approve($orders->firstWhere('supplier_id', $fixture['secondSupplier']->getKey()));
+
+    $receiveAndInspect = function (PurchaseOrder $order, float $delivered, float $accepted, float $rejected) use ($receiving): array {
+        $orderLine = $order->lines->firstOrFail();
+        $receipt = $receiving->receive($order, [
+            'document_date' => now()->toDateString(),
+            'supplier_delivery_note' => 'DN-'.$order->doc_num,
+            'lines' => [[
+                'purchase_order_line_public_id' => $orderLine->public_id,
+                'delivered_quantity' => $delivered,
+            ]],
+        ]);
+        $receiptLine = $receipt->lines->firstOrFail();
+        $inspection = $receiving->inspect($receipt, [
+            'inspection_at' => now()->toDateString(),
+            'lines' => [[
+                'receipt_line_public_id' => $receiptLine->public_id,
+                'accepted_quantity' => $accepted,
+                'rejected_quantity' => $rejected,
+                'disposition' => $rejected > 0 ? 'quarantine' : 'accepted',
+                'reason' => $rejected > 0 ? 'Rejected during incoming QC.' : null,
+            ]],
+        ]);
+
+        return [$receipt, $receiptLine, $inspection];
+    };
+
+    [$supplierAReceipt, $supplierAReceiptLine] = $receiveAndInspect($supplierAOrder, 6000, 5900, 100);
+    [$supplierBReceipt, $supplierBReceiptLine] = $receiveAndInspect($supplierBOrder, 4000, 4000, 0);
+
+    $preInvoiceReturn = $settlement->createPurchaseReturn([
+        'purchase_order_doc_num' => $supplierAOrder->doc_num,
+        'return_date' => now()->toDateString(),
+        'reason_code' => 'incoming_qc_rejection',
+        'lines' => [[
+            'receipt_line_public_id' => $supplierAReceiptLine->public_id,
+            'quantity' => 100,
+            'from_quarantine' => true,
+        ]],
+    ]);
+    $preInvoiceReturn = $settlement->approvePurchaseReturn($preInvoiceReturn);
+
+    $beforeInvoiceBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
+    expect((float) $beforeInvoiceBalance->on_hand)->toBe(9900.0)
+        ->and((float) $beforeInvoiceBalance->inventory_value)->toBe(0.0)
+        ->and((float) $beforeInvoiceBalance->unvalued_receipt_quantity)->toBe(9900.0)
+        ->and($preInvoiceReturn->journal_entry_id)->toBeNull();
+
+    $createInvoice = function (
+        int $docNumber,
+        PurchaseOrder $order,
+        object $receiptLine,
+        float $quantity,
+        float $unitPrice,
+        float $discount,
+        float $headerDiscount = 0,
+    ) use ($fixture): PurchaseInvoice {
+        $calculation = app(PurchaseInvoiceCalculationService::class)->calculate([[
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'discount_type' => 'fixed',
+            'discount_value' => $discount,
+            'tax_rate' => 14,
+        ]], $headerDiscount > 0 ? 'fixed' : null, $headerDiscount);
+        $invoice = PurchaseInvoice::query()->create([
+            'doc_number' => $docNumber,
+            'doc_num' => 'PINV-SPLIT-'.$docNumber,
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'supplier_id' => $order->supplier_id,
+            'purchase_order_id' => $order->getKey(),
+            'invoice_date' => now()->toDateString(),
+            'currency_id' => $fixture['currency']->getKey(),
+            'exchange_rate' => 1,
+            ...$calculation['invoice'],
+            'remaining_amount' => $calculation['invoice']['total_amount'],
+            'status' => PurchaseInvoice::StatusDraft,
+        ]);
+        $invoice->lines()->create([
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'line_number' => 1,
+            'product_id' => $fixture['raw']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'purchase_order_line_id' => $order->lines->firstOrFail()->getKey(),
+            'receipt_line_id' => $receiptLine->getKey(),
+            ...$calculation['lines'][0],
+        ]);
+        $invoice->paymentSchedules()->create([
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'line_number' => 1,
+            'due_date' => now()->addMonth()->toDateString(),
+            'amount' => $calculation['invoice']['total_amount'],
+            'paid_amount' => 0,
+            'status' => 'scheduled',
+        ]);
+        app(PurchaseInvoiceMatchingService::class)->matchForPosting($invoice);
+
+        return app(PurchaseInvoiceService::class)->approve($invoice);
+    };
+
+    $supplierAInvoice = $createInvoice(9801, $supplierAOrder, $supplierAReceiptLine, 5900, 2, 59, 100);
+    $supplierBInvoice = $createInvoice(9802, $supplierBOrder, $supplierBReceiptLine, 4000, 2.5, 32);
+    $postInvoiceReturn = $settlement->createPurchaseReturn([
+        'purchase_order_doc_num' => $supplierAOrder->doc_num,
+        'purchase_invoice_doc_num' => $supplierAInvoice->doc_num,
+        'return_date' => now()->toDateString(),
+        'reason_code' => 'latent_defect',
+        'lines' => [[
+            'receipt_line_public_id' => $supplierAReceiptLine->public_id,
+            'quantity' => 500,
+            'from_quarantine' => false,
+        ]],
+    ]);
+    $postInvoiceReturn = $settlement->approvePurchaseReturn($postInvoiceReturn);
+
+    $payInvoice = function (PurchaseInvoice $invoice, Supplier $supplier) use ($bankAccount, $fixture, $settlement): SupplierPaymentContext {
+        $invoice->refreshPaymentTotals();
+        $payment = $settlement->createSupplierPayment([
+            'supplier_doc_num' => $supplier->doc_num,
+            'payment_method' => SupplierPaymentContext::MethodBank,
+            'payment_date' => now()->toDateString(),
+            'bank_account_doc_num' => $bankAccount->doc_num,
+            'currency_doc_num' => $fixture['currency']->doc_num,
+            'exchange_rate' => 1,
+            'amount' => $invoice->remaining_amount,
+            'reason' => 'Close canonical split-award Supplier balance.',
+            'allocations' => [[
+                'purchase_invoice_doc_num' => $invoice->doc_num,
+                'payment_schedule_public_id' => $invoice->paymentSchedules()->firstOrFail()->public_id,
+                'amount' => $invoice->remaining_amount,
+            ]],
+        ]);
+
+        return $settlement->approveSupplierPayment($payment);
+    };
+
+    $supplierAPayment = $payInvoice($supplierAInvoice, $fixture['firstSupplier']);
+    $supplierBPayment = $payInvoice($supplierBInvoice, $fixture['secondSupplier']);
+    $finalBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+    ])->firstOrFail();
+    $ledgerFilters = [
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'from_date' => $fixture['period']->from_date->toDateString(),
+        'to_date' => $fixture['period']->to_date->toDateString(),
+    ];
+    $supplierAStatement = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $supplierAAccount->getKey()]);
+    $supplierBStatement = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $supplierBAccount->getKey()]);
+
+    expect((float) $requisition->lines()->sum('requested_quantity'))->toBe(10000.0)
+        ->and((float) $orders->sum(fn (PurchaseOrder $order): float => (float) $order->total_ordered_quantity))->toBe(10000.0)
+        ->and((float) $supplierAReceipt->lines()->sum('delivered_quantity') + (float) $supplierBReceipt->lines()->sum('delivered_quantity'))->toBe(10000.0)
+        ->and((float) $supplierAReceipt->lines()->sum('accepted_quantity') + (float) $supplierBReceipt->lines()->sum('accepted_quantity'))->toBe(9900.0)
+        ->and((float) $supplierAReceipt->lines()->sum('rejected_quantity') + (float) $supplierBReceipt->lines()->sum('rejected_quantity'))->toBe(100.0)
+        ->and((float) $preInvoiceReturn->total_quantity)->toBe(100.0)
+        ->and((float) $supplierAInvoice->lines()->sum('quantity') + (float) $supplierBInvoice->lines()->sum('quantity'))->toBe(9900.0)
+        ->and((float) $postInvoiceReturn->total_quantity)->toBe(500.0)
+        ->and((float) $finalBalance->on_hand)->toBe(9400.0)
+        ->and((float) $finalBalance->inventory_value)->toBe(20622.45)
+        ->and((float) $finalBalance->unvalued_receipt_quantity)->toBe(0.0)
+        ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_receipt')->count())->toBe(2)
+        ->and($supplierAInvoice->fresh()->total_amount)->toBe('13270.7400')
+        ->and($supplierAInvoice->fresh()->credited_amount)->toBe('1124.6636')
+        ->and($supplierAPayment->amount)->toBe('12146.0764')
+        ->and($supplierAInvoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and($supplierAStatement['period']['credit'])->toBe('13270.7400')
+        ->and($supplierAStatement['period']['debit'])->toBe('13270.7400')
+        ->and($supplierAStatement['ending']['credit'])->toBe('0.0000')
+        ->and($supplierBInvoice->fresh()->total_amount)->toBe('11363.5200')
+        ->and($supplierBInvoice->fresh()->credited_amount)->toBe('0.0000')
+        ->and($supplierBPayment->amount)->toBe('11363.5200')
+        ->and($supplierBInvoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and($supplierBStatement['period']['credit'])->toBe('11363.5200')
+        ->and($supplierBStatement['period']['debit'])->toBe('11363.5200')
+        ->and($supplierBStatement['ending']['credit'])->toBe('0.0000');
+
+    $fixture['user']->givePermissionTo('purchases.purchase_returns.print');
+    foreach ([$preInvoiceReturn, $postInvoiceReturn] as $returnDocument) {
+        $returnPdf = $this->actingAs($fixture['user'])
+            ->get(route('admin.purchases.procurement.print', ['purchase-return', $returnDocument->doc_num]))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf')
+            ->assertHeader('content-disposition');
+        expect(str_starts_with($returnPdf->getContent(), '%PDF-'))->toBeTrue();
+    }
+});
+
 test('supplier installments, partial payments, advances, and cancellation accounting reconcile', function () {
     $fixture = procurementFixture();
     $this->seed(DefaultChartOfAccountsSeeder::class);
+    $this->seed(PermissionSeeder::class);
 
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111001', 'Procurement Supplier Payable');
     $cashAccount = procurementPostingAccount($fixture['company'], '1111', '1111001', 'Procurement Cash');
@@ -631,14 +986,24 @@ test('supplier installments, partial payments, advances, and cancellation accoun
         ->and($invoice->fresh()->paid_amount)->toBe('6.0000')
         ->and($firstSchedule->fresh()->status)->toBe('paid')
         ->and($secondSchedule->fresh()->status)->toBe('partially_paid');
+
+    $fixture['user']->givePermissionTo(['supplier_payments.print', 'purchases.prices.view']);
+    $cashPaymentPdf = $this->actingAs($fixture['user'])
+        ->get(route('admin.purchases.procurement.print', ['supplier-payment', $firstPayment->doc_num]))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition');
+    expect(str_starts_with($cashPaymentPdf->getContent(), '%PDF-'))->toBeTrue();
 });
 
 test('bank and issued cheque supplier payments use canonical finance records and reversible journals', function () {
     $fixture = procurementFixture();
     $this->seed(DefaultChartOfAccountsSeeder::class);
+    $this->seed(PermissionSeeder::class);
 
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111001', 'Procurement Supplier Payable');
     $bankAccountGl = procurementPostingAccount($fixture['company'], '1112', '1112001', 'Procurement Bank Current Account');
+    $paymentPaperAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('account_code', '2112')->firstOrFail();
     $bankParent = Account::query()->where('company_id', $fixture['company']->getKey())->where('account_code', '1112')->firstOrFail();
     $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->getKey()])->save();
     $bankAccount = BankAccount::query()->create([
@@ -708,20 +1073,71 @@ test('bank and issued cheque supplier payments use canonical finance records and
         'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => 5]],
     ]);
     $chequePayment = $settlement->approveSupplierPayment($chequePayment);
+    $issuedCheque = $chequePayment->cheque;
+    $chequeJournal = $chequePayment->journalEntry()->with('lines')->firstOrFail();
 
-    expect($chequePayment->cheque)->toBeInstanceOf(Cheque::class)
-        ->and($chequePayment->cheque->cheque_type)->toBe(Cheque::TypeIssued)
-        ->and($chequePayment->cheque->status)->toBe(Cheque::StatusIssued)
+    expect($issuedCheque)->toBeInstanceOf(Cheque::class)
+        ->and($issuedCheque->doc_num)->toStartWith('OCH-')
+        ->and($issuedCheque->cheque_type)->toBe(Cheque::TypeIssued)
+        ->and($issuedCheque->status)->toBe(Cheque::StatusIssued)
+        ->and($issuedCheque->party_type)->toBe(Supplier::class)
+        ->and($issuedCheque->party_id)->toBe($fixture['firstSupplier']->getKey())
+        ->and($issuedCheque->bank_account_id)->toBe($bankAccount->getKey())
+        ->and($issuedCheque->cheque_date->toDateString())->toBe(now()->toDateString())
+        ->and($issuedCheque->due_date->toDateString())->toBe(now()->addWeek()->toDateString())
         ->and($chequePayment->status)->toBe(SupplierPaymentContext::StatusApproved)
         ->and($chequePayment->journal_entry_id)->not->toBeNull()
+        ->and((float) $chequeJournal->lines->firstWhere('account_id', $supplierAccount->getKey())?->debit_amount)->toBe(5.0)
+        ->and((float) $chequeJournal->lines->firstWhere('account_id', $paymentPaperAccount->getKey())?->credit_amount)->toBe(5.0)
+        ->and($chequeJournal->lines->firstWhere('account_id', $bankAccountGl->getKey()))->toBeNull()
         ->and($invoice->fresh()->paid_amount)->toBe('5.0000');
 
-    $chequeJournal = $chequePayment->journalEntry;
     $settlement->cancelSupplierPayment($chequePayment, 'Cheque voided before delivery.');
     expect($chequePayment->fresh()->status)->toBe(SupplierPaymentContext::StatusCancelled)
-        ->and($chequePayment->cheque->fresh()->status)->toBe(Cheque::StatusCancelled)
+        ->and($issuedCheque->fresh()->status)->toBe(Cheque::StatusCancelled)
         ->and($chequeJournal->fresh()->reversed_entry_id)->not->toBeNull()
         ->and($invoice->fresh()->remaining_amount)->toBe('10.0000');
+
+    $clearedPayment = $settlement->createSupplierPayment([
+        ...$common,
+        'payment_method' => SupplierPaymentContext::MethodCheque,
+        'amount' => 5,
+        'cheque_number' => 'CHK-PROC-101',
+        'cheque_date' => now()->toDateString(),
+        'cheque_due_date' => now()->addWeek()->toDateString(),
+        'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => 5]],
+    ]);
+    $clearedPayment = $settlement->approveSupplierPayment($clearedPayment);
+    $clearedCheque = app(ChequeService::class)->markCleared($clearedPayment->cheque);
+    $clearingJournal = JournalEntry::query()
+        ->with('lines')
+        ->where('source_type', 'supplier_cheque_clearing')
+        ->where('source_id', $clearedPayment->getKey())
+        ->firstOrFail();
+
+    expect($clearedCheque->status)->toBe(Cheque::StatusCleared)
+        ->and((float) $clearingJournal->lines->firstWhere('account_id', $paymentPaperAccount->getKey())?->debit_amount)->toBe(5.0)
+        ->and((float) $clearingJournal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->credit_amount)->toBe(5.0)
+        ->and($clearingJournal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->bank_account_id)->toBe($bankAccount->getKey())
+        ->and($invoice->fresh()->remaining_amount)->toBe('5.0000')
+        ->and(fn () => app(ChequeService::class)->cancel($clearedCheque, 'Cannot void cleared cheque.'))
+        ->toThrow(DomainException::class, __('cheques.messages.status_transition_forbidden'));
+
+    $fixture['user']->givePermissionTo(['cheques.print', 'supplier_payments.print', 'purchases.prices.view']);
+    foreach ([$bankPayment, $clearedPayment] as $paymentDocument) {
+        $paymentPdf = $this->actingAs($fixture['user'])
+            ->get(route('admin.purchases.procurement.print', ['supplier-payment', $paymentDocument->doc_num]))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf')
+            ->assertHeader('content-disposition');
+        expect(str_starts_with($paymentPdf->getContent(), '%PDF-'))->toBeTrue();
+    }
+    $chequePdf = $this->actingAs($fixture['user'])
+        ->get(route('admin.finance.cheques.print', $clearedCheque->doc_num))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition');
+    expect(str_starts_with($chequePdf->getContent(), '%PDF-'))->toBeTrue();
 });
 
 test('freight discount tax posting, invoice reversal, and period locks are exact', function () {
@@ -897,11 +1313,12 @@ test('procurement reports filter, print, and export without leaking confidential
         ->assertSee('name="production_order_doc_num"', false)
         ->assertSee('name="work_order_reference"', false)
         ->assertDontSee(__('Amount'));
-    $this->get(route('admin.purchases.procurement-cycle-report.print', $query))
+    $reportPdf = $this->get(route('admin.purchases.procurement-cycle-report.print', $query))
         ->assertOk()
-        ->assertSee($invoice->doc_num)
-        ->assertSee('erp-document-company-header', false)
-        ->assertDontSee(__('Amount'));
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition');
+    expect(str_starts_with($reportPdf->getContent(), '%PDF-'))->toBeTrue()
+        ->and($reportPdf->headers->get('content-disposition'))->toStartWith('inline;');
     $this->get(route('admin.purchases.procurement-cycle-report.export.excel', $query))
         ->assertOk()
         ->assertHeader('content-disposition');

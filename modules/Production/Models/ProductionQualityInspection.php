@@ -31,6 +31,11 @@ class ProductionQualityInspection extends Model
         return $this->belongsTo(ProductionRun::class, 'production_run_id');
     }
 
+    public function qualityType(): BelongsTo
+    {
+        return $this->belongsTo(QualityInspectionType::class, 'quality_inspection_type_id')->withTrashed();
+    }
+
     public function results(): HasMany
     {
         return $this->hasMany(ProductionQualityInspectionResult::class, 'quality_inspection_id')->orderBy('sequence');

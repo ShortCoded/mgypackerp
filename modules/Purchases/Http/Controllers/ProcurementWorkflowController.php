@@ -9,6 +9,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
@@ -20,6 +21,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
@@ -51,7 +53,6 @@ class ProcurementWorkflowController extends Controller
         private readonly ProcurementReceivingService $receiving,
         private readonly ProcurementSettlementService $settlement,
         private readonly OperatingContextService $operatingContext,
-        private readonly CompanyPrintIdentityService $printIdentities,
         private readonly ProcurementCycleReport $procurementReport,
     ) {}
 
@@ -577,33 +578,45 @@ class ProcurementWorkflowController extends Controller
         );
     }
 
-    public function printReport(Request $request): View
+    public function printReport(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $context = $this->context();
         $filters = $this->reportFilters($request);
         $rows = $this->procurementReport->rows($filters['report_type'], $filters, $context['company_id'], $context['financial_period_id']);
 
-        return view('modules.purchases.procurement.report-print', [
+        $title = __('Procurement Report').' — '.__('procurement.reports.types.'.$filters['report_type']);
+        $identity = $printIdentities->forCompany(Company::query()->findOrFail($context['company_id']));
+
+        return $pdf->stream('modules.purchases.procurement.report-print', [
+            'title' => $title,
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
             'rows' => $rows,
             'filters' => $filters,
             'reportType' => $filters['report_type'],
             'showPrices' => (bool) $request->user()?->can('purchases.prices.view'),
-            'companyPrintIdentity' => $this->printIdentities->forCompany(Company::query()->findOrFail($context['company_id'])),
-        ]);
+        ], 'procurement-'.$filters['report_type'].'.pdf');
     }
 
-    public function printDocument(Request $request, string $type, string $docNum): View
+    public function printDocument(Request $request, string $type, string $docNum, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         abort_unless((bool) $request->user()?->can($this->printPermissionForType($type)), 403);
         $record = $this->printRecord($type, $docNum);
         $pricesVisible = $this->pricesVisibleFor($type, $request);
 
-        return view('modules.purchases.procurement.print', [
+        $title = __('procurement.documents.types.'.$type).' — '.$record->doc_num;
+        $identity = $printIdentities->forCompany(Company::query()->findOrFail($record->company_id));
+
+        return $pdf->stream('modules.purchases.procurement.print', [
+            'title' => $title,
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
             'type' => $type,
             'record' => $record,
             'showPrices' => $pricesVisible,
-            'companyPrintIdentity' => $this->printIdentities->forCompany(Company::query()->findOrFail($record->company_id)),
-        ]);
+        ], str($type.'-'.$record->doc_num)->slug().'.pdf');
     }
 
     private function printRecord(string $type, string $docNum): object

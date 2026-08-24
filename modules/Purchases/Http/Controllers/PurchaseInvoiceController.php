@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Modules\Core\Services\BreadcrumbService;
@@ -15,6 +16,7 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
 use Modules\Purchases\Http\Requests\BulkDeletePurchaseInvoicesRequest;
@@ -209,14 +211,18 @@ class PurchaseInvoiceController extends Controller
         ]);
     }
 
-    public function print(PurchaseInvoice $purchaseInvoice, CompanyPrintIdentityService $printIdentities): View
+    public function print(PurchaseInvoice $purchaseInvoice, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $purchaseInvoice->loadMissing($this->service->defaultRelations());
+        $identity = $printIdentities->forCompany($purchaseInvoice->company);
 
-        return view('modules.purchases.purchase-invoices.print', [
+        return $pdf->stream('modules.purchases.purchase-invoices.print', [
+            'title' => __('purchase_invoices.print_title', ['doc' => $purchaseInvoice->doc_num]),
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
             'record' => $purchaseInvoice,
-            'companyPrintIdentity' => $printIdentities->forCompany($purchaseInvoice->company),
-        ]);
+        ], str('purchase-invoice-'.$purchaseInvoice->doc_num)->slug().'.pdf');
     }
 
     public function updateDocumentNumberSettings(UpdatePurchaseInvoiceDocumentNumberSettingsRequest $request, DocumentNumberSettingsService $settings): JsonResponse

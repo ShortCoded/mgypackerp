@@ -69,7 +69,6 @@ Route::middleware('auth')
             Route::get('/sales-deliveries/{inventoryDocument}', 'showDelivery')->middleware('can:sales_deliveries.view')->name('sales-deliveries.show');
             Route::get('/production-requests/{productionOrder}', 'showProduction')->middleware('can:sales_orders.production')->name('production-requests.show');
             Route::get('/production-requests/{productionOrder}/print', 'printProduction')->middleware('can:sales_orders.production')->name('production-requests.print');
-            Route::post('/production-requests/{productionOrder}/complete', 'completeProduction')->middleware('can:sales_orders.production')->name('production-requests.complete');
         });
 
         Route::get('/select2/customer-groups', function (Request $request, SalesSelect2Service $select2) {

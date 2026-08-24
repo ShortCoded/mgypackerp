@@ -39,6 +39,7 @@ return [
     'purchase_orders' => 'أوامر الشراء',
     'purchase_invoices' => 'فواتير المشتريات',
     'inventory' => 'المخزون',
+    'inventory_accounting' => 'حسابات المخزون والتصنيع',
     'production' => 'التصنيع والإنتاج',
     'planning_production' => 'التخطيط والإنتاج',
     'production_identifier_types' => 'أنواع المعرفات',

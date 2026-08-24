@@ -7,11 +7,14 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Http\Requests\StoreInventoryOperationRequest;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\WarehouseLocation;
@@ -20,7 +23,11 @@ use Modules\Inventory\Services\InventoryMovementService;
 
 class InventoryDocumentController extends Controller
 {
-    public function __construct(private readonly OperatingContextService $context) {}
+    public function __construct(
+        private readonly OperatingContextService $context,
+        private readonly CompanyPrintIdentityService $printIdentity,
+        private readonly ReportPdfService $pdf,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -30,6 +37,7 @@ class InventoryDocumentController extends Controller
             'records' => InventoryDocument::query()
                 ->where('company_id', $context['company_id'])
                 ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
                 ->with(['branchStore', 'destinationBranchStore', 'productionRun'])
                 ->latest('document_date')
                 ->latest('id')
@@ -41,11 +49,21 @@ class InventoryDocumentController extends Controller
     public function create(Request $request): View
     {
         $context = $this->requiredContext($request);
+        $allowedDocumentTypes = collect([
+            InventoryDocument::TypeTransfer => 'inventory.documents.transfer',
+            InventoryDocument::TypeAdjustmentIn => 'inventory.documents.adjust',
+            InventoryDocument::TypeAdjustmentOut => 'inventory.documents.adjust',
+            InventoryDocument::TypeDamage => 'inventory.documents.damage_scrap',
+            InventoryDocument::TypeScrap => 'inventory.documents.damage_scrap',
+        ])->filter(fn (string $permission): bool => (bool) $request->user()?->can($permission))->keys()->all();
+
+        abort_if($allowedDocumentTypes === [], 403);
 
         return view('modules.inventory.documents.create', [
             'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->orderBy('position')->get(),
             'locations' => WarehouseLocation::query()->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))->orderBy('code')->get(),
             'products' => Product::query()->forCompany($context['company_id'])->active()->nonService()->orderBy('name')->limit(500)->get(),
+            'allowedDocumentTypes' => $allowedDocumentTypes,
         ]);
     }
 
@@ -63,25 +81,39 @@ class InventoryDocumentController extends Controller
         return $this->respond($request, ['doc_num' => $document->doc_num, 'url' => $url], $url, 201);
     }
 
-    public function show(InventoryDocument $inventoryDocument): View
+    public function show(Request $request, InventoryDocument $inventoryDocument): View
     {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+
         return view('modules.inventory.documents.show', [
             'record' => $inventoryDocument->load([
                 'lines.product', 'lines.unit', 'transactions', 'branchStore',
-                'destinationBranchStore', 'productionOrder', 'productionRun',
+                'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
+                'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'salesOrder',
+                'journalEntry', 'reversalJournalEntry',
             ]),
+            'canViewFinancial' => (bool) $request->user()?->can('inventory.reports.financial'),
         ]);
     }
 
-    public function print(InventoryDocument $inventoryDocument): View
+    public function print(Request $request, InventoryDocument $inventoryDocument): Response
     {
-        return view('modules.inventory.documents.print', [
-            'record' => $inventoryDocument->load(['lines.product', 'lines.unit', 'branchStore', 'destinationBranchStore']),
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $record = $inventoryDocument->load([
+            'company', 'lines.product', 'lines.unit', 'lines.warehouseLocation', 'branchStore', 'destinationBranchStore',
+            'productionOrder', 'productionRun', 'journalEntry',
         ]);
+
+        return $this->pdf->stream('reports.inventory.document', [
+            'title' => str($record->document_type)->replace('_', ' ')->title().' — '.$record->doc_num,
+            'record' => $record,
+            'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
+        ], str('inventory-'.$record->document_type.'-'.$record->doc_num)->slug().'.pdf');
     }
 
     public function reverse(Request $request, InventoryDocument $inventoryDocument, InventoryDocumentPostingService $posting): JsonResponse|RedirectResponse
     {
+        $this->assertInCurrentContext($request, $inventoryDocument);
         $record = $this->guard(fn (): InventoryDocument => $posting->reverse($inventoryDocument));
 
         return $this->respond($request, ['doc_num' => $record->doc_num, 'status' => $record->status], route('admin.inventory.documents.show', $record));
@@ -98,6 +130,18 @@ class InventoryDocumentController extends Controller
             'financial_period_id' => $context['financial_period_id'],
             'branch_id' => $context['branch_id'],
         ];
+    }
+
+    private function assertInCurrentContext(Request $request, InventoryDocument $inventoryDocument): void
+    {
+        $context = $this->requiredContext($request);
+
+        abort_unless(
+            (int) $inventoryDocument->company_id === $context['company_id']
+            && (int) $inventoryDocument->financial_period_id === $context['financial_period_id']
+            && (int) $inventoryDocument->branch_id === $context['branch_id'],
+            404,
+        );
     }
 
     private function guard(callable $callback): mixed

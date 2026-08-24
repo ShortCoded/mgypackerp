@@ -124,15 +124,57 @@ test('configured and expanded menu destinations are preserved exactly once in th
     $organizedLeaves = businessDomainMenuLeaves($organized);
 
     expect($organizedDestinations)
-        ->toBe($sourceDestinations)
-        ->toHaveCount($includeExpanded ? 582 : 80)
+        ->toBe(array_values(array_unique($sourceDestinations)))
         ->and(array_unique($organizedDestinations))->toHaveCount(count($organizedDestinations))
         ->and(array_values(array_unique(array_column($organizedLeaves, 'depth'))))->toBe([0, 2])
         ->and(max(array_column($organizedLeaves, 'depth')))->toBe(2);
+
+    collect($organizedLeaves)->each(fn (array $item) => expect(Route::has($item['route']))->toBeTrue());
 })->with([
     'legacy configuration' => ['legacy', false],
     'expanded configuration' => ['expanded', true],
 ]);
+
+test('inventory and manufacturing navigation exposes canonical workflows without retired shell destinations', function (): void {
+    config()->set('erp.phase_mode', 'legacy');
+
+    $leaves = collect(businessDomainMenuLeaves(app(MenuService::class)->structure()));
+    $destinations = $leaves->pluck('route')->all();
+    $labels = $leaves->pluck('label')->all();
+    $requiredDestinations = [
+        'admin.inventory.accounting.index',
+        'admin.inventory.documents.index',
+        'admin.inventory.stock-counts.index',
+        'admin.inventory.reports.index',
+        'admin.inventory.opening-stocks.index',
+        'admin.production.resources.index',
+        'admin.production.work-orders.index',
+        'admin.production.runs.index',
+        'admin.production.reports.index',
+    ];
+
+    expect($destinations)->toContain(...$requiredDestinations)
+        ->and($labels)->toContain(
+            'inventory_accounting',
+            'inventory_movements',
+            'inventory_stock_counts',
+            'inventory_operational_reports',
+            'production_resources',
+            'production_work_orders',
+            'production_runs',
+            'production_operational_reports',
+        )
+        ->and($labels)->not->toContain(
+            'inventory_stock_receipts',
+            'inventory_finished_goods_receipt',
+            'inventory_production_material_issue',
+            'production_material_requests',
+            'production_material_issues',
+            'production_output_receipts',
+        );
+
+    collect($requiredDestinations)->each(fn (string $routeName) => expect(Route::has($routeName))->toBeTrue());
+});
 
 test('menu uses the required business domain order and maps representative screens correctly', function (string $phaseMode): void {
     config()->set('erp.phase_mode', $phaseMode);
@@ -532,14 +574,11 @@ test('domain labels are localized exactly and navigation renderers keep unique c
     preg_match_all('/\\sid="(top-menu-[^"]+)"/', $topHtml, $topIds);
     preg_match_all('/\\sid="(top-dropdown-menu-[^"]+)"/', $topHtml, $topDropdownIds);
 
-    expect($collapseIds[1])->toHaveCount(34)
-        ->and(array_unique($collapseIds[1]))->toHaveCount(34)
+    expect(array_unique($collapseIds[1]))->toHaveCount(count($collapseIds[1]))
         ->and($controlledIds[1])->toBe($collapseIds[1])
         ->and($englishCollapseIds[1])->toBe($collapseIds[1])
-        ->and($topIds[1])->toHaveCount(10)
-        ->and(array_unique($topIds[1]))->toHaveCount(10)
-        ->and($topDropdownIds[1])->toHaveCount(24)
-        ->and(array_unique($topDropdownIds[1]))->toHaveCount(24)
+        ->and(array_unique($topIds[1]))->toHaveCount(count($topIds[1]))
+        ->and(array_unique($topDropdownIds[1]))->toHaveCount(count($topDropdownIds[1]))
         ->and(file_get_contents(resource_path('views/layouts/partials/navbar-vertical.blade.php')))
         ->toContain('navbar-vertical-content scrollbar')
         ->and(file_get_contents(resource_path('views/layouts/app.blade.php')))

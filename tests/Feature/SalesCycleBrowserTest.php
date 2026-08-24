@@ -10,7 +10,8 @@ test('sales and manufacturing browser routes resolve only to concrete controller
         ->and($routes->getByName('admin.sales.customer-receipts.create')?->getActionName())->toContain('SalesCycleController@createReceipt')
         ->and($routes->getByName('admin.sales.sales-invoices.edit')?->getActionName())->toContain('SalesCycleController@editInvoice')
         ->and($routes->getByName('admin.production.work-orders.index')?->getActionName())->toContain('ProductionOrderController@index')
-        ->and($routes->getByName('admin.production.work-orders.complete')?->getActionName())->toContain('ProductionOrderController@complete')
+        ->and($routes->getByName('admin.production.work-orders.complete'))->toBeNull()
+        ->and($routes->getByName('admin.sales.production-requests.complete'))->toBeNull()
         ->and(collect($routes)->where(fn ($route) => $route->getName() === 'admin.sales.sales-orders.index'))->toHaveCount(1);
 });
 

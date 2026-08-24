@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 class StockCount extends Model
@@ -51,6 +52,11 @@ class StockCount extends Model
     public function branchStore(): BelongsTo
     {
         return $this->belongsTo(BranchStore::class);
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     public function warehouseLocation(): BelongsTo

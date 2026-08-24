@@ -181,6 +181,9 @@
                         <textarea class="form-control" id="notes" name="notes" rows="2" @readonly($isReadonly)>{{ old('notes', $value('notes')) }}</textarea>
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
+                    <div class="col-12">
+                        <div class="alert alert-info mb-0 py-2">{{ __('inventory.opening_stocks.messages.pricing_ownership') }}</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -205,9 +208,11 @@
                     <table class="table table-sm table-hover align-middle mb-0 js-opening-stock-lines">
                         <thead class="bg-200">
                             <tr>
-                                <th style="width: 40%">{{ __('inventory.opening_stocks.attributes.product') }}</th>
-                                <th style="width: 16%">{{ __('inventory.opening_stocks.attributes.unit') }}</th>
-                                <th class="text-center" style="width: 14%">{{ __('inventory.opening_stocks.attributes.quantity') }}</th>
+                                <th style="min-width: 280px">{{ __('inventory.opening_stocks.attributes.product') }}</th>
+                                <th style="min-width: 120px">{{ __('inventory.opening_stocks.attributes.unit') }}</th>
+                                <th class="text-center" style="min-width: 130px">{{ __('inventory.opening_stocks.attributes.quantity') }}</th>
+                                <th style="min-width: 150px">{{ __('inventory.opening_stocks.attributes.stock_status') }}</th>
+                                <th style="min-width: 150px">{{ __('inventory.opening_stocks.attributes.batch_lot') }}</th>
                                 <th>{{ __('inventory.opening_stocks.attributes.line_notes') }}</th>
                                 @unless($isReadonly)
                                     <th class="text-center" style="width: 76px">{{ __('common.fields.actions') }}</th>
@@ -274,6 +279,26 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
+                                            <div class="form-control-plaintext">{{ str($line['stock_status'] ?? 'available')->replace('_', ' ')->title() }}</div>
+                                        @else
+                                            <select class="form-select js-opening-stock-status" name="lines[{{ $index }}][stock_status]">
+                                                @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
+                                                    <option value="{{ $status }}" @selected(($line['stock_status'] ?? 'available') === $status)>{{ str($status)->replace('_', ' ')->title() }}</option>
+                                                @endforeach
+                                            </select>
+                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.stock_status"></div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)
+                                            <div class="form-control-plaintext">{{ $line['batch_lot'] ?? null }}</div>
+                                        @else
+                                            <input class="form-control js-opening-stock-batch" name="lines[{{ $index }}][batch_lot]" type="text" maxlength="100" value="{{ $line['batch_lot'] ?? '' }}">
+                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.batch_lot"></div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                         @else
                                             <input class="form-control js-opening-stock-line-notes" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}">
@@ -295,7 +320,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="{{ $isReadonly ? 4 : 5 }}" class="text-center text-600 py-3">{{ __('common.empty_value') }}</td>
+                                    <td colspan="{{ $isReadonly ? 6 : 7 }}" class="text-center text-600 py-3">{{ __('common.empty_value') }}</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -375,6 +400,18 @@
                 <td class="text-center">
                     <x-forms.numeric-input class="text-center js-opening-stock-quantity" name="lines[__INDEX__][quantity]" :scale="4" min="0.0001" step="0.0001" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
+                </td>
+                <td>
+                    <select class="form-select js-opening-stock-status" name="lines[__INDEX__][stock_status]">
+                        @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
+                            <option value="{{ $status }}" @selected($status === 'available')>{{ str($status)->replace('_', ' ')->title() }}</option>
+                        @endforeach
+                    </select>
+                    <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.stock_status"></div>
+                </td>
+                <td>
+                    <input class="form-control js-opening-stock-batch" name="lines[__INDEX__][batch_lot]" type="text" maxlength="100" value="">
+                    <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.batch_lot"></div>
                 </td>
                 <td>
                     <input class="form-control js-opening-stock-line-notes" name="lines[__INDEX__][notes]" type="text" value="">

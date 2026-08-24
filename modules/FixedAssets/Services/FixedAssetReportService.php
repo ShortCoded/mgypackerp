@@ -146,7 +146,10 @@ class FixedAssetReportService
             '_row_state' => $row->status,
         ]);
 
-        return [$this->labels(array_keys($rows->first() ?? ['asset' => '', 'period' => ''])), $rows];
+        return [$this->labels([
+            'asset', 'classification', 'period', 'opening_net_book_value', 'depreciation_base', 'period_depreciation',
+            'accumulated_before', 'accumulated_after', 'net_book_value', 'cost_center', 'journal_entry', 'status', 'posted_by_date',
+        ]), $rows];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -414,7 +417,132 @@ class FixedAssetReportService
 
     private function reconciliationRow(string $type, ?Account $account, string $subledger, string $gl): array
     {
-        return ['reconciliation_type' => __('fixed_assets.reports.reconciliation_types.'.$type), 'account' => $account?->codeNameLabel(), 'subledger' => $subledger, 'general_ledger' => $gl, 'difference' => bcsub($subledger, $gl, 4)];
+        $difference = bcsub($subledger, $gl, 4);
+
+        return [
+            'reconciliation_type' => __('fixed_assets.reports.reconciliation_types.'.$type),
+            'account' => $account?->codeNameLabel(),
+            'subledger' => $subledger,
+            'general_ledger' => $gl,
+            'difference' => $difference,
+            'state' => $this->reconciliationState($difference),
+            '_row_state' => bccomp($difference, '0', 4) === 0 ? 'reconciled' : 'difference',
+        ];
+    }
+
+    private function reconciliationState(string $difference): string
+    {
+        return bccomp($difference, '0', 4) === 0
+            ? __('fixed_assets.pdf.reconciliation.reconciled')
+            : __('fixed_assets.pdf.reconciliation.difference');
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array<string, string>
+     */
+    private function filterSummary(array $filters): array
+    {
+        $companyId = $this->companies->requireCompanyId();
+        $summary = [];
+
+        if (isset($filters['from_date'])) {
+            $summary[__('fixed_assets.reports.from_date')] = $this->dates->formatDate($filters['from_date'], '');
+        }
+
+        if (isset($filters['to_date'])) {
+            $summary[__('fixed_assets.reports.to_date')] = $this->dates->formatDate($filters['to_date'], '');
+        }
+
+        foreach ([
+            'asset_doc_num' => ['fixed_assets.reports.columns.asset', 'fixed_assets', 'asset_name'],
+            'asset_group_account_doc_num' => ['fixed_assets.attributes.asset_group_account', 'accounts', 'name'],
+            'financial_period_doc_num' => ['fixed_assets.lifecycle.financial_period', 'financial_periods', 'name'],
+            'branch_doc_num' => ['fixed_assets.attributes.branch', 'branches', 'name'],
+            'cost_center_doc_num' => ['fixed_assets.attributes.cost_center', 'cost_centers', 'name'],
+        ] as $filter => [$labelKey, $table, $nameColumn]) {
+            if (! isset($filters[$filter])) {
+                continue;
+            }
+
+            $summary[__($labelKey)] = $this->documentLabel($table, $nameColumn, $companyId, (string) $filters[$filter]);
+        }
+
+        if (isset($filters['branch_hall_uuid'])) {
+            $summary[__('fixed_assets.attributes.hall')] = (string) DB::table('branch_halls')
+                ->join('branches', 'branches.id', '=', 'branch_halls.branch_id')
+                ->where('branches.company_id', $companyId)
+                ->where('branch_halls.public_uuid', $filters['branch_hall_uuid'])
+                ->value('branch_halls.name');
+        }
+
+        if (isset($filters['status'])) {
+            $summary[__('fixed_assets.attributes.status')] = __('fixed_assets.statuses.'.$filters['status']);
+        }
+
+        if (isset($filters['entry_type'])) {
+            $summary[__('fixed_assets.attributes.entry_type')] = __('fixed_assets.entry_types.'.$filters['entry_type']);
+        }
+
+        if (isset($filters['depreciable'])) {
+            $summary[__('fixed_assets.attributes.is_depreciable')] = filter_var($filters['depreciable'], FILTER_VALIDATE_BOOL)
+                ? __('fixed_assets.booleans.yes')
+                : __('fixed_assets.booleans.no');
+        }
+
+        if (isset($filters['posting_status'])) {
+            $summary[__('fixed_assets.pdf.filters.posting_status')] = __('fixed_assets.lifecycle.statuses.'.$filters['posting_status']);
+        }
+
+        return array_filter($summary, fn (string $value): bool => trim($value) !== '');
+    }
+
+    private function documentLabel(string $table, string $nameColumn, int $companyId, string $docNum): string
+    {
+        $row = DB::table($table)
+            ->where('company_id', $companyId)
+            ->where('doc_num', $docNum)
+            ->first(['doc_num', $nameColumn]);
+
+        if (! $row) {
+            return $docNum;
+        }
+
+        return trim(implode(' / ', array_filter([(string) $row->doc_num, (string) $row->{$nameColumn}])));
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @return array<string, string>
+     */
+    private function totals(string $type, Collection $rows): array
+    {
+        return match ($type) {
+            self::Register, self::FullyDepreciated => [
+                __('fixed_assets.pdf.totals.asset_cost') => $this->sumRows($rows, 'cost'),
+                __('fixed_assets.pdf.totals.accumulated_depreciation') => $this->sumRows($rows, 'accumulated_depreciation'),
+                __('fixed_assets.pdf.totals.net_book_value') => $this->sumRows($rows, 'net_book_value'),
+            ],
+            self::Depreciation, self::Schedule => [
+                __('fixed_assets.pdf.totals.period_depreciation') => $this->sumRows($rows, 'period_depreciation'),
+            ],
+            self::AdditionsDisposals => [
+                __('fixed_assets.pdf.totals.additions') => $this->sumRows($rows, 'addition_value'),
+                __('fixed_assets.pdf.totals.disposal_proceeds') => $this->sumRows($rows, 'disposal_proceeds'),
+                __('fixed_assets.pdf.totals.gains') => $this->sumRows($rows, 'gain'),
+                __('fixed_assets.pdf.totals.losses') => $this->sumRows($rows, 'loss'),
+            ],
+            default => [],
+        };
+    }
+
+    /** @param Collection<int, array<string, mixed>> $rows */
+    private function sumRows(Collection $rows, string $key): string
+    {
+        return $rows->reduce(
+            fn (string $total, array $row): string => bcadd($total, (string) (data_get($row, $key) ?: '0'), 4),
+            '0.0000',
+        );
     }
 
     /** @param list<string> $keys */
@@ -425,6 +553,6 @@ class FixedAssetReportService
 
     private function emptyRegisterRow(): array
     {
-        return array_fill_keys(['asset', 'name', 'classification', 'serial', 'acquisition_date', 'service_date', 'cost', 'accumulated_depreciation', 'net_book_value', 'residual_value', 'useful_life', 'method', 'annual_rate', 'branch', 'hall_location', 'cost_center', 'status'], '');
+        return array_fill_keys(['asset', 'name', 'classification', 'serial', 'acquisition_date', 'service_date', 'cost', 'accumulated_depreciation', 'net_book_value', 'residual_value', 'branch', 'hall_location', 'cost_center', 'status'], '');
     }
 }

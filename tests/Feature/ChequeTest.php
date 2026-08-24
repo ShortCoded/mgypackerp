@@ -260,7 +260,7 @@ test('Finance Cheque creates received and issued cheques with separate document 
     $issuedDocNum = $this->actingAs($actor)
         ->postJson(route('admin.finance.cheques.store'), chequeFeaturePayload($bankAccount, $egp, $issuedLine, Cheque::TypeIssued))
         ->assertOk()
-        ->assertJsonPath('data.doc_num', 'ICH-00001')
+        ->assertJsonPath('data.doc_num', 'OCH-00001')
         ->json('data.doc_num');
 
     $received = Cheque::query()->where('doc_num', $receivedDocNum)->firstOrFail();

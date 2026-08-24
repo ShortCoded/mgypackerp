@@ -7,12 +7,15 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Production\Http\Requests\StoreProductionRunRequest;
 use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMold;
@@ -20,6 +23,7 @@ use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionShift;
+use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Services\ProductionCycleService;
 
 class ProductionRunController extends Controller
@@ -27,6 +31,8 @@ class ProductionRunController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly ProductionCycleService $cycle,
+        private readonly CompanyPrintIdentityService $printIdentity,
+        private readonly ReportPdfService $pdf,
     ) {}
 
     public function index(Request $request): View
@@ -36,12 +42,16 @@ class ProductionRunController extends Controller
         return view('modules.production.runs.index', [
             'records' => ProductionRun::query()
                 ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
                 ->with(['order', 'product', 'machine', 'mold'])
                 ->latest('planned_start_at')
                 ->paginate(30)
                 ->withQueryString(),
             'orders' => ProductionOrder::query()
                 ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
                 ->whereIn('status', [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted])
                 ->with('lines.product')
                 ->orderByDesc('production_order_date')
@@ -84,8 +94,13 @@ class ProductionRunController extends Controller
     public function store(StoreProductionRunRequest $request): JsonResponse|RedirectResponse
     {
         $context = $this->requiredContext($request);
-        $line = ProductionOrderLine::query()->findOrFail($request->validated('production_order_line_id'));
-        abort_unless((int) $line->order()->value('company_id') === $context['company_id'], 404);
+        $line = ProductionOrderLine::query()->with('order')->findOrFail($request->validated('production_order_line_id'));
+        abort_unless(
+            (int) $line->order->company_id === (int) $context['company_id']
+            && (int) $line->order->financial_period_id === (int) $context['financial_period_id']
+            && (int) $line->order->branch_id === (int) $context['branch_id'],
+            404,
+        );
         $run = $this->guard(fn (): ProductionRun => $this->cycle->createRun($line, $request->safe()->except('production_order_line_id')));
 
         $url = route('admin.production.runs.show', $run);
@@ -93,24 +108,64 @@ class ProductionRunController extends Controller
         return $this->respond($request, ['run_number' => $run->run_number, 'url' => $url], $url, 201);
     }
 
-    public function show(ProductionRun $productionRun): View
+    public function show(Request $request, ProductionRun $productionRun): View
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return view('modules.production.runs.show', [
             'record' => $productionRun->load([
-                'order', 'orderLine', 'product', 'machine', 'mold', 'shift',
+                'order.salesOrder', 'orderLine', 'product', 'machine', 'mold', 'shift',
                 'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
+                'inventoryDocuments.journalEntry',
             ]),
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
+            'qualityInspectionTypes' => QualityInspectionType::query()
+                ->where('company_id', $productionRun->company_id)
+                ->where('is_active', true)
+                ->orderByDesc('is_final_production')
+                ->orderBy('name')
+                ->get(),
         ]);
     }
 
-    public function print(ProductionRun $productionRun): View
+    public function print(Request $request, ProductionRun $productionRun): Response
     {
-        return view('modules.production.runs.print', ['record' => $productionRun->load(['order', 'product', 'requirements.product', 'requirements.unit'])]);
+        return $this->printRunDocument($request, $productionRun, __('Production Run Sheet'), 'production-run');
+    }
+
+    public function printMaterials(Request $request, ProductionRun $productionRun): Response
+    {
+        return $this->printRunDocument($request, $productionRun, __('Material Requirement'), 'material-requirement');
+    }
+
+    public function printQuality(Request $request, ProductionRun $productionRun): Response
+    {
+        return $this->printRunDocument($request, $productionRun, __('In-Process Quality Inspection'), 'production-quality');
+    }
+
+    public function printCompletion(Request $request, ProductionRun $productionRun): Response
+    {
+        return $this->printRunDocument($request, $productionRun, __('Production Completion Summary'), 'production-completion');
+    }
+
+    private function printRunDocument(Request $request, ProductionRun $productionRun, string $documentTitle, string $filenamePrefix): Response
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $record = $productionRun->load([
+            'order.company', 'order.salesOrder.customer', 'orderLine', 'product', 'machine', 'mold', 'shift',
+            'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
+        ]);
+
+        return $this->pdf->stream('reports.production.run-sheet', [
+            'title' => $documentTitle.' — '.$record->run_number,
+            'record' => $record,
+            'companyPrintIdentity' => $record->order->print_identity_snapshot ?: $this->printIdentity->forCompany($record->order->company),
+        ], str($filenamePrefix.'-'.$record->run_number)->slug().'.pdf');
     }
 
     public function releaseOrder(Request $request, ProductionOrder $productionOrder): JsonResponse|RedirectResponse
     {
+        $this->assertOrderInCurrentContext($request, $productionOrder);
         $record = $this->guard(fn (): ProductionOrder => $this->cycle->releaseOrder($productionOrder));
 
         return $this->respond($request, ['doc_num' => $record->doc_num, 'status' => $record->status], route('admin.production.work-orders.show', $record));
@@ -118,6 +173,7 @@ class ProductionRunController extends Controller
 
     public function reserve(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate(['branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'], 'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id']]);
         $record = $this->guard(fn (): ProductionRun => $this->cycle->reserveRun($productionRun, $validated['branch_store_id'], $validated['warehouse_location_id'] ?? null));
 
@@ -126,6 +182,7 @@ class ProductionRunController extends Controller
 
     public function issue(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate($this->materialRules());
         $document = $this->guard(fn () => $this->cycle->issueMaterials(
             $productionRun,
@@ -140,6 +197,7 @@ class ProductionRunController extends Controller
 
     public function returnMaterials(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate($this->materialRules());
         $document = $this->guard(fn () => $this->cycle->returnMaterials(
             $productionRun,
@@ -153,26 +211,35 @@ class ProductionRunController extends Controller
 
     public function startSetup(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->startSetup($productionRun)));
     }
 
     public function completeSetup(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->completeSetup($productionRun)));
     }
 
     public function start(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->startRun($productionRun)));
     }
 
     public function resume(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->resumeRun($productionRun)));
     }
 
     public function cancel(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
 
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->cancelRun($productionRun, $validated['reason'])));
@@ -180,6 +247,7 @@ class ProductionRunController extends Controller
 
     public function progress(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $data = $request->validate([
             'recorded_at' => ['nullable', 'date'],
             'good_base_quantity' => ['nullable', 'numeric', 'min:0'],
@@ -195,6 +263,7 @@ class ProductionRunController extends Controller
 
     public function inspect(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $data = $request->validate([
             'quality_inspection_type_id' => ['nullable', 'integer', 'exists:quality_inspection_types,id'],
             'sampled_at' => ['nullable', 'date'],
@@ -225,6 +294,7 @@ class ProductionRunController extends Controller
 
     public function account(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
             'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
@@ -251,6 +321,7 @@ class ProductionRunController extends Controller
 
     public function receive(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
             'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
@@ -268,11 +339,14 @@ class ProductionRunController extends Controller
 
     public function complete(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
+        $this->assertRunInCurrentContext($request, $productionRun);
+
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->completeRun($productionRun)));
     }
 
     public function shortClose(Request $request, ProductionOrder $productionOrder): JsonResponse|RedirectResponse
     {
+        $this->assertOrderInCurrentContext($request, $productionOrder);
         $validated = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         $record = $this->guard(fn (): ProductionOrder => $this->cycle->shortCloseOrder($productionOrder, $validated['reason']));
 
@@ -286,6 +360,30 @@ class ProductionRunController extends Controller
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Operating context is required.');
 
         return $context;
+    }
+
+    private function assertRunInCurrentContext(Request $request, ProductionRun $productionRun): void
+    {
+        $context = $this->requiredContext($request);
+
+        abort_unless(
+            (int) $productionRun->company_id === (int) $context['company_id']
+            && (int) $productionRun->financial_period_id === (int) $context['financial_period_id']
+            && (int) $productionRun->branch_id === (int) $context['branch_id'],
+            404,
+        );
+    }
+
+    private function assertOrderInCurrentContext(Request $request, ProductionOrder $productionOrder): void
+    {
+        $context = $this->requiredContext($request);
+
+        abort_unless(
+            (int) $productionOrder->company_id === (int) $context['company_id']
+            && (int) $productionOrder->financial_period_id === (int) $context['financial_period_id']
+            && (int) $productionOrder->branch_id === (int) $context['branch_id'],
+            404,
+        );
     }
 
     /** @return array<string, mixed> */

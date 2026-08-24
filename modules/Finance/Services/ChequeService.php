@@ -274,6 +274,13 @@ class ChequeService
         }
 
         if ($status === Cheque::StatusIssued) {
+            $paymentPaperAccount = $this->supplierPaymentPostings->paymentPaperAccount((int) $payment->company_id);
+            $this->supplierPaymentPostings->post($payment, $paymentPaperAccount);
+
+            return;
+        }
+
+        if ($status === Cheque::StatusCleared) {
             $cheque->loadMissing('bankAccount.account');
             $bankAccount = $cheque->bankAccount;
             $account = $bankAccount?->account;
@@ -281,7 +288,12 @@ class ChequeService
                 throw new DomainException(__('The issuing Bank Account requires a postable GL account.'));
             }
 
-            $this->supplierPaymentPostings->post($payment, $account, (int) $bankAccount->getKey());
+            $this->supplierPaymentPostings->clearIssuedCheque(
+                $payment,
+                $account,
+                (int) $bankAccount->getKey(),
+                $cheque->cleared_at,
+            );
 
             return;
         }

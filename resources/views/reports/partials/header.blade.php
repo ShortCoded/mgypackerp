@@ -1,6 +1,9 @@
 @php
     $isRtl = ($direction ?? 'ltr') === 'rtl';
-    $logoPath = is_string($companyLogoPath ?? null) && is_file($companyLogoPath) ? $companyLogoPath : null;
+    $logoPath = is_string($companyLogoPath ?? null)
+        && (str_starts_with($companyLogoPath, 'data:image/') || is_file($companyLogoPath))
+            ? $companyLogoPath
+            : null;
     $logoHtml = $logoPath
         ? '<img class="report-logo" src="'.e($logoPath).'" alt="'.e($companyName).'" style="max-width:110px;max-height:60px;width:auto;height:auto;object-fit:contain;">'
         : '<span class="report-company-name">'.e($companyName).'</span>';

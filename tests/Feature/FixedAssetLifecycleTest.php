@@ -3,6 +3,7 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Support\Collection;
+use Illuminate\Testing\TestResponse;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
@@ -16,7 +17,6 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
-use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
@@ -167,6 +167,19 @@ function lifecycleFixedAsset(array $context, array $overrides = []): FixedAsset
     ];
 
     return app(FixedAssetService::class)->create($payload)['record'];
+}
+
+function assertInlineFixedAssetPdf(TestResponse $response, ?string $filename = null): void
+{
+    $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+
+    $contentDisposition = (string) $response->baseResponse->headers->get('Content-Disposition');
+    expect($contentDisposition)->toStartWith('inline; filename="')
+        ->and((string) $response->getContent())->toStartWith('%PDF-');
+
+    if ($filename !== null) {
+        expect($contentDisposition)->toBe('inline; filename="'.$filename.'"');
+    }
 }
 
 test('opening assets establish controlled book values and non-depreciable assets never enter a run', function (): void {
@@ -503,7 +516,10 @@ test('transfers preserve history and sale and write-off post balanced gain and l
         ->and($saleAsset->refresh()->status)->toBe(FixedAsset::StatusSuspended);
 
     $this->actingAs($actor);
-    $this->get(route('admin.fixed-assets.prints.disposal', $writeOff))->assertOk()->assertSee($writeOff->doc_num);
+    assertInlineFixedAssetPdf(
+        $this->get(route('admin.fixed-assets.prints.disposal', $writeOff)),
+        'asset-write-off-'.$writeOff->doc_num.'.pdf',
+    );
 });
 
 test('opening asset reconciliation consumes canonical opening GL balances without another asset journal', function (): void {
@@ -604,21 +620,50 @@ test('asset card reports print and export screens use the canonical lifecycle re
     $this->actingAs($actor);
     $this->get(route('admin.fixed-assets.lifecycle.show', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.lifecycle.movement_history'));
     $this->get(route('admin.fixed-assets.accounting.index'))->assertOk()->assertSee($context['category']->account_code);
-    $this->get(route('admin.fixed-assets.prints.asset', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.lifecycle.asset_card'));
-    $this->get(route('admin.fixed-assets.prints.movement', $movement))->assertOk()->assertSee($movement->doc_num);
+    assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.prints.asset', $asset)), 'fixed-asset-'.$asset->doc_num.'.pdf');
+    assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.prints.movement', $movement)), 'asset-transfer-'.$movement->doc_num.'.pdf');
     $this->get(route('admin.fixed-assets.depreciation.show', $run))->assertOk()->assertSee($run->doc_num);
     $this->get(route('admin.fixed-assets.depreciation.index'))->assertOk()->assertSee(__('fixed_assets.lifecycle.depreciation_policy', ['basis' => 365]));
-    $this->get(route('admin.fixed-assets.depreciation.print', $run))->assertOk()->assertSee($run->doc_num)->assertSee(app(NumericFormatService::class)->format($run->lines->firstOrFail()->period_depreciation));
+    assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.depreciation.print', $run)), 'depreciation-run-'.$run->doc_num.'.pdf');
     $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register']))->assertOk()->assertSee($asset->doc_num);
     $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register', 'to_date' => $date]))
         ->assertOk()
         ->assertSee('value="'.app(DateFormatService::class)->formatDate($date, '').'"', false);
-    $this->get(route('admin.fixed-assets.reports.print', ['type' => 'register']))->assertOk()->assertSee($asset->doc_num);
-    $this->get(route('admin.fixed-assets.reports.print', ['type' => 'depreciation']))->assertOk()->assertSee($asset->doc_num);
-    $this->get(route('admin.fixed-assets.reports.print', ['type' => 'movements']))->assertOk()->assertSee($movement->doc_num);
+    assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.reports.print', ['type' => 'register'])), 'fixed-assets-register.pdf');
+
+    foreach (FixedAssetReportService::types() as $reportType) {
+        assertInlineFixedAssetPdf(
+            $this->get(route('admin.fixed-assets.reports.pdf', ['type' => $reportType])),
+            'fixed-assets-'.str_replace('_', '-', $reportType).'.pdf',
+        );
+    }
+
     $this->get(route('admin.fixed-assets.reports.excel', ['type' => 'register']))->assertOk();
-    $this->get(route('admin.fixed-assets.reports.pdf', ['type' => 'register']))->assertOk();
 
     $actor->forceFill(['locale' => 'ar'])->save();
-    $this->get(route('admin.fixed-assets.prints.asset', $asset))->assertOk()->assertSee('dir="rtl"', false);
+    assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.prints.asset', $asset)), 'fixed-asset-'.$asset->doc_num.'.pdf');
+});
+
+test('fixed asset PDF endpoints enforce print permission and company-scoped route binding', function (): void {
+    $authorized = lifecycleFixedAssetActor(['fixed_assets.create', 'fixed_assets.view', 'fixed_assets.print']);
+    $context = lifecycleFixedAssetContext();
+    $asset = lifecycleFixedAsset($context, ['asset_name' => 'PDF Authorization Asset']);
+
+    $blocked = lifecycleFixedAssetActor(['fixed_assets.view']);
+    $this->actingAs($blocked);
+    $this->get(route('admin.fixed-assets.prints.asset', $asset))->assertForbidden();
+
+    $foreignCompany = Company::factory()->create(['name' => 'Foreign PDF Company']);
+    $foreignAsset = $asset->replicate();
+    $foreignAsset->forceFill([
+        'company_id' => $foreignCompany->getKey(),
+        'doc_number' => 999901,
+        'doc_num' => 'FA-FOREIGN-PDF',
+        'asset_name' => 'Foreign PDF Asset',
+        'account_id' => null,
+        'serial_number' => null,
+    ])->save();
+
+    $this->actingAs($authorized);
+    $this->get(route('admin.fixed-assets.prints.asset', $foreignAsset))->assertNotFound();
 });

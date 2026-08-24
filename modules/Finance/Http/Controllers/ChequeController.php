@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -14,6 +15,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\DataTables\ChequesDataTable;
 use Modules\Finance\Http\Requests\Cheques\BulkDeleteChequesRequest;
@@ -198,15 +200,19 @@ class ChequeController extends Controller
         ]);
     }
 
-    public function print(Request $request, string $cheque, CompanyPrintIdentityService $printIdentities): View
+    public function print(Request $request, string $cheque, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $record = $this->findInCurrentCompany($request, $cheque, true);
         $record->loadMissing(['company', 'bankAccount.bank', 'bankAccount.account', 'currency', 'lines.account']);
+        $identity = $printIdentities->forCompany($record->company);
 
-        return view('modules.finance.cheques.print', [
+        return $pdf->stream('modules.finance.cheques.print', [
+            'title' => ($record->isIssued() ? __('Issued / Payment Cheque') : __('Received Cheque')).' — '.$record->doc_num,
+            'companyName' => $identity['legal_name'] ?: $identity['name'],
+            'companyLogoPath' => $identity['logo_source'],
+            'companyPrintIdentity' => $identity,
             'record' => $record,
-            'companyPrintIdentity' => $printIdentities->forCompany($record->company),
-        ]);
+        ], str(($record->isIssued() ? 'outgoing-cheque-' : 'received-cheque-').$record->doc_num)->slug().'.pdf', 'P');
     }
 
     public function updateDocumentNumberSettings(UpdateChequeDocumentNumberSettingsRequest $request, FinanceDocumentNumberSettingsService $settings): JsonResponse

@@ -39,6 +39,7 @@ return [
     'purchase_orders' => 'Purchase Orders',
     'purchase_invoices' => 'Purchase Invoices',
     'inventory' => 'Inventory',
+    'inventory_accounting' => 'Inventory & Manufacturing Accounting',
     'production' => 'Manufacturing & Production',
     'planning_production' => 'Planning & Production',
     'production_identifier_types' => 'Identifier Types',

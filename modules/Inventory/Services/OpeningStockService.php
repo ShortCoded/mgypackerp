@@ -4,6 +4,7 @@ namespace Modules\Inventory\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
@@ -12,6 +13,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
 
@@ -111,7 +113,7 @@ class OpeningStockService
 
             /** @var OpeningStock $locked */
             $locked = OpeningStock::query()
-                ->with(['lines.product'])
+                ->with(['lines.product', 'branch'])
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
@@ -125,6 +127,10 @@ class OpeningStockService
 
             if ($locked->lines->isEmpty()) {
                 throw new DomainException(__('inventory.opening_stocks.messages.no_lines_approve'));
+            }
+
+            if ($locked->branch?->type === Branch::TypeFactory && ! $locked->branch_store_id) {
+                throw new DomainException(__('inventory.opening_stocks.messages.store_required_for_factory'));
             }
 
             foreach ($locked->lines as $line) {
@@ -240,6 +246,8 @@ class OpeningStockService
                 'product_id' => $product->getKey(),
                 'product_snapshot' => $snapshot,
                 'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
+                'stock_status' => $line['stock_status'] ?? InventoryTransaction::StatusAvailable,
+                'batch_lot' => $this->nullableText($line['batch_lot'] ?? null),
                 'notes' => $line['notes'] ?? null,
             ];
 
