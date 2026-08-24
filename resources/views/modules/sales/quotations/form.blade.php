@@ -65,6 +65,10 @@
             min-width: 16rem;
         }
 
+        .quotation-lines-table {
+            min-width: 2500px;
+        }
+
         .quotation-total-box {
             max-width: 24rem;
         }
@@ -138,6 +142,20 @@
                                 </button>
                             @endcan
                         @endif
+                        @if ($record->status === Quotation::StatusAccepted)
+                            @can('sales_orders.create')
+                                <button class="btn btn-success btn-sm js-quotation-convert-action" type="button" data-url="{{ route('admin.sales.quotations.convert', $record) }}">
+                                    <span class="fas fa-file-signature me-1"></span>{{ __('quotations.actions.create_sales_order') }}
+                                </button>
+                            @endcan
+                        @endif
+                        @if ($record->status === Quotation::StatusConverted && $record->salesOrders->isNotEmpty())
+                            @can('sales_orders.view')
+                                <a class="btn btn-falcon-success btn-sm" href="{{ route('admin.sales.sales-orders.show', $record->salesOrders->first()) }}">
+                                    <span class="fas fa-external-link-alt me-1"></span>{{ $record->salesOrders->first()->doc_num }}
+                                </a>
+                            @endcan
+                        @endif
                         @if (! in_array($record->status, [Quotation::StatusCancelled, Quotation::StatusConverted], true))
                             @can('quotations.cancel')
                                 <button class="btn btn-falcon-default text-danger btn-sm js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.cancel', $record->doc_num) }}">
@@ -146,9 +164,9 @@
                             @endcan
                         @endif
                         @can('quotations.print')
-                            <button class="btn btn-falcon-default btn-sm" type="button" disabled>
-                                <span class="fas fa-print me-1"></span>{{ __('quotations.actions.print_placeholder') }}
-                            </button>
+                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.quotations.print', $record) }}" target="_blank">
+                                <span class="fas fa-print me-1"></span>{{ __('quotations.actions.print') }}
+                            </a>
                         @endcan
                     </div>
                 @endif
@@ -297,6 +315,26 @@
                                 <div class="invalid-feedback d-block" data-error-for="project_name"></div>
                             </div>
 
+                            <div class="col-md-6">
+                                <x-forms.label for="customer_reference" :label="__('quotations.attributes.customer_reference')" />
+                                @if ($isReadonly)
+                                    <x-forms.view-field for="customer_reference" :value="$record?->customer_reference" />
+                                @else
+                                    <input class="form-control" id="customer_reference" name="customer_reference" type="text" value="{{ old('customer_reference', $record?->customer_reference) }}" maxlength="160">
+                                @endif
+                                <div class="invalid-feedback d-block" data-error-for="customer_reference"></div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <x-forms.label for="internal_notes" :label="__('quotations.attributes.internal_notes')" />
+                                @if ($isReadonly)
+                                    <x-forms.view-field for="internal_notes" :value="$record?->internal_notes" />
+                                @else
+                                    <textarea class="form-control" id="internal_notes" name="internal_notes" rows="2">{{ old('internal_notes', $record?->internal_notes) }}</textarea>
+                                @endif
+                                <div class="invalid-feedback d-block" data-error-for="internal_notes"></div>
+                            </div>
+
                             <div class="col-md-3">
                                 <x-forms.label for="revision_date" :label="__('quotations.attributes.revision_date')" required />
                                 @if ($isReadonly)
@@ -339,6 +377,11 @@
                                         <th>{{ __('quotations.attributes.discount') }}</th>
                                         <th class="text-center">{{ __('quotations.attributes.tax_rate') }}</th>
                                         <th class="text-center">{{ __('quotations.attributes.total') }}</th>
+                                        <th>{{ __('quotations.attributes.requested_date') }}</th>
+                                        <th>{{ __('quotations.attributes.packaging') }}</th>
+                                        <th>{{ __('quotations.attributes.customer_specification') }}</th>
+                                        <th>{{ __('quotations.attributes.warehouse_notes') }}</th>
+                                        <th>{{ __('quotations.attributes.production_notes') }}</th>
                                         <th>{{ __('quotations.attributes.line_notes') }}</th>
                                         @unless ($isReadonly)
                                             <th class="text-center">{{ __('common.fields.actions') }}</th>
@@ -419,6 +462,29 @@
                                             </td>
                                             <td class="text-center">
                                                 <span class="js-quotation-line-total" dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</span>
+                                            </td>
+                                            <td>
+                                                @if ($isReadonly)
+                                                    <div class="form-control-plaintext">{{ $line['requested_date'] ?: __('common.empty_value') }}</div>
+                                                @else
+                                                    <input class="form-control js-date-picker" name="lines[{{ $index }}][requested_date]" value="{{ $line['requested_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off">
+                                                @endif
+                                            </td>
+                                            <td>
+                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['specifications']['packaging'] ?? __('common.empty_value') }}</div>
+                                                @else<input class="form-control" name="lines[{{ $index }}][specifications][packaging]" value="{{ $line['specifications']['packaging'] ?? '' }}">@endif
+                                            </td>
+                                            <td>
+                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['specifications']['customer_specification'] ?? __('common.empty_value') }}</div>
+                                                @else<input class="form-control" name="lines[{{ $index }}][specifications][customer_specification]" value="{{ $line['specifications']['customer_specification'] ?? '' }}">@endif
+                                            </td>
+                                            <td>
+                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['warehouse_notes'] ?? __('common.empty_value') }}</div>
+                                                @else<input class="form-control" name="lines[{{ $index }}][warehouse_notes]" value="{{ $line['warehouse_notes'] ?? '' }}">@endif
+                                            </td>
+                                            <td>
+                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['production_notes'] ?? __('common.empty_value') }}</div>
+                                                @else<input class="form-control" name="lines[{{ $index }}][production_notes]" value="{{ $line['production_notes'] ?? '' }}">@endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
@@ -685,9 +751,9 @@
                                                         </a>
                                                     @endcan
                                                     @can('quotations.print')
-                                                        <button class="btn btn-falcon-default btn-sm" type="button" disabled>
+                                                        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.quotations.revisions.print', [$record, $history]) }}" target="_blank">
                                                             <span class="fas fa-print"></span>
-                                                        </button>
+                                                        </a>
                                                     @endcan
                                                 </td>
                                             </tr>

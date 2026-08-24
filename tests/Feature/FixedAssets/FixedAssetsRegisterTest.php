@@ -190,6 +190,26 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
     expect(json_encode($fixedAssets, JSON_THROW_ON_ERROR))->toContain('fixed_assets_register')
         ->and(app(PermissionRegistryService::class)->all())->toContain('fixed_assets.view');
 
+    $fullyAuthorized = fixedAssetsActor([
+        'fixed_assets.view',
+        'fixed_assets.accounting.configure',
+        'fixed_assets.depreciation.preview',
+        'fixed_assets.reports',
+    ]);
+    $this->actingAs($fullyAuthorized);
+    fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
+    $authorizedFixedAssets = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'fixed_assets');
+    $canonicalChildren = collect($authorizedFixedAssets['children'] ?? [])
+        ->flatMap(fn (array $group): array => array_column($group['children'] ?? [$group], 'label'))
+        ->all();
+
+    expect($canonicalChildren)->toEqualCanonicalizing([
+        'fixed_assets_register',
+        'fixed_asset_accounting_mappings',
+        'fixed_asset_depreciation',
+        'fixed_asset_reports',
+    ])->not->toContain('asset_inspection', 'asset_documents', 'asset_insurance');
+
     $blocked = fixedAssetsActor(['customers.view']);
     $this->actingAs($blocked);
     fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);

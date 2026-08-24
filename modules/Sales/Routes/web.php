@@ -149,11 +149,14 @@ Route::middleware('auth')
             Route::patch('/{quotation}/restore', 'restore')->middleware('can:quotations.restore')->name('restore');
             Route::get('/{quotation}/clone', 'clone')->middleware('can:quotations.clone')->name('clone');
             Route::post('/{quotation}/revisions', 'createRevision')->middleware('can:quotations.revisions.create')->name('revisions.create');
+            Route::get('/{quotation}/revisions/{revision:revision_code}/print', 'printRevision')->middleware('can:quotations.print')->name('revisions.print');
             Route::get('/{quotation}/revisions/{revision:revision_code}', 'showRevision')->middleware('can:quotations.revisions.view')->name('revisions.show');
             Route::post('/{quotation}/mark-sent', 'markSent')->middleware('can:quotations.mark_sent')->name('mark-sent');
             Route::post('/{quotation}/accept', 'accept')->middleware('can:quotations.accept')->name('accept');
             Route::post('/{quotation}/reject', 'reject')->middleware('can:quotations.reject')->name('reject');
             Route::post('/{quotation}/cancel', 'cancel')->middleware('can:quotations.cancel')->name('cancel');
+            Route::post('/{quotation}/convert', 'convert')->middleware('can:sales_orders.create')->name('convert');
+            Route::get('/{quotation}/print', 'print')->middleware('can:quotations.print')->name('print');
             Route::get('/{quotation}', 'show')->withTrashed()->middleware('can:quotations.view')->name('show');
             Route::get('/{quotation}/edit', 'edit')->middleware('can:quotations.edit')->name('edit');
             Route::put('/{quotation}', 'update')->middleware('can:quotations.edit')->name('update');

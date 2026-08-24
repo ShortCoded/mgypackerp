@@ -39,7 +39,7 @@ class ProductionOrderController extends Controller
 
     public function show(ProductionOrder $productionOrder): View
     {
-        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit']);
+        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit', 'runs.product', 'runs.requirements.product']);
 
         return view('modules.sales.cycle.show', [
             'kind' => 'production_request',

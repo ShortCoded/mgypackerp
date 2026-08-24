@@ -30,13 +30,14 @@ class ReportPdfService
     public function stream(string $view, array $data, string $filename, string $orientation = 'L'): Response
     {
         $branding = $this->branding->current();
+        $identity = is_array($data['companyPrintIdentity'] ?? null) ? $data['companyPrintIdentity'] : [];
         $generatedAt = now();
         $generatedBy = auth()->user()?->name ?: '';
         $direction = config('languages.available.'.app()->getLocale().'.dir', 'ltr');
         $shared = [
             'branding' => $branding,
-            'companyName' => $branding['name'],
-            'companyLogoPath' => $this->pdfLogoPath($branding['logo_path']),
+            'companyName' => (string) ($identity['legal_name'] ?? $identity['name'] ?? $branding['name']),
+            'companyLogoPath' => $this->pdfImageSource($identity['logo_source'] ?? $branding['logo_path']),
             'direction' => $direction,
             'pdfFontFamily' => 'dejavusans',
             'generatedAt' => $generatedAt,
@@ -50,6 +51,11 @@ class ReportPdfService
         $header = $this->views->make('reports.partials.header', $payload)->render();
         $footer = $this->views->make('reports.partials.footer', $payload)->render();
         $styles = $this->views->make('reports.partials.styles', $payload)->render();
+        $extraStylesView = $data['pdfStylesView'] ?? null;
+
+        if (is_string($extraStylesView) && $this->views->exists($extraStylesView)) {
+            $styles .= $this->views->make($extraStylesView, $payload)->render();
+        }
 
         $tempDir = storage_path('framework/cache/mpdf');
         File::ensureDirectoryExists($tempDir);
@@ -90,18 +96,26 @@ class ReportPdfService
         return $this->stream($view, $data, $filename, $orientation);
     }
 
-    private function pdfLogoPath(?string $path): ?string
+    private function pdfImageSource(mixed $source): ?string
     {
-        if (! is_string($path) || trim($path) === '' || ! is_file($path)) {
+        if (! is_string($source) || trim($source) === '') {
             return null;
         }
 
-        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (str_starts_with($source, 'data:image/')) {
+            return $source;
+        }
+
+        if (! is_file($source)) {
+            return null;
+        }
+
+        $extension = strtolower(pathinfo($source, PATHINFO_EXTENSION));
 
         if (! in_array($extension, self::SupportedLogoExtensions, true)) {
             return null;
         }
 
-        return $path;
+        return $source;
     }
 }

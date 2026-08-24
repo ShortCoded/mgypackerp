@@ -13,10 +13,12 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\QuotationsDataTable;
 use Modules\Sales\Http\Requests\BulkDeleteQuotationsRequest;
@@ -31,6 +33,7 @@ use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\QuotationRevisionLine;
 use Modules\Sales\Services\QuotationService;
+use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesSelect2Service;
 use Throwable;
 
@@ -270,6 +273,52 @@ class QuotationController extends Controller
         return $this->statusAction($request, $quotation, 'cancel', fn (): Quotation => $this->service->cancel($quotation), __('quotations.messages.cancelled'));
     }
 
+    public function convert(Request $request, Quotation $quotation, SalesOrderService $orders, OperatingContextService $context): JsonResponse
+    {
+        $snapshot = $context->snapshot($request);
+        if (! $snapshot['company_id'] || ! $snapshot['financial_period_id'] || ! $snapshot['branch_id']) {
+            return response()->json(['success' => false, 'message' => __('quotations.messages.operating_context_required')], 422);
+        }
+
+        try {
+            $order = $orders->createFromQuotation($quotation, [
+                'company_id' => (int) $snapshot['company_id'],
+                'financial_period_id' => (int) $snapshot['financial_period_id'],
+                'branch_id' => (int) $snapshot['branch_id'],
+            ]);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+
+        $this->logActivity($request, 'quotations.convert', [
+            'quotation_doc_num' => $quotation->doc_num,
+            'sales_order_doc_num' => $order->doc_num,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => __('quotations.messages.converted'),
+            'redirect' => route('admin.sales.sales-orders.show', $order),
+            'data' => ['doc_num' => $order->doc_num, 'url' => route('admin.sales.sales-orders.show', $order)],
+        ], 201);
+    }
+
+    public function print(Quotation $quotation, CompanyPrintIdentityService $printIdentity): View
+    {
+        $quotation->load(['company', 'branch', 'customer', 'currency', 'salesPerson', 'currentRevision.lines.product', 'currentRevision.lines.unit', 'currentRevision.paymentMilestones']);
+
+        return $this->printView($quotation, $quotation->currentRevision, $printIdentity);
+    }
+
+    public function printRevision(Quotation $quotation, QuotationRevision $revision, CompanyPrintIdentityService $printIdentity): View
+    {
+        abort_unless((int) $revision->quotation_id === (int) $quotation->getKey(), 404);
+        $quotation->load(['company', 'branch', 'customer', 'currency', 'salesPerson']);
+        $revision->load(['lines.product', 'lines.unit', 'paymentMilestones']);
+
+        return $this->printView($quotation, $revision, $printIdentity);
+    }
+
     public function destroyAttachment(Request $request, QuotationAttachment $attachment): JsonResponse
     {
         abort_unless((bool) $request->user()?->can('quotations.attachments.manage'), 403);
@@ -319,6 +368,17 @@ class QuotationController extends Controller
             'paymentMilestones' => $this->paymentMilestones($revision),
             'executionScheduleLines' => $this->executionScheduleLines($revision),
             'metadata' => $this->metadata($record),
+        ]);
+    }
+
+    private function printView(Quotation $quotation, ?QuotationRevision $revision, CompanyPrintIdentityService $printIdentity): View
+    {
+        abort_unless($revision instanceof QuotationRevision, 404);
+
+        return view('modules.sales.quotations.print', [
+            'record' => $quotation,
+            'revision' => $revision,
+            'companyPrintIdentity' => $quotation->print_identity_snapshot ?: $printIdentity->forCompany($quotation->company),
         ]);
     }
 
@@ -489,11 +549,17 @@ class QuotationController extends Controller
                     'unit_doc_num' => $unit?->doc_num,
                     'unit_label' => $unitLabel !== '' ? $unitLabel : null,
                     'quantity' => $this->numbers->format($line->quantity),
+                    'base_quantity' => $this->numbers->format($line->base_quantity),
+                    'conversion_factor' => $this->numbers->format($line->conversion_factor),
                     'unit_price' => $this->numbers->format($line->unit_price),
                     'discount_type' => $line->discount_type,
                     'discount_value' => $this->numbers->format($line->discount_value),
                     'tax_rate' => $this->numbers->format($line->tax_rate),
                     'line_total' => $this->numbers->format($line->line_total),
+                    'requested_date' => $line->requested_date ? app(DateFormatService::class)->formatDate($line->requested_date, '') : null,
+                    'specifications' => $line->specifications ?? [],
+                    'warehouse_notes' => $line->warehouse_notes,
+                    'production_notes' => $line->production_notes,
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
@@ -507,11 +573,17 @@ class QuotationController extends Controller
                 'unit_doc_num' => null,
                 'unit_label' => null,
                 'quantity' => '1',
+                'base_quantity' => '1',
+                'conversion_factor' => '1',
                 'unit_price' => null,
                 'discount_type' => null,
                 'discount_value' => '0',
                 'tax_rate' => '0',
                 'line_total' => '0',
+                'requested_date' => null,
+                'specifications' => [],
+                'warehouse_notes' => null,
+                'production_notes' => null,
                 'notes' => null,
             ]];
         }

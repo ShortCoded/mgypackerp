@@ -8,6 +8,7 @@ class QuotationCalculationService
 {
     public function __construct(
         private readonly NumericFormatService $numbers,
+        private readonly SalesAmountService $amounts,
     ) {}
 
     /**
@@ -17,70 +18,77 @@ class QuotationCalculationService
     public function calculate(array $lines, ?string $discountType, mixed $discountValue): array
     {
         $calculatedLines = [];
-        $subtotal = 0.0;
-        $lineDiscountTotal = 0.0;
-        $taxTotal = 0.0;
+        $subtotal = '0.0000';
+        $lineDiscountTotal = '0.0000';
+        $taxTotal = '0.0000';
 
         foreach ($lines as $line) {
-            $quantity = $this->number($line['quantity'] ?? 0);
-            $unitPrice = $this->number($line['unit_price'] ?? 0);
-            $lineSubtotal = $quantity * $unitPrice;
+            $quantity = $this->decimal($line['quantity'] ?? 0);
+            $unitPrice = $this->decimal($line['unit_price'] ?? 0);
+            $lineSubtotal = $this->amounts->multiply($quantity, $unitPrice);
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
-            $taxBase = max(0, $lineSubtotal - $lineDiscount);
-            $lineTax = $taxBase * ($this->number($line['tax_rate'] ?? 0) / 100);
-            $lineTotal = $taxBase + $lineTax;
+            $taxBase = $this->amounts->subtract($lineSubtotal, $lineDiscount);
+            $taxRate = $this->decimal($line['tax_rate'] ?? 0);
+            $lineTax = $this->amounts->round($this->amounts->multiply($taxBase, bcdiv($taxRate, '100', 8), 8));
+            $lineTotal = $this->amounts->add($taxBase, $lineTax);
 
-            $subtotal += $lineSubtotal;
-            $lineDiscountTotal += $lineDiscount;
-            $taxTotal += $lineTax;
+            $subtotal = $this->amounts->add($subtotal, $lineSubtotal);
+            $lineDiscountTotal = $this->amounts->add($lineDiscountTotal, $lineDiscount);
+            $taxTotal = $this->amounts->add($taxTotal, $lineTax);
 
             $calculatedLines[] = [
                 ...$line,
                 'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
                 'unit_price' => $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000',
                 'discount_value' => $this->numbers->normalizeToScale($line['discount_value'] ?? 0, 4) ?? '0.0000',
-                'discount_amount' => $this->decimal($lineDiscount),
+                'discount_amount' => $lineDiscount,
                 'tax_rate' => $this->numbers->normalizeToScale($line['tax_rate'] ?? 0, 4) ?? '0.0000',
-                'tax_amount' => $this->decimal($lineTax),
-                'line_total' => $this->decimal($lineTotal),
+                'tax_amount' => $lineTax,
+                'line_total' => $lineTotal,
             ];
         }
 
-        $headerDiscount = $this->discountAmount(max(0, $subtotal - $lineDiscountTotal), $discountType, $discountValue);
-        $discountAmount = $lineDiscountTotal + $headerDiscount;
-        $total = max(0, $subtotal - $discountAmount + $taxTotal);
+        $headerDiscount = $this->discountAmount($this->amounts->subtract($subtotal, $lineDiscountTotal), $discountType, $discountValue);
+        $discountAmount = $this->amounts->add($lineDiscountTotal, $headerDiscount);
+        $total = $this->amounts->add($this->amounts->subtract($subtotal, $discountAmount), $taxTotal);
 
         return [
             'revision' => [
-                'subtotal' => $this->decimal($subtotal),
+                'subtotal' => $subtotal,
                 'discount_type' => $discountType ?: null,
                 'discount_value' => $this->numbers->normalizeToScale($discountValue ?? 0, 4) ?? '0.0000',
-                'discount_amount' => $this->decimal($discountAmount),
-                'tax_amount' => $this->decimal($taxTotal),
-                'total' => $this->decimal($total),
+                'discount_amount' => $discountAmount,
+                'tax_amount' => $taxTotal,
+                'total' => $total,
             ],
             'lines' => $calculatedLines,
         ];
     }
 
-    private function discountAmount(float $base, mixed $type, mixed $value): float
+    private function discountAmount(string $base, mixed $type, mixed $value): string
     {
-        $value = max(0, $this->number($value));
+        $value = $this->decimal($value);
+        if ($this->amounts->compare($value, '0') < 0) {
+            $value = '0.0000';
+        }
 
-        return match ($type) {
-            'percentage' => min($base, $base * min($value, 100) / 100),
-            'fixed' => min($base, $value),
-            default => 0.0,
+        $discount = match ($type) {
+            'percentage' => $this->amounts->multiply($base, bcdiv(
+                $this->amounts->compare($value, '100') > 0 ? '100' : $value,
+                '100',
+                8,
+            ), 8),
+            'fixed' => $value,
+            default => '0.0000',
         };
+
+        return $this->amounts->compare($discount, $base) > 0
+            ? $base
+            : $this->amounts->round($discount);
     }
 
-    private function number(mixed $value): float
+    private function decimal(mixed $value): string
     {
-        return (float) str_replace(',', '', (string) ($value ?? 0));
-    }
-
-    private function decimal(float $value): string
-    {
-        return number_format($value, 4, '.', '');
+        return $this->numbers->normalizeToScale(str_replace(',', '', (string) ($value ?? 0)), 4) ?? '0.0000';
     }
 }

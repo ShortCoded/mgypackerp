@@ -35,6 +35,21 @@
     <span class="js-quotation-line-total" dir="ltr">0</span>
 </td>
 <td>
+    <input class="form-control js-date-picker" name="lines[__INDEX__][requested_date]" data-date-format="{{ app(\Modules\Core\Services\DateFormatService::class)->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off">
+</td>
+<td>
+    <input class="form-control" name="lines[__INDEX__][specifications][packaging]">
+</td>
+<td>
+    <input class="form-control" name="lines[__INDEX__][specifications][customer_specification]">
+</td>
+<td>
+    <input class="form-control" name="lines[__INDEX__][warehouse_notes]">
+</td>
+<td>
+    <input class="form-control" name="lines[__INDEX__][production_notes]">
+</td>
+<td>
     <input class="form-control" name="lines[__INDEX__][notes]" type="text" value="">
 </td>
 <td class="text-center">

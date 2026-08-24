@@ -2,6 +2,7 @@
 
 namespace Modules\FixedAssets\Models;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Accounting\Models\Account;
@@ -135,5 +136,15 @@ class FixedAssetDisposal extends Model
     public function reversalJournalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id')->withTrashed();
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function postedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'posted_by');
     }
 }

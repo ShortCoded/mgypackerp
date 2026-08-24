@@ -17,6 +17,8 @@ class ProductionOrder extends Model
 
     public const StatusDraft = 'draft';
 
+    public const StatusPlanned = 'planned';
+
     public const StatusReleased = 'released';
 
     public const StatusInProgress = 'in_progress';
@@ -24,6 +26,8 @@ class ProductionOrder extends Model
     public const StatusPartiallyCompleted = 'partially_completed';
 
     public const StatusCompleted = 'completed';
+
+    public const StatusShortClosed = 'short_closed';
 
     public const StatusCancelled = 'cancelled';
 
@@ -33,7 +37,7 @@ class ProductionOrder extends Model
 
     protected function casts(): array
     {
-        return ['production_order_date' => 'date', 'expected_start_date' => 'date', 'expected_finish_date' => 'date', 'expected_delivery_date' => 'date', 'released_at' => 'datetime', 'cancelled_at' => 'datetime', 'print_identity_snapshot' => 'array'];
+        return ['production_order_date' => 'date', 'expected_start_date' => 'date', 'expected_finish_date' => 'date', 'expected_delivery_date' => 'date', 'overproduction_tolerance_percent' => 'decimal:4', 'released_at' => 'datetime', 'cancelled_at' => 'datetime', 'short_closed_at' => 'datetime', 'print_identity_snapshot' => 'array'];
     }
 
     public function getRouteKeyName(): string
@@ -61,5 +65,10 @@ class ProductionOrder extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(ProductionOrderLine::class)->orderBy('line_number');
+    }
+
+    public function runs(): HasMany
+    {
+        return $this->hasMany(ProductionRun::class)->orderBy('planned_start_at');
     }
 }

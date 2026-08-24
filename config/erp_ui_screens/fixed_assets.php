@@ -24,8 +24,8 @@ return [
         'support' => ['title' => ['en' => 'Asset Support', 'ar' => 'خدمات الأصول'], 'icon' => 'folder-open', 'order' => 50],
     ],
     'screens' => [
-        $screen('asset-inspection', 'Asset Inspection', 'فحص الأصل', 'support'),
-        $screen('asset-documents', 'Asset Documents', 'مستندات الأصل', 'support'),
-        $screen('asset-insurance', 'Asset Insurance', 'تأمين الأصل', 'support'),
+        $screen('asset-inspection', 'Asset Inspection', 'فحص الأصل', 'support', 'document', ['menu_visible' => false]),
+        $screen('asset-documents', 'Asset Documents', 'مستندات الأصل', 'support', 'document', ['menu_visible' => false]),
+        $screen('asset-insurance', 'Asset Insurance', 'تأمين الأصل', 'support', 'document', ['menu_visible' => false]),
     ],
 ];

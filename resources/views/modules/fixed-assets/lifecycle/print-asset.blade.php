@@ -9,6 +9,10 @@
 
 @section('title', __('fixed_assets.lifecycle.asset_card').' '.$asset->doc_num)
 
+@push('styles')
+    <style>@page { size: A4 portrait; margin: 12mm; }</style>
+@endpush
+
 @section('content')
     <div class="page-print-actions d-flex justify-content-end gap-2 mb-3">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.lifecycle.show', $asset) }}">{{ __('common.actions.back') }}</a>

@@ -271,6 +271,7 @@
                     <table class="table table-sm align-middle mb-0 procurement-lines-table">
                         <thead class="bg-100"><tr>
                             <th>#</th><th>{{ __('Item / Invoice') }}</th><th>{{ __('Source') }}</th><th class="text-end">{{ __('Quantity') }}</th>
+                            @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th>@endif
                             @if($showPrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
                             <th>{{ __('Disposition / Notes') }}</th>
                         </tr></thead>
@@ -289,6 +290,10 @@
                                     <td>{{ $item }}</td>
                                     <td dir="ltr">{{ $source }}</td>
                                     <td class="text-end" dir="ltr">{{ is_numeric($quantity) ? app(\Modules\Core\Services\NumericFormatService::class)->format($quantity) : $quantity }}</td>
+                                    @if($type === 'goods_receipt_inspection')
+                                        <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->accepted_quantity) }}</td>
+                                        <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->rejected_quantity) }}</td>
+                                    @endif
                                     @if($showPrices)
                                         <td class="text-end" dir="ltr">{{ isset($line->unit_price) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->unit_price) : '—' }}</td>
                                         <td class="text-end" dir="ltr">{{ isset($line->line_total) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->line_total) : (isset($line->amount) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->amount) : '—') }}</td>

@@ -8,13 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 class Quotation extends Model
 {
-    use SoftDeletes;
+    use SnapshotsCompanyPrintIdentity, SoftDeletes;
 
     public const TypeStandard = 'standard';
 
@@ -59,7 +61,9 @@ class Quotation extends Model
         'doc_number',
         'doc_num',
         'company_id',
+        'branch_id',
         'customer_id',
+        'customer_reference',
         'quotation_type',
         'project_name',
         'subject',
@@ -71,6 +75,8 @@ class Quotation extends Model
         'current_revision_id',
         'status',
         'notes',
+        'internal_notes',
+        'print_identity_snapshot',
         'created_by',
         'updated_by',
         'deleted_by',
@@ -93,6 +99,7 @@ class Quotation extends Model
             'quotation_date' => 'date',
             'valid_until' => 'date',
             'exchange_rate' => 'decimal:6',
+            'print_identity_snapshot' => 'array',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
@@ -125,6 +132,11 @@ class Quotation extends Model
         return $this->belongsTo(Customer::class)->withTrashed();
     }
 
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class)->withTrashed();
+    }
+
     public function currency(): BelongsTo
     {
         return $this->belongsTo(Currency::class)->withTrashed();
@@ -148,6 +160,11 @@ class Quotation extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(QuotationAttachment::class)->orderByDesc('created_at');
+    }
+
+    public function salesOrders(): HasMany
+    {
+        return $this->hasMany(SalesOrder::class)->orderByDesc('created_at');
     }
 
     public function createdBy(): BelongsTo

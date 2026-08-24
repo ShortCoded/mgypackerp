@@ -111,7 +111,7 @@ class SalesCycleController extends Controller
         InventoryAvailabilityService $availability,
     ): View {
         $record = $salesOrder->load([
-            'customer', 'branch', 'branchStore', 'currency', 'salesEmployee', 'lines.product', 'lines.unit',
+            'customer', 'branch', 'branchStore', 'currency', 'salesEmployee', 'quotation.currentRevision', 'quotationRevision', 'lines.product', 'lines.unit',
             'lines.reservations', 'lines.productionLines.order', 'paymentSchedules', 'statusHistory.changedBy',
             'deliveries.lines.product', 'deliveries.lines.transactionUnit', 'productionOrders.lines.product',
             'invoices.lines', 'invoices.paymentSchedules', 'creditOverrides',
@@ -423,7 +423,7 @@ class SalesCycleController extends Controller
 
     public function printOrder(SalesOrder $salesOrder): View
     {
-        return $this->print('sales_order', $salesOrder->load(['company', 'customer', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
+        return $this->print('sales_order', $salesOrder->load(['company', 'customer', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
     }
 
     public function printInvoice(CustomerInvoice $customerInvoice): View

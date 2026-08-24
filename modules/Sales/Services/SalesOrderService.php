@@ -3,12 +3,15 @@
 namespace Modules\Sales\Services;
 
 use DomainException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Sales\Models\CustomerCommercialAgreement;
 use Modules\Sales\Models\Quotation;
+use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
@@ -22,6 +25,75 @@ class SalesOrderService
         private readonly CreditControlService $creditControl,
         private readonly SalesCycleAuditService $audit,
     ) {}
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    public function createFromQuotation(Quotation $quotation, array $context): SalesOrder
+    {
+        return DB::transaction(function () use ($quotation, $context): SalesOrder {
+            $locked = Quotation::query()
+                ->with(['currentRevision.lines.product', 'currentRevision.lines.unit', 'currentRevision.paymentMilestones'])
+                ->lockForUpdate()
+                ->findOrFail($quotation->getKey());
+            $revision = $locked->currentRevision;
+
+            if ($locked->status !== Quotation::StatusAccepted || ! $revision instanceof QuotationRevision || $locked->current_revision_id !== $revision->getKey()) {
+                throw new DomainException('Only the accepted current quotation revision can be converted.');
+            }
+            if ((int) $locked->company_id !== $context['company_id'] || (int) $locked->branch_id !== $context['branch_id']) {
+                throw new DomainException('Switch to the quotation operating company and branch before conversion.');
+            }
+            if ($locked->valid_until?->isBefore(now()->startOfDay())) {
+                throw new DomainException('The accepted quotation has expired and must be revised before conversion.');
+            }
+            if (! $locked->customer_id || ! $locked->currency_id || $revision->lines->isEmpty()) {
+                throw new DomainException('The quotation requires a customer, currency, and at least one sales line.');
+            }
+            if (SalesOrder::query()->where('quotation_revision_id', $revision->getKey())->exists()) {
+                throw new DomainException('This quotation revision was already converted.');
+            }
+
+            $physicalLines = $revision->lines->reject(fn ($line): bool => $line->product?->item_classification === Product::ClassificationService);
+            $store = $physicalLines->isEmpty() ? null : BranchStore::query()
+                ->where('branch_id', $context['branch_id'])
+                ->orderBy('position')
+                ->orderBy('name')
+                ->first();
+            if ($physicalLines->isNotEmpty() && ! $store instanceof BranchStore) {
+                throw new DomainException('The quotation branch needs a finished-goods store before physical lines can be converted.');
+            }
+
+            $requestedDate = $revision->lines->pluck('requested_date')->filter()->max();
+            $expectedDeliveryDate = $requestedDate?->toDateString() ?? $locked->valid_until?->toDateString() ?? now()->toDateString();
+            if ($expectedDeliveryDate < now()->toDateString()) {
+                $expectedDeliveryDate = now()->toDateString();
+            }
+
+            return $this->create([
+                ...$context,
+                'quotation_id' => $locked->getKey(),
+                'quotation_revision_id' => $revision->getKey(),
+                'customer_id' => $locked->customer_id,
+                'sales_employee_id' => $locked->sales_person_id,
+                'currency_id' => $locked->currency_id,
+                'branch_store_id' => $store?->getKey(),
+                'order_date' => now()->toDateString(),
+                'expected_delivery_date' => $expectedDeliveryDate,
+                'sales_channel' => 'quotation',
+                'exchange_rate' => $locked->exchange_rate,
+                'customer_reference' => $locked->customer_reference,
+                'notes' => $revision->notes_snapshot ?: $locked->notes,
+                'internal_notes' => $locked->internal_notes,
+                'terms_snapshot' => $this->termSnapshot($revision->terms_snapshot),
+                'payment_terms_snapshot' => $this->termSnapshot($revision->payment_terms_snapshot),
+                'execution_terms_snapshot' => $this->termSnapshot($revision->execution_terms_snapshot),
+                'warranty_terms_snapshot' => $this->termSnapshot($revision->warranty_terms_snapshot),
+                'technical_notes_snapshot' => $this->termSnapshot($revision->technical_notes_snapshot),
+                'delivery_terms_snapshot' => $this->termSnapshot($revision->delivery_terms_snapshot),
+                'lines' => $this->quotationLines($revision),
+                'payment_schedules' => $this->quotationPaymentSchedules($revision, $expectedDeliveryDate),
+            ]);
+        });
+    }
 
     /** @param array<string, mixed> $data */
     public function create(array $data): SalesOrder
@@ -336,6 +408,111 @@ class SalesOrderService
             throw new DomainException('This quotation revision was already converted.');
         }
         $quotation->update(['status' => Quotation::StatusConverted, 'updated_by' => auth()->id()]);
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function quotationLines(QuotationRevision $revision): array
+    {
+        $baseDiscount = $this->amounts->sum($revision->lines->pluck('discount_amount'));
+        $documentDiscount = $this->amounts->subtract($revision->discount_amount, $baseDiscount);
+        $discountableTotal = $this->amounts->sum($revision->lines->map(
+            fn ($line): string => $this->amounts->subtract(
+                $this->amounts->multiply($line->quantity, $line->unit_price),
+                $line->discount_amount,
+            ),
+        ));
+        $allocatedDocumentDiscount = '0.0000';
+        $lastIndex = $revision->lines->count() - 1;
+
+        return $revision->lines->values()->map(function ($line, int $index) use ($documentDiscount, $discountableTotal, &$allocatedDocumentDiscount, $lastIndex): array {
+            $share = '0.0000';
+            if ($this->amounts->compare($documentDiscount, '0') > 0) {
+                if ($index === $lastIndex) {
+                    $share = $this->amounts->subtract($documentDiscount, $allocatedDocumentDiscount);
+                } else {
+                    $lineBase = $this->amounts->subtract($this->amounts->multiply($line->quantity, $line->unit_price), $line->discount_amount);
+                    $share = $this->amounts->round($this->amounts->multiply($documentDiscount, bcdiv($lineBase, $discountableTotal, 8), 8));
+                    $allocatedDocumentDiscount = $this->amounts->add($allocatedDocumentDiscount, $share);
+                }
+            }
+
+            return [
+                'quotation_revision_line_id' => $line->getKey(),
+                'product_id' => $line->product_id,
+                'unit_id' => $line->unit_id,
+                'description' => $line->description ?: $line->product_name_snapshot,
+                'quantity' => $line->quantity,
+                'unit_price' => $line->unit_price,
+                'discount_amount' => $this->amounts->add($line->discount_amount, $share),
+                'tax_amount' => $line->tax_amount,
+                'requested_date' => $line->requested_date,
+                'specifications' => $line->specifications,
+                'customer_notes' => $line->notes,
+                'warehouse_notes' => $line->warehouse_notes,
+                'production_notes' => $line->production_notes,
+            ];
+        })->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function quotationPaymentSchedules(QuotationRevision $revision, string $expectedDeliveryDate): array
+    {
+        $milestones = $revision->paymentMilestones->values();
+        if ($milestones->isEmpty()) {
+            return [];
+        }
+
+        $weights = $milestones->map(function (QuotationPaymentMilestone $milestone) use ($revision): string {
+            if ($this->amounts->compare($milestone->amount ?? '0', '0') > 0) {
+                return (string) $milestone->amount;
+            }
+
+            return $this->amounts->multiply($revision->total, bcdiv((string) ($milestone->percentage ?? 0), '100', 8), 8);
+        });
+        $weightTotal = $this->amounts->sum($weights);
+        if ($this->amounts->compare($weightTotal, '0') <= 0) {
+            return [[
+                'title' => 'Quotation total',
+                'amount' => $revision->total,
+                'due_date' => $expectedDeliveryDate,
+                'due_condition' => 'custom',
+            ]];
+        }
+
+        $allocated = '0.0000';
+        $lastIndex = $milestones->count() - 1;
+
+        return $milestones->map(function (QuotationPaymentMilestone $milestone, int $index) use ($weights, $weightTotal, $revision, $expectedDeliveryDate, &$allocated, $lastIndex): array {
+            $amount = $index === $lastIndex
+                ? $this->amounts->subtract($revision->total, $allocated)
+                : $this->amounts->round($this->amounts->multiply($revision->total, bcdiv($weights[$index], $weightTotal, 8), 8));
+            $allocated = $this->amounts->add($allocated, $amount);
+            $dueDate = match ($milestone->due_type) {
+                QuotationPaymentMilestone::DueOnContract => now()->toDateString(),
+                QuotationPaymentMilestone::DueAfterDelivery => Carbon::parse($expectedDeliveryDate)->addDays(30)->toDateString(),
+                QuotationPaymentMilestone::DueAfterInstallation => Carbon::parse($expectedDeliveryDate)->addDays(60)->toDateString(),
+                default => $milestone->due_date?->toDateString() ?? $expectedDeliveryDate,
+            };
+
+            return [
+                'installment_type' => 'quotation_milestone',
+                'title' => $milestone->title,
+                'description' => $milestone->description,
+                'percentage' => $this->amounts->compare($revision->total, '0') > 0
+                    ? $this->amounts->multiply($amount, bcdiv('100', $revision->total, 8), 4)
+                    : '0.0000',
+                'amount' => $amount,
+                'due_date' => $dueDate,
+                'due_condition' => $milestone->due_type ?: 'custom',
+                'notes' => $milestone->notes,
+            ];
+        })->all();
+    }
+
+    /** @return array{content: string}|null */
+    private function termSnapshot(?string $content): ?array
+    {
+        return filled($content) ? ['content' => $content] : null;
     }
 
     private function recordStatus(SalesOrder $order, ?string $from, string $to, ?string $reason = null): void

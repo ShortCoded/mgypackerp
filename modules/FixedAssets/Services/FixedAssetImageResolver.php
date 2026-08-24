@@ -7,6 +7,7 @@ use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Company;
 use Modules\FixedAssets\Models\FixedAsset;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 class FixedAssetImageResolver
 {
@@ -84,6 +85,23 @@ class FixedAssetImageResolver
         return $this->usageArchiveFile($asset) ?: $this->archiveFileFromImagePath($asset);
     }
 
+    public function pdfSource(FixedAsset $asset): ?string
+    {
+        $archiveFile = $this->archiveFile($asset);
+
+        if ($this->archiveFileAvailable($archiveFile)) {
+            return $this->filesystemImageSource($archiveFile->disk, $archiveFile->path, $archiveFile->mime_type);
+        }
+
+        $path = trim((string) $asset->image_path);
+
+        if ($path === '' || str_starts_with($path, 'archive/') || ! Storage::disk('public')->exists($path)) {
+            return null;
+        }
+
+        return $this->filesystemImageSource('public', $path, Storage::disk('public')->mimeType($path));
+    }
+
     private function archiveFileFromImagePath(FixedAsset $asset): ?ArchiveFile
     {
         $path = trim((string) $asset->image_path);
@@ -151,5 +169,23 @@ class FixedAssetImageResolver
             'Content-Type' => $file->mime_type ?: 'image/*',
             'Content-Disposition' => 'inline; filename="'.addslashes($file->original_name).'"',
         ]);
+    }
+
+    private function filesystemImageSource(string $disk, string $path, ?string $mimeType): ?string
+    {
+        try {
+            $absolutePath = Storage::disk($disk)->path($path);
+
+            if (is_file($absolutePath)) {
+                return $absolutePath;
+            }
+        } catch (Throwable) {
+        }
+
+        if (Storage::disk($disk)->size($path) > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        return 'data:'.($mimeType ?: 'image/png').';base64,'.base64_encode(Storage::disk($disk)->get($path));
     }
 }

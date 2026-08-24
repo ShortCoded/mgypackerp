@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
@@ -30,6 +31,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
+use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseRequisition;
@@ -177,6 +179,17 @@ function procurementDocumentAttachment(Company $company): ArchiveFile
         'size_bytes' => 20,
     ]);
 }
+
+test('unapproved requisitions cannot open the request for quotation creation screen', function () {
+    $fixture = procurementFixture();
+    $requisition = procurementManualRequisition($fixture);
+    $requisition = app(ProcurementSourcingService::class)->submitRequisition($requisition);
+
+    $response = app(ProcurementWorkflowController::class)->createRfq($requisition);
+
+    expect($response)->toBeInstanceOf(RedirectResponse::class)
+        ->and($response->getTargetUrl())->toBe(route('admin.purchases.purchase-requisitions.show', $requisition));
+});
 
 test('procurement migrations expose the reconciled purchase schema', function () {
     expect(Schema::hasColumns('purchase_orders', [
@@ -447,6 +460,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     $fixture['user']->givePermissionTo([
         'purchases.goods_receipt_notes.view',
         'purchases.goods_receipt_notes.print',
+        'purchases.goods_receipt_inspection.view',
         'purchase_orders.view',
     ]);
 
@@ -458,6 +472,12 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     $this->get(route('admin.purchases.procurement.print', ['goods-receipt', $receipt->doc_num]))
         ->assertOk()
         ->assertDontSee(__('Unit price'));
+    $this->get(route('admin.purchases.goods-receipt-inspection.show', $inspection->doc_num))
+        ->assertOk()
+        ->assertSee(__('Accepted'))
+        ->assertSee(__('Rejected'))
+        ->assertSee('5')
+        ->assertSee('1');
     $this->get(route('admin.purchases.purchase-orders.show', $firstOrder->doc_num))
         ->assertForbidden();
 });
@@ -787,9 +807,30 @@ test('freight discount tax posting, invoice reversal, and period locks are exact
     ])['record'];
     $fixture['period']->forceFill(['is_closed' => true])->save();
 
+    $lockedPayment = SupplierPaymentContext::query()->create([
+        'doc_number' => 9401,
+        'doc_num' => 'SPAY-LOCKED-PROC',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'supplier_id' => $fixture['firstSupplier']->getKey(),
+        'payment_method' => SupplierPaymentContext::MethodCash,
+        'payment_date' => now()->toDateString(),
+        'amount' => 10,
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'status' => SupplierPaymentContext::StatusDraft,
+        'is_advance' => true,
+        'allocated_amount' => 0,
+    ]);
+
     expect(fn () => app(PurchaseInvoiceService::class)->approve($lockedInvoice))
         ->toThrow(DomainException::class, __('purchase_invoices.messages.period_closed'))
-        ->and($lockedInvoice->fresh()->journal_entry_id)->toBeNull();
+        ->and($lockedInvoice->fresh()->journal_entry_id)->toBeNull()
+        ->and(fn () => app(ProcurementSettlementService::class)->approveSupplierPayment($lockedPayment))
+        ->toThrow(DomainException::class, __('purchase_invoices.messages.period_closed'))
+        ->and($lockedPayment->fresh()->status)->toBe(SupplierPaymentContext::StatusDraft)
+        ->and($lockedPayment->fresh()->journal_entry_id)->toBeNull();
 });
 
 test('procurement reports filter, print, and export without leaking confidential prices', function () {
@@ -823,7 +864,26 @@ test('procurement reports filter, print, and export without leaking confidential
     );
     $confidentialExport = new ProcurementCycleReportExport($report, $rows, false);
 
-    expect($rows)->toHaveCount(1)
+    expect(ProcurementCycleReport::types())->toBe([
+        'open_requirements',
+        'requested_vs_ordered',
+        'rfq_quotation_status',
+        'purchase_order_status',
+        'ordered_vs_received',
+        'overdue_po_deliveries',
+        'delivery_schedule',
+        'incoming_qc_pending',
+        'qc_rejection',
+        'purchases_by_supplier',
+        'purchases_by_product',
+        'purchases_by_period',
+        'outstanding_supplier_invoices',
+        'due_supplier_installments',
+        'supplier_aging',
+        'upcoming_supplier_payments',
+        'returns',
+        'production_analysis',
+    ])->and($rows)->toHaveCount(1)
         ->and($rows->first()['document'])->toBe($invoice->doc_num)
         ->and($rows->first()['outstanding'])->toBe('125.0000')
         ->and($confidentialExport->headings())->not->toContain('Amount')
@@ -845,4 +905,8 @@ test('procurement reports filter, print, and export without leaking confidential
     $this->get(route('admin.purchases.procurement-cycle-report.export.excel', $query))
         ->assertOk()
         ->assertHeader('content-disposition');
+
+    app()->setLocale('ar');
+    expect(__('procurement.reports.types.open_requirements'))->toBe('احتياجات الشراء المفتوحة')
+        ->and(__('procurement.documents.types.goods-receipt-inspection'))->toBe('فحص الجودة الوارد');
 });

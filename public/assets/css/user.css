@@ -1831,13 +1831,94 @@ html[dir="rtl"] .erp-date-picker-calendar {
 @media print {
   .navbar,
   .footer,
-  .page-print-actions {
+  .page-print-actions,
+  .settings-panel,
+  .setting-toggle,
+  .offcanvas-backdrop,
+  #operating-context-modal {
     display: none !important;
+  }
+
+  html,
+  body,
+  .main,
+  .content,
+  [data-layout="container"],
+  .erp-document-print,
+  .erp-document-print .card-body {
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  .content {
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   .erp-document-print.card {
     border: 0 !important;
     box-shadow: none !important;
+    font-size: .875rem;
+  }
+
+  .erp-document-print .card-body {
+    padding-bottom: 0 !important;
+  }
+
+  .erp-document-print .col-md-4 {
+    width: 33.333333%;
+  }
+
+  .erp-document-print .col-md-6 {
+    width: 50%;
+  }
+
+  .erp-document-print .g-3 {
+    --falcon-gutter-y: .5rem;
+  }
+
+  .erp-document-print .mb-4 {
+    margin-bottom: .75rem !important;
+  }
+
+  .erp-document-print .table-responsive {
+    overflow: visible !important;
+  }
+
+  .erp-document-print .table-responsive table {
+    font-size: .65rem;
+  }
+
+  .erp-document-print .table-responsive th,
+  .erp-document-print .table-responsive td {
+    padding: .18rem .15rem;
+  }
+
+  .erp-document-company-header {
+    padding-bottom: 3mm;
+    margin-bottom: 5mm;
+  }
+
+  .erp-document-print .text-700,
+  .erp-document-print .text-body-tertiary,
+  .erp-document-print h1,
+  .erp-document-print h2,
+  .erp-document-print h3,
+  .erp-document-print h4,
+  .erp-document-print h5,
+  .erp-document-print h6,
+  .erp-document-print th,
+  .erp-document-print td {
+    color: #000 !important;
+  }
+
+  .erp-document-authorization {
+    min-height: 16mm;
+    padding-top: 1mm;
+    margin-top: 0;
+    font-size: .7rem;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .erp-document-company-logo {
@@ -1846,13 +1927,13 @@ html[dir="rtl"] .erp-date-picker-calendar {
   }
 
   .erp-document-signature {
-    max-width: 42mm;
-    max-height: 18mm;
+    max-width: 25mm;
+    max-height: 9mm;
   }
 
   .erp-document-stamp {
-    max-width: 28mm;
-    max-height: 28mm;
+    max-width: 16mm;
+    max-height: 16mm;
   }
 }
 

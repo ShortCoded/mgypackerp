@@ -29,6 +29,9 @@
             ['debit_amount' => '0', 'credit_amount' => ''],
         ];
     }
+    $totalDebit = collect($lines)->reduce(fn (string $total, array $line): string => bcadd($total, (string) ($line['debit_amount'] ?? 0), 4), '0.0000');
+    $totalCredit = collect($lines)->reduce(fn (string $total, array $line): string => bcadd($total, (string) ($line['credit_amount'] ?? 0), 4), '0.0000');
+    $totalDifference = bcsub($totalDebit, $totalCredit, 4);
     $title = $isCreate ? __('journal_entries.create') : __('journal_entries.document_title', ['doc_num' => $record?->doc_num]);
 @endphp
 
@@ -141,9 +144,9 @@
                         <tfoot class="bg-light fw-semibold">
                             <tr>
                                 <td class="text-end">{{ __('journal_entries.attributes.totals') }}</td>
-                                <td class="text-end js-journal-entry-total-debit" dir="ltr">0</td>
-                                <td class="text-end js-journal-entry-total-credit" dir="ltr">0</td>
-                                <td colspan="{{ $isReadonly ? 5 : 6 }}"><span class="js-journal-entry-difference"></span></td>
+                                <td class="text-end js-journal-entry-total-debit" dir="ltr">{{ $numbers->format($totalDebit) }}</td>
+                                <td class="text-end js-journal-entry-total-credit" dir="ltr">{{ $numbers->format($totalCredit) }}</td>
+                                <td colspan="{{ $isReadonly ? 5 : 6 }}"><span class="js-journal-entry-difference @if($isReadonly) {{ bccomp($totalDifference, '0', 4) === 0 ? 'text-success' : 'text-danger' }} @endif">@if($isReadonly) {{ __('journal_entries.js.difference') }}: {{ $numbers->format($totalDifference) }} @endif</span></td>
                             </tr>
                         </tfoot>
                     </table>

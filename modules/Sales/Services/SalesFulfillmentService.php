@@ -121,9 +121,7 @@ class SalesFulfillmentService
                 $this->amounts->assertNotGreaterThan($quantity, $line->remainingDeliveryQuantity(), 'Delivery exceeds the remaining approved quantity.');
                 $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
                 $stock = $this->availability->forProduct((int) $lockedOrder->company_id, (int) $lockedOrder->branch_store_id, (int) $line->product_id, (int) $line->getKey());
-                $ownReserved = $this->amounts->subtract($line->reserved_base_quantity, $line->delivered_base_quantity, 8);
-                $usable = $this->amounts->add($stock['available'], $ownReserved, 8);
-                $this->amounts->assertNotGreaterThan($baseQuantity, $usable, 'Delivery exceeds available or reserved stock.');
+                $this->amounts->assertNotGreaterThan($baseQuantity, $stock['available'], 'Delivery exceeds available or reserved stock.');
 
                 $document->lines()->create([
                     'company_id' => $lockedOrder->company_id, 'financial_period_id' => $lockedOrder->financial_period_id,

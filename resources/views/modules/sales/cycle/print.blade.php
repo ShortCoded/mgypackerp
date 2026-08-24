@@ -43,6 +43,7 @@
             </div>
             <div class="row g-3 mb-4">
                 @if($record->customer ?? null)<div class="col-6"><strong>{{ __('Customer') }}</strong><div>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</div></div>@endif
+                @if($record->quotation ?? null)<div class="col-6"><strong>{{ __('Source Quotation') }}</strong><div>{{ $record->quotation->doc_num }} / {{ $record->quotationRevision?->revision_code }}</div></div>@endif
                 @if(($record->customer?->tax_number ?? null) && in_array($kind, ['invoice', 'credit_note'], true))<div class="col-6"><strong>{{ __('Customer tax number') }}</strong><div dir="ltr">{{ $record->customer->tax_number }}</div></div>@endif
                 @if(($record->customer?->address ?? null) && in_array($kind, ['invoice', 'credit_note'], true))<div class="col-12"><strong>{{ __('Customer address') }}</strong><div>{{ $record->customer->address }}</div></div>@endif
                 @if($record->salesOrder ?? $record->order ?? null)<div class="col-6"><strong>{{ __('Source Sales Order') }}</strong><div>{{ ($record->salesOrder ?? $record->order)->doc_num }}</div></div>@endif

@@ -7,15 +7,18 @@ use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
+use Modules\Sales\Models\SalesOrder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -36,7 +39,7 @@ function quotationActor(array $permissions): User
 }
 
 /**
- * @return array{company: Company, branch: Branch, period: FinancialPeriod, currency: Currency}
+ * @return array{company: Company, branch: Branch, period: FinancialPeriod, currency: Currency, customer: Customer, store: BranchStore}
  */
 function quotationContext(): array
 {
@@ -47,10 +50,22 @@ function quotationContext(): array
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->orderBy('id')->firstOrFail();
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->orderBy('id')->firstOrFail();
     $currency = Currency::query()->where('company_id', $company->getKey())->orderByDesc('is_main')->orderBy('id')->firstOrFail();
+    $customer = Customer::query()->create([
+        'company_id' => $company->getKey(),
+        'doc_number' => 9501,
+        'doc_num' => 'Customer-09501',
+        'name' => 'Quotation Customer',
+        'status' => 'active',
+    ]);
+    $store = BranchStore::query()->create([
+        'branch_id' => $branch->getKey(),
+        'name' => 'Quotation Finished Goods',
+        'position' => 1,
+    ]);
 
     quotationSelectContext($company, $branch, $period);
 
-    return compact('company', 'branch', 'period', 'currency');
+    return compact('company', 'branch', 'period', 'currency', 'customer', 'store');
 }
 
 function quotationSelectContext(Company $company, Branch $branch, FinancialPeriod $period): void
@@ -105,6 +120,7 @@ function quotationProductFixture(Company $company): array
 function quotationPayload(Product $product, ItemUnit $unit, ?Currency $currency = null, array $overrides = []): array
 {
     return [
+        'customer_doc_num' => Customer::query()->forCompany((int) $product->company_id)->active()->value('doc_num'),
         'quotation_type' => Quotation::TypeProject,
         'project_name' => 'Hotel Lobby Fitout',
         'subject' => 'Lobby desks package',
@@ -123,6 +139,8 @@ function quotationPayload(Product $product, ItemUnit $unit, ?Currency $currency 
         'delivery_terms' => '<p>Delivery to customer site.</p>',
         'technical_notes' => '<p>Use approved shop drawings.</p>',
         'notes' => '<p>Internal note snapshot.</p>',
+        'customer_reference' => 'PO-QUOTE-001',
+        'internal_notes' => 'Internal conversion note.',
         'lines' => [
             [
                 'product_doc_num' => $product->doc_num,
@@ -134,6 +152,10 @@ function quotationPayload(Product $product, ItemUnit $unit, ?Currency $currency 
                 'discount_value' => '0',
                 'tax_rate' => '14',
                 'notes' => 'Line note',
+                'requested_date' => '2026-07-10',
+                'specifications' => ['packaging' => 'Export carton', 'customer_specification' => 'Customer-approved oak finish'],
+                'warehouse_notes' => 'Keep dry',
+                'production_notes' => 'Priority cut',
             ],
         ],
         'payment_milestones' => [
@@ -164,7 +186,7 @@ function quotationPayload(Product $product, ItemUnit $unit, ?Currency $currency 
 /**
  * @return array{actor: User, company: Company, quotation: Quotation, product: Product, unit: ItemUnit, currency: Currency}
  */
-function createQuotationThroughHttp(array $extraPermissions = []): array
+function createQuotationThroughHttp(array $extraPermissions = [], array $payloadOverrides = []): array
 {
     $context = quotationContext();
     ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
@@ -185,7 +207,7 @@ function createQuotationThroughHttp(array $extraPermissions = []): array
     ]));
     $actor = quotationActor($permissions);
     test()->actingAs($actor)
-        ->postJson(route('admin.sales.quotations.store'), quotationPayload($product, $unit, $context['currency']))
+        ->postJson(route('admin.sales.quotations.store'), quotationPayload($product, $unit, $context['currency'], $payloadOverrides))
         ->assertOk()
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.doc_num', 'QT-00001');
@@ -392,6 +414,108 @@ test('quotation status transitions work', function (): void {
         ->and($quotation->currentRevision->status)->toBe(QuotationRevision::StatusAccepted);
 });
 
+test('accepted quotation converts once into a fully linked sales order without re-entry', function (): void {
+    ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp([
+        'quotations.print',
+        'sales_orders.create',
+        'sales_orders.view',
+        'sales_orders.view_prices',
+    ], [
+        'valid_until' => now()->addMonth()->toDateString(),
+        'lines' => [[
+            'product_doc_num' => 'Product-00901',
+            'description' => 'Canonical quoted line',
+            'unit_doc_num' => 'Unit-00501',
+            'quantity' => '2',
+            'unit_price' => '100',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '14',
+            'requested_date' => now()->addDays(10)->toDateString(),
+            'specifications' => ['packaging' => 'Export carton', 'customer_specification' => 'Approved finish'],
+            'notes' => 'Customer line note',
+            'warehouse_notes' => 'Keep dry',
+            'production_notes' => 'Priority cut',
+        ]],
+    ]);
+
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.print', $quotation))
+        ->assertOk()
+        ->assertSee('Canonical quoted line')
+        ->assertSee('Export carton');
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.convert', $quotation))
+        ->assertCreated()
+        ->assertJsonPath('success', true)
+        ->assertJsonPath('data.doc_num', 'SO-00001');
+
+    $order = SalesOrder::query()->with(['lines', 'paymentSchedules', 'quotation', 'quotationRevision'])->sole();
+    $sourceLine = $quotation->refresh()->currentRevision->lines()->sole();
+
+    expect($quotation->status)->toBe(Quotation::StatusConverted)
+        ->and($order->quotation_id)->toBe($quotation->getKey())
+        ->and($order->quotation_revision_id)->toBe($quotation->current_revision_id)
+        ->and($order->customer_reference)->toBe('PO-QUOTE-001')
+        ->and($order->internal_notes)->toBe('Internal conversion note.')
+        ->and($order->total_amount)->toBe($quotation->currentRevision->total)
+        ->and($order->lines)->toHaveCount(1)
+        ->and($order->lines->sole()->quotation_revision_line_id)->toBe($sourceLine->getKey())
+        ->and($order->lines->sole()->base_quantity)->toBe('2.00000000')
+        ->and($order->lines->sole()->specifications)->toBe(['packaging' => 'Export carton', 'customer_specification' => 'Approved finish'])
+        ->and($order->lines->sole()->warehouse_notes)->toBe('Keep dry')
+        ->and($order->lines->sole()->production_notes)->toBe('Priority cut')
+        ->and($order->paymentSchedules)->toHaveCount(1)
+        ->and($order->paymentSchedules->sum('amount'))->toEqual(228.0);
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.show', $quotation))
+        ->assertOk()
+        ->assertSee($order->doc_num);
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.sales-orders.show', $order))
+        ->assertOk()
+        ->assertSee($quotation->doc_num)
+        ->assertSee($quotation->currentRevision->revision_code);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.convert', $quotation))
+        ->assertUnprocessable();
+
+    expect(SalesOrder::query()->count())->toBe(1)
+        ->and($response->json('data.url'))->toContain($order->doc_num);
+});
+
+test('quotation rejects forged internal inventory products server side', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    $raw = Product::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => 902,
+        'doc_num' => 'Product-RAW-00902',
+        'name' => 'Raw Resin',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    $actor = quotationActor(['quotations.create']);
+
+    $payload = quotationPayload($product, $unit, $context['currency']);
+    $payload['lines'][0]['product_doc_num'] = $raw->doc_num;
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['lines.0.product_doc_num']);
+
+    expect(Quotation::query()->count())->toBe(0);
+});
+
 test('quotations data table returns expected public columns', function (): void {
     ['actor' => $actor] = createQuotationThroughHttp();
 
@@ -486,9 +610,9 @@ test('quotation document number settings can be updated', function (): void {
 });
 
 test('quotation tables include required operational detail structures', function (): void {
-    expect(Schema::hasColumns('quotations', ['doc_number', 'doc_num', 'current_revision_id', 'deleted_by', 'restored_by', 'restored_at']))->toBeTrue()
+    expect(Schema::hasColumns('quotations', ['doc_number', 'doc_num', 'branch_id', 'customer_reference', 'internal_notes', 'print_identity_snapshot', 'current_revision_id', 'deleted_by', 'restored_by', 'restored_at']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_revisions', ['revision_number', 'revision_code', 'terms_snapshot', 'payment_terms_snapshot', 'execution_terms_snapshot', 'warranty_terms_snapshot', 'delivery_terms_snapshot', 'technical_notes_snapshot']))->toBeTrue()
-        ->and(Schema::hasColumns('quotation_revision_lines', ['product_name_snapshot', 'unit_name_snapshot', 'specs_snapshot']))->toBeTrue()
+        ->and(Schema::hasColumns('quotation_revision_lines', ['product_name_snapshot', 'unit_name_snapshot', 'specs_snapshot', 'conversion_factor', 'base_quantity', 'requested_date', 'specifications', 'warehouse_notes', 'production_notes']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_payment_milestones', ['title', 'percentage', 'amount', 'due_type', 'due_date']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_execution_schedule_lines', ['phase_name', 'start_date', 'end_date', 'duration_days']))->toBeTrue();
 });

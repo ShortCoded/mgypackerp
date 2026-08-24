@@ -5,23 +5,24 @@ namespace Modules\FixedAssets\Http\Controllers;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
-use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Http\Requests\FixedAssetDepreciationRunRequest;
 use Modules\FixedAssets\Http\Requests\ReverseFixedAssetDocumentRequest;
 use Modules\FixedAssets\Models\FixedAssetDepreciationRun;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
+use Modules\FixedAssets\Services\FixedAssetPdfService;
 
 class FixedAssetDepreciationController extends Controller
 {
     public function __construct(
         private readonly FixedAssetDepreciationService $depreciation,
         private readonly BreadcrumbService $breadcrumbs,
-        private readonly CompanyPrintIdentityService $printIdentities,
+        private readonly FixedAssetPdfService $pdf,
     ) {}
 
     public function index(): View
@@ -84,10 +85,13 @@ class FixedAssetDepreciationController extends Controller
         return back()->with('success', __('fixed_assets.lifecycle.messages.depreciation_reversed'));
     }
 
-    public function print(FixedAssetDepreciationRun $run): View
+    public function print(FixedAssetDepreciationRun $run): Response
     {
-        $run->load(['company', 'financialPeriod', 'branch', 'journalEntry', 'postedBy', 'lines.asset', 'lines.costCenter', 'lines.branch']);
+        $run->load(['company', 'financialPeriod', 'branch', 'journalEntry', 'postedBy', 'lines.asset.assetGroupAccount', 'lines.asset.currency', 'lines.costCenter', 'lines.branch']);
 
-        return view('modules.fixed-assets.depreciation.print', ['run' => $run, 'companyPrintIdentity' => $this->printIdentities->forCompany($run->company)]);
+        return $this->pdf->stream('reports.fixed-assets.depreciation-run', $run->company, [
+            'title' => __('fixed_assets.lifecycle.depreciation_run'),
+            'run' => $run,
+        ], 'depreciation-run-'.$run->doc_num.'.pdf', 'L');
     }
 }

@@ -9,6 +9,9 @@ use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Production\Models\ProductionMaterialRequirement;
+use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionRun;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 
@@ -54,6 +57,26 @@ class InventoryReservation extends Model
     public function branchStore(): BelongsTo
     {
         return $this->belongsTo(BranchStore::class);
+    }
+
+    public function productionOrder(): BelongsTo
+    {
+        return $this->belongsTo(ProductionOrder::class);
+    }
+
+    public function productionRun(): BelongsTo
+    {
+        return $this->belongsTo(ProductionRun::class);
+    }
+
+    public function productionMaterialRequirement(): BelongsTo
+    {
+        return $this->belongsTo(ProductionMaterialRequirement::class);
+    }
+
+    public function warehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class);
     }
 
     public function product(): BelongsTo

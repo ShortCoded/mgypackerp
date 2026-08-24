@@ -28,6 +28,8 @@ class FixedAssetReportService
 
     public const Locations = 'locations';
 
+    public const FullyDepreciated = 'fully_depreciated';
+
     public const Exceptions = 'exceptions';
 
     public const Reconciliation = 'reconciliation';
@@ -43,7 +45,7 @@ class FixedAssetReportService
     /** @return list<string> */
     public static function types(): array
     {
-        return [self::Register, self::Depreciation, self::Schedule, self::Movements, self::AdditionsDisposals, self::Locations, self::Exceptions, self::Reconciliation];
+        return [self::Register, self::Depreciation, self::Schedule, self::Movements, self::AdditionsDisposals, self::Locations, self::FullyDepreciated, self::Exceptions, self::Reconciliation];
     }
 
     /** @return array<string, mixed> */
@@ -61,7 +63,7 @@ class FixedAssetReportService
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return array{type: string, title: string, columns: array<string, string>, rows: Collection<int, array<string, mixed>>}
+     * @return array{type: string, title: string, columns: array<string, string>, rows: Collection<int, array<string, mixed>>, filters: array<string, string>, totals: array<string, string>}
      */
     public function report(array $filters): array
     {
@@ -72,12 +74,20 @@ class FixedAssetReportService
             self::Movements => $this->movements($filters),
             self::AdditionsDisposals => $this->additionsDisposals($filters),
             self::Locations => $this->locations($filters),
+            self::FullyDepreciated => $this->fullyDepreciated($filters),
             self::Exceptions => $this->exceptions($filters),
             self::Reconciliation => $this->reconciliation($filters),
             default => $this->register($filters),
         };
 
-        return ['type' => $type, 'title' => __('fixed_assets.reports.types.'.$type), 'columns' => $columns, 'rows' => $rows];
+        return [
+            'type' => $type,
+            'title' => __('fixed_assets.reports.types.'.$type),
+            'columns' => $columns,
+            'rows' => $rows,
+            'filters' => $this->filterSummary($filters),
+            'totals' => $this->totals($type, $rows),
+        ];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -99,9 +109,6 @@ class FixedAssetReportService
                 'accumulated_depreciation' => $position['accumulated_depreciation'],
                 'net_book_value' => $position['net_book_value'],
                 'residual_value' => $position['residual_value'],
-                'useful_life' => $asset->useful_life,
-                'method' => $asset->depreciationMethodLabel(),
-                'annual_rate' => $asset->annual_depreciation_rate,
                 'branch' => $asset->branch?->name,
                 'hall_location' => trim(implode(' / ', array_filter([$asset->branchHall?->name, $asset->location_address]))),
                 'cost_center' => $asset->costCenter?->codeNameLabel(),
@@ -109,7 +116,7 @@ class FixedAssetReportService
             ];
         });
 
-        return [$this->labels(array_keys($rows->first() ?? $this->emptyRegisterRow())), $rows];
+        return [$this->labels(array_keys($this->emptyRegisterRow())), $rows];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -136,6 +143,7 @@ class FixedAssetReportService
             'journal_entry' => $row->journalEntry?->doc_num,
             'status' => __('fixed_assets.lifecycle.statuses.'.$row->status),
             'posted_by_date' => trim(implode(' / ', array_filter([$row->postedBy?->name, $this->dates->formatDateTime($row->posted_at, '')]))),
+            '_row_state' => $row->status,
         ]);
 
         return [$this->labels(array_keys($rows->first() ?? ['asset' => '', 'period' => ''])), $rows];
@@ -166,6 +174,7 @@ class FixedAssetReportService
                     'accumulated_depreciation' => $row['accumulated_depreciation'],
                     'closing_net_book_value' => $row['closing_net_book_value'],
                     'status' => __('fixed_assets.lifecycle.statuses.'.$row['status']),
+                    '_row_state' => $row['status'],
                 ])->all();
         })->values();
 
@@ -200,14 +209,22 @@ class FixedAssetReportService
         $companyId = $this->companies->requireCompanyId();
         $assets = FixedAsset::query()->forCompany($companyId)->with('assetGroupAccount');
         $this->assetFilters($assets, $filters);
-        $additionRows = $assets->get()->map(fn (FixedAsset $asset): array => [
-            'asset' => $asset->doc_num.' / '.$asset->asset_name,
-            'date' => $asset->asset_date,
-            'classification' => $asset->assetGroupAccount?->codeNameLabel(),
-            'value' => $asset->purchase_value,
-            'movement_type' => $asset->entry_type === FixedAsset::EntryTypeOpeningAsset ? __('fixed_assets.entry_types.opening_asset') : __('fixed_assets.reports.addition'),
-            'net_book_value' => $asset->net_value,
-        ]);
+        $additionRows = $assets->get()->map(function (FixedAsset $asset): array {
+            $position = $this->bookValues->position($asset);
+
+            return [
+                'asset' => $asset->doc_num.' / '.$asset->asset_name,
+                'date' => $asset->asset_date,
+                'classification' => $asset->assetGroupAccount?->codeNameLabel(),
+                'movement_type' => $asset->entry_type === FixedAsset::EntryTypeOpeningAsset ? __('fixed_assets.entry_types.opening_asset') : __('fixed_assets.reports.addition'),
+                'addition_value' => $position['acquisition_cost'],
+                'disposal_proceeds' => '0.0000',
+                'net_book_value' => $position['net_book_value'],
+                'gain' => '0.0000',
+                'loss' => '0.0000',
+                'status' => __('fixed_assets.statuses.'.$asset->status),
+            ];
+        });
         $disposals = FixedAssetDisposal::query()->where('company_id', $companyId)->where('status', FixedAssetDisposal::StatusPosted)->with('asset.assetGroupAccount')
             ->when($filters['asset_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('asset', fn ($query) => $query->where('doc_num', $value)))
             ->when($filters['status'] ?? null, fn ($query, $value) => $query->whereHas('asset', fn ($query) => $query->where('status', $value)))
@@ -219,13 +236,17 @@ class FixedAssetReportService
             'asset' => $row->asset?->doc_num.' / '.$row->asset?->asset_name,
             'date' => $row->disposal_date,
             'classification' => $row->asset?->assetGroupAccount?->codeNameLabel(),
-            'value' => $row->proceeds,
             'movement_type' => __('fixed_assets.lifecycle.disposition_types.'.$row->disposition_type),
+            'addition_value' => '0.0000',
+            'disposal_proceeds' => $row->proceeds,
             'net_book_value' => $row->net_book_value,
+            'gain' => $row->gain_amount,
+            'loss' => $row->loss_amount,
+            'status' => __('fixed_assets.lifecycle.statuses.'.$row->status),
         ]);
         $rows = $additionRows->concat($disposalRows)->sortBy('date')->values();
 
-        return [$this->labels(array_keys($rows->first() ?? ['asset' => '', 'date' => ''])), $rows];
+        return [$this->labels(['date', 'asset', 'classification', 'movement_type', 'addition_value', 'disposal_proceeds', 'net_book_value', 'gain', 'loss', 'status']), $rows];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -234,6 +255,19 @@ class FixedAssetReportService
         [$columns, $rows] = $this->register($filters);
 
         return [array_intersect_key($columns, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])), $rows->map(fn (array $row): array => array_intersect_key($row, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])))];
+    }
+
+    /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
+    private function fullyDepreciated(array $filters): array
+    {
+        $filters['status'] = FixedAsset::StatusFullyDepreciated;
+        [$columns, $rows] = $this->register($filters);
+        $keys = ['asset', 'name', 'cost', 'residual_value', 'accumulated_depreciation', 'net_book_value', 'service_date', 'status', 'branch', 'hall_location'];
+
+        return [
+            array_intersect_key($columns, array_flip($keys)),
+            $rows->map(fn (array $row): array => array_intersect_key($row, array_flip($keys))),
+        ];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -263,8 +297,9 @@ class FixedAssetReportService
         $assets = FixedAsset::query()
             ->forCompany($companyId)
             ->whereNotIn('status', FixedAsset::dispositionStatuses())
-            ->with(['account', 'postedDepreciations'])
-            ->get();
+            ->with(['account', 'postedDepreciations']);
+        $this->assetFilters($assets, $filters);
+        $assets = $assets->get();
         $rows = collect();
 
         foreach ($assets->groupBy('account_id') as $accountId => $group) {
@@ -300,9 +335,18 @@ class FixedAssetReportService
             ->when($filters['from_date'] ?? null, fn ($query, $date) => $query->whereDate('journal_entries.entry_date', '>=', $date))
             ->when($filters['to_date'] ?? null, fn ($query, $date) => $query->whereDate('journal_entries.entry_date', '<=', $date))
             ->selectRaw('COALESCE(SUM((journal_entry_lines.debit_amount - journal_entry_lines.credit_amount) * journal_entries.exchange_rate), 0) as balance')->value('balance');
-        $rows->push(['reconciliation_type' => __('fixed_assets.reports.reconciliation_types.period_depreciation'), 'account' => __('fixed_assets.reports.all_expense_accounts'), 'subledger' => (string) $periodDepreciation, 'general_ledger' => (string) $glPeriod, 'difference' => bcsub((string) $periodDepreciation, (string) $glPeriod, 4)]);
+        $periodDifference = bcsub((string) $periodDepreciation, (string) $glPeriod, 4);
+        $rows->push([
+            'reconciliation_type' => __('fixed_assets.reports.reconciliation_types.period_depreciation'),
+            'account' => __('fixed_assets.reports.all_expense_accounts'),
+            'subledger' => (string) $periodDepreciation,
+            'general_ledger' => (string) $glPeriod,
+            'difference' => $periodDifference,
+            'state' => $this->reconciliationState($periodDifference),
+            '_row_state' => bccomp($periodDifference, '0', 4) === 0 ? 'reconciled' : 'difference',
+        ]);
 
-        return [$this->labels(['reconciliation_type', 'account', 'subledger', 'general_ledger', 'difference']), $rows];
+        return [$this->labels(['reconciliation_type', 'account', 'subledger', 'general_ledger', 'difference', 'state']), $rows];
     }
 
     private function assetFilters($query, array $filters): void

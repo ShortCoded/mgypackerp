@@ -7,6 +7,17 @@
 
 @section('title', __('purchase_orders.print_title', ['doc' => $record->doc_num]))
 
+@push('styles')
+    <style>
+        @media print {
+            .purchase-order-print table { break-inside: auto; }
+            .purchase-order-print tr { break-inside: avoid; page-break-inside: avoid; }
+            .purchase-order-print thead { display: table-header-group; }
+            .purchase-order-print tfoot { display: table-row-group; break-inside: avoid; page-break-inside: avoid; }
+        }
+    </style>
+@endpush
+
 @section('content')
     <div class="page-print-actions d-flex justify-content-end gap-2 mb-3">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-orders.show', $record->doc_num) }}">
@@ -17,7 +28,7 @@
         </button>
     </div>
 
-    <div class="card erp-document-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
+    <div class="card erp-document-print purchase-order-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
         <div class="card-body">
             <x-company-print-header :identity="$companyPrintIdentity" />
             <div class="d-flex justify-content-between align-items-start mb-4">

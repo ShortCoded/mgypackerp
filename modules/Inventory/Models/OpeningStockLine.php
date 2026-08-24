@@ -28,6 +28,9 @@ class OpeningStockLine extends Model
         'product_id',
         'product_snapshot',
         'quantity',
+        'warehouse_location_id',
+        'stock_status',
+        'batch_lot',
         'notes',
         'created_by',
         'updated_by',
@@ -62,6 +65,11 @@ class OpeningStockLine extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function warehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class);
     }
 
     public function company(): BelongsTo

@@ -34,6 +34,7 @@ class SalesProductionDemandService
             $production = ProductionOrder::query()->create([
                 ...$numbers, 'company_id' => $order->company_id, 'financial_period_id' => $order->financial_period_id,
                 'branch_id' => $order->branch_id, 'sales_order_id' => $order->getKey(), 'customer_id' => $order->customer_id,
+                'source_type' => 'sales_order', 'source_id' => $order->getKey(),
                 'production_order_date' => now()->toDateString(), 'expected_delivery_date' => $order->expected_delivery_date,
                 'status' => ProductionOrder::StatusDraft,
                 'technical_notes' => $order->technical_notes_snapshot ? json_encode($order->technical_notes_snapshot, JSON_THROW_ON_ERROR) : null,

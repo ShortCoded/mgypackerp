@@ -250,6 +250,7 @@ return [
             'later_depreciation_exists' => 'A later depreciation period exists for one or more assets. Reverse later periods first.',
             'depreciation_reversal_after_disposal' => 'Depreciation cannot be reversed while the asset has a posted disposal. Reverse the disposal first.',
             'account_mapping_required' => 'Complete the fixed asset classification accounting mapping first.',
+            'no_asset_categories' => 'Create at least one Fixed Asset classification before configuring posting accounts.',
             'account_unavailable' => 'One of the selected accounts is unavailable or is not a valid posting account.',
             'proceeds_account_required' => 'A valid proceeds posting account is required when proceeds are greater than zero.',
             'customer_unavailable' => 'The selected customer is unavailable for a new asset sale.',

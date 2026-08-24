@@ -45,7 +45,7 @@
                 <label class="form-label mb-1" for="procurement-report-type">{{ __('Report') }}</label>
                 <select class="{{ $selectClass }}" id="procurement-report-type" name="report_type">
                     @foreach($reportTypes as $type)
-                        <option value="{{ $type }}" @selected($reportType === $type)>{{ str($type)->replace('_', ' ')->title() }}</option>
+                        <option value="{{ $type }}" @selected($reportType === $type)>{{ __('procurement.reports.types.'.$type) }}</option>
                     @endforeach
                 </select>
             </div>
@@ -147,7 +147,7 @@
             @foreach($metrics as $key => $value)
                 <div class="col-6 col-md-4 col-xl">
                     <div class="card h-100"><div class="card-body py-2">
-                        <div class="text-600 fs-11">{{ str($key)->replace('_', ' ')->title() }}</div>
+                        <div class="text-600 fs-11">{{ __('procurement.reports.metrics.'.$key) }}</div>
                         <div class="fs-7 fw-semibold" dir="ltr">{{ $numbers->format($value) }}</div>
                     </div></div>
                 </div>
@@ -156,7 +156,7 @@
 
         <div class="card">
             <div class="card-header py-2 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0">{{ str($reportType)->replace('_', ' ')->title() }}</h6>
+                <h6 class="mb-0">{{ __('procurement.reports.types.'.$reportType) }}</h6>
                 <span class="badge badge-subtle-secondary">{{ $rows->count() }}</span>
             </div>
             <div class="card-body p-0">
@@ -173,9 +173,9 @@
                             @forelse($rows as $row)
                                 <tr>
                                     <td dir="ltr">{{ $row['date'] ?: '—' }}</td><td dir="ltr">{{ $row['document'] ?: '—' }}</td>
-                                    <td>{{ str((string) $row['status'])->replace('_', ' ')->title() ?: '—' }}</td><td>{{ $row['supplier'] ?: '—' }}</td>
+                                    <td>{{ $row['status'] ? __('procurement.statuses.'.$row['status']) : '—' }}</td><td>{{ $row['supplier'] ?: '—' }}</td>
                                     <td>{{ $row['product'] ?: '—' }}</td><td dir="ltr">{{ $row['requisition'] ?: '—' }}</td><td dir="ltr">{{ $row['purchase_order'] ?: '—' }}</td>
-                                    <td>{{ collect([$row['branch'], $row['warehouse']])->filter()->join(' / ') ?: '—' }}</td><td>{{ $row['qc_status'] ?: '—' }}</td>
+                                    <td>{{ collect([$row['branch'], $row['warehouse']])->filter()->join(' / ') ?: '—' }}</td><td>{{ $row['qc_status'] ? __('procurement.statuses.'.$row['qc_status']) : '—' }}</td>
                                     <td dir="ltr">{{ collect([$row['production_order'], $row['work_order']])->filter()->join(' / ') ?: '—' }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($row['quantity']) }}</td>
                                     @if($showPrices)<td class="text-end" dir="ltr">{{ $numbers->format($row['amount']) }}</td>@endif

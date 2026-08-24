@@ -90,6 +90,15 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'equivalent_unit_id' => $carton->getKey(),
                 'status' => 'active',
             ]);
+            Product::query()->create([
+                'company_id' => $company->getKey(),
+                'doc_number' => 990002,
+                'doc_num' => 'Product-E2E-SERVICE',
+                'name' => 'TEST Packaging Design Service',
+                'item_classification' => Product::ClassificationService,
+                'item_unit_id' => $piece->getKey(),
+                'status' => 'active',
+            ]);
 
             $receivableClassification = AccountClassification::query()->where('code', 'accounts_receivable')->firstOrFail();
             $receivableParent = Account::query()->where('company_id', $company->getKey())
@@ -149,13 +158,13 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'transaction_type' => 'opening_stock',
                 'product_id' => $product->getKey(),
                 'unit_id' => $piece->getKey(),
-                'quantity_in' => '10000',
+                'quantity_in' => '30000',
                 'quantity_out' => 0,
                 'source_type' => 'sales_cycle_browser_e2e',
                 'source_id' => $mainCustomer->getKey(),
-                'source_doc_num' => 'E2E-OPENING-10-CARTONS',
+                'source_doc_num' => 'E2E-OPENING-30-CARTONS',
                 'unit_cost' => '0.0100',
-                'total_cost' => '100.0000',
+                'total_cost' => '300.0000',
                 'created_by' => $admin->getKey(),
             ]);
 

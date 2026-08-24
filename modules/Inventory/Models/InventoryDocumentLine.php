@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Production\Models\ProductionRun;
 
 class InventoryDocumentLine extends Model
 {
@@ -43,5 +44,25 @@ class InventoryDocumentLine extends Model
     public function transactionUnit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class, 'transaction_unit_id')->withTrashed();
+    }
+
+    public function warehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class);
+    }
+
+    public function destinationWarehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class, 'destination_warehouse_location_id');
+    }
+
+    public function productionRun(): BelongsTo
+    {
+        return $this->belongsTo(ProductionRun::class);
+    }
+
+    public function reservation(): BelongsTo
+    {
+        return $this->belongsTo(InventoryReservation::class, 'inventory_reservation_id');
     }
 }

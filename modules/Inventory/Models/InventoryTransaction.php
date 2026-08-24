@@ -4,10 +4,32 @@ namespace Modules\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
+use Modules\Production\Models\ProductionRun;
 
 class InventoryTransaction extends Model
 {
+    public const StatusAvailable = 'available';
+
+    public const StatusReserved = 'reserved';
+
+    public const StatusQcHold = 'qc_hold';
+
+    public const StatusQuarantine = 'quarantine';
+
+    public const StatusProductionStaging = 'production_staging';
+
+    public const StatusWip = 'wip';
+
+    public const StatusRejected = 'rejected';
+
+    public const StatusDamaged = 'damaged';
+
+    public const StatusScrap = 'scrap';
+
+    public const StatusInTransit = 'in_transit';
+
     protected $guarded = ['id'];
 
     protected function casts(): array
@@ -23,5 +45,15 @@ class InventoryTransaction extends Model
     public function branchStore(): BelongsTo
     {
         return $this->belongsTo(BranchStore::class);
+    }
+
+    public function warehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class);
+    }
+
+    public function productionRun(): BelongsTo
+    {
+        return $this->belongsTo(ProductionRun::class);
     }
 }

@@ -4,6 +4,10 @@
 
 @section('title', __('fixed_assets.lifecycle.transfer').' '.$movement->doc_num)
 
+@push('styles')
+    <style>@page { size: A4 portrait; margin: 12mm; }</style>
+@endpush
+
 @section('content')
     <div class="page-print-actions d-flex justify-content-end mb-3"><button class="btn btn-falcon-primary btn-sm" type="button" onclick="window.print()">{{ __('common.actions.print') }}</button></div>
     <div class="card erp-document-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}"><div class="card-body">

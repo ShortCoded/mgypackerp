@@ -5,9 +5,12 @@ namespace Modules\Purchases\Services\Reports;
 use Illuminate\Support\Collection;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\PurchaseRequisitionLine;
 use Modules\Purchases\Models\PurchaseReturnLine;
+use Modules\Purchases\Models\RequestForQuotation;
 
 class ProcurementCycleReport
 {
@@ -15,9 +18,37 @@ class ProcurementCycleReport
 
     public const PurchaseOrderStatus = 'purchase_order_status';
 
+    public const RequestedVsOrdered = 'requested_vs_ordered';
+
+    public const RfqQuotationStatus = 'rfq_quotation_status';
+
+    public const OrderedVsReceived = 'ordered_vs_received';
+
+    public const OverduePoDeliveries = 'overdue_po_deliveries';
+
+    public const DeliverySchedule = 'delivery_schedule';
+
     public const ReceiptQualityStatus = 'receipt_quality_status';
 
-    public const SupplierPayables = 'supplier_payables';
+    public const IncomingQcPending = 'incoming_qc_pending';
+
+    public const QcRejection = 'qc_rejection';
+
+    public const PurchasesBySupplier = 'purchases_by_supplier';
+
+    public const PurchasesByProduct = 'purchases_by_product';
+
+    public const PurchasesByPeriod = 'purchases_by_period';
+
+    public const OutstandingSupplierInvoices = 'outstanding_supplier_invoices';
+
+    public const SupplierPayables = self::OutstandingSupplierInvoices;
+
+    public const DueSupplierInstallments = 'due_supplier_installments';
+
+    public const SupplierAging = 'supplier_aging';
+
+    public const UpcomingSupplierPayments = 'upcoming_supplier_payments';
 
     public const Returns = 'returns';
 
@@ -27,9 +58,21 @@ class ProcurementCycleReport
     {
         return [
             self::OpenRequirements,
+            self::RequestedVsOrdered,
+            self::RfqQuotationStatus,
             self::PurchaseOrderStatus,
-            self::ReceiptQualityStatus,
-            self::SupplierPayables,
+            self::OrderedVsReceived,
+            self::OverduePoDeliveries,
+            self::DeliverySchedule,
+            self::IncomingQcPending,
+            self::QcRejection,
+            self::PurchasesBySupplier,
+            self::PurchasesByProduct,
+            self::PurchasesByPeriod,
+            self::OutstandingSupplierInvoices,
+            self::DueSupplierInstallments,
+            self::SupplierAging,
+            self::UpcomingSupplierPayments,
             self::Returns,
             self::ProductionAnalysis,
         ];
@@ -43,9 +86,17 @@ class ProcurementCycleReport
     {
         $rows = match ($type) {
             self::OpenRequirements => $this->openRequirements($companyId, $financialPeriodId),
-            self::PurchaseOrderStatus => $this->purchaseOrderStatus($companyId, $financialPeriodId),
-            self::ReceiptQualityStatus => $this->receiptQualityStatus($companyId, $financialPeriodId),
-            self::SupplierPayables => $this->supplierPayables($companyId, $financialPeriodId),
+            self::RequestedVsOrdered => $this->requestedVsOrdered($companyId, $financialPeriodId),
+            self::RfqQuotationStatus => $this->rfqQuotationStatus($companyId, $financialPeriodId),
+            self::PurchaseOrderStatus, self::OrderedVsReceived, self::PurchasesBySupplier,
+            self::PurchasesByProduct, self::PurchasesByPeriod => $this->purchaseOrderStatus($companyId, $financialPeriodId),
+            self::OverduePoDeliveries => $this->purchaseOrderStatus($companyId, $financialPeriodId)->where('overdue', true)->values(),
+            self::DeliverySchedule => $this->deliverySchedule($companyId, $financialPeriodId),
+            self::IncomingQcPending => $this->receiptQualityStatus($companyId, $financialPeriodId)->where('qc_status', 'pending_inspection')->values(),
+            self::QcRejection => $this->receiptQualityStatus($companyId, $financialPeriodId)->filter(fn (array $row): bool => (float) $row['outstanding'] > 0)->values(),
+            self::OutstandingSupplierInvoices, self::SupplierAging => $this->supplierPayables($companyId, $financialPeriodId)->filter(fn (array $row): bool => (float) $row['outstanding'] > 0)->values(),
+            self::DueSupplierInstallments => $this->supplierInstallments($companyId, $financialPeriodId, false),
+            self::UpcomingSupplierPayments => $this->supplierInstallments($companyId, $financialPeriodId, true),
             self::Returns => $this->returns($companyId, $financialPeriodId),
             self::ProductionAnalysis => $this->productionAnalysis($companyId, $financialPeriodId),
             default => collect(),
@@ -121,6 +172,53 @@ class ProcurementCycleReport
     }
 
     /** @return Collection<int, array<string, mixed>> */
+    private function requestedVsOrdered(int $companyId, int $periodId): Collection
+    {
+        return PurchaseRequisitionLine::query()
+            ->with(['requisition.branch', 'requisition.branchStore', 'product', 'purchaseOrderLines'])
+            ->where('company_id', $companyId)->where('financial_period_id', $periodId)->get()
+            ->map(function (PurchaseRequisitionLine $line): array {
+                $ordered = (float) $line->purchaseOrderLines->sum('ordered_quantity');
+
+                return $this->row([
+                    'date' => $line->requisition?->request_date?->toDateString(),
+                    'document' => $line->requisition?->doc_num,
+                    'status' => $line->requisition?->status,
+                    'product_doc_num' => $line->product?->doc_num,
+                    'product' => $line->product?->name,
+                    'requisition' => $line->requisition?->doc_num,
+                    'branch_id' => $line->requisition?->branch_id,
+                    'branch' => $line->requisition?->branch?->name,
+                    'warehouse_uuid' => $line->requisition?->branchStore?->public_uuid,
+                    'warehouse' => $line->requisition?->branchStore?->name,
+                    'production_order' => $line->source_type === 'production_order' ? $line->source_doc_num : null,
+                    'work_order' => $line->source_type === 'work_order' ? $line->source_doc_num : null,
+                    'quantity' => $line->approved_quantity ?: $line->requested_quantity,
+                    'outstanding' => max(0, (float) ($line->approved_quantity ?: $line->requested_quantity) - $ordered),
+                ]);
+            });
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function rfqQuotationStatus(int $companyId, int $periodId): Collection
+    {
+        return RequestForQuotation::query()->with(['requisition.branch', 'suppliers', 'quotations', 'lines'])
+            ->where('company_id', $companyId)->where('financial_period_id', $periodId)->get()
+            ->map(fn (RequestForQuotation $rfq): array => $this->row([
+                'date' => $rfq->issue_date?->toDateString(),
+                'document' => $rfq->doc_num,
+                'status' => $rfq->status,
+                'supplier' => $rfq->suppliers->pluck('name')->join(', '),
+                'requisition' => $rfq->requisition?->doc_num,
+                'branch_id' => $rfq->branch_id,
+                'branch' => $rfq->requisition?->branch?->name,
+                'quantity' => $rfq->lines->sum('quantity'),
+                'outstanding' => max(0, $rfq->suppliers->count() - $rfq->quotations->count()),
+                'overdue' => $rfq->quotation_due_date?->isPast() && $rfq->quotations->count() < $rfq->suppliers->count(),
+            ]));
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
     private function purchaseOrderStatus(int $companyId, int $periodId): Collection
     {
         return PurchaseOrderLine::query()->with(['purchaseOrder.supplier', 'purchaseOrder.branch', 'purchaseOrder.branchStore', 'product', 'requisitionLine.requisition'])
@@ -145,6 +243,31 @@ class ProcurementCycleReport
                 'amount' => $line->total_after_tax,
                 'outstanding' => $line->remaining_quantity,
                 'overdue' => (float) $line->remaining_quantity > 0 && $line->required_delivery_date?->isPast(),
+            ]));
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function deliverySchedule(int $companyId, int $periodId): Collection
+    {
+        return PurchaseOrderDeliverySchedule::query()
+            ->with(['purchaseOrder.supplier', 'purchaseOrder.branch', 'purchaseOrder.branchStore', 'purchaseOrderLine.product'])
+            ->where('company_id', $companyId)->where('financial_period_id', $periodId)->get()
+            ->map(fn (PurchaseOrderDeliverySchedule $schedule): array => $this->row([
+                'date' => $schedule->scheduled_date?->toDateString(),
+                'document' => $schedule->purchaseOrder?->doc_num.' / '.$schedule->sequence,
+                'status' => $schedule->status,
+                'supplier_doc_num' => $schedule->purchaseOrder?->supplier?->doc_num,
+                'supplier' => $schedule->purchaseOrder?->supplier?->name,
+                'product_doc_num' => $schedule->purchaseOrderLine?->product?->doc_num,
+                'product' => $schedule->purchaseOrderLine?->product?->name,
+                'purchase_order' => $schedule->purchaseOrder?->doc_num,
+                'branch_id' => $schedule->purchaseOrder?->branch_id,
+                'branch' => $schedule->purchaseOrder?->branch?->name,
+                'warehouse_uuid' => $schedule->purchaseOrder?->branchStore?->public_uuid,
+                'warehouse' => $schedule->purchaseOrder?->branchStore?->name,
+                'quantity' => $schedule->scheduled_quantity,
+                'outstanding' => max(0, (float) $schedule->scheduled_quantity - (float) $schedule->received_quantity),
+                'overdue' => $schedule->scheduled_date?->isPast() && $schedule->status !== 'received',
             ]));
     }
 
@@ -176,7 +299,8 @@ class ProcurementCycleReport
     private function supplierPayables(int $companyId, int $periodId): Collection
     {
         return PurchaseInvoice::query()->with(['supplier', 'branch', 'purchaseOrder', 'paymentSchedules'])->where('company_id', $companyId)
-            ->where('financial_period_id', $periodId)->get()->map(fn (PurchaseInvoice $invoice): array => $this->row([
+            ->where('financial_period_id', $periodId)->whereIn('status', [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed])
+            ->get()->map(fn (PurchaseInvoice $invoice): array => $this->row([
                 'date' => $invoice->invoice_date?->toDateString(),
                 'document' => $invoice->doc_num,
                 'status' => $invoice->status,
@@ -192,6 +316,36 @@ class ProcurementCycleReport
                     ->whereNotIn('status', ['paid', 'settled', 'cancelled'])
                     ->isNotEmpty(),
             ]));
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function supplierInstallments(int $companyId, int $periodId, bool $upcomingOnly): Collection
+    {
+        return PurchaseInvoicePaymentSchedule::query()->with(['purchaseInvoice.supplier', 'purchaseInvoice.branch', 'purchaseInvoice.purchaseOrder'])
+            ->where('company_id', $companyId)->where('financial_period_id', $periodId)
+            ->whereHas('purchaseInvoice', fn ($query) => $query->whereIn('status', [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed]))
+            ->get()
+            ->map(function (PurchaseInvoicePaymentSchedule $schedule): array {
+                $invoice = $schedule->purchaseInvoice;
+                $outstanding = max(0, (float) $schedule->amount - (float) $schedule->paid_amount - (float) $schedule->credited_amount);
+
+                return $this->row([
+                    'date' => $schedule->due_date?->toDateString(),
+                    'document' => $invoice?->doc_num.' / '.$schedule->line_number,
+                    'status' => $schedule->status,
+                    'supplier_doc_num' => $invoice?->supplier?->doc_num,
+                    'supplier' => $invoice?->supplier?->name,
+                    'purchase_order' => $invoice?->purchaseOrder?->doc_num,
+                    'branch_id' => $invoice?->branch_id,
+                    'branch' => $invoice?->branch?->name,
+                    'amount' => $schedule->amount,
+                    'outstanding' => $outstanding,
+                    'overdue' => $outstanding > 0 && $schedule->due_date?->isPast(),
+                ]);
+            })
+            ->when($upcomingOnly, fn (Collection $rows): Collection => $rows
+                ->filter(fn (array $row): bool => (float) $row['outstanding'] > 0 && filled($row['date']) && $row['date'] >= today()->toDateString()))
+            ->values();
     }
 
     /** @return Collection<int, array<string, mixed>> */

@@ -5,11 +5,11 @@ namespace Modules\FixedAssets\Http\Controllers;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Services\BreadcrumbService;
-use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\FixedAssets\Http\Requests\ActivateFixedAssetRequest;
@@ -23,6 +23,8 @@ use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\FixedAssets\Services\FixedAssetBookValueService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
+use Modules\FixedAssets\Services\FixedAssetImageResolver;
+use Modules\FixedAssets\Services\FixedAssetPdfService;
 use Modules\FixedAssets\Services\FixedAssetScheduleService;
 
 class FixedAssetLifecycleController extends Controller
@@ -32,7 +34,8 @@ class FixedAssetLifecycleController extends Controller
         private readonly FixedAssetBookValueService $bookValues,
         private readonly FixedAssetScheduleService $schedules,
         private readonly BreadcrumbService $breadcrumbs,
-        private readonly CompanyPrintIdentityService $printIdentities,
+        private readonly FixedAssetPdfService $pdf,
+        private readonly FixedAssetImageResolver $images,
     ) {}
 
     public function show(FixedAsset $fixedAsset): View
@@ -104,7 +107,20 @@ class FixedAssetLifecycleController extends Controller
     public function accounting(): View
     {
         $companyId = app(OperatingCompanyContextService::class)->requireCompanyId();
-        $root = app(BusinessPartnerAccountService::class)->rootAccount(BusinessPartnerAccountService::FixedAsset);
+        $setupError = null;
+
+        try {
+            $root = app(BusinessPartnerAccountService::class)->rootAccount(BusinessPartnerAccountService::FixedAsset);
+        } catch (DomainException $exception) {
+            $setupError = $exception->getMessage();
+
+            return view('modules.fixed-assets.lifecycle.accounting', [
+                'categories' => collect(),
+                'mappings' => collect(),
+                'setupError' => $setupError,
+            ]);
+        }
+
         $categories = Account::query()
             ->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
             ->where('accounts.company_id', $companyId)
@@ -112,7 +128,7 @@ class FixedAssetLifecycleController extends Controller
             ->where('accounts.is_group', true)
             ->where('accounts.is_postable', false)
             ->where('accounts.status', 'active')
-            ->where('account_classifications.code', BusinessPartnerAccountService::FixedAsset)
+            ->where('account_classifications.code', 'fixed_assets')
             ->whereNull('accounts.deleted_at')
             ->select('accounts.*')
             ->orderBy('accounts.account_code')
@@ -123,7 +139,7 @@ class FixedAssetLifecycleController extends Controller
             ->get()
             ->keyBy('asset_group_account_id');
 
-        return view('modules.fixed-assets.lifecycle.accounting', compact('categories', 'mappings'));
+        return view('modules.fixed-assets.lifecycle.accounting', compact('categories', 'mappings', 'setupError'));
     }
 
     public function configureAccounting(ConfigureFixedAssetCategoryMappingRequest $request): RedirectResponse
@@ -137,33 +153,42 @@ class FixedAssetLifecycleController extends Controller
         return back()->with('success', __('fixed_assets.lifecycle.messages.mapping_saved'));
     }
 
-    public function printAsset(FixedAsset $fixedAsset): View
+    public function printAsset(FixedAsset $fixedAsset): Response
     {
         $fixedAsset->load([
             'company', 'account', 'assetGroupAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file',
             'categoryMapping.accumulatedDepreciationAccount', 'categoryMapping.depreciationExpenseAccount',
             'postedDepreciations.journalEntry', 'postedDepreciations.costCenter', 'postedDepreciations.branch', 'postedDepreciations.postedBy',
-            'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceCostCenter', 'movements.destinationCostCenter', 'disposals',
+            'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceBranchHall', 'movements.destinationBranchHall', 'movements.sourceCostCenter', 'movements.destinationCostCenter',
+            'disposals.journalEntry',
         ]);
 
-        return view('modules.fixed-assets.lifecycle.print-asset', [
+        return $this->pdf->stream('reports.fixed-assets.asset-card', $fixedAsset->company, [
+            'title' => __('fixed_assets.lifecycle.asset_card'),
             'asset' => $fixedAsset,
             'position' => $this->bookValues->position($fixedAsset),
-            'companyPrintIdentity' => $this->printIdentities->forCompany($fixedAsset->company),
-        ]);
+            'assetImageSource' => $this->images->pdfSource($fixedAsset),
+        ], 'fixed-asset-'.$fixedAsset->doc_num.'.pdf');
     }
 
-    public function printMovement(FixedAssetMovement $movement): View
+    public function printMovement(FixedAssetMovement $movement): Response
     {
-        $movement->load(['company', 'asset', 'sourceBranch', 'destinationBranch', 'sourceBranchHall', 'destinationBranchHall', 'sourceCostCenter', 'destinationCostCenter', 'requestedBy']);
+        $movement->load(['company', 'asset', 'sourceBranch', 'destinationBranch', 'sourceBranchHall', 'destinationBranchHall', 'sourceCostCenter', 'destinationCostCenter', 'requestedBy', 'approvedBy', 'postedBy']);
 
-        return view('modules.fixed-assets.lifecycle.print-movement', ['movement' => $movement, 'companyPrintIdentity' => $this->printIdentities->forCompany($movement->company)]);
+        return $this->pdf->stream('reports.fixed-assets.movement', $movement->company, [
+            'title' => __('fixed_assets.lifecycle.transfer'),
+            'movement' => $movement,
+        ], 'asset-transfer-'.$movement->doc_num.'.pdf');
     }
 
-    public function printDisposal(FixedAssetDisposal $disposal): View
+    public function printDisposal(FixedAssetDisposal $disposal): Response
     {
-        $disposal->load(['company', 'asset', 'customer', 'proceedsAccount', 'journalEntry']);
+        $disposal->load(['company', 'financialPeriod', 'asset', 'customer', 'proceedsAccount', 'journalEntry', 'approvedBy', 'postedBy']);
+        $title = __('fixed_assets.pdf.disposition_titles.'.$disposal->disposition_type);
 
-        return view('modules.fixed-assets.lifecycle.print-disposal', ['disposal' => $disposal, 'companyPrintIdentity' => $this->printIdentities->forCompany($disposal->company)]);
+        return $this->pdf->stream('reports.fixed-assets.disposition', $disposal->company, [
+            'title' => $title,
+            'disposal' => $disposal,
+        ], 'asset-'.$disposal->disposition_type.'-'.$disposal->doc_num.'.pdf');
     }
 }

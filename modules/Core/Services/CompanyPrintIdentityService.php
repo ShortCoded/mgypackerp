@@ -5,6 +5,7 @@ namespace Modules\Core\Services;
 use Illuminate\Support\Facades\Storage;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Company;
+use Throwable;
 
 class CompanyPrintIdentityService
 {
@@ -17,6 +18,7 @@ class CompanyPrintIdentityService
      *     name: string,
      *     legal_name: string|null,
      *     logo_url: string|null,
+     *     logo_source: string|null,
      *     commercial_register_number: string|null,
      *     tax_card_number: string|null,
      *     vat_registration_number: string|null,
@@ -24,9 +26,11 @@ class CompanyPrintIdentityService
      *     phone: string|null,
      *     email: string|null,
      *     company_stamp_url: string|null,
+     *     company_stamp_source: string|null,
      *     authorized_signatory_name: string|null,
      *     authorized_signatory_title: string|null,
      *     authorized_signatory_signature_url: string|null
+     *     authorized_signatory_signature_source: string|null
      * }
      */
     public function forCompany(Company $company): array
@@ -44,6 +48,7 @@ class CompanyPrintIdentityService
             'name' => (string) $company->name,
             'legal_name' => $this->nullableString($company->legal_name),
             'logo_url' => $this->logoUrl($company->logo),
+            'logo_source' => $this->publicImageSource($company->logo),
             'commercial_register_number' => $this->nullableString($company->commercial_register_number),
             'tax_card_number' => $this->nullableString($company->tax_card_number),
             'vat_registration_number' => $this->nullableString($company->vat_registration_number),
@@ -51,9 +56,11 @@ class CompanyPrintIdentityService
             'phone' => $this->nullableString($company->phone ?: $company->mobile),
             'email' => $this->nullableString($company->email),
             'company_stamp_url' => $this->archiveImageUrl($company->companyStampArchiveFile),
+            'company_stamp_source' => $this->archiveImageSource($company->companyStampArchiveFile),
             'authorized_signatory_name' => $this->nullableString($company->authorized_signatory_name),
             'authorized_signatory_title' => $this->nullableString($company->authorized_signatory_title),
             'authorized_signatory_signature_url' => $this->archiveImageUrl($company->authorizedSignatorySignatureArchiveFile),
+            'authorized_signatory_signature_source' => $this->archiveImageSource($company->authorizedSignatorySignatureArchiveFile),
         ];
     }
 
@@ -78,6 +85,51 @@ class CompanyPrintIdentityService
         }
 
         return route('admin.file-manager.files.preview', $file->doc_num);
+    }
+
+    private function publicImageSource(mixed $path): ?string
+    {
+        $path = $this->nullableString($path);
+
+        if ($path === null || ! Storage::disk('public')->exists($path)) {
+            return null;
+        }
+
+        return $this->filesystemImageSource('public', $path, Storage::disk('public')->mimeType($path));
+    }
+
+    private function archiveImageSource(?ArchiveFile $file): ?string
+    {
+        if (! $file instanceof ArchiveFile
+            || ! $this->filePicker->isImageFile($file)
+            || ! $this->filePicker->isAvailableFile($file)
+        ) {
+            return null;
+        }
+
+        return $this->filesystemImageSource($file->disk, $file->path, $file->mime_type);
+    }
+
+    private function filesystemImageSource(string $disk, string $path, ?string $mimeType): ?string
+    {
+        try {
+            $absolutePath = Storage::disk($disk)->path($path);
+
+            if (is_file($absolutePath)) {
+                return $absolutePath;
+            }
+        } catch (Throwable) {
+        }
+
+        $size = Storage::disk($disk)->size($path);
+
+        if ($size > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        $contents = Storage::disk($disk)->get($path);
+
+        return 'data:'.($mimeType ?: 'image/png').';base64,'.base64_encode($contents);
     }
 
     private function address(Company $company): ?string

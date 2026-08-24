@@ -215,6 +215,12 @@ class ErpUiScreenRegistry
                     continue;
                 }
 
+                if (in_array($module['module'], ['inventory', 'production', 'quality'], true)
+                    && ($screen['shell_enabled'] ?? true) === false
+                    && ($screen['menu_visible'] ?? true) === false) {
+                    continue;
+                }
+
                 $definitions->push(new ErpUiScreenDefinition(
                     $this->blueprints->build($module, $screen, (($moduleIndex + 1) * 10000) + (($screenIndex + 1) * 10)),
                 ));

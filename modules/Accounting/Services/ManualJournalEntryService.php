@@ -258,6 +258,7 @@ class ManualJournalEntryService
             ->where('is_postable', true)
             ->whereIn('id', $accountIds)
             ->lockForUpdate()
+            ->pluck('id')
             ->count();
 
         if ($validAccountCount !== $accountIds->count()) {
@@ -271,6 +272,7 @@ class ManualJournalEntryService
             ->where('is_group', false)
             ->whereIn('id', $costCenterIds)
             ->lockForUpdate()
+            ->pluck('id')
             ->count();
 
         if ($validCostCenterCount !== $costCenterIds->count()) {
@@ -283,6 +285,7 @@ class ManualJournalEntryService
             ->active()
             ->whereIn('id', $branchIds)
             ->lockForUpdate()
+            ->pluck('id')
             ->count();
 
         if ($validBranchCount !== $branchIds->count()) {

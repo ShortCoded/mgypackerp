@@ -5,8 +5,10 @@ namespace Modules\Inventory\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
 
 class InventoryDocumentPostingService
@@ -16,53 +18,285 @@ class InventoryDocumentPostingService
     public function post(InventoryDocument $document): InventoryDocument
     {
         return DB::transaction(function () use ($document): InventoryDocument {
-            $locked = InventoryDocument::query()->with('lines')->lockForUpdate()->findOrFail($document->getKey());
+            $locked = InventoryDocument::query()
+                ->with('lines')
+                ->lockForUpdate()
+                ->findOrFail($document->getKey());
+
             if ($locked->status === InventoryDocument::StatusPosted) {
                 return $locked;
             }
+
             if ($locked->status !== InventoryDocument::StatusDraft) {
                 throw new DomainException('Only a draft inventory document can be posted.');
             }
 
+            if ($locked->lines->isEmpty()) {
+                throw new DomainException('An inventory document must contain at least one line.');
+            }
+
+            $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
+
+            if ($period->is_closed || (int) $period->company_id !== (int) $locked->company_id) {
+                throw new DomainException('Inventory movements cannot be posted to a closed or unrelated financial period.');
+            }
+
+            $profile = $this->movementProfile($locked);
             BranchStore::query()->lockForUpdate()->findOrFail($locked->branch_store_id);
+
+            if ($profile['destination_store_id'] !== null) {
+                BranchStore::query()->lockForUpdate()->findOrFail($profile['destination_store_id']);
+            }
+
             foreach ($locked->lines as $line) {
                 Product::query()->lockForUpdate()->findOrFail($line->product_id);
-                $isOutbound = $locked->document_type === InventoryDocument::TypeSalesDelivery;
                 $quantity = (string) $line->quantity;
+
                 if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
                 }
-                $postingKey = "inventory-document:{$locked->id}:line:{$line->id}";
-                if (InventoryTransaction::query()->where('posting_key', $postingKey)->exists()) {
-                    continue;
+
+                $unitCost = (string) ($line->unit_cost ?: $this->availability->averageCost(
+                    (int) $locked->company_id,
+                    (int) $locked->branch_store_id,
+                    (int) $line->product_id,
+                ));
+
+                if ($profile['outbound']) {
+                    $this->assertPositionCanIssue($locked, $line, $quantity, $profile['source_status']);
+                    $this->createTransaction(
+                        $locked,
+                        $line,
+                        'out',
+                        (int) $locked->branch_store_id,
+                        $line->warehouse_location_id ?? $locked->warehouse_location_id,
+                        $profile['source_status'],
+                        '0',
+                        $quantity,
+                        $unitCost,
+                    );
                 }
 
-                $unitCost = (string) ($line->unit_cost ?: $this->availability->averageCost((int) $locked->company_id, (int) $locked->branch_store_id, (int) $line->product_id));
-                if ($isOutbound) {
-                    $available = $this->availability->forProduct((int) $locked->company_id, (int) $locked->branch_store_id, (int) $line->product_id)['on_hand'];
-                    if (bccomp($quantity, $available, 8) > 0) {
-                        throw new DomainException('The delivery exceeds physical stock on hand.');
+                if ($profile['inbound']) {
+                    $this->createTransaction(
+                        $locked,
+                        $line,
+                        'in',
+                        $profile['destination_store_id'] ?? (int) $locked->branch_store_id,
+                        $line->destination_warehouse_location_id
+                            ?? $locked->destination_warehouse_location_id
+                            ?? $line->warehouse_location_id
+                            ?? $locked->warehouse_location_id,
+                        $profile['destination_status'],
+                        $quantity,
+                        '0',
+                        $unitCost,
+                    );
+                }
+
+                $line->update([
+                    'unit_cost' => $unitCost,
+                    'total_cost' => bcmul($quantity, $unitCost, 8),
+                ]);
+            }
+
+            $locked->update([
+                'status' => InventoryDocument::StatusPosted,
+                'is_closed' => true,
+                'approved_by' => auth()->id(),
+                'approved_at' => now(),
+                'closed_by' => auth()->id(),
+                'closed_at' => now(),
+                'updated_by' => auth()->id(),
+            ]);
+
+            return $locked->refresh()->load(['lines', 'transactions']);
+        });
+    }
+
+    public function reverse(InventoryDocument $document): InventoryDocument
+    {
+        return DB::transaction(function () use ($document): InventoryDocument {
+            $locked = InventoryDocument::query()->lockForUpdate()->findOrFail($document->getKey());
+
+            if ($locked->status === InventoryDocument::StatusReversed) {
+                return $locked;
+            }
+
+            if ($locked->status !== InventoryDocument::StatusPosted) {
+                throw new DomainException('Only a posted inventory document can be reversed.');
+            }
+
+            $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
+
+            if ($period->is_closed || (int) $period->company_id !== (int) $locked->company_id) {
+                throw new DomainException('Inventory movements cannot be reversed in a closed or unrelated financial period.');
+            }
+
+            $transactions = InventoryTransaction::query()
+                ->where('source_type', InventoryDocument::class)
+                ->where('source_id', $locked->getKey())
+                ->where('is_reversal', false)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($transactions as $transaction) {
+                if (bccomp((string) $transaction->quantity_in, '0', 8) > 0) {
+                    $position = $this->availability->forProduct(
+                        (int) $transaction->company_id,
+                        (int) $transaction->branch_store_id,
+                        (int) $transaction->product_id,
+                        null,
+                        $transaction->warehouse_location_id,
+                        (string) $transaction->stock_status,
+                    );
+
+                    if (bccomp((string) $transaction->quantity_in, $position['on_hand'], 8) > 0) {
+                        throw new DomainException('The document cannot be reversed because its received stock has already been consumed or moved.');
                     }
                 }
 
-                InventoryTransaction::query()->create([
-                    'posting_key' => $postingKey, 'company_id' => $locked->company_id,
-                    'financial_period_id' => $locked->financial_period_id, 'branch_id' => $locked->branch_id,
-                    'branch_store_id' => $locked->branch_store_id, 'transaction_date' => $locked->document_date,
-                    'transaction_type' => $locked->document_type, 'product_id' => $line->product_id,
-                    'unit_id' => $line->unit_id, 'quantity_in' => $isOutbound ? 0 : $quantity,
-                    'quantity_out' => $isOutbound ? $quantity : 0, 'source_type' => InventoryDocument::class,
-                    'source_id' => $locked->getKey(), 'source_doc_num' => $locked->doc_num,
-                    'source_line_type' => $line->source_line_type, 'source_line_id' => $line->source_line_id,
-                    'customer_id' => $locked->customer_id, 'unit_cost' => $unitCost,
-                    'total_cost' => bcmul($quantity, $unitCost, 8), 'created_by' => auth()->id(),
-                ]);
-                $line->update(['unit_cost' => $unitCost, 'total_cost' => bcmul($quantity, $unitCost, 8)]);
+                InventoryTransaction::query()->firstOrCreate(
+                    ['posting_key' => $transaction->posting_key.':reversal'],
+                    [
+                        ...$transaction->only([
+                            'company_id', 'financial_period_id', 'branch_id', 'branch_store_id',
+                            'branch_hall_id', 'warehouse_location_id', 'stock_status', 'batch_lot',
+                            'transaction_date', 'transaction_type', 'product_id', 'unit_id',
+                            'source_type', 'source_id', 'source_doc_num', 'source_line_type',
+                            'source_line_id', 'supplier_id', 'customer_id', 'production_order_id',
+                            'production_run_id', 'inventory_reservation_id', 'unit_cost', 'total_cost',
+                        ]),
+                        'quantity_in' => $transaction->quantity_out,
+                        'quantity_out' => $transaction->quantity_in,
+                        'is_reversal' => true,
+                        'reversal_of_id' => $transaction->getKey(),
+                        'notes' => 'Reversal of '.$transaction->posting_key,
+                        'created_by' => auth()->id(),
+                    ],
+                );
             }
 
-            $locked->update(['status' => InventoryDocument::StatusPosted, 'is_closed' => true, 'closed_by' => auth()->id(), 'closed_at' => now(), 'updated_by' => auth()->id()]);
+            $locked->update([
+                'status' => InventoryDocument::StatusReversed,
+                'reversed_by' => auth()->id(),
+                'reversed_at' => now(),
+                'updated_by' => auth()->id(),
+            ]);
 
-            return $locked->refresh()->load('lines');
+            return $locked->refresh()->load(['lines', 'transactions']);
         });
+    }
+
+    /**
+     * @return array{outbound: bool, inbound: bool, source_status: string, destination_status: string, destination_store_id: int|null}
+     */
+    private function movementProfile(InventoryDocument $document): array
+    {
+        $transferTypes = [
+            InventoryDocument::TypeTransfer,
+            InventoryDocument::TypeMaterialIssue,
+            InventoryDocument::TypeAdditionalMaterialIssue,
+            InventoryDocument::TypeMaterialReturn,
+            InventoryDocument::TypeDamage,
+        ];
+        $outboundTypes = [
+            InventoryDocument::TypeSalesDelivery,
+            InventoryDocument::TypeAdjustmentOut,
+            InventoryDocument::TypeMaterialConsumption,
+            InventoryDocument::TypeProductionWaste,
+            InventoryDocument::TypeScrap,
+        ];
+
+        $sourceStatus = $document->source_stock_status ?: match ($document->document_type) {
+            InventoryDocument::TypeMaterialConsumption,
+            InventoryDocument::TypeProductionWaste,
+            InventoryDocument::TypeMaterialReturn => InventoryTransaction::StatusProductionStaging,
+            default => InventoryTransaction::StatusAvailable,
+        };
+        $destinationStatus = $document->destination_stock_status ?: match ($document->document_type) {
+            InventoryDocument::TypeMaterialIssue,
+            InventoryDocument::TypeAdditionalMaterialIssue => InventoryTransaction::StatusProductionStaging,
+            InventoryDocument::TypeDamage => InventoryTransaction::StatusDamaged,
+            default => InventoryTransaction::StatusAvailable,
+        };
+        $isTransfer = in_array($document->document_type, $transferTypes, true);
+
+        return [
+            'outbound' => $isTransfer || in_array($document->document_type, $outboundTypes, true),
+            'inbound' => $isTransfer || ! in_array($document->document_type, $outboundTypes, true),
+            'source_status' => $sourceStatus,
+            'destination_status' => $destinationStatus,
+            'destination_store_id' => $document->destination_branch_store_id
+                ? (int) $document->destination_branch_store_id
+                : ($isTransfer ? (int) $document->branch_store_id : null),
+        ];
+    }
+
+    private function assertPositionCanIssue(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        string $quantity,
+        string $stockStatus,
+    ): void {
+        $position = $this->availability->forProduct(
+            (int) $document->company_id,
+            (int) $document->branch_store_id,
+            (int) $line->product_id,
+            null,
+            $line->warehouse_location_id ?? $document->warehouse_location_id,
+            $stockStatus,
+        );
+
+        if (bccomp($quantity, $position['on_hand'], 8) > 0) {
+            throw new DomainException('The inventory movement exceeds stock on hand in the selected store, location, and status.');
+        }
+    }
+
+    private function createTransaction(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        string $direction,
+        int $branchStoreId,
+        mixed $warehouseLocationId,
+        string $stockStatus,
+        string $quantityIn,
+        string $quantityOut,
+        string $unitCost,
+    ): void {
+        $postingKey = "inventory-document:{$document->id}:line:{$line->id}:{$direction}";
+
+        InventoryTransaction::query()->firstOrCreate(
+            ['posting_key' => $postingKey],
+            [
+                'company_id' => $document->company_id,
+                'financial_period_id' => $document->financial_period_id,
+                'branch_id' => $document->branch_id,
+                'branch_store_id' => $branchStoreId,
+                'branch_hall_id' => $document->branch_hall_id,
+                'warehouse_location_id' => $warehouseLocationId,
+                'stock_status' => $stockStatus,
+                'batch_lot' => $line->batch_lot,
+                'transaction_date' => $document->document_date,
+                'transaction_type' => $document->document_type,
+                'product_id' => $line->product_id,
+                'unit_id' => $line->unit_id,
+                'quantity_in' => $quantityIn,
+                'quantity_out' => $quantityOut,
+                'source_type' => InventoryDocument::class,
+                'source_id' => $document->getKey(),
+                'source_doc_num' => $document->doc_num,
+                'source_line_type' => $line->source_line_type,
+                'source_line_id' => $line->source_line_id,
+                'customer_id' => $document->customer_id,
+                'production_order_id' => $document->production_order_id,
+                'production_run_id' => $line->production_run_id ?? $document->production_run_id,
+                'inventory_reservation_id' => $line->inventory_reservation_id ?? null,
+                'unit_cost' => $unitCost,
+                'total_cost' => bcmul(bcadd($quantityIn, $quantityOut, 8), $unitCost, 8),
+                'created_by' => auth()->id(),
+            ],
+        );
     }
 }

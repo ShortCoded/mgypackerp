@@ -6,6 +6,8 @@ $screen = static fn (string $slug, string $en, string $ar, string $group = 'tran
     'title' => ['en' => $en, 'ar' => $ar],
     'group' => $group,
     'profile' => $profile,
+    'shell_enabled' => false,
+    'menu_visible' => false,
     ...$extra,
 ];
 

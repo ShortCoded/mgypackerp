@@ -30,6 +30,7 @@ class QuotationService
         private readonly QuotationCalculationService $calculator,
         private readonly FilePickerService $filePicker,
         private readonly NumericFormatService $numbers,
+        private readonly SalesUnitConversionService $unitConversions,
     ) {}
 
     public function create(array $data, ?Request $request = null): array
@@ -138,6 +139,8 @@ class QuotationService
                     'description',
                     'unit_id',
                     'quantity',
+                    'conversion_factor',
+                    'base_quantity',
                     'unit_price',
                     'discount_type',
                     'discount_value',
@@ -145,10 +148,14 @@ class QuotationService
                     'tax_rate',
                     'tax_amount',
                     'line_total',
+                    'requested_date',
                     'notes',
                     'product_name_snapshot',
                     'unit_name_snapshot',
                     'specs_snapshot',
+                    'specifications',
+                    'warehouse_notes',
+                    'production_notes',
                 ]));
             }
 
@@ -265,6 +272,7 @@ class QuotationService
     {
         return [
             'customer',
+            'branch',
             'currency',
             'salesPerson',
             'currentRevision.lines.product',
@@ -274,6 +282,7 @@ class QuotationService
             'revisions.createdBy',
             'attachments.archiveFile',
             'attachments.uploadedBy',
+            'salesOrders',
         ];
     }
 
@@ -301,7 +310,9 @@ class QuotationService
     {
         return [
             'company_id' => $companyId,
+            'branch_id' => $data['branch_id'],
             'customer_id' => $this->customerId($companyId, $data['customer_doc_num'] ?? null),
+            'customer_reference' => $data['customer_reference'] ?? null,
             'quotation_type' => $data['quotation_type'] ?? Quotation::TypeStandard,
             'project_name' => $data['project_name'] ?? null,
             'subject' => $data['subject'] ?? null,
@@ -311,6 +322,7 @@ class QuotationService
             'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
             'sales_person_id' => $this->salesPersonId($data['sales_person_doc_num'] ?? null),
             'notes' => $data['notes'] ?? null,
+            'internal_notes' => $data['internal_notes'] ?? null,
         ];
     }
 
@@ -379,13 +391,21 @@ class QuotationService
             $product = $this->productByDocNum((int) $record->company_id, $line['product_doc_num'] ?? null);
             $unit = $this->unitByDocNum((int) $record->company_id, $line['unit_doc_num'] ?? null) ?: $product?->unit;
 
+            if (! $product instanceof Product || ! $product->isSalesEligible()) {
+                throw new DomainException(__('quotations.messages.product_sales_ineligible'));
+            }
+
+            $unitSnapshot = $this->unitConversions->snapshot($product, $unit?->getKey(), $line['quantity']);
+
             $revision->lines()->create([
                 'line_number' => $index + 1,
                 'product_id' => $product?->getKey(),
                 'item_id' => $product?->getKey(),
                 'description' => $line['description'] ?? null,
-                'unit_id' => $unit?->getKey(),
+                'unit_id' => $unitSnapshot['unit_id'],
                 'quantity' => $line['quantity'],
+                'conversion_factor' => $unitSnapshot['conversion_factor'],
+                'base_quantity' => $unitSnapshot['base_quantity'],
                 'unit_price' => $line['unit_price'],
                 'discount_type' => $line['discount_type'] ?? null,
                 'discount_value' => $line['discount_value'],
@@ -393,10 +413,14 @@ class QuotationService
                 'tax_rate' => $line['tax_rate'],
                 'tax_amount' => $line['tax_amount'],
                 'line_total' => $line['line_total'],
+                'requested_date' => $line['requested_date'] ?? null,
                 'notes' => $line['notes'] ?? null,
                 'product_name_snapshot' => $product?->name ?: ($line['description'] ?? null),
                 'unit_name_snapshot' => $unit?->name,
                 'specs_snapshot' => $product ? $this->productSpecsSnapshot($product) : null,
+                'specifications' => collect($line['specifications'] ?? [])->filter(fn (mixed $value): bool => filled($value))->all() ?: null,
+                'warehouse_notes' => $line['warehouse_notes'] ?? null,
+                'production_notes' => $line['production_notes'] ?? null,
             ]);
         }
 
@@ -476,6 +500,7 @@ class QuotationService
 
         return Product::query()
             ->active()
+            ->salesEligible()
             ->forCompany($companyId)
             ->where('products.doc_num', $docNum)
             ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')

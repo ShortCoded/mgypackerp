@@ -723,6 +723,25 @@
           showToast('error', responseMessage(xhr));
         });
       })
+      .off('click.quotationsConvert', '.js-quotation-convert-action')
+      .on('click.quotationsConvert', '.js-quotation-convert-action', function () {
+        const $button = $(this);
+        const url = $button.data('url');
+        if (!url) {
+          return;
+        }
+
+        setLoading($button, true);
+        $.ajax({ url: url, method: 'POST', headers: headers() }).done(function (response) {
+          showToast('success', response.message || msg('saved', 'Saved.'));
+          if (response.redirect) {
+            window.location.href = response.redirect;
+          }
+        }).fail(function (xhr) {
+          showToast('error', responseMessage(xhr));
+          setLoading($button, false);
+        });
+      })
       .off('click.quotationsCreateRevision', '.js-create-quotation-revision')
       .on('click.quotationsCreateRevision', '.js-create-quotation-revision', function () {
         const url = $(this).data('url');

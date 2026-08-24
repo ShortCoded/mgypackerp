@@ -5,6 +5,7 @@
 @section('content')
     @if(session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
     @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+    @if($setupError)<div class="alert alert-warning" role="alert">{{ $setupError }}</div>@endif
     <div class="card">
         <div class="card-header"><h5 class="mb-0">{{ __('fixed_assets.lifecycle.accounting_mappings') }}</h5><p class="text-600 mb-0 mt-1">{{ __('fixed_assets.lifecycle.accounting_mappings_help') }}</p></div>
         <div class="card-body">
@@ -30,6 +31,9 @@
                     </div>
                 @endforeach
             </div>
+            @if(! $setupError && $categories->isEmpty())
+                <div class="alert alert-info mb-0">{{ __('fixed_assets.lifecycle.errors.no_asset_categories') }}</div>
+            @endif
         </div>
     </div>
 @endsection

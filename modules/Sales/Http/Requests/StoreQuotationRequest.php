@@ -16,6 +16,8 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
+use Modules\Sales\Services\SalesUnitConversionService;
+use Throwable;
 
 class StoreQuotationRequest extends FormRequest
 {
@@ -44,6 +46,7 @@ class StoreQuotationRequest extends FormRequest
 
         $data = [
             'company_id' => $context['company_id'],
+            'branch_id' => $context['branch_id'],
             'customer_doc_num' => $this->nullableTrim('customer_doc_num'),
             'quotation_type' => $this->nullableTrim('quotation_type') ?: Quotation::TypeStandard,
             'project_name' => $this->nullableTrim('project_name'),
@@ -65,6 +68,8 @@ class StoreQuotationRequest extends FormRequest
             'warranty_terms' => $this->nullableHtml('warranty_terms'),
             'delivery_terms' => $this->nullableHtml('delivery_terms'),
             'technical_notes' => $this->nullableHtml('technical_notes'),
+            'customer_reference' => $this->nullableTrim('customer_reference'),
+            'internal_notes' => $this->nullableTrim('internal_notes'),
             'lines' => $this->normalizedLines(),
             'payment_milestones' => $this->normalizedPaymentMilestones(),
             'execution_schedule_lines' => $this->normalizedExecutionScheduleLines(),
@@ -83,13 +88,14 @@ class StoreQuotationRequest extends FormRequest
         return [
             'doc_number' => ['nullable', 'integer', 'min:1', $this->uniqueActiveQuotationRule('doc_number')],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
-            'customer_doc_num' => ['nullable', 'string'],
+            'branch_id' => ['required', 'integer', 'exists:branches,id'],
+            'customer_doc_num' => ['required', 'string'],
             'quotation_type' => ['required', Rule::in(Quotation::Types)],
             'project_name' => ['nullable', 'string', 'max:255'],
             'subject' => ['nullable', 'string', 'max:255'],
             'quotation_date' => ['required', $this->dateRule('quotation_date')],
             'valid_until' => ['nullable', $this->dateRule('valid_until')],
-            'currency_doc_num' => ['nullable', 'string'],
+            'currency_doc_num' => ['required', 'string'],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'min:0.000001'],
             'sales_person_doc_num' => ['nullable', 'string', Rule::exists('users', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'notes' => ['nullable', 'string'],
@@ -104,16 +110,24 @@ class StoreQuotationRequest extends FormRequest
             'warranty_terms' => ['nullable', 'string'],
             'delivery_terms' => ['nullable', 'string'],
             'technical_notes' => ['nullable', 'string'],
+            'customer_reference' => ['nullable', 'string', 'max:160'],
+            'internal_notes' => ['nullable', 'string'],
             'lines' => ['required', 'array'],
-            'lines.*.product_doc_num' => ['nullable', 'string'],
+            'lines.*.product_doc_num' => ['required', 'string'],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.unit_doc_num' => ['nullable', 'string'],
             'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
-            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
             'lines.*.notes' => ['nullable', 'string'],
+            'lines.*.requested_date' => ['nullable', $this->dateRule('requested_date')],
+            'lines.*.specifications' => ['nullable', 'array'],
+            'lines.*.specifications.packaging' => ['nullable', 'string'],
+            'lines.*.specifications.customer_specification' => ['nullable', 'string'],
+            'lines.*.warehouse_notes' => ['nullable', 'string'],
+            'lines.*.production_notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'payment_milestones' => ['nullable', 'array'],
             'payment_milestones.*.title' => ['nullable', 'string', 'max:255'],
@@ -172,6 +186,8 @@ class StoreQuotationRequest extends FormRequest
             'warranty_terms' => __('quotations.attributes.warranty_terms'),
             'delivery_terms' => __('quotations.attributes.delivery_terms'),
             'technical_notes' => __('quotations.attributes.technical_notes'),
+            'customer_reference' => __('quotations.attributes.customer_reference'),
+            'internal_notes' => __('quotations.attributes.internal_notes'),
             'lines' => __('quotations.attributes.lines'),
             'lines.*.product_doc_num' => __('quotations.attributes.product'),
             'lines.*.description' => __('quotations.attributes.description'),
@@ -182,6 +198,11 @@ class StoreQuotationRequest extends FormRequest
             'lines.*.discount_value' => __('quotations.attributes.discount_value'),
             'lines.*.tax_rate' => __('quotations.attributes.tax_rate'),
             'lines.*.notes' => __('quotations.attributes.line_notes'),
+            'lines.*.requested_date' => __('quotations.attributes.requested_date'),
+            'lines.*.specifications.packaging' => __('quotations.attributes.packaging'),
+            'lines.*.specifications.customer_specification' => __('quotations.attributes.customer_specification'),
+            'lines.*.warehouse_notes' => __('quotations.attributes.warehouse_notes'),
+            'lines.*.production_notes' => __('quotations.attributes.production_notes'),
             'payment_milestones.*.title' => __('quotations.attributes.milestone_title'),
             'execution_schedule_lines.*.phase_name' => __('quotations.attributes.phase_name'),
             'attachment_file_doc_nums' => __('quotations.attributes.attachments'),
@@ -214,6 +235,13 @@ class StoreQuotationRequest extends FormRequest
         $data['lines'] = collect($data['lines'] ?? [])
             ->filter(fn (array $line): bool => ! ($line['_delete'] ?? false))
             ->filter(fn (array $line): bool => $this->lineHasContent($line))
+            ->map(function (array $line): array {
+                if (($line['requested_date'] ?? null) !== null) {
+                    $line['requested_date'] = app(DateFormatService::class)->normalizeForStorage((string) $line['requested_date']);
+                }
+
+                return $line;
+            })
             ->values()
             ->all();
 
@@ -323,28 +351,37 @@ class StoreQuotationRequest extends FormRequest
             $validLineCount++;
             $productDocNum = trim((string) ($line['product_doc_num'] ?? ''));
             $unitDocNum = trim((string) ($line['unit_doc_num'] ?? ''));
-            $description = trim((string) ($line['description'] ?? ''));
             $quantity = $line['quantity'] ?? null;
             $unitPrice = $line['unit_price'] ?? null;
 
-            if ($productDocNum === '' && $description === '') {
-                $validator->errors()->add("lines.{$index}.description", __('quotations.messages.product_or_description_required'));
+            if ($productDocNum === '') {
+                $validator->errors()->add("lines.{$index}.product_doc_num", __('validation.required', ['attribute' => __('quotations.attributes.product')]));
             }
 
-            if ($productDocNum !== '' && ! Product::query()->active()->forCompany($companyId)->where('doc_num', $productDocNum)->exists()) {
-                $validator->errors()->add("lines.{$index}.product_doc_num", __('quotations.messages.product_unavailable'));
+            $product = $productDocNum === '' ? null : Product::query()->active()->forCompany($companyId)->where('doc_num', $productDocNum)->first();
+            if ($productDocNum !== '' && (! $product instanceof Product || ! $product->isSalesEligible())) {
+                $validator->errors()->add("lines.{$index}.product_doc_num", __('quotations.messages.product_sales_ineligible'));
             }
 
-            if ($unitDocNum !== '' && ! ItemUnit::query()->active()->forCompany($companyId)->where('doc_num', $unitDocNum)->exists()) {
+            $unit = $unitDocNum === '' ? null : ItemUnit::query()->active()->forCompany($companyId)->where('doc_num', $unitDocNum)->first();
+            if ($unitDocNum !== '' && ! $unit instanceof ItemUnit) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('validation.exists', ['attribute' => __('quotations.attributes.unit')]));
             }
 
-            if ($quantity === null || $quantity === '' || ! is_numeric($quantity) || (float) $quantity <= 0) {
+            if ($quantity === null || $quantity === '' || ! is_numeric($quantity) || bccomp((string) $quantity, '0', 4) <= 0) {
                 $validator->errors()->add("lines.{$index}.quantity", __('quotations.messages.quantity_gt_zero'));
             }
 
-            if ($unitPrice === null || $unitPrice === '' || ! is_numeric($unitPrice) || (float) $unitPrice < 0) {
+            if ($unitPrice === null || $unitPrice === '' || ! is_numeric($unitPrice) || bccomp((string) $unitPrice, '0', 4) <= 0) {
                 $validator->errors()->add("lines.{$index}.unit_price", __('quotations.messages.unit_price_required'));
+            }
+
+            if ($product instanceof Product && $quantity !== null && $quantity !== '' && is_numeric($quantity)) {
+                try {
+                    app(SalesUnitConversionService::class)->snapshot($product, $unit?->getKey(), $quantity);
+                } catch (Throwable $exception) {
+                    $validator->errors()->add("lines.{$index}.unit_doc_num", $exception->getMessage());
+                }
             }
         }
 
@@ -470,6 +507,13 @@ class StoreQuotationRequest extends FormRequest
                 'discount_value' => isset($row['discount_value']) ? trim((string) $row['discount_value']) ?: '0' : '0',
                 'tax_rate' => isset($row['tax_rate']) ? trim((string) $row['tax_rate']) ?: '0' : '0',
                 'notes' => isset($row['notes']) ? trim((string) $row['notes']) ?: null : null,
+                'requested_date' => isset($row['requested_date']) ? trim((string) $row['requested_date']) ?: null : null,
+                'specifications' => [
+                    'packaging' => isset($row['specifications']['packaging']) ? trim((string) $row['specifications']['packaging']) ?: null : null,
+                    'customer_specification' => isset($row['specifications']['customer_specification']) ? trim((string) $row['specifications']['customer_specification']) ?: null : null,
+                ],
+                'warehouse_notes' => isset($row['warehouse_notes']) ? trim((string) $row['warehouse_notes']) ?: null : null,
+                'production_notes' => isset($row['production_notes']) ? trim((string) $row['production_notes']) ?: null : null,
                 '_delete' => filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
             ->values()

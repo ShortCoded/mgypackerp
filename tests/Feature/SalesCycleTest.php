@@ -121,7 +121,7 @@ test('stock sale, mixed service, installments, collection, and quality returns r
     $goodsLine = $order->lines->firstWhere('product_id', $fixture['finished']->getKey());
     $serviceLine = $order->lines->firstWhere('product_id', $fixture['service']->getKey());
 
-    $reservation = $fulfillment->reserve($goodsLine, '100');
+    $reservation = $fulfillment->reserve($goodsLine, '30');
     expect($reservation->status)->toBe(InventoryReservation::StatusActive);
     $firstDelivery = $fulfillment->deliver($order, [['sales_order_line_id' => $goodsLine->getKey(), 'quantity' => '60']]);
     expect($goodsLine->fresh()->remainingDeliveryQuantity())->toBe('40.00000000')
@@ -129,6 +129,7 @@ test('stock sale, mixed service, installments, collection, and quality returns r
         ->and($firstDelivery->lines->first()->source_line_id)->toBe($goodsLine->getKey());
     $secondDelivery = $fulfillment->deliver($order->fresh(), [['sales_order_line_id' => $goodsLine->getKey(), 'quantity' => '40']]);
     expect($order->fresh()->status)->toBe(SalesOrder::StatusFulfilled)
+        ->and($reservation->fresh()->status)->toBe(InventoryReservation::StatusConsumed)
         ->and(InventoryTransaction::query()->where('transaction_type', 'sales_delivery')->count())->toBe(2)
         ->and(InventoryTransaction::query()->where('product_id', $serviceLine->product_id)->count())->toBe(0);
     expect(fn () => $fulfillment->deliver($order->fresh(), [['sales_order_line_id' => $goodsLine->getKey(), 'quantity' => '1']]))->toThrow(DomainException::class);
@@ -484,11 +485,27 @@ test('sales operational report renders order, sales, aging, and return analyses 
     Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
     $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
     $session = salesCycleSession($fixture);
+    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'sales_employee_id' => $fixture['user']->getKey(),
+    ]));
 
     $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.sales.sales-orders.index'))
+        ->get(route('admin.reports.sales.sales-orders.index', [
+            'customer_doc_num' => $fixture['customer']->doc_num,
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'sales_person_doc_num' => $fixture['user']->doc_num,
+            'branch_doc_num' => $fixture['branch']->doc_num,
+            'order_doc_num' => $order->doc_num,
+            'order_status' => SalesOrder::StatusDraft,
+        ]))
         ->assertOk()
         ->assertSee('Sales Cycle Operational Report')
+        ->assertSee('Quotation Status / History')
+        ->assertSee('Reserved')
+        ->assertSee('Produced')
+        ->assertSee($order->doc_num)
+        ->assertSee($fixture['customer']->doc_num)
+        ->assertSee($fixture['finished']->doc_num)
         ->assertSee('Customer Aging')
         ->assertSee('Sales by Item')
         ->assertSee('Customer Order History')

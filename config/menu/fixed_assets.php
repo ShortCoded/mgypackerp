@@ -2,9 +2,9 @@
 
 return [
     [
-        'label' => 'accounting_costing',
-        'title' => 'Accounting & Costing',
-        'icon' => 'calculator',
+        'label' => 'fixed_assets',
+        'title' => 'Fixed Assets',
+        'icon' => 'building',
         'route' => null,
         'permission' => null,
         'keywords' => ['fixed assets', 'assets', 'register', 'الأصول الثابتة', 'دليل الأصول'],
@@ -17,6 +17,7 @@ return [
                 'route' => 'admin.fixed-assets.assets.index',
                 'permission' => 'fixed_assets.view',
                 'keywords' => ['fixed assets register', 'fixed assets directory', 'assets', 'دليل الأصول الثابتة'],
+                'subgroup' => 'asset_data',
                 'actions' => [
                     'view' => 'fixed_assets.view',
                     'create' => 'fixed_assets.create',
@@ -43,6 +44,7 @@ return [
                 'icon' => 'calculator',
                 'route' => 'admin.fixed-assets.depreciation.index',
                 'permission' => 'fixed_assets.depreciation.preview',
+                'subgroup' => 'depreciation',
                 'actions' => [
                     'preview' => 'fixed_assets.depreciation.preview',
                     'post' => 'fixed_assets.depreciation.post',
@@ -57,6 +59,7 @@ return [
                 'icon' => 'chart-bar',
                 'route' => 'admin.fixed-assets.reports.index',
                 'permission' => 'fixed_assets.reports',
+                'subgroup' => 'asset_reports',
                 'actions' => [
                     'view' => 'fixed_assets.reports',
                     'export' => 'fixed_assets.export',
@@ -70,6 +73,7 @@ return [
                 'icon' => 'project-diagram',
                 'route' => 'admin.fixed-assets.accounting.index',
                 'permission' => 'fixed_assets.accounting.configure',
+                'subgroup' => 'asset_data',
                 'actions' => ['configure' => 'fixed_assets.accounting.configure'],
                 'active' => ['admin.fixed-assets.accounting.*'],
                 'children' => [],

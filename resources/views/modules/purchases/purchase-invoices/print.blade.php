@@ -7,6 +7,18 @@
 
 @section('title', __('purchase_invoices.print_title', ['doc' => $record->doc_num]))
 
+@push('styles')
+    <style>
+        @media print {
+            .purchase-invoice-print table { break-inside: auto; }
+            .purchase-invoice-print tr { break-inside: avoid; page-break-inside: avoid; }
+            .purchase-invoice-print thead { display: table-header-group; }
+            .purchase-invoice-print tfoot { display: table-footer-group; }
+            .purchase-invoice-print .row.g-4 { break-inside: avoid; page-break-inside: avoid; }
+        }
+    </style>
+@endpush
+
 @section('content')
     <div class="page-print-actions d-flex justify-content-end gap-2 mb-3">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.show', $record->doc_num) }}">
@@ -17,7 +29,7 @@
         </button>
     </div>
 
-    <div class="card erp-document-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
+    <div class="card erp-document-print purchase-invoice-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
         <div class="card-body">
             <x-company-print-header :identity="$companyPrintIdentity" />
             <div class="row g-3 mb-4">

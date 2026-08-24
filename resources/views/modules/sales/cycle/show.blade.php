@@ -30,6 +30,7 @@
                 @if($record->customer_reference ?? null)<div class="col-md-4"><strong>{{ __('Customer reference / PO') }}</strong><div>{{ $record->customer_reference }}</div></div>@endif
                 @if($record->expected_delivery_date ?? null)<div class="col-md-4"><strong>{{ __('Required date') }}</strong><div>{{ $dates->formatDate($record->expected_delivery_date, '') }}</div></div>@endif
                 @if($record->salesEmployee ?? null)<div class="col-md-4"><strong>{{ __('Sales representative') }}</strong><div>{{ $record->salesEmployee->doc_num }} / {{ $record->salesEmployee->name }}</div></div>@endif
+                @if($record->quotation ?? null)<div class="col-md-4"><strong>{{ __('Source Quotation') }}</strong><div>@can('quotations.view')<a href="{{ route('admin.sales.quotations.show', $record->quotation) }}">{{ $record->quotation->doc_num }} / {{ $record->quotationRevision?->revision_code }}</a>@else{{ $record->quotation->doc_num }}@endcan</div></div>@endif
                 @if($record->salesOrder ?? $record->order ?? null)<div class="col-md-4"><strong>{{ __('Sales Order') }}</strong><div>{{ ($record->salesOrder ?? $record->order)->doc_num }}</div></div>@endif
                 @if($record->invoice ?? null)<div class="col-md-4"><strong>{{ __('Original Invoice') }}</strong><div>{{ $record->invoice->doc_num }}</div></div>@endif
                 @if($record->relationLoaded('deliveries') && $record->deliveries->isNotEmpty())<div class="col-md-4"><strong>{{ __('Deliveries') }}</strong><div>{{ $record->deliveries->pluck('doc_num')->join(' / ') }}</div></div>
@@ -49,12 +50,24 @@
         </tbody></table></div></div>
     @endif
 
+    @if($kind === 'production_request')
+        <div class="card mb-3"><div class="card-header d-flex justify-content-between"><h6 class="mb-0">{{ __('BOM snapshots and production runs') }}</h6>@if(in_array($record->status, ['draft', 'planned']))<form method="POST" action="{{ route('admin.production.work-orders.release', $record) }}">@csrf<button class="btn btn-primary btn-sm">{{ __('Release and snapshot BOM') }}</button></form>@endif</div><div class="card-body">
+            @foreach($record->lines as $line)
+                <div class="mb-3"><strong>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</strong><div class="text-500">{{ __('Target base quantity') }}: {{ $line->base_quantity }} · {{ __('Received') }}: {{ $line->received_base_quantity }}</div>
+                    @if(is_array($line->bom_snapshot))<ul class="mb-0">@foreach($line->bom_snapshot['components'] ?? [] as $component)<li>{{ $component['product_doc_num'] ?? '' }} — {{ $component['product_name'] ?? '' }}: {{ $component['base_quantity_per_output'] ?? '' }} / {{ __('base output unit') }}</li>@endforeach</ul>@endif
+                </div>
+            @endforeach
+            <div class="row g-2">@forelse($record->runs as $run)<div class="col-md-4"><a class="d-block border rounded p-2" href="{{ route('admin.production.runs.show', $run) }}"><strong>{{ $run->run_number }}</strong><br><span>{{ $run->status }} · {{ $run->planned_base_quantity }} / {{ $run->good_base_quantity }} / {{ $run->received_base_quantity }}</span></a></div>@empty<div class="text-500">{{ __('No production runs planned.') }}</div>@endforelse</div>
+        </div></div>
+    @endif
+
     @if($showPrices && $record->relationLoaded('paymentSchedules') && $record->paymentSchedules->isNotEmpty())
         <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('Payment Schedule') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Collected') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence ?? $schedule->line_number }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td class="text-end">{{ $numbers->format($schedule->amount) }}</td><td class="text-end">{{ $numbers->format($schedule->collected_amount) }}</td><td class="text-end">{{ $numbers->format($schedule->outstanding_amount ?? $schedule->remaining_amount) }}</td><td>{{ $schedule->payment_status ?? $schedule->status }}</td></tr>@endforeach</tbody></table></div></div>
     @endif
 
     @if($kind === 'sales_order')
         <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Complete document chain') }}</h6></div><div class="card-body"><div class="row g-3">
+            <div class="col-md-4"><strong>{{ __('Quotation') }}</strong><div>@if($record->quotation) @can('quotations.view')<a href="{{ route('admin.sales.quotations.show', $record->quotation) }}">{{ $record->quotation->doc_num }} / {{ $record->quotationRevision?->revision_code }}</a>@else{{ $record->quotation->doc_num }}@endcan @else<span class="text-500">{{ __('Direct order') }}</span>@endif</div></div>
             <div class="col-md-4"><strong>{{ __('Credit Overrides') }}</strong><div>@forelse($record->creditOverrides as $document)<span class="d-block">{{ $document->overridden_at }} · {{ $document->reason }}</span>@empty<span class="text-500">—</span>@endforelse</div></div>
             <div class="col-md-4"><strong>{{ __('Reservations') }}</strong><div>@forelse($record->lines->flatMap->reservations as $document)<span class="d-block">{{ str($document->public_id)->limit(12) }} · {{ $document->status }}</span>@empty<span class="text-500">—</span>@endforelse</div></div>
             <div class="col-md-4"><strong>{{ __('Production Requests') }}</strong><div>@forelse($record->productionOrders as $document) @can('sales_orders.production')<a class="d-block" href="{{ route('admin.sales.production-requests.show', $document) }}">{{ $document->doc_num }} · {{ str($document->status)->replace('_', ' ')->title() }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @empty<span class="text-500">—</span>@endforelse</div></div>

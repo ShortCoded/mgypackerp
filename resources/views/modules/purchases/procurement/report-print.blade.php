@@ -2,7 +2,7 @@
 
 @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
 
-@section('title', __('Procurement Report').' — '.str($reportType)->replace('_', ' ')->title())
+@section('title', __('Procurement Report').' — '.__('procurement.reports.types.'.$reportType))
 
 @section('content')
     <div class="page-print-actions d-flex justify-content-end mb-3">
@@ -13,7 +13,7 @@
             <x-company-print-header :identity="$companyPrintIdentity" />
             <div class="mb-3">
                 <h4 class="mb-1">{{ __('Procurement Report') }}</h4>
-                <div>{{ str($reportType)->replace('_', ' ')->title() }}</div>
+                <div>{{ __('procurement.reports.types.'.$reportType) }}</div>
                 <div class="text-600 fs-11" dir="ltr">{{ now()->format('Y-m-d H:i') }}</div>
             </div>
             <div class="table-responsive">
@@ -27,10 +27,10 @@
                     <tbody>
                         @forelse($rows as $row)
                             <tr>
-                                <td dir="ltr">{{ $row['date'] ?: '—' }}</td><td dir="ltr">{{ $row['document'] ?: '—' }}</td><td>{{ $row['status'] ?: '—' }}</td>
+                                <td dir="ltr">{{ $row['date'] ?: '—' }}</td><td dir="ltr">{{ $row['document'] ?: '—' }}</td><td>{{ $row['status'] ? __('procurement.statuses.'.$row['status']) : '—' }}</td>
                                 <td>{{ $row['supplier'] ?: '—' }}</td><td>{{ $row['product'] ?: '—' }}</td><td dir="ltr">{{ $row['requisition'] ?: '—' }}</td>
                                 <td dir="ltr">{{ $row['purchase_order'] ?: '—' }}</td><td>{{ collect([$row['branch'], $row['warehouse']])->filter()->join(' / ') ?: '—' }}</td>
-                                <td>{{ $row['qc_status'] ?: '—' }}</td><td dir="ltr">{{ collect([$row['production_order'], $row['work_order']])->filter()->join(' / ') ?: '—' }}</td>
+                                <td>{{ $row['qc_status'] ? __('procurement.statuses.'.$row['qc_status']) : '—' }}</td><td dir="ltr">{{ collect([$row['production_order'], $row['work_order']])->filter()->join(' / ') ?: '—' }}</td>
                                 <td class="text-end" dir="ltr">{{ $numbers->format($row['quantity']) }}</td>
                                 @if($showPrices)<td class="text-end" dir="ltr">{{ $numbers->format($row['amount']) }}</td>@endif
                                 <td class="text-end" dir="ltr">{{ $numbers->format($row['outstanding']) }}</td><td>{{ $row['overdue'] ? __('Yes') : __('No') }}</td>

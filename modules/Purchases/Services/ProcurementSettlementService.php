@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
@@ -261,6 +262,7 @@ class ProcurementSettlementService
             if ($return->status !== 'draft') {
                 throw new DomainException(__('This purchase return is locked.'));
             }
+            $this->assertOpenFinancialPeriod((int) $return->financial_period_id);
 
             BranchStore::query()->lockForUpdate()->findOrFail($return->branch_store_id);
             foreach ($return->lines as $line) {
@@ -591,6 +593,7 @@ class ProcurementSettlementService
             if (! $locked->isDraft()) {
                 throw new DomainException(__('A cancelled supplier payment cannot be approved.'));
             }
+            $this->assertOpenFinancialPeriod((int) $locked->financial_period_id);
             if (! $locked->is_advance && abs((float) $locked->allocated_amount - (float) $locked->amount) > 0.0001) {
                 throw new DomainException(__('A non-advance supplier payment must be fully allocated before approval.'));
             }
@@ -648,6 +651,18 @@ class ProcurementSettlementService
         }
 
         $this->cashVouchers->approve(CashVoucher::TypePayment, $payment->cashVoucher);
+    }
+
+    private function assertOpenFinancialPeriod(int $financialPeriodId): void
+    {
+        $isOpen = FinancialPeriod::query()
+            ->whereKey($financialPeriodId)
+            ->where('is_closed', false)
+            ->exists();
+
+        if (! $isOpen) {
+            throw new DomainException(__('purchase_invoices.messages.period_closed'));
+        }
     }
 
     private function approveBankPayment(SupplierPaymentContext $payment): void

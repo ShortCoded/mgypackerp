@@ -22,28 +22,21 @@ use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
-use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
 use Modules\Purchases\Http\Requests\ProcurementWorkflowRequest;
 use Modules\Purchases\Models\GoodsReceiptInspection;
 use Modules\Purchases\Models\PurchaseInvoice;
-use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderChangeRequest;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
-use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\PurchaseRequisition;
-use Modules\Purchases\Models\PurchaseRequisitionLine;
 use Modules\Purchases\Models\PurchaseReturn;
-use Modules\Purchases\Models\PurchaseReturnLine;
 use Modules\Purchases\Models\RequestForQuotation;
 use Modules\Purchases\Models\Supplier;
-use Modules\Purchases\Models\SupplierPaymentAllocation;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Models\SupplierQuotation;
-use Modules\Purchases\Models\SupplierQuotationLine;
 use Modules\Purchases\Models\SupplierSelection;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSettlementService;
@@ -71,23 +64,14 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('purchase_requisitions', __('Purchase Requisitions'), $records);
     }
 
-    public function requisitionLinesIndex(): View
+    public function requisitionLinesIndex(): RedirectResponse
     {
-        $context = $this->context();
-        $records = PurchaseRequisitionLine::query()->with(['requisition', 'product', 'unit'])
-            ->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])
-            ->latest('id')->paginate(25);
-
-        return $this->indexView('purchase_requisition_lines', __('Purchase Requisition Lines'), $records);
+        return to_route('admin.purchases.purchase-requisitions.index');
     }
 
-    public function requisitionApprovalsIndex(): View
+    public function requisitionApprovalsIndex(): RedirectResponse
     {
-        $context = $this->context();
-        $records = PurchaseRequisition::query()->forContext($context['company_id'], $context['financial_period_id'])
-            ->where('status', 'pending_approval')->with(['branch', 'branchStore'])->withCount('lines')->oldest('request_date')->paginate(25);
-
-        return $this->indexView('purchase_requisition_approvals', __('Purchase Requisition Approvals'), $records);
+        return to_route('admin.purchases.purchase-requisitions.index');
     }
 
     public function createRequisition(): View
@@ -129,9 +113,18 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('request_for_quotations', __('Requests for Quotation'), $records);
     }
 
-    public function createRfq(PurchaseRequisition $purchaseRequisition): View
+    public function createRfq(PurchaseRequisition $purchaseRequisition): View|RedirectResponse
     {
         $this->assertCurrent($purchaseRequisition);
+
+        if (! in_array($purchaseRequisition->status, [
+            PurchaseRequisition::StatusApproved,
+            PurchaseRequisition::StatusPartiallyConverted,
+        ], true)) {
+            return to_route('admin.purchases.purchase-requisitions.show', $purchaseRequisition)
+                ->withErrors(['purchase_requisition' => __('The purchase requisition must be approved before creating a request for quotation.')]);
+        }
+
         $purchaseRequisition->load(['lines.product', 'lines.unit']);
 
         return view('modules.purchases.procurement.rfq-form', [
@@ -167,14 +160,9 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('supplier_quotations', __('Supplier Quotations'), $records, true);
     }
 
-    public function quotationLinesIndex(): View
+    public function quotationLinesIndex(): RedirectResponse
     {
-        $context = $this->context();
-        $records = SupplierQuotationLine::query()->with(['quotation.supplier', 'rfqLine', 'product', 'unit'])
-            ->whereHas('quotation', fn ($query) => $query->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id']))
-            ->latest('id')->paginate(25);
-
-        return $this->indexView('supplier_quotation_lines', __('Supplier Quotation Lines'), $records, true);
+        return to_route('admin.purchases.supplier-quotation-entry.index');
     }
 
     public function createQuotation(RequestForQuotation $requestForQuotation): View
@@ -331,15 +319,9 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('goods_receipts', __('Goods Receipt Notes'), $records);
     }
 
-    public function receiptLinesIndex(): View
+    public function receiptLinesIndex(): RedirectResponse
     {
-        $context = $this->context();
-        $records = UnpricedInventoryReceiptLine::query()
-            ->with(['receipt', 'product', 'unit', 'purchaseOrderLine'])
-            ->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])
-            ->whereNotNull('purchase_order_line_id')->latest('id')->paginate(25);
-
-        return $this->indexView('goods_receipt_lines', __('Goods Receipt Lines'), $records);
+        return to_route('admin.purchases.goods-receipt-notes.index');
     }
 
     public function createReceipt(PurchaseOrder $purchaseOrder): View
@@ -414,14 +396,9 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('purchase_returns', __('Purchase Returns'), $records, true);
     }
 
-    public function returnLinesIndex(): View
+    public function returnLinesIndex(): RedirectResponse
     {
-        $context = $this->context();
-        $records = PurchaseReturnLine::query()->with(['purchaseReturn', 'product', 'unit', 'receiptLine'])
-            ->whereHas('purchaseReturn', fn ($query) => $query->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id']))
-            ->latest('id')->paginate(25);
-
-        return $this->indexView('purchase_return_lines', __('Purchase Return Lines'), $records, true);
+        return to_route('admin.purchases.purchase-returns.index');
     }
 
     public function createReturn(Request $request): View
@@ -538,21 +515,19 @@ class ProcurementWorkflowController extends Controller
         return $this->execute($request, fn () => $this->settlement->allocatePayment($record, $request->validated('allocations')), 'admin.purchases.supplier-payments.show', $supplierPayment);
     }
 
-    public function inquiry(Request $request): View
+    public function inquiry(Request $request): RedirectResponse
     {
         $screen = (string) $request->route('procurement_screen', 'procurement_cycle');
-        $context = $this->context();
-        $records = match ($screen) {
-            'purchase_order_lines' => PurchaseOrderLine::query()->with(['purchaseOrder.supplier', 'product', 'unit'])->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])->latest('id')->paginate(25),
-            'purchase_order_approvals' => PurchaseOrder::query()->forCompany($context['company_id'])->where('financial_period_id', $context['financial_period_id'])->where('status', 'draft')->with('supplier')->latest('document_date')->paginate(25),
-            'purchase_invoice_lines' => PurchaseInvoiceLine::query()->with(['purchaseInvoice.supplier', 'product', 'unit'])->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])->latest('id')->paginate(25),
-            'purchase_invoice_payments', 'purchase_invoice_allocations' => PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])->with(['supplier', 'paymentSchedules', 'paymentAllocations'])->latest('invoice_date')->paginate(25),
-            'supplier_payment_allocations' => SupplierPaymentAllocation::query()->with(['paymentContext.cashVoucher', 'purchaseInvoice.supplier', 'paymentSchedule'])->whereHas('paymentContext', fn ($query) => $query->where('company_id', $context['company_id']))->latest('allocated_at')->paginate(25),
-            'supplier_debit_notes' => PurchaseReturn::query()->where('company_id', $context['company_id'])->whereNotNull('journal_entry_id')->with(['supplier', 'purchaseInvoice'])->latest('return_date')->paginate(25),
-            default => InventoryTransaction::query()->where('company_id', $context['company_id'])->with(['product', 'branchStore'])->latest('transaction_date')->paginate(25),
+
+        $parentRoute = match ($screen) {
+            'purchase_order_lines', 'purchase_order_approvals' => 'admin.purchases.purchase-orders.index',
+            'purchase_invoice_lines', 'purchase_invoice_payments', 'purchase_invoice_allocations' => 'admin.purchases.purchase-invoices.index',
+            'supplier_payment_allocations' => 'admin.purchases.supplier-payments.index',
+            'supplier_debit_notes' => 'admin.purchases.purchase-returns.index',
+            default => 'admin.purchases.purchase-requisitions.index',
         };
 
-        return $this->indexView($screen, str($screen)->replace('_', ' ')->title()->toString(), $records, ! in_array($screen, ['goods_receipt_lines', 'goods_receipt_inspections'], true));
+        return to_route($parentRoute);
     }
 
     public function report(Request $request): View

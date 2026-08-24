@@ -15,6 +15,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -517,6 +518,15 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
         'previous_depreciation_until_date' => $context['period']->from_date->copy()->addDays(8)->toDateString(),
         'operation_date' => $context['period']->from_date->copy()->subYears(3)->toDateString(),
     ]);
+    $unrelatedOpeningAsset = lifecycleFixedAsset($context, [
+        'asset_name' => 'Unrelated Opening Reconciliation Asset',
+        'entry_type' => FixedAsset::EntryTypeOpeningAsset,
+        'purchase_value' => '25000',
+        'salvage_value' => '0',
+        'previous_depreciation' => '5000',
+        'previous_depreciation_until_date' => $context['period']->from_date->copy()->addDays(8)->toDateString(),
+        'operation_date' => $context['period']->from_date->copy()->subYears(2)->toDateString(),
+    ]);
     $mapping = FixedAssetCategoryMapping::query()->where('asset_group_account_id', $openingAsset->asset_group_account_id)->firstOrFail();
     $entryDate = $context['period']->from_date->copy()->addDays(8)->toDateString();
 
@@ -538,7 +548,10 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
         ['account_id' => $context['postingAccounts'][4]->getKey(), 'debit_amount' => '0', 'credit_amount' => '60000', 'description' => 'Opening equity offset'],
     ]);
 
-    $reconciliation = app(FixedAssetReportService::class)->report(['type' => FixedAssetReportService::Reconciliation]);
+    $reconciliation = app(FixedAssetReportService::class)->report([
+        'type' => FixedAssetReportService::Reconciliation,
+        'asset_doc_num' => $openingAsset->doc_num,
+    ]);
     $costRow = $reconciliation['rows']->firstWhere('account', $openingAsset->account->codeNameLabel());
     $accumulatedRow = $reconciliation['rows']->firstWhere('account', $mapping->accumulatedDepreciationAccount->codeNameLabel());
 
@@ -550,6 +563,7 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
         ->and($accumulatedRow['subledger'])->toBe('40000.0000')
         ->and((float) $accumulatedRow['general_ledger'])->toEqualWithDelta(40000, 0.0001)
         ->and((float) $accumulatedRow['difference'])->toEqualWithDelta(0, 0.0001)
+        ->and($reconciliation['rows']->pluck('account'))->not->toContain($unrelatedOpeningAsset->account->codeNameLabel())
         ->and(JournalEntry::query()->where('source_type', 'opening_balance')->count())->toBe(1)
         ->and(JournalEntry::query()->where('source_type', 'like', 'fixed_asset_opening%')->exists())->toBeFalse();
 });
@@ -558,7 +572,7 @@ test('asset card reports print and export screens use the canonical lifecycle re
     $actor = lifecycleFixedAssetActor([
         'fixed_assets.create', 'fixed_assets.view', 'fixed_assets.transfer', 'fixed_assets.dispose',
         'fixed_assets.depreciation.preview', 'fixed_assets.depreciation.post', 'fixed_assets.reports',
-        'fixed_assets.print', 'fixed_assets.export',
+        'fixed_assets.print', 'fixed_assets.export', 'fixed_assets.accounting.configure',
     ]);
     $context = lifecycleFixedAssetContext();
     $asset = lifecycleFixedAsset($context, ['asset_name' => 'Runtime Print Asset']);
@@ -589,12 +603,16 @@ test('asset card reports print and export screens use the canonical lifecycle re
 
     $this->actingAs($actor);
     $this->get(route('admin.fixed-assets.lifecycle.show', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.lifecycle.movement_history'));
+    $this->get(route('admin.fixed-assets.accounting.index'))->assertOk()->assertSee($context['category']->account_code);
     $this->get(route('admin.fixed-assets.prints.asset', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.lifecycle.asset_card'));
     $this->get(route('admin.fixed-assets.prints.movement', $movement))->assertOk()->assertSee($movement->doc_num);
     $this->get(route('admin.fixed-assets.depreciation.show', $run))->assertOk()->assertSee($run->doc_num);
     $this->get(route('admin.fixed-assets.depreciation.index'))->assertOk()->assertSee(__('fixed_assets.lifecycle.depreciation_policy', ['basis' => 365]));
     $this->get(route('admin.fixed-assets.depreciation.print', $run))->assertOk()->assertSee($run->doc_num)->assertSee(app(NumericFormatService::class)->format($run->lines->firstOrFail()->period_depreciation));
     $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register']))->assertOk()->assertSee($asset->doc_num);
+    $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register', 'to_date' => $date]))
+        ->assertOk()
+        ->assertSee('value="'.app(DateFormatService::class)->formatDate($date, '').'"', false);
     $this->get(route('admin.fixed-assets.reports.print', ['type' => 'register']))->assertOk()->assertSee($asset->doc_num);
     $this->get(route('admin.fixed-assets.reports.print', ['type' => 'depreciation']))->assertOk()->assertSee($asset->doc_num);
     $this->get(route('admin.fixed-assets.reports.print', ['type' => 'movements']))->assertOk()->assertSee($movement->doc_num);

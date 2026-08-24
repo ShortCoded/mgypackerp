@@ -4,6 +4,7 @@ namespace Modules\Production\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -20,7 +21,7 @@ class ProductionOrderLine extends Model
 
     protected function casts(): array
     {
-        return ['quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'specifications' => 'array', 'mandatory_specs_resolved' => 'boolean'];
+        return ['quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'received_base_quantity' => 'decimal:8', 'specifications' => 'array', 'bom_snapshot' => 'array', 'mandatory_specs_resolved' => 'boolean'];
     }
 
     public function order(): BelongsTo
@@ -41,5 +42,10 @@ class ProductionOrderLine extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class)->withTrashed();
+    }
+
+    public function runs(): HasMany
+    {
+        return $this->hasMany(ProductionRun::class, 'production_order_line_id')->orderBy('planned_start_at');
     }
 }

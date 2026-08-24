@@ -23,6 +23,7 @@ class OpeningStockService
         private readonly OperatingContextService $operatingContext,
         private readonly ProductImageResolver $productImages,
         private readonly NumericFormatService $numbers,
+        private readonly InventoryOpeningStockPostingService $posting,
     ) {}
 
     public function create(array $data): array
@@ -140,6 +141,8 @@ class OpeningStockService
                 'status' => OpeningStock::StatusApproved,
                 'updated_by' => auth()->id(),
             ])->save();
+
+            $this->posting->post($locked);
 
             return $locked->refresh()->load(['lines.product.unit', 'branch', 'branchHall', 'branchStore']);
         });

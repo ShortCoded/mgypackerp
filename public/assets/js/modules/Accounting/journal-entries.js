@@ -255,7 +255,9 @@
         }
 
         $form.find('.js-journal-entry-select').each(function () { initSelect($(this), $form); });
-        totals($form);
+        if ($form.find('.js-journal-entry-amount').length) {
+            totals($form);
+        }
 
         $form.on('click', '.js-journal-entry-post', function () {
             requestAction($(this).data('url'), 'POST', {

@@ -499,8 +499,22 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'inventory_stock_counts' => [
+        'prefix' => 'STK-COUNT-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company_period',
+    ],
     'production_orders' => [
         'prefix' => 'PROD-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company_period',
+    ],
+    'quality_inspections' => [
+        'prefix' => 'QC-INS-',
         'padding' => 5,
         'column' => 'doc_num',
         'number_column' => 'doc_number',

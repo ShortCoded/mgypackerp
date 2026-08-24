@@ -80,7 +80,9 @@ class FixedAssetBookValueService
             $query->whereDate('period_end', '<=', $through->toDateString());
         }
 
-        $totals = $query->selectRaw('COALESCE(SUM(period_depreciation), 0) as amount, COALESCE(SUM(base_period_depreciation), 0) as base_amount')->first();
+        $totals = $query->reorder()
+            ->selectRaw('COALESCE(SUM(period_depreciation), 0) as amount, COALESCE(SUM(base_period_depreciation), 0) as base_amount')
+            ->first();
 
         return [$this->scale($totals?->amount), $this->scale($totals?->base_amount)];
     }
