@@ -24,10 +24,12 @@ use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Services\SalesProductionDemandService;
+use Modules\Sales\Http\Requests\AllocateCustomerCreditRequest;
 use Modules\Sales\Http\Requests\AmendCustomerInvoiceRequest;
 use Modules\Sales\Http\Requests\CreateDeliveryRequest;
 use Modules\Sales\Http\Requests\CreateProductionDemandRequest;
 use Modules\Sales\Http\Requests\InspectSalesReturnRequest;
+use Modules\Sales\Http\Requests\RefundCustomerCreditRequest;
 use Modules\Sales\Http\Requests\ReleaseSalesStockRequest;
 use Modules\Sales\Http\Requests\ReserveSalesStockRequest;
 use Modules\Sales\Http\Requests\SalesOrderActionRequest;
@@ -37,6 +39,7 @@ use Modules\Sales\Http\Requests\StoreSalesOrderRequest;
 use Modules\Sales\Http\Requests\StoreSalesReturnRequest;
 use Modules\Sales\Http\Requests\UpdateSalesOrderRequest;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerCreditRefund;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\CustomerInvoicePaymentSchedule;
@@ -46,8 +49,10 @@ use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Models\SalesReturnLine;
 use Modules\Sales\Services\CreditControlService;
+use Modules\Sales\Services\CustomerCreditService;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\CustomerReceiptService;
+use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesReturnService;
@@ -153,7 +158,95 @@ class SalesCycleController extends Controller
 
     public function showInvoice(CustomerInvoice $customerInvoice): View
     {
-        return $this->show($customerInvoice->document_type, $customerInvoice->load(['customer', 'order', 'delivery', 'deliveries', 'originalInvoice', 'lines.product', 'lines.unit', 'lines.orderLine', 'lines.deliveryLine.document', 'lines.returnLines.salesReturn', 'paymentSchedules', 'allocations.receipt', 'journalEntry.lines', 'reversalJournalEntry', 'returns.creditNote', 'creditNotes']));
+        $record = $customerInvoice->load([
+            'customer', 'order', 'delivery', 'deliveries', 'originalInvoice', 'lines.product', 'lines.unit',
+            'lines.orderLine', 'lines.deliveryLine.document', 'lines.returnLines.salesReturn', 'paymentSchedules',
+            'allocations.receipt', 'journalEntry.lines', 'reversalJournalEntry', 'returns.creditNote', 'creditNotes',
+            'creditAllocations.targetInvoice', 'appliedCredits.creditNote', 'creditRefunds.cashbox',
+            'creditRefunds.bankAccount', 'electronicInvoiceSubmissions',
+        ]);
+
+        return $this->show($record->document_type, $record, [
+            'creditTargetInvoices' => CustomerInvoice::query()
+                ->where('company_id', $record->company_id)
+                ->where('customer_id', $record->customer_id)
+                ->where('document_type', CustomerInvoice::TypeInvoice)
+                ->where('posting_status', 'posted')
+                ->where('remaining_amount', '>', 0)
+                ->orderBy('invoice_date')
+                ->get(['id', 'doc_num', 'invoice_date', 'remaining_amount']),
+            'creditCashboxes' => Cashbox::query()->forCompany((int) $record->company_id)->active()->orderBy('name')->get(),
+            'creditBankAccounts' => BankAccount::query()->forCompany((int) $record->company_id)->active()->orderBy('account_name')->get(),
+        ]);
+    }
+
+    public function allocateCustomerCredit(
+        AllocateCustomerCreditRequest $request,
+        CustomerInvoice $customerInvoice,
+        CustomerCreditService $service,
+    ): JsonResponse {
+        $target = CustomerInvoice::query()
+            ->where('company_id', $customerInvoice->company_id)
+            ->where('doc_num', $request->validated('target_invoice_doc_num'))
+            ->firstOrFail();
+        $allocation = $service->allocate(
+            $customerInvoice,
+            $target,
+            (string) $request->validated('amount'),
+            (string) $request->validated('allocation_date'),
+            notes: $request->validated('notes'),
+            idempotencyKey: $request->validated('idempotency_key') ?: $this->idempotencyKey([
+                'credit-allocation', $customerInvoice->doc_num, $target->doc_num,
+                $request->validated('amount'), $request->validated('allocation_date'),
+            ]),
+        );
+
+        return response()->json(['data' => ['id' => $allocation->getKey(), 'url' => route('admin.sales.sales-invoices.show', $customerInvoice)]]);
+    }
+
+    public function refundCustomerCredit(
+        RefundCustomerCreditRequest $request,
+        CustomerInvoice $customerInvoice,
+        CustomerCreditService $service,
+    ): JsonResponse {
+        $context = $this->requiredContext($request);
+        $cashbox = $request->filled('cashbox_doc_num')
+            ? Cashbox::query()->forCompany($context['company_id'])->active()->where('doc_num', $request->validated('cashbox_doc_num'))->firstOrFail()
+            : null;
+        $bank = $request->filled('bank_account_doc_num')
+            ? BankAccount::query()->forCompany($context['company_id'])->active()->where('doc_num', $request->validated('bank_account_doc_num'))->firstOrFail()
+            : null;
+        $refund = $service->refund($customerInvoice, [
+            ...$request->validated(), ...$context,
+            'idempotency_key' => $request->validated('idempotency_key') ?: $this->idempotencyKey([
+                'credit-refund', $customerInvoice->doc_num, $request->validated('amount'),
+                $request->validated('refund_date'), $request->validated('payment_method'),
+                $request->validated('cashbox_doc_num'), $request->validated('bank_account_doc_num'),
+            ]),
+            'cashbox_id' => $cashbox?->getKey(),
+            'bank_account_id' => $bank?->getKey(), 'currency_id' => $customerInvoice->currency_id,
+            'exchange_rate' => $customerInvoice->exchange_rate,
+        ]);
+
+        return response()->json(['data' => ['doc_num' => $refund->doc_num, 'url' => route('admin.sales.customer-credit-refunds.print', $refund)]]);
+    }
+
+    public function printCustomerCreditRefund(CustomerCreditRefund $customerCreditRefund): Response
+    {
+        $record = $customerCreditRefund->load(['creditNote.company', 'creditNote.customer', 'cashbox', 'bankAccount', 'journalEntry.lines', 'creditNote.creditAllocations', 'creditNote.creditRefunds']);
+
+        return $this->pdf->stream('reports.sales.customer-credit-refund', [
+            'title' => __('Customer Credit Refund').' — '.$record->doc_num,
+            'record' => $record,
+            'companyPrintIdentity' => $record->creditNote->print_identity_snapshot ?: $this->printIdentity->forCompany($record->creditNote->company),
+        ], str('customer-credit-refund-'.$record->doc_num)->slug().'.pdf');
+    }
+
+    public function submitElectronicInvoice(CustomerInvoice $customerInvoice, ElectronicInvoiceService $service): JsonResponse
+    {
+        $submission = $service->queue($customerInvoice);
+
+        return response()->json(['data' => ['status' => $submission->status, 'submission_id' => $submission->getKey()]]);
     }
 
     public function editInvoice(CustomerInvoice $customerInvoice): View
@@ -179,7 +272,7 @@ class SalesCycleController extends Controller
 
     public function showReturn(SalesReturn $salesReturn): View
     {
-        return $this->show('sales_return', $salesReturn->load(['customer', 'invoice', 'order', 'delivery', 'returnInventoryDocument.lines', 'creditNote.lines', 'lines.product', 'lines.unit', 'statusHistory.changedBy']));
+        return $this->show('sales_return', $salesReturn->load(['customer', 'invoice', 'order', 'delivery', 'returnInventoryDocument.lines', 'creditNote.lines', 'quarantineJournalEntry', 'dispositionJournalEntry', 'lines.product', 'lines.unit', 'statusHistory.changedBy']));
     }
 
     public function showDelivery(InventoryDocument $inventoryDocument): View
@@ -455,7 +548,7 @@ class SalesCycleController extends Controller
 
     public function printReturn(SalesReturn $salesReturn): Response
     {
-        return $this->print('sales_return', $salesReturn->load(['company', 'customer', 'invoice', 'delivery', 'returnInventoryDocument', 'creditNote', 'inspectedBy', 'lines.product', 'lines.unit']), true);
+        return $this->print('sales_return', $salesReturn->load(['company', 'customer', 'invoice', 'delivery', 'returnInventoryDocument', 'creditNote', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), true);
     }
 
     public function printDelivery(InventoryDocument $inventoryDocument): Response
@@ -477,7 +570,7 @@ class SalesCycleController extends Controller
 
     public function printQualityDisposition(SalesReturn $salesReturn): Response
     {
-        return $this->print('quality_disposition', $salesReturn->load(['company', 'customer', 'invoice', 'returnInventoryDocument', 'inspectedBy', 'lines.product', 'lines.unit']), false);
+        return $this->print('quality_disposition', $salesReturn->load(['company', 'customer', 'invoice', 'returnInventoryDocument', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), false);
     }
 
     private function listing(Request $request, string $kind, $query): View
@@ -570,7 +663,8 @@ class SalesCycleController extends Controller
         ];
     }
 
-    private function show(string $kind, object $record): View
+    /** @param array<string, mixed> $extra */
+    private function show(string $kind, object $record, array $extra = []): View
     {
         $pricePermission = match ($kind) {
             'sales_order' => 'sales_orders.view_prices',
@@ -582,6 +676,7 @@ class SalesCycleController extends Controller
             'kind' => $kind,
             'record' => $record,
             'showPrices' => $pricePermission === null || (bool) request()->user()?->can($pricePermission),
+            ...$extra,
         ]);
     }
 
@@ -620,6 +715,14 @@ class SalesCycleController extends Controller
     private function created(object $record, string $route, array $extra = []): JsonResponse
     {
         return response()->json(['data' => ['doc_num' => $record->doc_num, 'url' => route($route, $record), ...$extra]], 201);
+    }
+
+    /** @param list<mixed> $parts */
+    private function idempotencyKey(array $parts): string
+    {
+        $hex = md5(collect($parts)->map(fn (mixed $part): string => (string) $part)->implode('|'));
+
+        return substr($hex, 0, 8).'-'.substr($hex, 8, 4).'-4'.substr($hex, 13, 3).'-a'.substr($hex, 17, 3).'-'.substr($hex, 20, 12);
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */

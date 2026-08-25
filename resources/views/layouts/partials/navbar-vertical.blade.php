@@ -1,4 +1,4 @@
-<nav class="navbar navbar-light navbar-vertical navbar-expand-xl" style="display:none;">
+<nav class="navbar navbar-light navbar-vertical navbar-expand-xl">
     <script>
         var navbarStyle = localStorage.getItem('navbarStyle');
         if (navbarStyle && navbarStyle !== 'transparent') {

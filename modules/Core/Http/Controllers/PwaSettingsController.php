@@ -52,6 +52,8 @@ class PwaSettingsController extends Controller
         $offlineUrl = route('pwa.offline', [], false);
         $manifestUrl = route('pwa.manifest', [], false);
         $serviceWorkerUrl = route('pwa.service-worker', [], false);
+        $dashboardUrl = route('dashboard', [], false);
+        $defaultPushTitle = (string) $settings['app_name'];
         $networkOnlyExactPaths = [
             route('auth.csrf-token', [], false),
             route('lock-screen.show', [], false),
@@ -96,6 +98,8 @@ const ERP_PWA_NAVIGATION_BYPASS_EXACT_PATHS = %s;
 const ERP_PWA_NETWORK_ONLY_EXACT_PATHS = %s;
 const ERP_PWA_NETWORK_ONLY_PREFIXES = %s;
 const ERP_PWA_STATIC_ASSET_PREFIXES = %s;
+const ERP_PWA_DASHBOARD_URL = %s;
+const ERP_PWA_DEFAULT_PUSH_TITLE = %s;
 const ERP_PWA_STATIC_EXTENSION_PATTERN = /\.(?:avif|bmp|css|eot|gif|ico|jpeg|jpg|js|map|otf|png|svg|ttf|wasm|webp|woff|woff2)$/i;
 
 self.addEventListener('install', (event) => {
@@ -108,8 +112,13 @@ self.addEventListener('install', (event) => {
     caches.open(ERP_PWA_CACHE)
       .then((cache) => cache.add(ERP_PWA_OFFLINE_URL))
       .catch(() => undefined)
-      .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
@@ -122,6 +131,15 @@ self.addEventListener('activate', (event) => {
       ))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener('push', (event) => {
+  event.waitUntil(handlePush(event));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(focusOrOpenApp(event.notification.data && event.notification.data.url));
 });
 
 self.addEventListener('fetch', (event) => {
@@ -158,6 +176,65 @@ function isNavigationRequest(request, url) {
   return request.mode === 'navigate'
     && accept.includes('text/html')
     && !ERP_PWA_NAVIGATION_BYPASS_EXACT_PATHS.includes(url.pathname);
+}
+
+async function handlePush(event) {
+  let payload = {};
+
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch (error) {
+      payload = { body: event.data.text() };
+    }
+  }
+
+  const targetUrl = safeAppUrl(payload.data && payload.data.url);
+  const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const foregroundClient = windowClients.find((client) => client.focused && client.visibilityState === 'visible')
+    || windowClients.find((client) => client.visibilityState === 'visible');
+
+  if (foregroundClient) {
+    foregroundClient.postMessage({ type: 'ERP_PUSH_NOTIFICATION', notification: payload });
+    return;
+  }
+
+  await self.registration.showNotification(payload.title || ERP_PWA_DEFAULT_PUSH_TITLE, {
+    body: payload.body || '',
+    icon: payload.icon || undefined,
+    badge: payload.badge || payload.icon || undefined,
+    tag: payload.tag || (payload.data && payload.data.id) || undefined,
+    renotify: false,
+    data: Object.assign({}, payload.data || {}, { url: targetUrl })
+  });
+}
+
+function safeAppUrl(value) {
+  try {
+    const target = new URL(value || ERP_PWA_DASHBOARD_URL, self.location.origin);
+
+    return target.origin === self.location.origin
+      ? target.href
+      : new URL(ERP_PWA_DASHBOARD_URL, self.location.origin).href;
+  } catch (error) {
+    return new URL(ERP_PWA_DASHBOARD_URL, self.location.origin).href;
+  }
+}
+
+async function focusOrOpenApp(value) {
+  const targetUrl = safeAppUrl(value);
+  const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const existingClient = windowClients.find((client) => new URL(client.url).origin === self.location.origin);
+
+  if (existingClient) {
+    if (existingClient.url !== targetUrl && 'navigate' in existingClient) {
+      await existingClient.navigate(targetUrl);
+    }
+
+    return existingClient.focus();
+  }
+
+  return self.clients.openWindow(targetUrl);
 }
 
 function isNetworkOnlyPath(pathname) {
@@ -223,6 +300,8 @@ JS,
             json_encode(array_values(array_unique($networkOnlyExactPaths)), JSON_THROW_ON_ERROR),
             json_encode($networkOnlyPrefixes, JSON_THROW_ON_ERROR),
             json_encode($staticAssetPrefixes, JSON_THROW_ON_ERROR),
+            json_encode($dashboardUrl, JSON_THROW_ON_ERROR),
+            json_encode($defaultPushTitle, JSON_THROW_ON_ERROR),
         );
 
         return response($script, 200, [

@@ -134,9 +134,18 @@ return [
         'paid' => 'مسددة',
     ],
     'source_types' => [
-        'scheduled' => 'غير مسدد / مجدول',
+        'scheduled' => 'مجدول',
         'cashbox' => 'خزينة',
         'bank' => 'بنك',
+    ],
+    'schedule_statuses' => [
+        'scheduled' => 'مجدول',
+        'voucher_draft' => 'مسودة سند',
+        'paid' => 'مسدد',
+        'partially_paid' => 'مسدد جزئياً',
+        'settled' => 'تمت التسوية بالسداد / الخصم',
+        'partially_settled' => 'تمت التسوية جزئياً',
+        'cancelled' => 'ملغى',
     ],
     'discount_types' => [
         'fixed' => 'مبلغ ثابت',
@@ -150,6 +159,7 @@ return [
         'tax' => 'الضريبة / القيمة المضافة',
         'net_total' => 'صافي الفاتورة',
         'paid' => 'المبلغ المدفوع',
+        'credited' => 'إشعار الخصم / التسوية',
         'remaining' => 'المبلغ المتبقي',
         'schedule_total' => 'إجمالي الجدول',
         'schedule_difference' => 'الفرق',

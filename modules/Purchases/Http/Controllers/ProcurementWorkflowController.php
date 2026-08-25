@@ -553,6 +553,9 @@ class ProcurementWorkflowController extends Controller
             'reportType' => $reportType,
             'reportTypes' => ProcurementCycleReport::types(),
             'showPrices' => $showPrices,
+            'grniReconciliation' => $reportType === ProcurementCycleReport::GoodsReceivedNotInvoiced
+                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'])
+                : null,
             'suppliers' => $this->suppliers(),
             'products' => $this->products(),
             'requisitions' => PurchaseRequisition::query()->forContext($context['company_id'], $context['financial_period_id'])->latest('id')->limit(200)->get(),
@@ -573,6 +576,7 @@ class ProcurementWorkflowController extends Controller
                 $this->procurementReport,
                 $rows,
                 (bool) $request->user()?->can('purchases.prices.view'),
+                $filters['report_type'],
             ),
             'procurement-'.$filters['report_type'].'.xlsx',
         );
@@ -596,6 +600,9 @@ class ProcurementWorkflowController extends Controller
             'filters' => $filters,
             'reportType' => $filters['report_type'],
             'showPrices' => (bool) $request->user()?->can('purchases.prices.view'),
+            'grniReconciliation' => $filters['report_type'] === ProcurementCycleReport::GoodsReceivedNotInvoiced
+                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'])
+                : null,
         ], 'procurement-'.$filters['report_type'].'.pdf');
     }
 

@@ -67,7 +67,8 @@ class ProcurementSourcingService
                 }
 
                 $requisition->lines()->create([
-                    ...$context,
+                    'company_id' => $context['company_id'],
+                    'financial_period_id' => $context['financial_period_id'],
                     'line_number' => $index + 1,
                     'product_id' => $product->getKey(),
                     'unit_id' => $unit->getKey(),

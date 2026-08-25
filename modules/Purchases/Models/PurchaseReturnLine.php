@@ -12,8 +12,9 @@ use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 class PurchaseReturnLine extends Model
 {
     protected $fillable = [
-        'public_id', 'purchase_return_id', 'purchase_order_line_id', 'receipt_line_id', 'purchase_invoice_line_id',
-        'product_id', 'unit_id', 'quantity', 'from_quarantine', 'unit_price', 'tax_amount', 'line_total', 'reason',
+        'public_id', 'purchase_return_id', 'company_id', 'financial_period_id', 'line_number',
+        'purchase_order_line_id', 'receipt_line_id', 'purchase_invoice_line_id',
+        'product_id', 'unit_id', 'quantity', 'from_quarantine', 'unit_price', 'tax_amount', 'line_total', 'reason', 'grni_reversed_value',
     ];
 
     protected static function booted(): void
@@ -27,7 +28,7 @@ class PurchaseReturnLine extends Model
     {
         return [
             'quantity' => 'decimal:8', 'from_quarantine' => 'boolean', 'unit_price' => 'decimal:4',
-            'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4',
+            'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'grni_reversed_value' => 'decimal:4',
         ];
     }
 

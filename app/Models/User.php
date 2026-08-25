@@ -13,12 +13,13 @@ use Modules\Auth\Notifications\QueuedResetPasswordNotification;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use NotificationChannels\WebPush\HasPushSubscriptions;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasRoles, Notifiable, SoftDeletes;
+    use HasFactory, HasPushSubscriptions, HasRoles, Notifiable, SoftDeletes;
 
     /**
      * The attributes that are mass assignable.

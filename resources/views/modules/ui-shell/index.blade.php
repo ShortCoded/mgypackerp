@@ -2,6 +2,7 @@
 
 @php
     $isReport = $definition->kind() === 'report';
+    $isPendingSurface = $screen['classification'] === 'UI_SURFACE_PENDING_DEEP_WORKFLOW';
     $columns = $screen['index_columns'];
     $canCreate = $definition->supportsMode('create') && auth()->user()?->can($definition->permission('create'));
     $createRoute = $canCreate && \Illuminate\Support\Facades\Route::has($definition->route('create'))
@@ -32,6 +33,38 @@
 @endpush
 
 @section('content')
+    @if ($isPendingSurface)
+        <div class="card mb-3">
+            <div class="card-header border-bottom border-200">
+                <h5 class="mb-1">{{ $definition->title() }}</h5>
+                <p class="mb-0 text-600">{{ __('erp_ui_shell.overview.description') }}</p>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    @foreach ($overview['metrics'] as $metric)
+                        <div class="col-6 col-md-4 col-xl-3">
+                            <div class="border rounded p-3 h-100 bg-light">
+                                <div class="text-600 fs-11">{{ $metric['label'] }}</div>
+                                <div class="fs-5 fw-semibold" dir="ltr">{{ number_format($metric['count']) }}</div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+
+                @if ($overview['links'] !== [])
+                    <div class="d-flex flex-wrap gap-2 mt-4">
+                        @foreach ($overview['links'] as $link)
+                            <a class="btn btn-falcon-primary btn-sm" href="{{ $link['url'] }}">
+                                {{ $link['label'] }}
+                                <span class="fas fa-arrow-right ms-1"></span>
+                            </a>
+                        @endforeach
+                    </div>
+                @endif
+            </div>
+        </div>
+    @endif
+
     @if ($screen['show_document_number_settings'])
         @can($definition->permission('document_number_settings.update'))
             <div class="mb-3 card erp-ui-shell-settings-card">
@@ -103,6 +136,7 @@
         </x-admin.report.page>
     @endif
 
+    @unless ($isPendingSurface)
     <div class="card erp-datatable-card erp-ui-shell-index-card">
         <x-admin.crud-index-toolbar
             :title="$definition->title()"
@@ -154,8 +188,10 @@
             </div>
         </div>
     </div>
+    @endunless
 @endsection
 
+@unless ($isPendingSurface)
 @push('scripts')
     <script>
         window.ErpUiShellConfig = @json($erpUiShellConfig);
@@ -164,3 +200,4 @@
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/erp-ui-shell.js') }}"></script>
 @endpush
+@endunless

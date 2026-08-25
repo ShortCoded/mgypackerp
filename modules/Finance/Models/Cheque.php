@@ -34,6 +34,8 @@ class Cheque extends Model
 
     public const StatusCleared = 'cleared';
 
+    public const StatusClearingReversed = 'clearing_reversed';
+
     public const StatusReturned = 'returned';
 
     public const StatusCancelled = 'cancelled';
@@ -65,6 +67,10 @@ class Cheque extends Model
         'issued_at',
         'delivered_at',
         'cleared_at',
+        'clearing_revision',
+        'clearing_reversed_at',
+        'clearing_reversed_by',
+        'clearing_reversal_reason',
         'cancelled_at',
         'cancelled_by',
         'cancel_reason',
@@ -95,6 +101,8 @@ class Cheque extends Model
             'issued_at' => 'datetime',
             'delivered_at' => 'datetime',
             'cleared_at' => 'datetime',
+            'clearing_revision' => 'integer',
+            'clearing_reversed_at' => 'datetime',
             'cancelled_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -115,7 +123,7 @@ class Cheque extends Model
 
     public static function issuedStatuses(): array
     {
-        return [self::StatusDraft, self::StatusIssued, self::StatusDelivered, self::StatusCleared, self::StatusReturned, self::StatusCancelled];
+        return [self::StatusDraft, self::StatusIssued, self::StatusDelivered, self::StatusCleared, self::StatusClearingReversed, self::StatusReturned, self::StatusCancelled];
     }
 
     public static function documentNumberKeyForType(string $type): string
@@ -150,7 +158,7 @@ class Cheque extends Model
 
     public function isLockedForEditing(): bool
     {
-        return in_array($this->status, [self::StatusIssued, self::StatusDelivered, self::StatusCollected, self::StatusCleared, self::StatusReturned, self::StatusCancelled], true);
+        return in_array($this->status, [self::StatusIssued, self::StatusDelivered, self::StatusCollected, self::StatusCleared, self::StatusClearingReversed, self::StatusReturned, self::StatusCancelled], true);
     }
 
     public function isDeletable(): bool
@@ -181,6 +189,11 @@ class Cheque extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(ChequeLine::class)->orderBy('line_number');
+    }
+
+    public function clearingEvents(): HasMany
+    {
+        return $this->hasMany(ChequeClearingEvent::class)->orderBy('sequence');
     }
 
     public function createdBy(): BelongsTo

@@ -53,10 +53,21 @@ class InventoryReportExport implements WithMultipleSheets
             $this->sheet('Damage and Scrap', ['Date', 'Source', 'Type', 'Store', 'Product Code', 'Product', 'In', 'Out'], collect($this->report['damageAndScrap'])->map(fn ($row): array => [$row->transaction_date?->toDateString(), $row->source_doc_num, $row->transaction_type, $row->branchStore?->name, $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out])),
             $this->sheet('Stock Count Variances', ['Count', 'Date', 'Store', 'Product Code', 'Product', 'Status', 'Batch', 'System', 'Physical', 'Variance', 'Reason'], collect($this->report['stockCountVariances'])->map(fn ($row): array => [$row->stockCount?->doc_num, $row->stockCount?->count_date?->toDateString(), $row->stockCount?->branchStore?->name, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->system_quantity, $row->physical_quantity, $row->variance_quantity, $row->variance_reason])),
             $this->sheet('Reorder', ['Product Code', 'Product', 'Store', 'On Hand', 'Reserved', 'Available', 'Reorder Point', 'Shortage', 'Production Demand'], collect($this->report['reorder'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->on_hand, $row->reserved, $row->available, $row->reorder_point, $row->shortage, $row->production_demand])),
+            $this->sheet(
+                'Inventory Aging',
+                array_values(array_filter(['Receipt Date', 'Age Days', 'Age Bucket', 'Receipt Source', 'Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'Remaining Quantity', $this->includeFinancial ? 'Remaining Value' : null])),
+                collect($this->report['agingLayers'])->map(fn ($row): array => array_values(array_filter([$row->original_receipt_date?->toDateString(), $row->age_days, $row->age_bucket, $row->source_doc_num, $row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->remaining_quantity, $this->includeFinancial ? $row->remaining_value : null], fn ($value): bool => $value !== null))),
+            ),
+            $this->sheet('Inventory Expiry', ['Expiry State', 'Days to Expiry', 'Expiry Date', 'Manufacture Date', 'Batch', 'Product Code', 'Product', 'Store', 'Location', 'Status', 'Remaining Quantity'], collect($this->report['expiryLayers'])->map(fn ($row): array => [$row->expiry_state, $row->days_to_expiry, $row->expiry_date?->toDateString(), $row->manufacture_date?->toDateString(), $row->batch_lot, $row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->warehouseLocation?->code, $row->stock_status, $row->remaining_quantity])),
         ];
 
         if ($this->includeFinancial) {
-            $sheets[] = $this->sheet('GL Reconciliation', ['Control', 'Subledger', 'General Ledger', 'Difference', 'Status'], collect($this->report['glReconciliation'])->map(fn (array $row): array => [$row['label'], $row['subledger'], $row['gl'], $row['difference'], $row['status']]));
+            $sheets[] = $this->report['glReconciliation'] === null
+                ? $this->sheet('GL Reconciliation', ['Status', 'Details'], collect([[
+                    'Unavailable',
+                    $this->report['glReconciliationUnavailableReason'],
+                ]]))
+                : $this->sheet('GL Reconciliation', ['Control', 'Subledger', 'General Ledger', 'Difference', 'Status'], collect($this->report['glReconciliation'])->map(fn (array $row): array => [$row['label'], $row['subledger'], $row['gl'], $row['difference'], $row['status']]));
         }
 
         return $sheets;

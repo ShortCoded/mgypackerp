@@ -109,6 +109,19 @@ class OperatingContextService
         return $user instanceof User ? $this->selectedCompany($request, $user) : null;
     }
 
+    public function selectedCompanyId(Request $request): ?int
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            return null;
+        }
+
+        $company = $this->selectedCompany($request, $user);
+
+        return $company instanceof Company ? (int) $company->getKey() : null;
+    }
+
     /**
      * @return Builder<Branch>
      */

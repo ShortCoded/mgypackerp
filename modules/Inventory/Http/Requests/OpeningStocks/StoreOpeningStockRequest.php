@@ -41,6 +41,8 @@ class StoreOpeningStockRequest extends FormRequest
                 'quantity' => isset($line['quantity']) ? trim((string) $line['quantity']) : null,
                 'stock_status' => isset($line['stock_status']) ? trim((string) $line['stock_status']) : InventoryTransaction::StatusAvailable,
                 'batch_lot' => isset($line['batch_lot']) ? trim((string) $line['batch_lot']) : null,
+                'manufacture_date' => isset($line['manufacture_date']) ? trim((string) $line['manufacture_date']) : null,
+                'expiry_date' => isset($line['expiry_date']) ? trim((string) $line['expiry_date']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
                 '_delete' => filter_var($line['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
@@ -94,6 +96,8 @@ class StoreOpeningStockRequest extends FormRequest
                 InventoryTransaction::StatusDamaged,
             ])],
             'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],
+            'lines.*.manufacture_date' => ['nullable', 'date'],
+            'lines.*.expiry_date' => ['nullable', 'date', 'after_or_equal:document_date'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],
@@ -232,6 +236,9 @@ class StoreOpeningStockRequest extends FormRequest
                     $validator->errors()->add("lines.{$index}.product_doc_num", __('inventory.opening_stocks.messages.duplicate_product'));
                 } else {
                     $seenProducts[$product->getKey()] = true;
+                    if ($product->tracks_expiry && blank($line['expiry_date'] ?? null)) {
+                        $validator->errors()->add("lines.{$index}.expiry_date", __('An expiry date is required for expiry-tracked inventory.'));
+                    }
                 }
             }
 
@@ -281,6 +288,8 @@ class StoreOpeningStockRequest extends FormRequest
             'lines.*.quantity' => __('inventory.opening_stocks.attributes.quantity'),
             'lines.*.stock_status' => __('inventory.opening_stocks.attributes.stock_status'),
             'lines.*.batch_lot' => __('inventory.opening_stocks.attributes.batch_lot'),
+            'lines.*.manufacture_date' => __('Manufacture date'),
+            'lines.*.expiry_date' => __('Expiry date'),
             'lines.*.notes' => __('inventory.opening_stocks.attributes.line_notes'),
         ];
     }

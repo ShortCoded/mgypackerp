@@ -541,6 +541,13 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'customer_credit_refunds' => [
+        'prefix' => 'CRF-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company_period',
+    ],
     'sales_returns' => [
         'prefix' => 'SRET-',
         'padding' => 5,

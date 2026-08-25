@@ -27,7 +27,7 @@
   }
 
   function isEnabled() {
-    return storedValue() !== '0';
+    return storedValue() === '1';
   }
 
   function sound() {
@@ -63,7 +63,7 @@
     }
 
     if (icon) {
-      icon.className = enabled ? 'fas fa-volume-up me-1' : 'fas fa-volume-mute me-1';
+      icon.setAttribute('class', enabled ? 'fas fa-volume-up me-1' : 'fas fa-volume-mute me-1');
     }
   }
 
@@ -72,6 +72,10 @@
   }
 
   function unlock() {
+    if (!isEnabled()) {
+      return;
+    }
+
     const item = sound();
 
     if (!item || unlocked) {

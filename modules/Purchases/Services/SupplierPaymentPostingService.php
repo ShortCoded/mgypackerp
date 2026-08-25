@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Finance\Models\ChequeClearingEvent;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\SupplierPaymentContext;
 
@@ -104,9 +105,11 @@ class SupplierPaymentPostingService
         Account $bankAccount,
         int $bankAccountId,
         Carbon|string|null $clearingDate = null,
+        int $clearingSequence = 1,
     ): JournalEntry {
+        $sourceType = $clearingSequence === 1 ? 'supplier_cheque_clearing' : 'supplier_cheque_clearing_'.$clearingSequence;
         $existing = JournalEntry::query()
-            ->where('source_type', 'supplier_cheque_clearing')
+            ->where('source_type', $sourceType)
             ->where('source_id', $payment->getKey())
             ->lockForUpdate()
             ->first();
@@ -139,7 +142,7 @@ class SupplierPaymentPostingService
             'exchange_rate' => $payment->exchange_rate,
             'description' => __('Supplier outgoing cheque clearing :document', ['document' => $payment->doc_num]),
             'notes' => $payment->notes,
-            'source_type' => 'supplier_cheque_clearing',
+            'source_type' => $sourceType,
             'source_id' => $payment->getKey(),
             'source_doc_num' => $payment->doc_num,
         ], [[
@@ -158,6 +161,29 @@ class SupplierPaymentPostingService
             'bank_account_id' => $bankAccountId,
             'branch_id' => $payment->branch_id,
         ]]);
+    }
+
+    public function reverseChequeClearing(
+        SupplierPaymentContext $payment,
+        ChequeClearingEvent $event,
+        string $reason,
+        Carbon|string|null $reversalDate = null,
+    ): JournalEntry {
+        $event->loadMissing('clearingJournalEntry');
+        if (! $event->clearingJournalEntry instanceof JournalEntry || $event->status !== ChequeClearingEvent::StatusCleared) {
+            throw new DomainException(__('Only an active cleared-cheque event can be reversed.'));
+        }
+        $entryDate = Carbon::parse($reversalDate ?? now())->toDateString();
+        $period = $this->financialPeriods->resolveOpenForPostingDate((int) $payment->company_id, $entryDate, lockForUpdate: true);
+
+        return $this->journalEntries->createPostedReversalFromSource($event->clearingJournalEntry, [
+            'entry_date' => $entryDate, 'company_id' => (int) $payment->company_id,
+            'financial_period_id' => (int) $period->getKey(), 'branch_id' => $payment->branch_id,
+            'currency_id' => $payment->currency_id, 'exchange_rate' => $payment->exchange_rate,
+            'description' => __('Supplier outgoing cheque clearing reversal :document', ['document' => $payment->doc_num]),
+            'notes' => $reason, 'source_type' => 'supplier_cheque_clearing_reversal_'.$event->sequence,
+            'source_id' => $payment->getKey(), 'source_doc_num' => $payment->doc_num,
+        ]);
     }
 
     public function reverse(SupplierPaymentContext $payment, string $reason, Carbon|string|null $reversalDate = null): ?JournalEntry

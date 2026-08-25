@@ -278,10 +278,41 @@ test('quotation creation creates quotation revision one lines milestones and sch
         ->and((float) $revision->tax_amount)->toBe(28.0)
         ->and((float) $revision->total)->toBe(228.0)
         ->and($revision->lines)->toHaveCount(1)
+        ->and(Str::isUuid($revision->lines->first()->public_uuid))->toBeTrue()
         ->and($revision->lines->first()->product_name_snapshot)->toBe('Oak Desk')
         ->and($revision->lines->first()->unit_name_snapshot)->toBe('Piece')
         ->and($revision->paymentMilestones)->toHaveCount(1)
         ->and($revision->executionScheduleLines)->toHaveCount(1);
+});
+
+test('quotation rich text removes executable markup while preserving safe formatting', function (): void {
+    $maliciousTerms = <<<'HTML'
+<p onclick=alert(1)>Approved <strong>commercial terms</strong>
+<a href=javascript:alert(2)>unsafe link</a>
+<a href="https://example.com/terms">safe link</a>
+<img src="data:text/html;base64,PHNjcmlwdD4=" onerror=alert(3)>
+<script>alert(4)</script></p>
+HTML;
+    ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp([], [
+        'terms' => $maliciousTerms,
+    ]);
+    $storedTerms = (string) $quotation->currentRevision->terms_snapshot;
+
+    expect($storedTerms)->toContain('<strong>commercial terms</strong>', 'https://example.com/terms')
+        ->and(strtolower($storedTerms))->not->toContain(
+            'javascript:',
+            'data:text/html',
+            'onclick',
+            'onerror',
+            '<script',
+        );
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.show', $quotation))
+        ->assertOk()
+        ->assertDontSee('javascript:', false)
+        ->assertDontSee('onerror', false)
+        ->assertDontSee('alert(4)', false);
 });
 
 test('quotation grouped numeric input persists canonically and displays grouped totals', function (): void {
@@ -683,7 +714,7 @@ test('quotation document number settings can be updated', function (): void {
 test('quotation tables include required operational detail structures', function (): void {
     expect(Schema::hasColumns('quotations', ['doc_number', 'doc_num', 'branch_id', 'customer_reference', 'internal_notes', 'print_identity_snapshot', 'current_revision_id', 'deleted_by', 'restored_by', 'restored_at']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_revisions', ['revision_number', 'revision_code', 'terms_snapshot', 'payment_terms_snapshot', 'execution_terms_snapshot', 'warranty_terms_snapshot', 'delivery_terms_snapshot', 'technical_notes_snapshot']))->toBeTrue()
-        ->and(Schema::hasColumns('quotation_revision_lines', ['product_name_snapshot', 'unit_name_snapshot', 'specs_snapshot', 'conversion_factor', 'base_quantity', 'requested_date', 'specifications', 'warehouse_notes', 'production_notes']))->toBeTrue()
+        ->and(Schema::hasColumns('quotation_revision_lines', ['public_uuid', 'product_name_snapshot', 'unit_name_snapshot', 'specs_snapshot', 'conversion_factor', 'base_quantity', 'requested_date', 'specifications', 'warehouse_notes', 'production_notes']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_payment_milestones', ['title', 'percentage', 'amount', 'due_type', 'due_date']))->toBeTrue()
         ->and(Schema::hasColumns('quotation_execution_schedule_lines', ['phase_name', 'start_date', 'end_date', 'duration_days']))->toBeTrue();
 });

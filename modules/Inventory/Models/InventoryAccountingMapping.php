@@ -26,6 +26,10 @@ class InventoryAccountingMapping extends Model
         'inventory_adjustment_gain_account_id',
         'inventory_adjustment_loss_account_id',
         'production_variance_account_id',
+        'quarantine_inventory_account_id',
+        'rework_inventory_account_id',
+        'grni_account_id',
+        'purchase_price_variance_account_id',
         'production_cost_center_id',
         'created_by',
         'updated_by',
@@ -93,6 +97,26 @@ class InventoryAccountingMapping extends Model
     public function productionVarianceAccount(): BelongsTo
     {
         return $this->account('production_variance_account_id');
+    }
+
+    public function quarantineInventoryAccount(): BelongsTo
+    {
+        return $this->account('quarantine_inventory_account_id');
+    }
+
+    public function reworkInventoryAccount(): BelongsTo
+    {
+        return $this->account('rework_inventory_account_id');
+    }
+
+    public function grniAccount(): BelongsTo
+    {
+        return $this->account('grni_account_id');
+    }
+
+    public function purchasePriceVarianceAccount(): BelongsTo
+    {
+        return $this->account('purchase_price_variance_account_id');
     }
 
     public function productionCostCenter(): BelongsTo

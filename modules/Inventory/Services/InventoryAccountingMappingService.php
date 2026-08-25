@@ -128,6 +128,10 @@ class InventoryAccountingMappingService
             'inventory_adjustment_gain_account_doc_num' => 'inventory_adjustment_gain_account_id',
             'inventory_adjustment_loss_account_doc_num' => 'inventory_adjustment_loss_account_id',
             'production_variance_account_doc_num' => 'production_variance_account_id',
+            'quarantine_inventory_account_doc_num' => 'quarantine_inventory_account_id',
+            'rework_inventory_account_doc_num' => 'rework_inventory_account_id',
+            'grni_account_doc_num' => 'grni_account_id',
+            'purchase_price_variance_account_doc_num' => 'purchase_price_variance_account_id',
         ];
     }
 
@@ -146,6 +150,10 @@ class InventoryAccountingMappingService
             'inventoryAdjustmentGainAccount',
             'inventoryAdjustmentLossAccount',
             'productionVarianceAccount',
+            'quarantineInventoryAccount',
+            'reworkInventoryAccount',
+            'grniAccount',
+            'purchasePriceVarianceAccount',
             'productionCostCenter',
         ];
     }

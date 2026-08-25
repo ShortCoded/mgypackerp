@@ -100,6 +100,24 @@
             'throttleMs' => 3000,
             'volume' => 0.32,
         ];
+        $webPushConfigured = filled(config('webpush.vapid.subject'))
+            && filled(config('webpush.vapid.public_key'))
+            && filled(config('webpush.vapid.private_key'));
+        $appPushNotifications = [
+            'enabled' => $appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled'] && $webPushConfigured,
+            'publicKey' => $webPushConfigured ? config('webpush.vapid.public_key') : null,
+            'storeUrl' => route('admin.notifications.push-subscriptions.store', [], false),
+            'destroyUrl' => route('admin.notifications.push-subscriptions.destroy', [], false),
+            'messages' => [
+                'enable' => __('notifications.push.enable'),
+                'disable' => __('notifications.push.disable'),
+                'enabled' => __('notifications.push.enabled'),
+                'disabled' => __('notifications.push.disabled'),
+                'denied' => __('notifications.push.denied'),
+                'unavailable' => __('notifications.push.unavailable'),
+                'failed' => __('notifications.push.failed'),
+            ],
+        ];
         $appNavigationSearch = [
             'searchUrl' => route('admin.navigation-search', [], false),
             'recentStoreUrl' => route('admin.navigation-search.recent.store', [], false),
@@ -152,6 +170,7 @@
         window.AppDatePicker = @json($appDatePicker);
         window.AppArchive = @json($appArchive);
         window.AppNotificationSoundConfig = @json($appNotificationSound);
+        window.AppPushNotifications = @json($appPushNotifications);
         window.AppNotifications = @json($appNotifications);
         window.AppNavigationSearch = @json($appNavigationSearch);
         window.AppOperatingContext = @json($appOperatingContextConfig);
@@ -170,48 +189,24 @@
     <script src="{{ $erpAsset->url('assets/js/modules/Core/flatpickr-locales.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/date-picker.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/notification-sound.js') }}"></script>
+    <script src="{{ $erpAsset->url('assets/js/modules/Core/push-notifications.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/notifications.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/navigation-search.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/operating-context.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/contact-actions.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/archive-uploader.js') }}"></script>
 @endauth
+<script src="{{ $erpAsset->url('assets/js/modules/Core/connectivity.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/layout.js') }}"></script>
 @php
     $appPwaSettings = $appPwaSettings ?? app(\Modules\Core\Services\PwaSettingsService::class)->settings();
 @endphp
-@if ($appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled'])
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function () {
-                navigator.serviceWorker.register(@json(route('pwa.service-worker', [], false)), {
-                    scope: @json($appPwaSettings['scope'])
-                }).catch(function () {});
-            });
-        }
-    </script>
-@else
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function () {
-                navigator.serviceWorker.getRegistrations().then(function (registrations) {
-                    registrations.forEach(function (registration) {
-                        if (registration.active && registration.active.scriptURL.indexOf('/pwa-service-worker.js') !== -1) {
-                            registration.unregister();
-                        }
-                    });
-                }).catch(function () {});
-
-                if ('caches' in window) {
-                    window.caches.keys().then(function (keys) {
-                        keys.filter(function (key) {
-                            return key.indexOf('erp-pwa-cache') === 0;
-                        }).forEach(function (key) {
-                            window.caches.delete(key);
-                        });
-                    }).catch(function () {});
-                }
-            });
-        }
-    </script>
-@endif
+<script>
+    window.AppPwaRuntime = {
+        enabled: @json($appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled']),
+        serviceWorkerUrl: @json(route('pwa.service-worker', [], false)),
+        scope: @json($appPwaSettings['scope']),
+        cachePrefix: 'erp-pwa-cache'
+    };
+</script>
+<script src="{{ $erpAsset->url('assets/js/modules/Core/pwa-runtime.js') }}"></script>

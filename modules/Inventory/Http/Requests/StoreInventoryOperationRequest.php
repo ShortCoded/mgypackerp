@@ -47,6 +47,8 @@ class StoreInventoryOperationRequest extends FormRequest
             'lines.*.warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.destination_warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],
+            'lines.*.manufacture_date' => ['nullable', 'date'],
+            'lines.*.expiry_date' => ['nullable', 'date', 'after_or_equal:document_date'],
             'lines.*.unit_cost' => [
                 Rule::requiredIf(fn (): bool => $this->input('document_type') === InventoryDocument::TypeAdjustmentIn),
                 'nullable',

@@ -5,6 +5,7 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
@@ -20,6 +21,7 @@ use Modules\Finance\Services\ChequeService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
@@ -43,6 +45,8 @@ class ProcurementSettlementService
         private readonly ProcurementAuditService $audit,
         private readonly InventoryAvailabilityService $availability,
         private readonly PurchaseOrderCalculationService $purchaseOrderCalculator,
+        private readonly InventoryGrniService $grni,
+        private readonly InventoryLayerService $layers,
     ) {}
 
     public function requestPurchaseOrderChange(PurchaseOrder $purchaseOrder, array $data): PurchaseOrderChangeRequest
@@ -59,7 +63,8 @@ class ProcurementSettlementService
 
             $changeRequest = PurchaseOrderChangeRequest::query()->create([
                 ...$this->number('purchase_order_change_requests', PurchaseOrderChangeRequest::class, $context),
-                ...$context,
+                'company_id' => $context['company_id'],
+                'financial_period_id' => $context['financial_period_id'],
                 'purchase_order_id' => $order->getKey(),
                 'request_date' => $data['request_date'],
                 'original_values' => $this->currentChangeValues($order),
@@ -184,7 +189,7 @@ class ProcurementSettlementService
 
             $totalQuantity = 0.0;
             $totalAmount = 0.0;
-            foreach ($data['lines'] as $input) {
+            foreach ($data['lines'] as $index => $input) {
                 $receiptLine = UnpricedInventoryReceiptLine::query()->with('receipt')->lockForUpdate()
                     ->where('public_id', $input['receipt_line_public_id'])->firstOrFail();
                 if ((int) $receiptLine->receipt?->purchase_order_id !== (int) $order->getKey()) {
@@ -223,6 +228,9 @@ class ProcurementSettlementService
                 $lineTotal = $this->amount((float) $storedUnitPrice * $quantity + (float) $storedTax);
 
                 $return->lines()->create([
+                    'company_id' => $return->company_id,
+                    'financial_period_id' => $return->financial_period_id,
+                    'line_number' => $index + 1,
                     'purchase_order_line_id' => $orderLine->getKey(),
                     'receipt_line_id' => $receiptLine->getKey(),
                     'purchase_invoice_line_id' => $invoiceLine?->getKey(),
@@ -276,6 +284,11 @@ class ProcurementSettlementService
                         (int) $return->company_id,
                         (int) $return->branch_store_id,
                         (int) $line->product_id,
+                        null,
+                        null,
+                        InventoryTransaction::StatusAvailable,
+                        $receiptLine->supplier_lot_number,
+                        filled($receiptLine->supplier_lot_number),
                     )['available'];
                     if ((float) $line->quantity > $available + 0.00000001) {
                         throw new DomainException(__('Return quantity exceeds currently available unreserved stock.'));
@@ -286,7 +299,7 @@ class ProcurementSettlementService
                         (string) ($return->purchaseInvoice?->exchange_rate ?? $return->purchaseOrder?->exchange_rate ?? 1),
                         8,
                     );
-                    InventoryTransaction::query()->firstOrCreate([
+                    $movement = InventoryTransaction::query()->firstOrCreate([
                         'posting_key' => "purchase-return:{$line->getKey()}",
                     ], [
                         'company_id' => $return->company_id,
@@ -297,6 +310,10 @@ class ProcurementSettlementService
                         'unit_id' => $line->unit_id,
                         'transaction_date' => $return->return_date,
                         'transaction_type' => 'purchase_return',
+                        'stock_status' => InventoryTransaction::StatusAvailable,
+                        'batch_lot' => $receiptLine->supplier_lot_number,
+                        'manufacture_date' => $receiptLine->manufacture_date,
+                        'expiry_date' => $receiptLine->expiry_date,
                         'quantity_in' => 0,
                         'quantity_out' => $line->quantity,
                         'source_type' => PurchaseReturn::class,
@@ -309,10 +326,12 @@ class ProcurementSettlementService
                         'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
                         'created_by' => auth()->id(),
                     ]);
+                    $this->layers->allocateIssue($movement);
                 }
             }
 
             $journalEntry = null;
+            $grniJournalEntry = $this->grni->postAcceptedReturn($return);
             if ($return->purchaseInvoice instanceof PurchaseInvoice && $return->purchaseInvoice->journal_entry_id !== null && (float) $return->total_amount > 0) {
                 $journalEntry = $this->journalEntries->createPostedFromPurchaseReturn($return);
             }
@@ -323,6 +342,7 @@ class ProcurementSettlementService
                 'posted_by' => auth()->id(),
                 'posted_at' => now(),
                 'journal_entry_id' => $journalEntry?->getKey(),
+                'grni_reversal_journal_entry_id' => $grniJournalEntry?->getKey(),
                 'updated_by' => auth()->id(),
             ])->save();
             $return->purchaseInvoice?->refreshPaymentTotals();
@@ -339,7 +359,7 @@ class ProcurementSettlementService
         return DB::transaction(function () use ($purchaseReturn, $reason): PurchaseReturn {
             $context = $this->context();
             $return = PurchaseReturn::query()
-                ->with(['lines', 'journalEntry.lines', 'purchaseInvoice', 'purchaseOrder'])
+                ->with(['lines.receiptLine', 'journalEntry.lines', 'purchaseInvoice', 'purchaseOrder'])
                 ->lockForUpdate()
                 ->findOrFail($purchaseReturn->getKey());
             if ((int) $return->company_id !== $context['company_id'] || $return->status !== PurchaseReturn::StatusPosted) {
@@ -361,6 +381,20 @@ class ProcurementSettlementService
                     'source_doc_num' => $return->doc_num,
                 ])
                 : null;
+            $grniReversal = $return->grni_reversal_journal_entry_id
+                ? $this->journalEntries->createPostedReversalFromSource(
+                    JournalEntry::query()->findOrFail($return->grni_reversal_journal_entry_id),
+                    [
+                        'entry_date' => now()->toDateString(), 'company_id' => (int) $return->company_id,
+                        'financial_period_id' => $context['financial_period_id'], 'branch_id' => $return->branch_id,
+                        'currency_id' => $return->purchaseOrder?->currency_id,
+                        'exchange_rate' => $return->purchaseOrder?->exchange_rate ?? 1,
+                        'description' => __('GRNI Purchase Return reversal :document', ['document' => $return->doc_num]),
+                        'notes' => $reason, 'source_type' => 'grni_purchase_return_reversal',
+                        'source_id' => $return->getKey(), 'source_doc_num' => $return->doc_num,
+                    ],
+                )
+                : null;
 
             foreach ($return->lines as $line) {
                 if ($line->from_quarantine) {
@@ -372,7 +406,7 @@ class ProcurementSettlementService
                     (string) ($return->purchaseInvoice?->exchange_rate ?? $return->purchaseOrder?->exchange_rate ?? 1),
                     8,
                 );
-                InventoryTransaction::query()->firstOrCreate([
+                $movement = InventoryTransaction::query()->firstOrCreate([
                     'posting_key' => "purchase-return-reversal:{$line->getKey()}",
                 ], [
                     'company_id' => $return->company_id,
@@ -383,6 +417,7 @@ class ProcurementSettlementService
                     'unit_id' => $line->unit_id,
                     'transaction_date' => now()->toDateString(),
                     'transaction_type' => 'purchase_return_reversal',
+                    'stock_status' => InventoryTransaction::StatusAvailable,
                     'quantity_in' => $line->quantity,
                     'quantity_out' => 0,
                     'source_type' => PurchaseReturn::class,
@@ -395,6 +430,16 @@ class ProcurementSettlementService
                     'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
                     'created_by' => auth()->id(),
                 ]);
+                $this->layers->recordInbound($movement);
+
+                if ($return->purchase_invoice_id === null) {
+                    $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
+                    $receiptLine->forceFill([
+                        'grni_returned_quantity' => bcsub((string) $receiptLine->grni_returned_quantity, (string) $line->quantity, 8),
+                        'grni_returned_value' => bcsub((string) $receiptLine->grni_returned_value, (string) $line->grni_reversed_value, 4),
+                        'updated_by' => auth()->id(),
+                    ])->save();
+                }
             }
 
             $return->forceFill([

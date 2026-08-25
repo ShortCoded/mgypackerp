@@ -372,7 +372,9 @@ test('pwa orientation direction and offline copy persist while technical values 
         ->get(route('dashboard'))
         ->assertOk()
         ->assertSee(route('pwa.manifest'), false)
-        ->assertSee('serviceWorker.register', false);
+        ->assertSee('window.AppPwaRuntime', false)
+        ->assertSee('enabled: true', false)
+        ->assertSee('assets/js/modules/Core/pwa-runtime.js', false);
 
     $this->get(route('pwa.service-worker'))
         ->assertOk()
@@ -408,6 +410,7 @@ test('pwa manifest and service worker stay public and bypass lock redirects', fu
 
     expect($serviceWorkerScript)
         ->toContain("request.mode === 'navigate'")
+        ->toContain("event.data.type === 'SKIP_WAITING'")
         ->toContain("accept.includes('text/html')")
         ->toContain('/auth/csrf-token')
         ->toContain('/lock-screen/unlock')
@@ -489,7 +492,9 @@ test('disabled web app setting keeps manifest and service worker registration ou
         ->get(route('dashboard'))
         ->assertOk()
         ->assertDontSee(route('pwa.manifest'), false)
-        ->assertDontSee('serviceWorker.register', false);
+        ->assertSee('window.AppPwaRuntime', false)
+        ->assertSee('enabled: false', false)
+        ->assertSee('assets/js/modules/Core/pwa-runtime.js', false);
 
     $this->get(route('pwa.service-worker'))
         ->assertOk()

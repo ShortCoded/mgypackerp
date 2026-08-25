@@ -94,6 +94,8 @@ class InventoryMovementService
                     'warehouse_location_id' => $sourceLocationId,
                     'destination_warehouse_location_id' => $destinationLocationId,
                     'batch_lot' => $input['batch_lot'] ?? null,
+                    'manufacture_date' => $input['manufacture_date'] ?? null,
+                    'expiry_date' => $input['expiry_date'] ?? null,
                     'source_line_type' => $input['source_line_type'] ?? null,
                     'source_line_id' => $input['source_line_id'] ?? null,
                     'source_line_public_id' => $input['source_line_public_id'] ?? null,

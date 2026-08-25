@@ -43,6 +43,8 @@ class ProductService
         'item_group_id',
         'cost_as_inventory',
         'is_displayable',
+        'tracks_expiry',
+        'default_shelf_life_days',
         'status',
         'notes',
     ];
@@ -395,7 +397,8 @@ class ProductService
             'item_classification' => trim((string) ($value ?: Product::ClassificationFinishedProduct)),
             'reorder_point' => $this->normalizeNullableDecimal($value),
             'equivalent_value' => $this->normalizeNullableEquivalenceDecimal($value),
-            'cost_as_inventory', 'is_displayable' => (bool) $value,
+            'cost_as_inventory', 'is_displayable', 'tracks_expiry' => (bool) $value,
+            'default_shelf_life_days' => $value === null || $value === '' ? null : (int) $value,
             'item_unit_id', 'equivalent_unit_id', 'item_size_id', 'item_color_id', 'item_decal_id', 'item_model_id', 'item_origin_country_id', 'item_category_id', 'item_group_id' => $value === null ? null : (int) $value,
             'image_path' => $value === null ? null : trim((string) $value),
             default => $this->normalizeNullableString($value),

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\PushSubscriptionController;
 use Illuminate\Support\Facades\Route;
 use Modules\Core\Http\Controllers\BranchController;
 use Modules\Core\Http\Controllers\CalendarController;
@@ -147,6 +148,10 @@ Route::middleware('auth')
             ->name('notifications.read');
         Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])
             ->name('notifications.read-all');
+        Route::post('/notifications/push-subscriptions', [PushSubscriptionController::class, 'store'])
+            ->name('notifications.push-subscriptions.store');
+        Route::delete('/notifications/push-subscriptions', [PushSubscriptionController::class, 'destroy'])
+            ->name('notifications.push-subscriptions.destroy');
 
         Route::get('/navigation-search', [NavigationSearchController::class, 'index'])
             ->name('navigation-search');

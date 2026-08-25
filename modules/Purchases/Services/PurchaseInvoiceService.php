@@ -20,8 +20,8 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
-use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
@@ -42,6 +42,7 @@ class PurchaseInvoiceService
         private readonly JournalEntryService $journalEntries,
         private readonly PurchaseInvoiceMatchingService $matching,
         private readonly NumericFormatService $numbers,
+        private readonly InventoryAccountingMappingService $inventoryMappings,
     ) {}
 
     public function create(array $data): array
@@ -766,53 +767,51 @@ class PurchaseInvoiceService
     private function postingLines(PurchaseInvoice $record): array
     {
         $record->loadMissing('lines.product');
-        $debits = [];
+        $posting = [];
         $netAmounts = $this->netAmountsByLine($record);
+        $mapping = null;
 
         foreach ($record->lines as $line) {
-            $account = $this->purchaseDebitAccount($line);
-            $amount = (float) ($netAmounts[$line->getKey()] ?? 0);
-
-            if ($amount <= 0) {
+            $finalAmount = (string) ($netAmounts[$line->getKey()] ?? '0.0000');
+            if (bccomp($finalAmount, '0', 4) <= 0) {
                 continue;
             }
 
-            $key = (string) $account->getKey();
-            $debits[$key] ??= [
-                'account_id' => (int) $account->getKey(),
-                'debit_amount' => 0.0,
-                'description' => __('purchase_invoices.journal.inventory_line'),
-            ];
-            $debits[$key]['debit_amount'] += $amount;
+            if ($line->receipt_line_id !== null && ! $line->product?->isService()) {
+                $mapping ??= $this->inventoryMappings->requireForCompany((int) $record->company_id);
+                $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
+                $provisionalBase = bcmul((string) $receiptLine->provisional_unit_value, (string) $line->quantity, 4);
+                $provisionalAmount = bcdiv($provisionalBase, (string) $record->exchange_rate, 4);
+                $grniAccount = $this->inventoryMappings->requirePostableAccount($mapping, 'grniAccount', __('Purchase Invoice'));
+                $this->addPostingAmount($posting, $grniAccount, $provisionalAmount, true, __('GRNI clearing'));
+
+                $variance = bcsub($finalAmount, $provisionalAmount, 4);
+                if (bccomp($variance, '0', 4) !== 0) {
+                    $varianceAccount = $this->inventoryMappings->requirePostableAccount($mapping, 'purchasePriceVarianceAccount', __('Purchase Invoice'));
+                    $this->addPostingAmount($posting, $varianceAccount, ltrim($variance, '-'), bccomp($variance, '0', 4) > 0, __('Purchase price variance'));
+                }
+            } else {
+                $this->addPostingAmount($posting, $this->purchaseDebitAccount($line), $finalAmount, true, __('purchase_invoices.journal.inventory_line'));
+            }
         }
 
         if ((float) $record->freight_amount > 0) {
             $freightCode = (string) config('purchases.accounts.freight_expense', '526');
             $freightAccount = $this->accountByCode((int) $record->company_id, $freightCode, 'purchase_debit_account_missing', ['code' => $freightCode]);
-            $key = (string) $freightAccount->getKey();
-            $debits[$key] ??= [
-                'account_id' => (int) $freightAccount->getKey(),
-                'debit_amount' => 0.0,
-                'description' => __('Freight expense'),
-            ];
-            $debits[$key]['debit_amount'] += (float) $record->freight_amount;
+            $this->addPostingAmount($posting, $freightAccount, (string) $record->freight_amount, true, __('Freight expense'));
         }
 
         if ((float) $record->tax_amount > 0) {
             $taxCode = (string) config('purchases.accounts.recoverable_input_vat', '2131');
             $taxAccount = $this->accountByCode((int) $record->company_id, $taxCode, 'input_vat_account_missing');
-            $debits['tax'] = [
-                'account_id' => (int) $taxAccount->getKey(),
-                'debit_amount' => (float) $record->tax_amount,
-                'description' => __('purchase_invoices.journal.input_vat'),
-            ];
+            $this->addPostingAmount($posting, $taxAccount, (string) $record->tax_amount, true, __('purchase_invoices.journal.input_vat'));
         }
 
-        $lines = collect($debits)
+        $lines = collect($posting)
             ->map(fn (array $line): array => [
                 'account_id' => $line['account_id'],
-                'debit_amount' => number_format((float) $line['debit_amount'], 4, '.', ''),
-                'credit_amount' => '0.0000',
+                'debit_amount' => $line['debit_amount'],
+                'credit_amount' => $line['credit_amount'],
                 'description' => $line['description'],
                 'supplier_id' => $record->supplier_id,
                 'branch_id' => $record->branch_id,
@@ -843,35 +842,45 @@ class PurchaseInvoiceService
                 continue;
             }
 
-            $movement = InventoryTransaction::query()
-                ->where('posting_key', "purchase-receipt:{$line->receipt_line_id}")
-                ->lockForUpdate()
-                ->first();
+            $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
+            $clearedValue = bcmul((string) $receiptLine->provisional_unit_value, (string) $line->quantity, 4);
+            $finalBaseValue = bcmul((string) ($netAmounts[$line->getKey()] ?? '0.0000'), (string) $record->exchange_rate, 4);
+            $quantityDelta = $reverse ? bcmul((string) $line->quantity, '-1', 8) : (string) $line->quantity;
+            $valueDelta = $reverse ? bcmul($clearedValue, '-1', 4) : $clearedValue;
+            $newClearedQuantity = bcadd((string) $receiptLine->grni_cleared_quantity, $quantityDelta, 8);
+            $eligibleQuantity = bcsub((string) $receiptLine->accepted_quantity, (string) $receiptLine->grni_returned_quantity, 8);
 
-            if (! $movement instanceof InventoryTransaction || bccomp((string) $movement->quantity_in, '0', 8) <= 0) {
-                throw new DomainException(__('The accepted goods receipt Inventory movement is missing for invoice valuation.'));
+            if (bccomp($newClearedQuantity, '0', 8) < 0 || bccomp($newClearedQuantity, $eligibleQuantity, 8) > 0) {
+                throw new DomainException(__('Purchase Invoice would over-clear the accepted GRNI quantity.'));
             }
 
-            $lineAmount = bcmul(
-                (string) ($netAmounts[$line->getKey()] ?? '0.0000'),
-                (string) $record->exchange_rate,
-                4,
-            );
-            $currentTotal = bcadd((string) ($movement->total_cost ?? 0), '0', 4);
-            $newTotal = $reverse
-                ? bcsub($currentTotal, $lineAmount, 4)
-                : bcadd($currentTotal, $lineAmount, 4);
-
-            if (bccomp($newTotal, '0', 4) < 0) {
-                throw new DomainException(__('Purchase Invoice reversal would make the receipt valuation negative.'));
-            }
-
-            $isUnvalued = bccomp($newTotal, '0', 4) === 0;
-            $movement->forceFill([
-                'unit_cost' => $isUnvalued ? null : bcdiv($newTotal, (string) $movement->quantity_in, 8),
-                'total_cost' => $isUnvalued ? null : $newTotal,
+            $receiptLine->forceFill([
+                'grni_cleared_quantity' => $newClearedQuantity,
+                'grni_cleared_value' => bcadd((string) $receiptLine->grni_cleared_value, $valueDelta, 4),
+                'updated_by' => auth()->id(),
+            ])->save();
+            $line->forceFill([
+                'grni_cleared_quantity' => $reverse ? '0.00000000' : $line->quantity,
+                'grni_cleared_value' => $reverse ? '0.0000' : $clearedValue,
+                'purchase_price_variance' => $reverse ? '0.0000' : bcsub($finalBaseValue, $clearedValue, 4),
             ])->save();
         }
+    }
+
+    /** @param array<string, array<string, mixed>> $posting */
+    private function addPostingAmount(array &$posting, Account $account, string $amount, bool $debit, string $description): void
+    {
+        if (bccomp($amount, '0', 4) <= 0) {
+            return;
+        }
+
+        $key = ($debit ? 'd:' : 'c:').$account->getKey();
+        $posting[$key] ??= [
+            'account_id' => (int) $account->getKey(), 'debit_amount' => '0.0000',
+            'credit_amount' => '0.0000', 'description' => $description,
+        ];
+        $column = $debit ? 'debit_amount' : 'credit_amount';
+        $posting[$key][$column] = bcadd((string) $posting[$key][$column], $amount, 4);
     }
 
     /** @return array<int, string> */

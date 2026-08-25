@@ -48,6 +48,15 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
             ];
         }
 
+        foreach ($this->result['subledger_events'] ?? [] as $event) {
+            $rows[] = [
+                $event['date'], __(str($event['event'])->replace('_', ' ')->title()->toString()),
+                $event['document'], $event['related_document'],
+                __('Amount: :amount; Remaining credit: :remaining', ['amount' => $event['amount'], 'remaining' => $event['remaining_credit'] ?? '—']),
+                '', '', '', '', '', '',
+            ];
+        }
+
         $rows[] = [
             (string) data_get($this->result, 'filters.to_date'),
             __('ledger_reports.summary.period'),

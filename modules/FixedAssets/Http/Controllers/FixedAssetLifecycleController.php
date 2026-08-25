@@ -46,6 +46,7 @@ class FixedAssetLifecycleController extends Controller
             'postedDepreciations.journalEntry', 'postedDepreciations.costCenter', 'postedDepreciations.branch', 'postedDepreciations.postedBy',
             'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceBranchHall', 'movements.destinationBranchHall', 'movements.sourceCostCenter', 'movements.destinationCostCenter', 'movements.requestedBy',
             'disposals.customer', 'disposals.proceedsAccount', 'disposals.journalEntry',
+            'disposals.customerInvoice', 'disposals.gainLossJournalEntry', 'disposals.reversalJournalEntry', 'disposals.gainLossReversalJournalEntry',
         ]);
 
         return view('modules.fixed-assets.lifecycle.show', [
@@ -135,7 +136,7 @@ class FixedAssetLifecycleController extends Controller
             ->get();
         $mappings = FixedAssetCategoryMapping::query()
             ->where('company_id', $companyId)
-            ->with(['assetGroupAccount', 'accumulatedDepreciationAccount', 'depreciationExpenseAccount', 'disposalGainAccount', 'disposalLossAccount'])
+            ->with(['assetGroupAccount', 'accumulatedDepreciationAccount', 'depreciationExpenseAccount', 'disposalGainAccount', 'disposalLossAccount', 'disposalClearingAccount'])
             ->get()
             ->keyBy('asset_group_account_id');
 

@@ -1,18 +1,10 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="{{ app()->getLocale() }}" dir="{{ config('languages.available.' . app()->getLocale() . '.dir', 'ltr') }}">
+<html data-bs-theme="light" data-navbar-position="{{ $appNavbarPosition }}" lang="{{ app()->getLocale() }}" dir="{{ config('languages.available.' . app()->getLocale() . '.dir', 'ltr') }}" @class(['double-top-nav-layout' => $appNavbarPosition === 'double-top'])>
 
 <head>
-    @php
-        $appBranding = app(\Modules\Core\Services\BrandingService::class)->current();
-        $appMenuItems = app(\Modules\Core\Services\MenuService::class)->getMenu();
-        $appOperatingContext = auth()->check()
-            ? app(\Modules\Core\Services\OperatingContextService::class)->current(request())
-            : null;
-        $appPwaSettings = app(\Modules\Core\Services\PwaSettingsService::class)->settings();
-    @endphp
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
     <title>@yield('title', $appBranding['name'])</title>
@@ -33,63 +25,20 @@
                 }
             </script>
 
-            @include('layouts.partials.navbar-double-top')
-            @include('layouts.partials.navbar-vertical')
-            @include('layouts.partials.navbar-top')
+            @if ($appNavbarPosition === 'double-top')
+                @include('layouts.partials.navbar-double-top')
+            @elseif ($appNavbarPosition === 'top')
+                @include('layouts.partials.navbar-top')
+            @elseif (in_array($appNavbarPosition, ['vertical', 'combo'], true))
+                @include('layouts.partials.navbar-vertical')
+            @endif
 
             <div class="content">
-                @include('layouts.partials.topbar')
-                @include('layouts.partials.navbar-combo')
-                <script>
-                    var navbarPosition = localStorage.getItem('navbarPosition');
-                    var navbarVertical = document.querySelector('.navbar-vertical');
-                    var navbarTopVertical = document.querySelector('.content .navbar-top:not([data-navbar-top="combo"])');
-                    var navbarTop = document.querySelector('[data-layout] > .navbar-top:not([data-double-top-nav])');
-                    var navbarDoubleTop = document.querySelector('[data-double-top-nav]');
-                    var navbarTopCombo = document.querySelector('.content [data-navbar-top="combo"]');
-
-                    function removeNavbar(navbar) {
-                        if (navbar) {
-                            navbar.remove();
-                        }
-                    }
-
-                    function showNavbar(navbar) {
-                        if (navbar) {
-                            navbar.removeAttribute('style');
-                        }
-                    }
-
-                    if (localStorage.getItem('navbarPosition') === 'double-top') {
-                        document.documentElement.classList.toggle('double-top-nav-layout');
-                    }
-
-                    if (navbarPosition === 'top') {
-                        showNavbar(navbarTop);
-                        removeNavbar(navbarTopVertical);
-                        removeNavbar(navbarVertical);
-                        removeNavbar(navbarTopCombo);
-                        removeNavbar(navbarDoubleTop);
-                    } else if (navbarPosition === 'combo') {
-                        showNavbar(navbarVertical);
-                        showNavbar(navbarTopCombo);
-                        removeNavbar(navbarTop);
-                        removeNavbar(navbarTopVertical);
-                        removeNavbar(navbarDoubleTop);
-                    } else if (navbarPosition === 'double-top') {
-                        showNavbar(navbarDoubleTop);
-                        removeNavbar(navbarTopVertical);
-                        removeNavbar(navbarVertical);
-                        removeNavbar(navbarTop);
-                        removeNavbar(navbarTopCombo);
-                    } else {
-                        showNavbar(navbarVertical);
-                        showNavbar(navbarTopVertical);
-                        removeNavbar(navbarTop);
-                        removeNavbar(navbarDoubleTop);
-                        removeNavbar(navbarTopCombo);
-                    }
-                </script>
+                @if ($appNavbarPosition === 'vertical')
+                    @include('layouts.partials.topbar')
+                @elseif ($appNavbarPosition === 'combo')
+                    @include('layouts.partials.navbar-combo')
+                @endif
 
                 @include('layouts.partials.flash')
                 @include('layouts.partials.breadcrumb')
@@ -105,6 +54,13 @@
     @auth
         @include('layouts.partials.operating-context-modal')
     @endauth
+    <div class="erp-connectivity-status alert alert-warning shadow-sm" role="status" aria-live="polite" hidden data-erp-connectivity-status data-offline-message="{{ __('pwa.connectivity.offline') }}" data-online-message="{{ __('pwa.connectivity.online') }}">
+        <span class="fas fa-wifi me-2" aria-hidden="true"></span><span data-erp-connectivity-message>{{ __('pwa.connectivity.offline') }}</span>
+    </div>
+    <div class="erp-pwa-update alert alert-info shadow-sm" role="status" aria-live="polite" hidden data-erp-pwa-update>
+        <span>{{ __('pwa.update.available') }}</span>
+        <button class="btn btn-info btn-sm ms-2" type="button" data-erp-pwa-reload>{{ __('pwa.update.reload') }}</button>
+    </div>
     @include('layouts.partials.scripts', ['appPwaSettings' => $appPwaSettings])
     @stack('scripts')
 </body>

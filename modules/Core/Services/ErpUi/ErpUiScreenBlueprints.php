@@ -21,8 +21,14 @@ class ErpUiScreenBlueprints
         $permissionResource = str_replace(['/', '-'], ['.', '_'], $slug);
         $profile = (string) ($screen['profile'] ?? 'document');
         $kind = (string) ($screen['kind'] ?? (in_array($profile, ['report', 'inquiry'], true) ? 'report' : 'resource'));
-        $actions = $screen['actions'] ?? $this->actionsFor($profile);
-        $modes = $screen['modes'] ?? ($kind === 'report' ? ['index', 'data'] : ['index', 'data', 'create', 'view', 'edit', 'clone']);
+        $classification = (string) ($screen['classification'] ?? (($screen['shell_enabled'] ?? true) === false
+            ? 'WORKING_REAL_SCREEN'
+            : 'UI_SURFACE_PENDING_DEEP_WORKFLOW'));
+        $isPendingSurface = $classification === 'UI_SURFACE_PENDING_DEEP_WORKFLOW';
+        $actions = $screen['actions'] ?? ($isPendingSurface ? ['view'] : $this->actionsFor($profile));
+        $modes = $screen['modes'] ?? ($isPendingSurface || $kind === 'report'
+            ? ['index', 'data']
+            : ['index', 'data', 'create', 'view', 'edit', 'clone']);
         $tabs = $screen['tabs'] ?? $this->tabsFor($moduleKey, $profile, (string) $screen['key']);
         $indexColumns = $screen['index_columns'] ?? $this->indexColumnsFor($moduleKey, $profile);
 
@@ -33,6 +39,7 @@ class ErpUiScreenBlueprints
             'module_title' => $module['title'],
             'kind' => $kind,
             'profile' => $profile,
+            'classification' => $classification,
             'slug' => $slug,
             'route_path' => 'admin/'.$routeSegment.'/'.$slug,
             'route_name_prefix' => 'admin.'.$routeName.'.'.str_replace('/', '.', $slug),

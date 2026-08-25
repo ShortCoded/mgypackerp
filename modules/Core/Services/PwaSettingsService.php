@@ -55,6 +55,14 @@ class PwaSettingsService
 
     private const DefaultCacheName = 'erp-pwa-cache-v1';
 
+    /** @var array<string, string> */
+    private const DefaultIconPaths = [
+        'icon_192' => 'assets/img/favicon/web-app-manifest-192x192.png',
+        'icon_512' => 'assets/img/favicon/web-app-manifest-512x512.png',
+        'icon_maskable' => 'assets/img/favicon/web-app-manifest-512x512.png',
+        'apple_touch_icon' => 'assets/img/favicon/apple-touch-icon.png',
+    ];
+
     /**
      * @var array<string, array{key: string, sizes: string, purpose: string}>
      */
@@ -175,12 +183,14 @@ class PwaSettingsService
         ];
 
         foreach (self::IconFields as $input => $definition) {
-            $path = $settings["{$input}_path"] ?? null;
-            $url = $settings["{$input}_url"] ?? null;
-
-            if (! is_string($path) || $path === '' || ! is_string($url) || $url === '') {
-                continue;
-            }
+            $configuredPath = $settings["{$input}_path"] ?? null;
+            $configuredUrl = $settings["{$input}_url"] ?? null;
+            $path = is_string($configuredPath) && $configuredPath !== ''
+                ? $configuredPath
+                : self::DefaultIconPaths[$input];
+            $url = is_string($configuredUrl) && $configuredUrl !== ''
+                ? $configuredUrl
+                : asset(self::DefaultIconPaths[$input]);
 
             $manifest['icons'][] = [
                 'src' => $url,

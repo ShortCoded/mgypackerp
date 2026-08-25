@@ -36,6 +36,7 @@ return [
             'upcoming_supplier_payments' => 'Upcoming Supplier Payments',
             'returns' => 'Purchase Returns',
             'production_analysis' => 'Production-linked Procurement Analysis',
+            'goods_received_not_invoiced' => 'Goods Received Not Invoiced (GRNI)',
         ],
         'metrics' => [
             'matching_rows' => 'Matching rows',
@@ -90,6 +91,8 @@ return [
         'approved_with_variance' => 'Approved with Variance',
         'paid' => 'Paid',
         'partially_paid' => 'Partially Paid',
+        'settled' => 'Settled by Payment / Credit',
+        'partially_settled' => 'Partially Settled',
         'posted' => 'Posted',
         'closed' => 'Closed',
         'cancelled' => 'Cancelled',

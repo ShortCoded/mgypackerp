@@ -70,19 +70,30 @@ await client.ready;
 
 let loadCount = 0;
 const browserErrors = [];
+const runtimeErrors = { failedXhr: [], responses500: [], sqlState: [], dataTable: [], select2: [] };
 client.on('Page.loadEventFired', () => { loadCount += 1; });
 client.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
   browserErrors.push(exceptionDetails?.exception?.description || exceptionDetails?.text || 'Unhandled JavaScript exception');
 });
 client.on('Runtime.consoleAPICalled', ({ type, args }) => {
   if (type === 'error' || type === 'assert') {
-    browserErrors.push(args.map((argument) => argument.value || argument.description || '').join(' '));
+    const message = args.map((argument) => argument.value || argument.description || '').join(' ');
+    browserErrors.push(message);
+    if (/SQLSTATE/i.test(message)) runtimeErrors.sqlState.push(message);
+    if (/DataTable/i.test(message)) runtimeErrors.dataTable.push(message);
+    if (/Select2/i.test(message)) runtimeErrors.select2.push(message);
   }
 });
 client.on('Log.entryAdded', ({ entry }) => {
   if (entry.level === 'error' && !entry.url?.endsWith('/favicon.ico')) {
     browserErrors.push(entry.url ? `${entry.url}: ${entry.text}` : entry.text);
   }
+});
+client.on('Network.loadingFailed', ({ type, canceled, errorText, requestId }) => {
+  if (['XHR', 'Fetch'].includes(type) && canceled !== true) runtimeErrors.failedXhr.push(errorText || requestId);
+});
+client.on('Network.responseReceived', ({ response }) => {
+  if (response?.url?.startsWith(baseUrl) && response.status >= 500) runtimeErrors.responses500.push(`${response.status} ${response.url}`);
 });
 
 await Promise.all([
@@ -91,6 +102,10 @@ await Promise.all([
   client.send('Log.enable'),
   client.send('Network.enable'),
 ]);
+const mobileQa = process.env.SALES_E2E_MOBILE === '1';
+await client.send('Emulation.setDeviceMetricsOverride', mobileQa
+  ? { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }
+  : { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 async function evaluate(expression) {
   const result = await client.send('Runtime.evaluate', {
@@ -175,6 +190,22 @@ async function submitForm(selector, context, timeout = 45000) {
     throw new Error(`${context} failed${alert ? `: ${alert}` : ''}. ${error.message}`);
   }
   await waitForReady();
+}
+
+async function submitFormWithButton(formSelector, buttonSelector, context, timeout = 45000) {
+  const before = loadCount;
+  const submitted = await evaluate(`(() => {
+    const form = document.querySelector(${JSON.stringify(formSelector)});
+    const button = form?.querySelector(${JSON.stringify(buttonSelector)});
+    if (!form || !button) return false;
+    form.requestSubmit(button);
+    return true;
+  })()`);
+  assert(submitted, `${context}: form or submit button not found.`);
+  await waitUntil(() => loadCount > before, `${context}: redirect/reload did not occur.`, timeout);
+  await waitForReady();
+  const validationError = await evaluate(`Array.from(document.querySelectorAll('.alert-danger')).find((element) => !element.classList.contains('d-none') && element.innerText.trim())?.innerText.trim() || ''`);
+  assert(!validationError, `${context} failed: ${validationError}`);
 }
 
 async function setField(selector, value) {
@@ -330,6 +361,14 @@ async function submitAction(actionFragment, context, configure = null) {
   await submitForm(selector, context);
 }
 
+async function submitProductionAction(actionFragment, context, configure = null) {
+  const selector = `form[action$=${JSON.stringify(actionFragment)}]`;
+  if (configure) await configure(selector);
+  await submitForm(selector, context);
+  const validationError = await evaluate(`Array.from(document.querySelectorAll('.alert-danger')).find((element) => !element.classList.contains('d-none') && element.innerText.trim())?.innerText.trim() || ''`);
+  assert(!validationError, `${context} failed: ${validationError}`);
+}
+
 async function setLocale(locale) {
   const result = await evaluate(`fetch(${JSON.stringify(`${baseUrl}/lang/${locale}`)}, {
     headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
@@ -341,7 +380,70 @@ const manifest = {
   scenario: {},
   prints: [],
   browserErrors,
+  runtimeErrors,
 };
+
+if (process.env.SALES_E2E_POSTCHECK_ONLY === '1') {
+  try {
+    const productionRunId = process.env.SALES_E2E_RUN_ID;
+    assert(productionRunId, 'SALES_E2E_RUN_ID is required for the completed Sales postcheck.');
+    await navigate(`${baseUrl}/login`);
+    if (await evaluate(`Boolean(document.querySelector('#login'))`)) {
+      await setField('#login', 'admin');
+      await setField('#password', 'admin');
+      await submitForm('form.js-auth-form', 'Postcheck login');
+    }
+    await navigate(`${baseUrl}/lang/en`);
+
+    const postcheckRoutes = [
+      ['/admin/sales/sales-orders/SO-00002', 'Fulfilled'],
+      [`/admin/production/runs/${productionRunId}`, 'Completed'],
+      ['/admin/sales/customer-invoices/SINV-00001', 'collected'],
+      ['/admin/sales/sales-returns/SRET-00001', 'SRET-00001'],
+      [`/admin/reports/sales/sales-orders?from=${isoDate(-2)}&to=${isoDate(30)}&order_doc_num=SO-00002`, 'SO-00002'],
+      [`/admin/accounting/reports/customer-statement?run=1&customer_doc_num=Customer-990001&from_date=${today.getUTCFullYear()}-01-01&to_date=${today.getUTCFullYear()}-12-31`, 'SINV-00001'],
+    ];
+
+    if (process.env.SALES_E2E_CROSS_MODULE_SWEEP === '1') {
+      postcheckRoutes.push(
+        ['/admin/purchases/purchase-requisitions', 'Purchase Requisitions'],
+        ['/admin/purchases/request-for-quotations', 'Requests for Quotation'],
+        ['/admin/purchases/supplier-quotation-entry', 'Supplier Quotations'],
+        ['/admin/purchases/supplier-selection', 'Supplier Selections'],
+        ['/admin/purchases/goods-receipt-notes', 'Goods Receipt Notes'],
+        ['/admin/purchases/goods-receipt-inspection', 'Incoming Quality Inspections'],
+        ['/admin/purchases/supplier-payments', 'Supplier Payments'],
+        ['/admin/purchases/purchase-returns', 'Purchase Returns'],
+        ['/admin/purchases/procurement-cycle-report', 'Procurement Cycle Report'],
+        ['/admin/fixed-assets/assets', 'Fixed Assets Register'],
+        ['/admin/fixed-assets/depreciation', 'Periodic Depreciation Run'],
+        ['/admin/fixed-assets/reports', 'Fixed Asset Reports'],
+        ['/admin/fixed-assets/accounting-mappings', 'Accounting Mappings'],
+      );
+    }
+
+    for (const [route, expectedText] of postcheckRoutes) {
+      const status = await evaluate(`fetch(${JSON.stringify(`${baseUrl}${route}`)}, { headers: { Accept: 'text/html' } }).then((response) => response.status)`);
+      assert(status === 200, `Sales postcheck ${route} returned HTTP ${status}.`);
+      await navigate(`${baseUrl}${route}`);
+      await assertBodyContains(expectedText, `Sales postcheck ${route}`);
+    }
+
+    await sleep(1000);
+    const actionableErrors = [...new Set(browserErrors)].filter((message) => message && !message.includes('favicon.ico'));
+    assert(actionableErrors.length === 0, `Browser console errors detected: ${actionableErrors.join(' | ')}`);
+    for (const [category, values] of Object.entries(runtimeErrors)) {
+      assert(values.length === 0, `${category} errors: ${JSON.stringify(values)}`);
+    }
+
+    const result = { routes: postcheckRoutes.map(([route]) => route), browserErrors: actionableErrors, runtimeErrors };
+    await writeFile(path.join(artifactDirectory, 'postcheck-result.json'), JSON.stringify(result, null, 2));
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } finally {
+    client.close();
+  }
+  process.exit(0);
+}
 
 try {
   await navigate(`${baseUrl}/login`);
@@ -427,16 +529,32 @@ try {
   await assertBodyContains(orderDoc, 'Manufacturing work order source Sales Order');
   await assertBodyContains('1000 pieces / export carton', 'Manufacturing work order');
   assert(!(await bodyText()).includes('Unit price'), 'Manufacturing work order leaked selling prices.');
-  await submitAction('/complete', 'Post 70-carton production receipt', async (selector) => {
-    const result = await evaluate(`(() => {
-      const form = document.querySelector(${JSON.stringify(selector)});
-      const quantities = [...form.querySelectorAll('input[name$="[quantity]"]')];
-      quantities.forEach(field => { field.value = '70'; field.dispatchEvent(new Event('input', { bubbles: true })); });
-      return quantities.length;
-    })()`);
-    assert(result === 1, `Production completion expected one line, found ${result}.`);
+  await submitProductionAction('/release', 'Release 70-carton production requirement and snapshot BOM');
+  await navigate(`${baseUrl}/admin/production/runs?production_order=${encodeURIComponent(productionDoc)}`);
+  await setField('form[action$="/admin/production/runs"] [name="planned_quantity"]', '70');
+  await setField('form[action$="/admin/production/runs"] [name="planned_start_at"]', `${isoDate(1)}T08:00`);
+  await setField('form[action$="/admin/production/runs"] [name="planned_end_at"]', `${isoDate(1)}T09:00`);
+  await submitForm('form[action$="/admin/production/runs"]', 'Plan canonical 70-carton production run');
+  const productionRunUrl = await currentUrl();
+  const productionRunPath = new URL(productionRunUrl).pathname;
+  await assertBodyContains('E2E Food Grade Resin', 'Planned production run BOM');
+  await submitProductionAction(`${productionRunPath}/reserve`, 'Reserve resin for 70-carton production run');
+  await submitFormWithButton('form[action*="/reserve"]', 'button[formaction*="/issue"]', 'Issue resin to production staging');
+  await submitProductionAction(`${productionRunPath}/setup/start`, 'Start production setup');
+  await submitProductionAction(`${productionRunPath}/setup/complete`, 'Complete production setup');
+  await submitProductionAction(`${productionRunPath}/start`, 'Start production run');
+  await submitProductionAction(`${productionRunPath}/progress`, 'Record 70-carton good output', async (selector) => {
+    await setField(`${selector} [name="good_base_quantity"]`, '70000');
   });
+  await submitProductionAction(`${productionRunPath}/account-materials`, 'Reconcile issued resin consumption');
+  await submitProductionAction(`${productionRunPath}/receive`, 'Receive 70 cartons into finished goods', async (selector) => {
+    await setField(`${selector} [name="base_quantity"]`, '70000');
+  });
+  await submitProductionAction(`${productionRunPath}/complete`, 'Complete canonical production run');
   await assertBodyContains('Completed', 'Completed production work order');
+
+  await navigate(productionUrl);
+  await assertBodyContains('Completed', 'Completed production requirement');
 
   await navigate(orderUrl);
   await submitAction('/deliveries', 'Post first 60-carton delivery', async (selector) => {
@@ -710,6 +828,7 @@ try {
     orderUrl,
     quotationUrl,
     productionUrl,
+    productionRunUrl,
     deliveryOneUrl,
     deliveryTwoUrl,
     invoiceUrl,
@@ -732,6 +851,9 @@ try {
   const actionableErrors = [...new Set(browserErrors)].filter((message) => message && !message.includes('favicon.ico'));
   await writeFile(path.join(artifactDirectory, 'manifest.json'), JSON.stringify(manifest, null, 2));
   assert(actionableErrors.length === 0, `Browser console errors detected: ${actionableErrors.join(' | ')}`);
+  for (const [category, values] of Object.entries(runtimeErrors)) {
+    assert(values.length === 0, `${category} errors: ${JSON.stringify(values)}`);
+  }
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 } finally {
   client.close();

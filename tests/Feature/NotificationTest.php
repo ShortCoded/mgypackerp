@@ -3,6 +3,7 @@
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Modules\Auth\Models\AuthLog;
+use Modules\Auth\Models\Role;
 use Modules\Auth\Models\UserPresenceSession;
 use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Models\UserNotification;
@@ -25,6 +26,26 @@ function notificationActor(array $permissions = []): User
     if ($permissions !== []) {
         $user->givePermissionTo($permissions);
     }
+
+    return $user;
+}
+
+function notificationAdminActor(array $permissions): User
+{
+    $user = notificationActor($permissions);
+    $role = Role::query()->whereKey(1)->first();
+
+    if (! $role instanceof Role) {
+        $role = Role::query()->create([
+            'name' => 'admin',
+            'guard_name' => 'web',
+            'doc_number' => 1,
+            'doc_num' => 'Role-00001',
+        ]);
+    }
+
+    $user->assignRole($role);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
 
     return $user;
 }
@@ -142,7 +163,7 @@ test('notification can be marked read only by recipient', function () {
 });
 
 test('creating board task notifies assigned users without notifying creator', function () {
-    $actor = notificationActor(['my_board.view', 'my_board.create', 'my_board.assign']);
+    $actor = notificationAdminActor(['my_board.view', 'my_board.create', 'my_board.assign']);
     $assignee = User::factory()->create();
 
     $this->actingAs($actor)
@@ -162,7 +183,7 @@ test('creating board task notifies assigned users without notifying creator', fu
 });
 
 test('updating board task assignment notifies newly added assignee once', function () {
-    $actor = notificationActor(['my_board.view', 'my_board.create', 'my_board.edit', 'my_board.assign']);
+    $actor = notificationAdminActor(['my_board.view', 'my_board.create', 'my_board.edit', 'my_board.assign']);
     $firstAssignee = User::factory()->create();
     $secondAssignee = User::factory()->create();
 

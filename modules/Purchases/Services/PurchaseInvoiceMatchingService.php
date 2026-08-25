@@ -91,15 +91,8 @@ class PurchaseInvoiceMatchingService
             throw new DomainException(__('Every invoice line must match its purchase order line and unit.'));
         }
 
-        if (abs((float) $invoiceLine->unit_price - (float) $orderLine->unit_price) > 0.0001) {
-            throw new DomainException(__('Invoice price differs from the approved purchase order price.'));
-        }
-        $expectedDiscount = (float) $orderLine->ordered_quantity > 0
-            ? (float) $orderLine->discount_amount * (float) $invoiceLine->quantity / (float) $orderLine->ordered_quantity
-            : 0.0;
-        if (abs((float) $invoiceLine->discount_amount - $expectedDiscount) > 0.0001
-            || abs((float) $invoiceLine->tax_rate - (float) $orderLine->tax_rate) > 0.0001) {
-            throw new DomainException(__('Invoice discount or tax differs from the approved purchase order terms.'));
+        if (abs((float) $invoiceLine->tax_rate - (float) $orderLine->tax_rate) > 0.0001) {
+            throw new DomainException(__('Invoice tax differs from the approved purchase order terms.'));
         }
 
         $invoicedForOrderLine = (float) PurchaseInvoiceLine::query()
@@ -124,6 +117,9 @@ class PurchaseInvoiceMatchingService
                 ->sum('quantity');
             if ($invoicedForReceipt > (float) $receiptLine->accepted_quantity + 0.0001) {
                 throw new DomainException(__('Invoice quantity exceeds quality-accepted receipt quantity.'));
+            }
+            if ($invoicedForReceipt > (float) $receiptLine->accepted_quantity - (float) $receiptLine->grni_returned_quantity + 0.0001) {
+                throw new DomainException(__('Invoice quantity exceeds the accepted GRNI quantity remaining after returns.'));
             }
             $eligibleQuantity = (float) $orderLine->received_quantity;
         }

@@ -69,8 +69,6 @@ class MenuService
         $visibleItems = [];
 
         foreach ($items as $item) {
-            $item = $this->normalizeItem($item);
-
             if (! $item['visible']) {
                 continue;
             }
@@ -668,13 +666,22 @@ class MenuService
         }
 
         try {
+            $permissionNames = $this->memo->remember(
+                'menu.user.permissions.'.(string) $user->getKey(),
+                fn (): array => $user->getAllPermissions()
+                    ->pluck('name')
+                    ->filter(fn (mixed $name): bool => is_string($name) && trim($name) !== '')
+                    ->mapWithKeys(fn (string $name): array => [trim($name) => true])
+                    ->all(),
+            );
+
             if (is_array($permission)) {
                 return collect($permission)
                     ->filter(fn (mixed $name): bool => is_string($name) && trim($name) !== '')
-                    ->contains(fn (string $name): bool => $user->can(trim($name)));
+                    ->contains(fn (string $name): bool => isset($permissionNames[trim($name)]));
             }
 
-            return $user->can($permission);
+            return isset($permissionNames[$permission]);
         } catch (Throwable) {
             return false;
         }

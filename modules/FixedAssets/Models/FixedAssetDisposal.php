@@ -11,6 +11,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerInvoice;
 
 class FixedAssetDisposal extends Model
 {
@@ -26,6 +27,10 @@ class FixedAssetDisposal extends Model
 
     public const StatusReversed = 'reversed';
 
+    public const SettlementDirect = 'direct_settlement';
+
+    public const SettlementCustomerInvoice = 'customer_invoice';
+
     protected $fillable = [
         'doc_number',
         'doc_num',
@@ -38,6 +43,13 @@ class FixedAssetDisposal extends Model
         'reason',
         'customer_id',
         'proceeds_account_id',
+        'settlement_path',
+        'tax_rate',
+        'tax_amount',
+        'gross_proceeds',
+        'customer_invoice_id',
+        'gain_loss_journal_entry_id',
+        'gain_loss_reversal_journal_entry_id',
         'original_cost',
         'base_original_cost',
         'accumulated_depreciation',
@@ -80,6 +92,9 @@ class FixedAssetDisposal extends Model
             'base_gain_amount' => 'decimal:4',
             'loss_amount' => 'decimal:4',
             'base_loss_amount' => 'decimal:4',
+            'tax_rate' => 'decimal:4',
+            'tax_amount' => 'decimal:4',
+            'gross_proceeds' => 'decimal:4',
             'approved_at' => 'datetime',
             'posted_at' => 'datetime',
             'reversed_at' => 'datetime',
@@ -136,6 +151,21 @@ class FixedAssetDisposal extends Model
     public function reversalJournalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id')->withTrashed();
+    }
+
+    public function customerInvoice(): BelongsTo
+    {
+        return $this->belongsTo(CustomerInvoice::class);
+    }
+
+    public function gainLossJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'gain_loss_journal_entry_id')->withTrashed();
+    }
+
+    public function gainLossReversalJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'gain_loss_reversal_journal_entry_id')->withTrashed();
     }
 
     public function approvedBy(): BelongsTo

@@ -137,6 +137,8 @@ return [
         'category' => 'Category',
         'group' => 'Group',
         'cost_as_inventory' => 'Inventory Cost',
+        'tracks_expiry' => 'Track Expiry',
+        'default_shelf_life_days' => 'Default Shelf Life (days)',
         'is_displayable' => 'Displayable',
         'options' => 'Options',
         'status' => 'Status',
@@ -283,6 +285,7 @@ return [
     'options' => [
         'help' => 'Set how this product is handled in storage, costing, and operational display.',
         'cost_as_inventory' => 'Included in inventory costing.',
+        'tracks_expiry' => 'Require batch expiry dates and block expired stock from issue.',
         'is_displayable' => 'Available in operational selectors.',
     ],
     'document_number_control' => [

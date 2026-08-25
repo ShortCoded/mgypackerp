@@ -62,6 +62,8 @@ class Product extends Model
         'item_group_id',
         'cost_as_inventory',
         'is_displayable',
+        'tracks_expiry',
+        'default_shelf_life_days',
         'status',
         'notes',
         'created_by',
@@ -78,6 +80,7 @@ class Product extends Model
         'item_classification' => self::ClassificationFinishedProduct,
         'cost_as_inventory' => true,
         'is_displayable' => true,
+        'tracks_expiry' => false,
         'status' => 'active',
     ];
 
@@ -223,6 +226,8 @@ class Product extends Model
             'equivalent_value' => 'decimal:6',
             'cost_as_inventory' => 'boolean',
             'is_displayable' => 'boolean',
+            'tracks_expiry' => 'boolean',
+            'default_shelf_life_days' => 'integer',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',

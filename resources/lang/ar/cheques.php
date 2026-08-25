@@ -58,6 +58,7 @@ return [
         'other' => 'أخرى',
     ],
     'statuses' => [
+        'clearing_reversed' => 'عكس تسوية الشيك',
         'received' => 'وارد',
         'deposited' => 'مودع',
         'collected' => 'محصل',
@@ -70,6 +71,8 @@ return [
         'deleted' => 'محذوف',
     ],
     'actions' => [
+        'reverse_clearing' => 'عكس التسوية البنكية',
+        'represent' => 'إعادة تقديم الشيك',
         'add_line' => 'إضافة سطر',
         'mark_deposited' => 'تعليم كمودع',
         'mark_collected' => 'تعليم كمحصل',
@@ -132,6 +135,10 @@ return [
         'updated_successfully' => 'تم تحديث إعدادات أرقام الشيكات بنجاح.',
     ],
     'js' => [
+        'reverse_clearing_confirm_title' => 'عكس التسوية البنكية؟',
+        'reverse_clearing_confirm_text' => 'سيتم إنشاء قيد عكسي جديد يعيد البنك وأوراق الدفع دون إعادة فتح حساب المورد.',
+        'reverse_clearing_reason_placeholder' => 'سبب العكس البنكي مطلوب',
+        'reverse_clearing_confirm_yes' => 'عكس التسوية',
         'select_bank_account' => 'اختر الحساب البنكي',
         'select_currency' => 'اختر العملة',
         'select_account' => 'اختر الحساب',

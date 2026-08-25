@@ -8,12 +8,14 @@ use Illuminate\Http\Request;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\ErpUi\ErpUiScreenDefinition;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
+use Modules\Core\Services\ErpUi\ErpUiShellOverviewService;
 
 class ErpUiShellController
 {
     public function __construct(
         private readonly ErpUiScreenRegistry $screens,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly ErpUiShellOverviewService $overviews,
     ) {}
 
     public function index(Request $request): View
@@ -23,6 +25,7 @@ class ErpUiShellController
         return view('modules.ui-shell.index', [
             'definition' => $screen,
             'screen' => $screen->toArray(),
+            'overview' => $this->overviews->for($screen, $request),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($screen->route('index')),
         ]);
     }

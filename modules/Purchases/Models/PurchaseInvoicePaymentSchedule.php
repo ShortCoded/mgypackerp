@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -21,6 +22,8 @@ class PurchaseInvoicePaymentSchedule extends Model
     public const StatusVoucherDraft = 'voucher_draft';
 
     public const StatusPaid = 'paid';
+
+    public const StatusPartiallyPaid = 'partially_paid';
 
     public const StatusSettled = 'settled';
 
@@ -76,6 +79,15 @@ class PurchaseInvoicePaymentSchedule extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];
+    }
+
+    protected function outstandingAmount(): Attribute
+    {
+        return Attribute::get(function (): string {
+            $outstanding = bcsub(bcsub((string) $this->amount, (string) $this->paid_amount, 4), (string) $this->credited_amount, 4);
+
+            return bccomp($outstanding, '0', 4) < 0 ? '0.0000' : $outstanding;
+        });
     }
 
     public function purchaseInvoice(): BelongsTo

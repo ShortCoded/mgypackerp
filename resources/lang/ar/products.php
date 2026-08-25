@@ -137,6 +137,8 @@ return [
         'category' => 'الفئة',
         'group' => 'المجموعة',
         'cost_as_inventory' => 'تكلفة المخزون',
+        'tracks_expiry' => 'تتبع الصلاحية',
+        'default_shelf_life_days' => 'مدة الصلاحية الافتراضية (يوم)',
         'is_displayable' => 'قابل للعرض',
         'options' => 'الخيارات',
         'status' => 'الحالة',
@@ -283,6 +285,7 @@ return [
     'options' => [
         'help' => 'حدد طريقة التعامل مع المنتج في التخزين والتكلفة وشاشات التشغيل.',
         'cost_as_inventory' => 'يدخل ضمن تكلفة المخزون.',
+        'tracks_expiry' => 'يلزم تاريخ صلاحية للدفعة ويمنع صرف المخزون منتهي الصلاحية.',
         'is_displayable' => 'يظهر في شاشات التشغيل والاختيار.',
     ],
     'document_number_control' => [

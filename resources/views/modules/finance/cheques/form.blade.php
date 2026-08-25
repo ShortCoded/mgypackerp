@@ -430,6 +430,22 @@
         </div>
     </div>
 
+    @if($mode === 'view' && $record?->clearingEvents?->isNotEmpty())
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">{{ __('Clearing and reversal lineage') }}</h6></div>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead><tr><th>#</th><th>{{ __('Clearing date') }}</th><th>{{ __('Status') }}</th><th>{{ __('Clearing Journal') }}</th><th>{{ __('Reversal Journal') }}</th><th>{{ __('Reason') }}</th></tr></thead>
+                    <tbody>
+                        @foreach($record->clearingEvents as $event)
+                            <tr><td>{{ $event->sequence }}</td><td>{{ $dateFormatService->formatDate($event->clearing_date, '—') }}</td><td>{{ str($event->status)->replace('_', ' ')->title() }}</td><td>{{ $event->clearingJournalEntry?->doc_num ?? '—' }}</td><td>{{ $event->reversalJournalEntry?->doc_num ?? '—' }}</td><td>{{ $event->reversal_reason }}</td></tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
     @if($mode === 'view')
         <div class="card mb-3">
             <div class="card-header">

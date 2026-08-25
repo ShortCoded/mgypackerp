@@ -3,10 +3,24 @@
 use App\Models\User;
 use Database\Seeders\RuntimeDemoDataSeeder;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
+use Modules\Finance\Models\FundTransfer;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Models\FixedAssetDepreciationRun;
+use Modules\Inventory\Models\InventoryReservation;
+use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Production\Models\ProductionQualityInspection;
+use Modules\Production\Models\ProductionRun;
+use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerReceipt;
 
 function runtimeDemoCount(string $table): int
 {
@@ -157,6 +171,8 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
     expect($fullRole->company_access_restricted)->toBeFalse()
         ->and($fullRole->branch_access_restricted)->toBeFalse()
         ->and($fullRole->financial_period_access_restricted)->toBeFalse()
+        ->and($fullRole->permissions()->count())->toBe(count(app(PermissionRegistryService::class)->all()))
+        ->and($fullRole->hasPermissionTo('products.view'))->toBeTrue()
         ->and($fullRole->companyAccessCompanies)->toHaveCount(0)
         ->and($fullRole->branchAccessBranches)->toHaveCount(0)
         ->and($fullRole->financialPeriodAccessPeriods)->toHaveCount(0);
@@ -170,11 +186,11 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
         ->and($nileRole->branch_access_restricted)->toBeTrue()
         ->and($nileRole->financial_period_access_restricted)->toBeTrue()
         ->and($nileRole->companyAccessCompanies->pluck('name')->all())
-        ->toBe(['Nile Wood Industries - Runtime Demo'])
+        ->toBe(['Mgy Plast Manufacturing - Runtime Demo'])
         ->and($nileRole->branchAccessBranches->pluck('name')->sort()->values()->all())
         ->toBe([
-            '10th of Ramadan Warehouse - Runtime Demo',
-            'Cairo Factory - Runtime Demo',
+            '10th of Ramadan Distribution Warehouse - Runtime Demo',
+            '10th of Ramadan Plastic Factory - Runtime Demo',
         ])
         ->and($nileRole->financialPeriodAccessPeriods->pluck('name')->sort()->values()->all())
         ->toBe([
@@ -188,9 +204,9 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
         ->firstOrFail();
 
     expect($deltaRole->companyAccessCompanies->pluck('name')->all())
-        ->toBe(['Delta Home Furniture - Runtime Demo'])
+        ->toBe(['Delta Packaging Trading - Runtime Demo'])
         ->and($deltaRole->branchAccessBranches->pluck('name')->all())
-        ->toBe(['Alexandria Showroom - Runtime Demo'])
+        ->toBe(['Alexandria Packaging Sales Office - Runtime Demo'])
         ->and($deltaRole->financialPeriodAccessPeriods->pluck('name')->all())
         ->toBe(['FY 2026 - Runtime Demo']);
 
@@ -223,5 +239,139 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
 
             expect($product->{$relation}->company_id)->toBe($product->company_id);
         }
+    });
+
+    $primaryCompany = Company::query()->where('name', 'Mgy Plast Manufacturing - Runtime Demo')->firstOrFail();
+    $factoryBranch = Branch::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('name', '10th of Ramadan Plastic Factory - Runtime Demo')
+        ->firstOrFail();
+    $finishedStore = BranchStore::query()
+        ->where('branch_id', $factoryBranch->getKey())
+        ->where('name', 'Finished Goods Warehouse - Runtime Demo')
+        ->firstOrFail();
+    expect(BranchStore::query()->where('branch_id', $factoryBranch->getKey())->count())->toBeGreaterThanOrEqual(3);
+
+    foreach ([
+        'customers' => 3,
+        'suppliers' => 3,
+        'cashboxes' => 1,
+        'bank_accounts' => 1,
+        'inventory_accounting_mappings' => 1,
+        'inventory_opening_stocks' => 2,
+        'purchase_requisitions' => 2,
+        'request_for_quotations' => 1,
+        'supplier_quotations' => 2,
+        'supplier_selections' => 1,
+        'purchase_orders' => 1,
+        'unpriced_inventory_receipts' => 1,
+        'goods_receipt_inspections' => 1,
+        'purchase_invoices' => 1,
+        'supplier_payment_contexts' => 1,
+        'production_orders' => 1,
+        'production_runs' => 1,
+        'quality_inspections' => 3,
+        'quotations' => 1,
+        'sales_orders' => 2,
+        'customer_invoices' => 1,
+        'customer_receipts' => 2,
+        'sales_returns' => 1,
+        'fixed_assets' => 2,
+        'fixed_asset_depreciation_runs' => 1,
+        'fund_transfers' => 1,
+        'cheques' => 1,
+    ] as $table => $expectedCount) {
+        expect(DB::table($table)->where('company_id', $primaryCompany->getKey())->count())
+            ->toBeGreaterThanOrEqual($expectedCount, "The integrated demo is missing records in {$table}.");
+    }
+
+    $purchaseInvoice = PurchaseInvoice::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('supplier_invoice_number', 'EPS-INV-260216-77')
+        ->sole();
+    expect($purchaseInvoice->status)->toBe(PurchaseInvoice::StatusApproved)
+        ->and($purchaseInvoice->payment_status)->toBe(PurchaseInvoice::PaymentStatusPartiallyPaid)
+        ->and((string) $purchaseInvoice->total_amount)->toBe('268128.0000')
+        ->and((string) $purchaseInvoice->paid_amount)->toBe('100000.0000')
+        ->and((string) $purchaseInvoice->remaining_amount)->toBe('168128.0000');
+
+    $supplierPayment = SupplierPaymentContext::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('reason', 'First resin invoice installment')
+        ->sole();
+    expect($supplierPayment->status)->toBe(SupplierPaymentContext::StatusApproved)
+        ->and((string) $supplierPayment->amount)->toBe('100000.0000')
+        ->and((string) $supplierPayment->allocated_amount)->toBe('100000.0000');
+
+    $customerInvoice = CustomerInvoice::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('total_amount', '18500')
+        ->sole();
+    expect($customerInvoice->status)->toBe(CustomerInvoice::StatusPosted)
+        ->and((string) $customerInvoice->total_amount)->toBe('18500.0000')
+        ->and((string) $customerInvoice->paid_amount)->toBe('10000.0000')
+        ->and((string) $customerInvoice->credited_amount)->toBe('850.0000')
+        ->and((string) $customerInvoice->remaining_amount)->toBe('7650.0000')
+        ->and(CustomerReceipt::query()->where('company_id', $primaryCompany->getKey())->where('receipt_type', CustomerReceipt::TypeAdvance)->value('unallocated_amount'))->toBe('25000.0000');
+
+    $productionRun = ProductionRun::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('batch_lot', 'PAIL-BLU-260403-A')
+        ->with('requirements')
+        ->sole();
+    expect($productionRun->status)->toBe(ProductionRun::StatusCompleted)
+        ->and((string) $productionRun->good_base_quantity)->toBe('490.00000000')
+        ->and((string) $productionRun->scrap_base_quantity)->toBe('10.00000000')
+        ->and((string) $productionRun->received_base_quantity)->toBe('490.00000000')
+        ->and(ProductionQualityInspection::query()->where('production_run_id', $productionRun->getKey())->where('result', 'passed')->count())->toBe(2)
+        ->and(ProductionQualityInspection::query()->where('production_run_id', $productionRun->getKey())->where('result', 'failed')->count())->toBe(1);
+
+    $productionRun->requirements->each(function ($requirement): void {
+        $issued = bcadd((string) $requirement->issued_quantity, (string) $requirement->additional_issued_quantity, 8);
+        $accounted = bcadd(
+            bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8),
+            (string) $requirement->returned_quantity,
+            8,
+        );
+
+        expect($accounted)->toBe($issued);
+    });
+
+    expect(FixedAsset::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAsset::StatusActive)->count())->toBeGreaterThanOrEqual(1)
+        ->and(FixedAsset::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAsset::StatusDraft)->count())->toBe(1)
+        ->and(FixedAssetDepreciationRun::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAssetDepreciationRun::StatusPosted)->count())->toBe(3)
+        ->and(FundTransfer::query()->where('company_id', $primaryCompany->getKey())->where('status', FundTransfer::StatusApproved)->value('source_amount'))->toBe('50000.0000')
+        ->and(InventoryReservation::query()->where('company_id', $primaryCompany->getKey())->where('status', InventoryReservation::StatusActive)->count())->toBe(0);
+
+    $pail = Product::query()->where('company_id', $primaryCompany->getKey())->where('barcode', 'MGY-FG-PAIL-20L-BLU')->firstOrFail();
+    $availablePails = InventoryTransaction::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('branch_store_id', $finishedStore->getKey())
+        ->where('product_id', $pail->getKey())
+        ->where('stock_status', InventoryTransaction::StatusAvailable)
+        ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as quantity')
+        ->value('quantity');
+    $negativePositions = InventoryTransaction::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->groupBy('branch_store_id', 'product_id', 'stock_status')
+        ->selectRaw('branch_store_id, product_id, stock_status, sum(quantity_in - quantity_out) as quantity')
+        ->havingRaw('sum(quantity_in - quantity_out) < -0.00000001')
+        ->get();
+    expect((float) $availablePails)->toBeGreaterThan(1000)
+        ->and($negativePositions->all())->toBe([], 'Negative inventory positions: '.$negativePositions->toJson());
+
+    $postedJournals = JournalEntry::query()
+        ->where('company_id', $primaryCompany->getKey())
+        ->where('is_posted', true)
+        ->with('lines')
+        ->get();
+    expect($postedJournals->count())->toBeGreaterThanOrEqual(10);
+    $postedJournals->each(function (JournalEntry $journal): void {
+        expect($journal->lines)->not->toBeEmpty();
+
+        $debits = $journal->lines->reduce(fn (string $sum, $line): string => bcadd($sum, (string) $line->debit_amount, 4), '0.0000');
+        $credits = $journal->lines->reduce(fn (string $sum, $line): string => bcadd($sum, (string) $line->credit_amount, 4), '0.0000');
+
+        expect($debits)->toBe($credits, "Journal {$journal->doc_num} is not balanced.");
     });
 });

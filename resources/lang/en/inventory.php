@@ -450,4 +450,7 @@ return [
             'select2_searching' => 'Searching...',
         ],
     ],
+    'reports' => [
+        'gl_reconciliation_unavailable' => "General Ledger reconciliation is unavailable until the company's inventory accounting mappings are configured.",
+    ],
 ];

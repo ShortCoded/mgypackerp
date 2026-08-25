@@ -24,6 +24,7 @@ use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Services\CustomerInvoiceService;
 
 class FixedAssetLifecycleService
 {
@@ -37,6 +38,7 @@ class FixedAssetLifecycleService
         private readonly BusinessPartnerAccountService $accounts,
         private readonly FinancialPeriodService $financialPeriods,
         private readonly FixedAssetDepreciationCalculator $depreciationCalculator,
+        private readonly CustomerInvoiceService $customerInvoices,
     ) {}
 
     public function activate(FixedAsset $asset, string $activationDate): FixedAsset
@@ -178,6 +180,10 @@ class FixedAssetLifecycleService
             $mapping = $this->requiredMapping($asset);
             $position = $this->bookValues->position($asset, $date);
             $proceeds = $this->scale($data['proceeds'] ?? 0);
+            $settlementPath = (string) ($data['settlement_path'] ?? FixedAssetDisposal::SettlementDirect);
+            $taxRate = $this->scale($data['tax_rate'] ?? 0);
+            $taxAmount = bcdiv(bcmul($proceeds, $taxRate, 8), '100', 4);
+            $grossProceeds = bcadd($proceeds, $taxAmount, 4);
             $baseProceeds = bcmul($proceeds, $this->rate($asset->exchange_rate), 4);
             $gain = bccomp($proceeds, $position['net_book_value'], 4) > 0 ? bcsub($proceeds, $position['net_book_value'], 4) : '0.0000';
             $loss = bccomp($position['net_book_value'], $proceeds, 4) > 0 ? bcsub($position['net_book_value'], $proceeds, 4) : '0.0000';
@@ -185,7 +191,7 @@ class FixedAssetLifecycleService
             $baseLoss = bccomp($position['base_net_book_value'], $baseProceeds, 4) > 0 ? bcsub($position['base_net_book_value'], $baseProceeds, 4) : '0.0000';
             $proceedsAccount = $this->modelByDocNum(Account::class, (int) $asset->company_id, $data['proceeds_account_doc_num'] ?? null);
 
-            if (bccomp($proceeds, '0', 4) > 0 && (! $proceedsAccount instanceof Account || ! $this->postable($proceedsAccount))) {
+            if ($settlementPath === FixedAssetDisposal::SettlementDirect && bccomp($proceeds, '0', 4) > 0 && (! $proceedsAccount instanceof Account || ! $this->postable($proceedsAccount))) {
                 throw new DomainException(__('fixed_assets.lifecycle.errors.proceeds_account_required'));
             }
 
@@ -194,6 +200,10 @@ class FixedAssetLifecycleService
 
             if ($customerDocNum !== null && (! $customer instanceof Customer || $customer->status !== 'active')) {
                 throw new DomainException(__('fixed_assets.lifecycle.errors.customer_unavailable'));
+            }
+            if ($settlementPath === FixedAssetDisposal::SettlementCustomerInvoice
+                && ($data['disposition_type'] !== FixedAssetDisposal::TypeSale || ! $customer instanceof Customer)) {
+                throw new DomainException(__('An invoiced Fixed Asset disposal requires a sale and an active Customer.'));
             }
 
             $disposal = FixedAssetDisposal::query()->create([
@@ -207,6 +217,10 @@ class FixedAssetLifecycleService
                 'reason' => $data['reason'],
                 'customer_id' => $customer?->getKey(),
                 'proceeds_account_id' => $proceedsAccount?->getKey(),
+                'settlement_path' => $settlementPath,
+                'tax_rate' => $taxRate,
+                'tax_amount' => $taxAmount,
+                'gross_proceeds' => $grossProceeds,
                 'original_cost' => $position['acquisition_cost'],
                 'base_original_cost' => $position['base_acquisition_cost'],
                 'accumulated_depreciation' => $position['accumulated_depreciation'],
@@ -228,44 +242,106 @@ class FixedAssetLifecycleService
                 'created_by' => auth()->id(),
             ]);
 
-            $journalLines = [];
             $dimensions = ['branch_id' => $asset->branch_id, 'cost_center_id' => $asset->cost_center_id];
             $description = __('fixed_assets.lifecycle.journal.disposal_line', ['asset' => $asset->doc_num]);
-
-            if (bccomp($baseProceeds, '0', 4) > 0) {
-                $journalLines[] = ['account_id' => $proceedsAccount->getKey(), 'debit_amount' => $baseProceeds, 'credit_amount' => 0, 'description' => $description, 'customer_id' => $customer?->getKey(), ...$dimensions];
-            }
-
-            if (bccomp($position['base_accumulated_depreciation'], '0', 4) > 0) {
-                $journalLines[] = ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => $position['base_accumulated_depreciation'], 'credit_amount' => 0, 'description' => $description, ...$dimensions];
-            }
-
-            if (bccomp($baseLoss, '0', 4) > 0) {
-                $journalLines[] = ['account_id' => $mapping->disposal_loss_account_id, 'debit_amount' => $baseLoss, 'credit_amount' => 0, 'description' => $description, ...$dimensions];
-            }
-
-            $journalLines[] = ['account_id' => $asset->account_id, 'debit_amount' => 0, 'credit_amount' => $position['base_acquisition_cost'], 'description' => $description, ...$dimensions];
-
-            if (bccomp($baseGain, '0', 4) > 0) {
-                $journalLines[] = ['account_id' => $mapping->disposal_gain_account_id, 'debit_amount' => 0, 'credit_amount' => $baseGain, 'description' => $description, ...$dimensions];
-            }
-
             $mainCurrency = Currency::query()->forCompany((int) $asset->company_id)->where('is_main', true)->whereNull('deleted_at')->firstOrFail();
-            $journal = $this->journals->createPostedFromSource([
-                'entry_date' => $date,
-                'company_id' => $asset->company_id,
-                'financial_period_id' => $period->getKey(),
-                'branch_id' => $asset->branch_id,
-                'currency_id' => $mainCurrency->getKey(),
-                'exchange_rate' => '1.000000',
-                'description' => __('fixed_assets.lifecycle.journal.disposal', ['document' => $disposal->doc_num]),
-                'notes' => $data['notes'] ?? null,
-                'source_type' => 'fixed_asset_disposal',
-                'source_id' => $disposal->getKey(),
-                'source_doc_num' => $disposal->doc_num,
-            ], $journalLines);
 
-            $disposal->forceFill(['journal_entry_id' => $journal->getKey()])->save();
+            if ($settlementPath === FixedAssetDisposal::SettlementCustomerInvoice) {
+                $clearingAccount = $mapping->disposalClearingAccount;
+                if (! $clearingAccount instanceof Account || ! $this->postable($clearingAccount)) {
+                    throw new DomainException(__('The Fixed Asset disposal clearing account is not configured.'));
+                }
+                $derecognitionLines = [];
+                if (bccomp($position['base_accumulated_depreciation'], '0', 4) > 0) {
+                    $derecognitionLines[] = ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => $position['base_accumulated_depreciation'], 'credit_amount' => 0, 'description' => $description, ...$dimensions];
+                }
+                if (bccomp($position['base_net_book_value'], '0', 4) > 0) {
+                    $derecognitionLines[] = ['account_id' => $clearingAccount->getKey(), 'debit_amount' => $position['base_net_book_value'], 'credit_amount' => 0, 'description' => $description, ...$dimensions];
+                }
+                $derecognitionLines[] = ['account_id' => $asset->account_id, 'debit_amount' => 0, 'credit_amount' => $position['base_acquisition_cost'], 'description' => $description, ...$dimensions];
+                $journal = $this->journals->createPostedFromSource([
+                    'entry_date' => $date, 'company_id' => $asset->company_id,
+                    'financial_period_id' => $period->getKey(), 'branch_id' => $asset->branch_id,
+                    'currency_id' => $mainCurrency->getKey(), 'exchange_rate' => '1.000000',
+                    'description' => __('Fixed Asset derecognition :document', ['document' => $disposal->doc_num]),
+                    'notes' => $data['notes'] ?? null, 'source_type' => 'fixed_asset_disposal_derecognition',
+                    'source_id' => $disposal->getKey(), 'source_doc_num' => $disposal->doc_num,
+                ], $derecognitionLines);
+
+                $invoice = $this->customerInvoices->createNonStockSourceInvoice([
+                    'company_id' => $asset->company_id, 'financial_period_id' => $period->getKey(),
+                    'branch_id' => $asset->branch_id, 'customer_id' => $customer->getKey(),
+                    'invoice_date' => $date->toDateString(), 'due_date' => $data['due_date'] ?? $date->toDateString(),
+                    'currency_id' => $asset->currency_id, 'exchange_rate' => $asset->exchange_rate,
+                    'net_amount' => $proceeds, 'tax_amount' => $taxAmount,
+                    'description' => __('Fixed Asset sale :asset', ['asset' => $asset->doc_num]),
+                    'source_type' => 'fixed_asset_disposal', 'source_id' => $disposal->getKey(),
+                    'source_doc_num' => $disposal->doc_num,
+                    'source_snapshot' => ['fixed_asset_doc_num' => $asset->doc_num, 'disposal_doc_num' => $disposal->doc_num, 'tax_rate' => $taxRate, 'tax_code' => bccomp($taxAmount, '0', 4) > 0 ? 'VAT' : 'EXEMPT', 'unit_code' => 'EA'],
+                    'notes' => $data['notes'] ?? null,
+                ]);
+                $invoice = $this->customerInvoices->post($invoice);
+
+                $gainLossLines = bccomp($baseGain, '0', 4) > 0
+                    ? [
+                        ['account_id' => $clearingAccount->getKey(), 'debit_amount' => $baseGain, 'credit_amount' => 0, 'description' => $description, ...$dimensions],
+                        ['account_id' => $mapping->disposal_gain_account_id, 'debit_amount' => 0, 'credit_amount' => $baseGain, 'description' => $description, ...$dimensions],
+                    ]
+                    : [
+                        ['account_id' => $mapping->disposal_loss_account_id, 'debit_amount' => $baseLoss, 'credit_amount' => 0, 'description' => $description, ...$dimensions],
+                        ['account_id' => $clearingAccount->getKey(), 'debit_amount' => 0, 'credit_amount' => $baseLoss, 'description' => $description, ...$dimensions],
+                    ];
+                $gainLossJournal = bccomp($baseGain, '0', 4) > 0 || bccomp($baseLoss, '0', 4) > 0
+                    ? $this->journals->createPostedFromSource([
+                        'entry_date' => $date, 'company_id' => $asset->company_id,
+                        'financial_period_id' => $period->getKey(), 'branch_id' => $asset->branch_id,
+                        'currency_id' => $mainCurrency->getKey(), 'exchange_rate' => '1.000000',
+                        'description' => __('Fixed Asset disposal gain/loss :document', ['document' => $disposal->doc_num]),
+                        'notes' => $data['notes'] ?? null, 'source_type' => 'fixed_asset_disposal_gain_loss',
+                        'source_id' => $disposal->getKey(), 'source_doc_num' => $disposal->doc_num,
+                    ], $gainLossLines)
+                    : null;
+                $disposal->forceFill([
+                    'journal_entry_id' => $journal->getKey(), 'customer_invoice_id' => $invoice->getKey(),
+                    'gain_loss_journal_entry_id' => $gainLossJournal?->getKey(),
+                ])->save();
+            } else {
+                $journalLines = [];
+
+                if (bccomp($baseProceeds, '0', 4) > 0) {
+                    $journalLines[] = ['account_id' => $proceedsAccount->getKey(), 'debit_amount' => $baseProceeds, 'credit_amount' => 0, 'description' => $description, 'customer_id' => $customer?->getKey(), ...$dimensions];
+                }
+
+                if (bccomp($position['base_accumulated_depreciation'], '0', 4) > 0) {
+                    $journalLines[] = ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => $position['base_accumulated_depreciation'], 'credit_amount' => 0, 'description' => $description, ...$dimensions];
+                }
+
+                if (bccomp($baseLoss, '0', 4) > 0) {
+                    $journalLines[] = ['account_id' => $mapping->disposal_loss_account_id, 'debit_amount' => $baseLoss, 'credit_amount' => 0, 'description' => $description, ...$dimensions];
+                }
+
+                $journalLines[] = ['account_id' => $asset->account_id, 'debit_amount' => 0, 'credit_amount' => $position['base_acquisition_cost'], 'description' => $description, ...$dimensions];
+
+                if (bccomp($baseGain, '0', 4) > 0) {
+                    $journalLines[] = ['account_id' => $mapping->disposal_gain_account_id, 'debit_amount' => 0, 'credit_amount' => $baseGain, 'description' => $description, ...$dimensions];
+                }
+
+                $journal = $this->journals->createPostedFromSource([
+                    'entry_date' => $date,
+                    'company_id' => $asset->company_id,
+                    'financial_period_id' => $period->getKey(),
+                    'branch_id' => $asset->branch_id,
+                    'currency_id' => $mainCurrency->getKey(),
+                    'exchange_rate' => '1.000000',
+                    'description' => __('fixed_assets.lifecycle.journal.disposal', ['document' => $disposal->doc_num]),
+                    'notes' => $data['notes'] ?? null,
+                    'source_type' => 'fixed_asset_disposal',
+                    'source_id' => $disposal->getKey(),
+                    'source_doc_num' => $disposal->doc_num,
+                ], $journalLines);
+
+                $disposal->forceFill(['journal_entry_id' => $journal->getKey()])->save();
+            }
             $status = match ($data['disposition_type']) {
                 FixedAssetDisposal::TypeSale => FixedAsset::StatusSold,
                 FixedAssetDisposal::TypeWriteOff => FixedAsset::StatusWrittenOff,
@@ -297,7 +373,24 @@ class FixedAssetLifecycleService
                 lockForUpdate: true,
             );
 
-            $disposal->loadMissing('journalEntry.lines');
+            $disposal->loadMissing(['journalEntry.lines', 'gainLossJournalEntry.lines', 'customerInvoice']);
+            if ($disposal->customerInvoice) {
+                $this->customerInvoices->reopen($disposal->customerInvoice, $reason);
+            }
+            $gainLossReversal = $disposal->gainLossJournalEntry
+                ? $this->journals->createPostedReversalFromSource($disposal->gainLossJournalEntry, [
+                    'entry_date' => $disposal->disposal_date,
+                    'company_id' => $disposal->company_id,
+                    'financial_period_id' => $disposal->financial_period_id,
+                    'currency_id' => $disposal->gainLossJournalEntry->currency_id,
+                    'exchange_rate' => $disposal->gainLossJournalEntry->exchange_rate,
+                    'description' => __('Fixed Asset disposal gain/loss reversal :document', ['document' => $disposal->doc_num]),
+                    'notes' => $reason,
+                    'source_type' => 'fixed_asset_disposal_gain_loss_reversal',
+                    'source_id' => $disposal->getKey(),
+                    'source_doc_num' => $disposal->doc_num,
+                ])
+                : null;
             $reversal = $this->journals->createPostedReversalFromSource($disposal->journalEntry, [
                 'entry_date' => $disposal->disposal_date,
                 'company_id' => $disposal->company_id,
@@ -320,6 +413,7 @@ class FixedAssetLifecycleService
             $disposal->forceFill([
                 'status' => FixedAssetDisposal::StatusReversed,
                 'reversal_journal_entry_id' => $reversal->getKey(),
+                'gain_loss_reversal_journal_entry_id' => $gainLossReversal?->getKey(),
                 'reversed_at' => now(),
                 'reversed_by' => auth()->id(),
                 'reversal_reason' => $reason,
@@ -345,6 +439,7 @@ class FixedAssetLifecycleService
             'depreciation_expense_account_id' => $this->requiredPostableOrGroupAccount($companyId, $data['depreciation_expense_account_doc_num'])->getKey(),
             'disposal_gain_account_id' => $this->requiredPostableOrGroupAccount($companyId, $data['disposal_gain_account_doc_num'])->getKey(),
             'disposal_loss_account_id' => $this->requiredPostableOrGroupAccount($companyId, $data['disposal_loss_account_doc_num'])->getKey(),
+            'disposal_clearing_account_id' => $this->requiredPostableOrGroupAccount($companyId, $data['disposal_clearing_account_doc_num'])->getKey(),
             'updated_by' => auth()->id(),
         ];
 

@@ -13,6 +13,7 @@
         :title="__('Procurement Cycle Report')"
         :description="__('Operational procurement, receiving, quality, supplier payable, return, and production-linked analysis.')"
     >
+        @can('reports.purchases.export')
         <x-slot:actions>
             <x-admin.report.actions-toolbar
                 filter-target="procurement-cycle-report-filters"
@@ -31,6 +32,7 @@
                 ]"
             />
         </x-slot:actions>
+        @endcan
 
         <x-admin.report.filter-panel
             id="procurement-cycle-report-filters"
@@ -153,6 +155,19 @@
                 </div>
             @endforeach
         </div>
+
+        @if($reportType === \Modules\Purchases\Services\Reports\ProcurementCycleReport::GoodsReceivedNotInvoiced)
+            <div class="card mb-3">
+                <div class="card-header py-2"><h6 class="mb-0">{{ __('Goods Received Not Invoiced') }}</h6></div>
+                <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="bg-100"><tr><th>{{ __('Date / GRN') }}</th><th>{{ __('Supplier / PO') }}</th><th>{{ __('Product / Store') }}</th><th class="text-end">{{ __('Received Qty') }}</th><th class="text-end">{{ __('Invoiced Qty') }}</th><th class="text-end">{{ __('Returned Qty') }}</th><th class="text-end">{{ __('Remaining Qty') }}</th><th class="text-end">{{ __('Provisional Unit Value') }}</th><th class="text-end">{{ __('Remaining GRNI Value') }}</th><th>{{ __('Currency') }}</th><th class="text-end">{{ __('Days Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead>
+                    <tbody>@forelse($rows as $row)<tr><td>{{ $row['date'] }}<br><span dir="ltr">{{ $row['document'] }}</span></td><td>{{ $row['supplier'] }}<br><span dir="ltr">{{ $row['purchase_order'] }}</span></td><td>{{ $row['product'] }}<br>{{ $row['warehouse'] }}</td><td class="text-end">{{ $numbers->format($row['received_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['invoiced_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['returned_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['remaining_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['provisional_unit_value']) }}</td><td class="text-end">{{ $numbers->format($row['remaining_grni_value']) }}</td><td>{{ $row['currency'] }}</td><td class="text-end">{{ $row['age_days'] }}</td><td>{{ __($row['status'] === 'cleared' ? 'Cleared' : 'Open') }}</td></tr>@empty<tr><td colspan="12" class="text-center text-muted">{{ __('No matching records.') }}</td></tr>@endforelse</tbody>
+                </table></div>
+            </div>
+            @if($grniReconciliation)
+                <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('GRNI Subledger to General Ledger Reconciliation') }}</h6></div><div class="card-body"><div class="row g-2"><div class="col-md-3"><strong>{{ __('Account') }}</strong><div>{{ $grniReconciliation['account'] ?? __('Not configured') }}</div></div><div class="col-md-3"><strong>{{ __('Subledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['subledger']) }}</div></div><div class="col-md-3"><strong>{{ __('General Ledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['gl']) }}</div></div><div class="col-md-3"><strong>{{ __('Difference') }}</strong><div class="text-{{ $grniReconciliation['status'] === 'reconciled' ? 'success' : 'danger' }}" dir="ltr">{{ $numbers->format($grniReconciliation['difference']) }} — {{ __($grniReconciliation['status']) }}</div></div></div></div></div>
+            @endif
+        @endif
 
         <div class="card">
             <div class="card-header py-2 d-flex justify-content-between align-items-center">

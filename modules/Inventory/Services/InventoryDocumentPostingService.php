@@ -10,6 +10,7 @@ use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Sales\Models\SalesOrderLine;
 
 class InventoryDocumentPostingService
 {
@@ -17,6 +18,7 @@ class InventoryDocumentPostingService
         private readonly InventoryAvailabilityService $availability,
         private readonly InventoryValuationService $valuation,
         private readonly InventoryAccountingPostingService $accounting,
+        private readonly InventoryLayerService $layers,
     ) {}
 
     public function post(InventoryDocument $document): InventoryDocument
@@ -76,9 +78,10 @@ class InventoryDocumentPostingService
                         $locked->document_date,
                     );
 
+                $sourceIssue = null;
                 if ($profile['outbound']) {
                     $this->assertPositionCanIssue($locked, $line, $quantity, $profile['source_status']);
-                    $this->createTransaction(
+                    $sourceIssue = $this->createTransaction(
                         $locked,
                         $line,
                         'out',
@@ -92,7 +95,12 @@ class InventoryDocumentPostingService
                 }
 
                 if ($profile['inbound']) {
-                    $this->createTransaction(
+                    if ($sourceIssue === null && isset($line->product_snapshot['source_issue_transaction_id'])) {
+                        $sourceIssue = InventoryTransaction::query()
+                            ->lockForUpdate()
+                            ->findOrFail($line->product_snapshot['source_issue_transaction_id']);
+                    }
+                    $receiptTransaction = $this->createTransaction(
                         $locked,
                         $line,
                         'in',
@@ -106,6 +114,7 @@ class InventoryDocumentPostingService
                         '0',
                         $unitCost,
                     );
+                    $this->layers->recordInbound($receiptTransaction, $sourceIssue);
                 }
 
                 $line->update([
@@ -175,12 +184,13 @@ class InventoryDocumentPostingService
                     }
                 }
 
-                InventoryTransaction::query()->firstOrCreate(
+                $reversal = InventoryTransaction::query()->firstOrCreate(
                     ['posting_key' => $transaction->posting_key.':reversal'],
                     [
                         ...$transaction->only([
                             'company_id', 'financial_period_id', 'branch_id', 'branch_store_id',
                             'branch_hall_id', 'warehouse_location_id', 'stock_status', 'batch_lot',
+                            'manufacture_date', 'expiry_date',
                             'transaction_date', 'transaction_type', 'product_id', 'unit_id',
                             'source_type', 'source_id', 'source_doc_num', 'source_line_type',
                             'source_line_id', 'supplier_id', 'customer_id', 'production_order_id',
@@ -194,6 +204,11 @@ class InventoryDocumentPostingService
                         'created_by' => auth()->id(),
                     ],
                 );
+                if (bccomp((string) $reversal->quantity_out, '0', 8) > 0) {
+                    $this->layers->allocateIssue($reversal);
+                } else {
+                    $this->layers->recordInbound($reversal);
+                }
             }
 
             $this->accounting->reverse($locked);
@@ -264,15 +279,25 @@ class InventoryDocumentPostingService
             (int) $document->company_id,
             (int) $document->branch_store_id,
             (int) $line->product_id,
-            null,
+            $line->source_line_type === SalesOrderLine::class ? (int) $line->source_line_id : null,
             $line->warehouse_location_id ?? $document->warehouse_location_id,
             $stockStatus,
             $line->batch_lot,
-            true,
+            $line->warehouse_location_id !== null
+                || $document->warehouse_location_id !== null
+                || filled($line->batch_lot),
         );
 
         if (bccomp($quantity, $position['available'], 8) > 0) {
-            throw new DomainException('The inventory movement exceeds unreserved stock in the selected store, location, batch, and status.');
+            throw new DomainException(sprintf(
+                'The inventory movement exceeds unreserved stock in the selected store, location, batch, and status. Document: %s; product ID: %d; requested: %s; available: %s; store ID: %d; status: %s.',
+                $document->doc_num,
+                $line->product_id,
+                $quantity,
+                $position['available'],
+                $document->branch_store_id,
+                $stockStatus,
+            ));
         }
     }
 
@@ -286,10 +311,10 @@ class InventoryDocumentPostingService
         string $quantityIn,
         string $quantityOut,
         string $unitCost,
-    ): void {
+    ): InventoryTransaction {
         $postingKey = "inventory-document:{$document->id}:line:{$line->id}:{$direction}";
 
-        InventoryTransaction::query()->firstOrCreate(
+        $transaction = InventoryTransaction::query()->firstOrCreate(
             ['posting_key' => $postingKey],
             [
                 'company_id' => $document->company_id,
@@ -300,6 +325,8 @@ class InventoryDocumentPostingService
                 'warehouse_location_id' => $warehouseLocationId,
                 'stock_status' => $stockStatus,
                 'batch_lot' => $line->batch_lot,
+                'manufacture_date' => $line->manufacture_date,
+                'expiry_date' => $line->expiry_date,
                 'transaction_date' => $document->document_date,
                 'transaction_type' => $document->document_type,
                 'product_id' => $line->product_id,
@@ -320,6 +347,12 @@ class InventoryDocumentPostingService
                 'created_by' => auth()->id(),
             ],
         );
+
+        if (bccomp($quantityOut, '0', 8) > 0) {
+            $this->layers->allocateIssue($transaction);
+        }
+
+        return $transaction;
     }
 
     private function assertChronologicalPosting(

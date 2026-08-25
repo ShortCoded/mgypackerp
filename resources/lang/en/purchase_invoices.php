@@ -134,9 +134,18 @@ return [
         'paid' => 'Paid',
     ],
     'source_types' => [
-        'scheduled' => 'Unpaid / Scheduled',
+        'scheduled' => 'Scheduled',
         'cashbox' => 'Cashbox',
         'bank' => 'Bank',
+    ],
+    'schedule_statuses' => [
+        'scheduled' => 'Scheduled',
+        'voucher_draft' => 'Voucher Draft',
+        'paid' => 'Paid',
+        'partially_paid' => 'Partially Paid',
+        'settled' => 'Settled by Payment / Credit',
+        'partially_settled' => 'Partially Settled',
+        'cancelled' => 'Cancelled',
     ],
     'discount_types' => [
         'fixed' => 'Fixed Amount',
@@ -150,6 +159,7 @@ return [
         'tax' => 'Tax / VAT',
         'net_total' => 'Net Total',
         'paid' => 'Paid Amount',
+        'credited' => 'Credit / Debit Adjustment',
         'remaining' => 'Remaining Amount',
         'schedule_total' => 'Schedule Total',
         'schedule_difference' => 'Difference',

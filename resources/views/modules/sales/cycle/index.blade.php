@@ -55,7 +55,7 @@
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0 data-table erp-datatable" id="sales-cycle-table" data-datatables='{"paging":false,"searching":false,"info":false,"responsive":false}'>
+                <table class="table table-sm table-hover align-middle mb-0 erp-datatable" id="sales-cycle-table">
                     <thead><tr><th>{{ __('Document') }}</th><th>{{ __('Date') }}</th><th>{{ __('Customer') }}</th>@if($kind === 'sales_orders')<th>{{ __('Required date') }}</th><th>{{ __('Credit') }}</th><th class="text-end">{{ __('Delivered %') }}</th><th class="text-end">{{ __('Invoiced %') }}</th>@endif<th>{{ __('Status') }}</th><th class="text-end">{{ __('Amount') }}</th>@if($kind === 'sales_orders')<th>{{ __('Created by') }}</th><th>{{ __('Updated') }}</th>@endif<th>{{ __('Actions') }}</th></tr></thead>
                     <tbody>
                         @forelse($records as $record)

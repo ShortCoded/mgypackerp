@@ -28,6 +28,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         //
+        $middleware->encryptCookies(except: ['erp_navbar_position']);
+
         $middleware->web(prepend: [
             PreventDynamicPageCache::class,
         ]);

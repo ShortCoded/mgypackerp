@@ -2,6 +2,7 @@
 
 namespace Modules\Core\Services;
 
+use App\Jobs\DeliverWebPushNotification;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Carbon;
@@ -30,7 +31,7 @@ class NotificationService
         array $metadata = [],
         ?string $dedupeKey = null,
     ): UserNotification {
-        return $this->persist([
+        $notification = $this->persist([
             'user_id' => $recipient->getKey(),
             'type' => $type,
             'category' => Str::before($type, '.'),
@@ -42,6 +43,12 @@ class NotificationService
             'delivered_at' => now(),
             'dedupe_key' => $dedupeKey,
         ]);
+
+        if ($notification->wasRecentlyCreated && $this->pushConfigured()) {
+            DeliverWebPushNotification::dispatch((int) $notification->getKey());
+        }
+
+        return $notification;
     }
 
     public function notifyTaskAssigned(UserTask $task, iterable $recipients, User $actor): void
@@ -196,6 +203,9 @@ class NotificationService
 
         foreach ($notifications as $notification) {
             $notification->forceFill(['delivered_at' => $now])->save();
+            if ($this->pushConfigured()) {
+                DeliverWebPushNotification::dispatch((int) $notification->getKey());
+            }
         }
 
         return $notifications->count();
@@ -278,5 +288,12 @@ class NotificationService
             'actor_name' => $actor?->name,
             'due_at' => $task->due_at?->toJSON(),
         ];
+    }
+
+    private function pushConfigured(): bool
+    {
+        return filled(config('webpush.vapid.subject'))
+            && filled(config('webpush.vapid.public_key'))
+            && filled(config('webpush.vapid.private_key'));
     }
 }

@@ -60,6 +60,11 @@
         </tfoot>
     </table>
 
+    @if(!empty($result['subledger_events']))
+        <h2>{{ __('Customer Invoice, Payment and Credit History') }}</h2>
+        <table class="report-table"><thead><tr><th>{{ __('Date') }}</th><th>{{ __('Event') }}</th><th>{{ __('Document') }}</th><th>{{ __('Related Document') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Remaining Credit') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($result['subledger_events'] as $event)<tr><td>{{ $event['date'] }}</td><td>{{ __(str($event['event'])->replace('_', ' ')->title()->toString()) }}</td><td>{{ $event['document'] }}</td><td>{{ $event['related_document'] }}</td><td>{{ $numbers->format($event['amount']) }}</td><td>{{ $event['remaining_credit'] === null ? '—' : $numbers->format($event['remaining_credit']) }}</td><td>{{ __($event['status']) }}</td></tr>@endforeach</tbody></table>
+    @endif
+
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .ledger-report-table { table-layout: fixed; }

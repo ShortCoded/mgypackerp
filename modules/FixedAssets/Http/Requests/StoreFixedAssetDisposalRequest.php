@@ -21,7 +21,7 @@ class StoreFixedAssetDisposalRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['proceeds']);
+        $this->normalizeNumericInput(['proceeds', 'tax_rate']);
         $this->merge([
             'disposal_date' => app(DateFormatService::class)->normalizeForStorage($this->nullableTrim('disposal_date')),
             'disposition_type' => $this->nullableTrim('disposition_type'),
@@ -29,6 +29,9 @@ class StoreFixedAssetDisposalRequest extends FormRequest
             'customer_doc_num' => $this->nullableTrim('customer_doc_num'),
             'proceeds_account_doc_num' => $this->nullableTrim('proceeds_account_doc_num'),
             'proceeds' => $this->nullableTrim('proceeds') ?? '0',
+            'settlement_path' => $this->nullableTrim('settlement_path') ?? FixedAssetDisposal::SettlementDirect,
+            'tax_rate' => $this->nullableTrim('tax_rate') ?? '0',
+            'due_date' => app(DateFormatService::class)->normalizeForStorage($this->nullableTrim('due_date')),
             'notes' => $this->nullableTrim('notes'),
         ]);
     }
@@ -44,6 +47,9 @@ class StoreFixedAssetDisposalRequest extends FormRequest
             'customer_doc_num' => ['nullable', 'string', Rule::exists('customers', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'proceeds_account_doc_num' => ['nullable', 'string', Rule::exists('accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('is_postable', true)->where('is_group', false)->where('status', 'active')->whereNull('deleted_at'))],
             'proceeds' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
+            'settlement_path' => ['required', Rule::in([FixedAssetDisposal::SettlementDirect, FixedAssetDisposal::SettlementCustomerInvoice])],
+            'tax_rate' => ['required', 'numeric', 'min:0', 'max:100'],
+            'due_date' => ['nullable', 'date', 'after_or_equal:disposal_date'],
             'notes' => ['nullable', 'string'],
         ];
     }
@@ -53,8 +59,12 @@ class StoreFixedAssetDisposalRequest extends FormRequest
         return [function (Validator $validator): void {
             $proceeds = $this->input('proceeds', '0');
 
-            if (bccomp((string) $proceeds, '0', 4) > 0 && ! $this->filled('proceeds_account_doc_num')) {
+            if ($this->input('settlement_path') === FixedAssetDisposal::SettlementDirect && bccomp((string) $proceeds, '0', 4) > 0 && ! $this->filled('proceeds_account_doc_num')) {
                 $validator->errors()->add('proceeds_account_doc_num', __('fixed_assets.lifecycle.errors.proceeds_account_required'));
+            }
+
+            if ($this->input('settlement_path') === FixedAssetDisposal::SettlementCustomerInvoice && ! $this->filled('customer_doc_num')) {
+                $validator->errors()->add('customer_doc_num', __('A Customer is required for an invoiced Fixed Asset sale.'));
             }
 
             if ($this->input('disposition_type') === FixedAssetDisposal::TypeSale && bccomp((string) $proceeds, '0', 4) <= 0) {

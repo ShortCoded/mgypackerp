@@ -248,6 +248,8 @@ class OpeningStockService
                 'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
                 'stock_status' => $line['stock_status'] ?? InventoryTransaction::StatusAvailable,
                 'batch_lot' => $this->nullableText($line['batch_lot'] ?? null),
+                'manufacture_date' => $line['manufacture_date'] ?? null,
+                'expiry_date' => $line['expiry_date'] ?? null,
                 'notes' => $line['notes'] ?? null,
             ];
 

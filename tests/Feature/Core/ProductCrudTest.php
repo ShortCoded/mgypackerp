@@ -828,6 +828,39 @@ test('product image resolver and table prefer archive file usage over legacy ima
         ->not->toContain('/storage/products/images/legacy.jpg');
 });
 
+test('missing archive product images render a placeholder instead of a broken image request', function () {
+    Storage::fake('local');
+    config()->set('archive.disk', 'local');
+    $actor = productCrudActor(['products.view', 'file_manager.view']);
+    $file = productArchiveFileForCompany($this->productCompany, UploadedFile::fake()->image('missing.jpg')->size(64));
+    $product = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 39,
+        'doc_num' => 'Product-00039',
+        'name' => 'Missing Archive Image Product',
+        'image_path' => $file->path,
+        'status' => 'active',
+    ]);
+
+    Storage::disk('local')->delete($file->path);
+
+    expect(app(ProductImageResolver::class)->url($product->fresh()))->toBeNull();
+
+    $table = $this->actingAs($actor)
+        ->getJson(route('admin.products.data', [
+            'draw' => 1,
+            'start' => 0,
+            'length' => 10,
+            'search' => ['value' => 'Missing Archive Image Product'],
+        ]))
+        ->assertOk()
+        ->json('data.0.image');
+
+    expect($table)
+        ->toContain(__('products.image.no_file_selected'))
+        ->not->toContain(route('admin.products.image', $product->doc_num));
+});
+
 test('raw material select2 image url uses archive file usage relation', function () {
     Storage::fake('local');
     config()->set('archive.disk', 'local');

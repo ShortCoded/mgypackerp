@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -105,6 +106,16 @@ class SalesReturn extends Model
     public function returnInventoryDocument(): BelongsTo
     {
         return $this->belongsTo(InventoryDocument::class, 'return_inventory_document_id');
+    }
+
+    public function quarantineJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'quarantine_journal_entry_id');
+    }
+
+    public function dispositionJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'disposition_journal_entry_id');
     }
 
     public function lines(): HasMany

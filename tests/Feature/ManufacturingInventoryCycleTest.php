@@ -2,6 +2,8 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
@@ -17,12 +19,16 @@ use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryLayerAllocation;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
+use Modules\Inventory\Services\InventoryReportService;
 use Modules\Inventory\Services\StockCountService;
 use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMold;
@@ -215,25 +221,61 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
     );
     expect($additionalIssue->document_type)->toBe(InventoryDocument::TypeAdditionalMaterialIssue)
         ->and($materialReturn->document_type)->toBe(InventoryDocument::TypeMaterialReturn);
-    $cycle->recordProgress($run, [
+    $progressTimeFloor = now()->subSecond();
+    $progress = $cycle->recordProgress($run, [
+        'recorded_at' => now()->subYear(),
         'good_base_quantity' => '4',
         'scrap_base_quantity' => '1',
         'notes' => 'First completed production run',
     ]);
+    expect($progress->recorded_at->greaterThanOrEqualTo($progressTimeFloor))->toBeTrue();
+
+    $otherCompany = Company::factory()->create();
+    $otherCompanyInspectionType = QualityInspectionType::query()->create([
+        'company_id' => $otherCompany->getKey(),
+        'code' => 'FOREIGN-CHECKPOINT-TYPE',
+        'name' => 'Foreign Checkpoint Type',
+        'is_final_production' => false,
+        'is_active' => true,
+    ]);
+    $foreignCheckpointId = DB::table('quality_checkpoints')->insertGetId([
+        'public_id' => (string) Str::uuid(),
+        'company_id' => $otherCompany->getKey(),
+        'quality_inspection_type_id' => $otherCompanyInspectionType->getKey(),
+        'code' => 'FOREIGN-CHECKPOINT',
+        'name' => 'Foreign Checkpoint',
+        'sequence' => 10,
+        'response_type' => 'pass_fail',
+        'is_required' => true,
+        'is_active' => true,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    expect(fn () => $cycle->recordInspection($run->fresh(), [
+        'quality_inspection_type_id' => $inProcessInspectionType->getKey(),
+        'result' => 'passed',
+        'results' => [[
+            'quality_checkpoint_id' => $foreignCheckpointId,
+            'result' => 'passed',
+        ]],
+    ]))->toThrow(DomainException::class, 'operating company');
+
+    $inspectionTimeFloor = now()->subSecond();
     $failedInspection = $cycle->recordInspection($run->fresh(), [
         'quality_inspection_type_id' => $inProcessInspectionType->getKey(),
-        'sampled_at' => now()->subMinute(),
+        'sampled_at' => now()->subYear(),
         'result' => 'failed',
         'defect_code' => 'QC-DIMENSION',
         'affected_base_quantity' => '1',
         'corrective_action' => 'Verify the mold and resample',
     ]);
     expect($failedInspection->production_run_id)->toBe($run->getKey())
+        ->and($failedInspection->sampled_at->greaterThanOrEqualTo($inspectionTimeFloor))->toBeTrue()
         ->and($run->fresh()->status)->toBe(ProductionRun::StatusHeld)
         ->and(fn () => $cycle->completeRun($run->fresh()))->toThrow(DomainException::class);
     $passedInspection = $cycle->recordInspection($run->fresh(), [
         'quality_inspection_type_id' => $inProcessInspectionType->getKey(),
-        'sampled_at' => now(),
+        'sampled_at' => now()->addYear(),
         'result' => 'passed',
         'notes' => 'Corrective action verified',
     ]);
@@ -250,7 +292,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
         ->toThrow(DomainException::class, 'final passed quality inspection');
     $cycle->recordInspection($run->fresh(), [
         'quality_inspection_type_id' => $finalInspectionType->getKey(),
-        'sampled_at' => now()->addSecond(),
+        'sampled_at' => now()->addYear(),
         'result' => 'passed',
         'notes' => 'Final finished-goods release passed',
     ]);
@@ -1133,4 +1175,176 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.documents.create'))
         ->assertForbidden();
+});
+
+test('financial inventory reports remain operational before accounting mappings are configured', function () {
+    $fixture = manufacturingInventoryFixture();
+    InventoryAccountingMapping::query()
+        ->where('company_id', $fixture['company']->getKey())
+        ->delete();
+
+    $permissions = [
+        'inventory.reports.operational',
+        'inventory.reports.financial',
+        'inventory.reports.export',
+    ];
+
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+
+    $financialUser = User::factory()->create();
+    $financialUser->givePermissionTo($permissions);
+    $session = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $unavailableMessage = __('inventory.reports.gl_reconciliation_unavailable');
+
+    $this->actingAs($financialUser)->withSession($session)
+        ->get(route('admin.inventory.reports.index'))
+        ->assertOk()
+        ->assertSee('Plastic Resin')
+        ->assertSee('<th>Value</th>', false)
+        ->assertSee($unavailableMessage)
+        ->assertDontSee('Reconciled');
+
+    $this->actingAs($financialUser)->withSession($session)
+        ->get(route('admin.inventory.reports.export'))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+    $pdf = $this->actingAs($financialUser)->withSession($session)
+        ->get(route('admin.inventory.reports.print'))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition', 'inline; filename="inventory-operations-report.pdf"');
+
+    expect(str_starts_with($pdf->getContent(), '%PDF-'))->toBeTrue();
+});
+
+test('receipt layers preserve aging and enforce FEFO without consuming expired stock on failure', function () {
+    $fixture = manufacturingInventoryFixture();
+    $layers = app(InventoryLayerService::class);
+    $reports = app(InventoryReportService::class);
+    $agingProduct = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9991,
+        'doc_num' => 'RM-AGING',
+        'name' => 'Aging Resin',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'status' => 'active',
+    ]);
+    $expiryProduct = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9992,
+        'doc_num' => 'RM-EXPIRY',
+        'name' => 'Expiry Controlled Additive',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'tracks_expiry' => true,
+        'status' => 'active',
+    ]);
+    $inbound = function (Product $product, string $key, int $ageDays, string $quantity, ?int $expiresInDays = null) use ($fixture, $layers): InventoryTransaction {
+        $transaction = InventoryTransaction::query()->create([
+            'posting_key' => $key,
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'stock_status' => InventoryTransaction::StatusAvailable,
+            'transaction_date' => now()->subDays($ageDays)->toDateString(),
+            'transaction_type' => 'purchase_receipt',
+            'product_id' => $product->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity_in' => $quantity,
+            'quantity_out' => 0,
+            'expiry_date' => $expiresInDays === null ? null : now()->addDays($expiresInDays)->toDateString(),
+            'source_type' => 'layer_runtime_test',
+            'source_id' => abs(crc32($key)),
+            'source_doc_num' => strtoupper($key),
+            'unit_cost' => '2',
+            'total_cost' => bcmul($quantity, '2', 8),
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+        $layers->recordInbound($transaction);
+
+        return $transaction;
+    };
+    $issue = function (Product $product, string $key, string $quantity) use ($fixture): InventoryTransaction {
+        return InventoryTransaction::query()->create([
+            'posting_key' => $key,
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'stock_status' => InventoryTransaction::StatusAvailable,
+            'transaction_date' => now()->toDateString(),
+            'transaction_type' => 'material_issue',
+            'product_id' => $product->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity_in' => 0,
+            'quantity_out' => $quantity,
+            'source_type' => 'layer_runtime_test',
+            'source_id' => abs(crc32($key)),
+            'source_doc_num' => strtoupper($key),
+            'unit_cost' => '2',
+            'total_cost' => bcmul($quantity, '2', 8),
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+    };
+
+    $inbound($agingProduct, 'aging-old', 200, '100');
+    $inbound($agingProduct, 'aging-mid', 60, '100');
+    $inbound($agingProduct, 'aging-new', 10, '100');
+    $agingIssue = $issue($agingProduct, 'aging-issue', '150');
+    $layers->allocateIssue($agingIssue);
+    $aging = $reports->agingLayers($fixture['company']->getKey(), [
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $agingProduct->getKey(),
+        'as_of' => now()->toDateString(),
+    ]);
+    expect($aging)->toHaveCount(2)
+        ->and($aging->firstWhere('age_bucket', '31–60')?->remaining_quantity)->toBe('50.00000000')
+        ->and($aging->firstWhere('age_bucket', '0–30')?->remaining_quantity)->toBe('100.00000000')
+        ->and(InventoryLayerAllocation::query()->where('issue_transaction_id', $agingIssue->getKey())->sum('quantity'))->toEqual(150);
+
+    $expired = $inbound($expiryProduct, 'expiry-expired', 10, '10', -1);
+    $soon = $inbound($expiryProduct, 'expiry-soon', 5, '20', 20);
+    $later = $inbound($expiryProduct, 'expiry-later', 4, '30', 80);
+    $expiryIssue = $issue($expiryProduct, 'expiry-issue', '25');
+    $layers->allocateIssue($expiryIssue);
+    $allocatedReceiptIds = InventoryLayerAllocation::query()
+        ->where('issue_transaction_id', $expiryIssue->getKey())
+        ->with('layer')
+        ->get()
+        ->pluck('layer.receipt_transaction_id')
+        ->all();
+    expect($allocatedReceiptIds)->toBe([$soon->getKey(), $later->getKey()])
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $expired->getKey())->value('remaining_quantity'))->toBe('10.00000000')
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $soon->getKey())->value('remaining_quantity'))->toBe('0.00000000')
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $later->getKey())->value('remaining_quantity'))->toBe('25.00000000');
+
+    $failedIssue = $issue($expiryProduct, 'expiry-failed-issue', '26');
+    expect(fn () => $layers->allocateIssue($failedIssue))
+        ->toThrow(DomainException::class, 'Expired or undated expiry layers are blocked.');
+    expect(InventoryLayerAllocation::query()->where('issue_transaction_id', $failedIssue->getKey())->count())->toBe(0)
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $later->getKey())->value('remaining_quantity'))->toBe('25.00000000');
+
+    $expiry = $reports->expiryLayers($fixture['company']->getKey(), [
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'product_id' => $expiryProduct->getKey(),
+        'as_of' => now()->toDateString(),
+        'expiry_within_days' => 90,
+    ]);
+    expect($expiry)->toHaveCount(2)
+        ->and($expiry->firstWhere('expiry_state', 'expired')?->remaining_quantity)->toBe('10.00000000')
+        ->and($expiry->firstWhere('expiry_state', 'expiring')?->remaining_quantity)->toBe('25.00000000');
 });

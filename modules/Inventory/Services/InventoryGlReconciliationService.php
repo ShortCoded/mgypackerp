@@ -94,7 +94,7 @@ class InventoryGlReconciliationService
             ->selectRaw('coalesce(sum(case when quantity_in > 0 then total_cost else -total_cost end), 0) as value')
             ->value('value');
 
-        return bcadd((string) $value, '0', 4);
+        return $this->amount($value);
     }
 
     private function wipValue(int $companyId, ?int $financialPeriodId, ?int $branchId): string
@@ -122,7 +122,7 @@ class InventoryGlReconciliationService
             )
             ->value('value');
 
-        return bcadd((string) $value, '0', 4);
+        return $this->amount($value);
     }
 
     /** @param list<int> $accountIds */
@@ -139,7 +139,7 @@ class InventoryGlReconciliationService
             ->selectRaw('coalesce(sum(journal_entry_lines.debit_amount - journal_entry_lines.credit_amount), 0) as value')
             ->value('value');
 
-        return bcadd((string) $value, '0', 4);
+        return $this->amount($value);
     }
 
     /** @param list<string> $documentTypes */
@@ -155,7 +155,7 @@ class InventoryGlReconciliationService
             ->whereNull('inventory_document_lines.deleted_at')
             ->sum('inventory_document_lines.total_cost');
 
-        return bcadd((string) $value, '0', 4);
+        return $this->amount($value);
     }
 
     /** @param list<string> $documentTypes @param list<int> $accountIds */
@@ -187,7 +187,12 @@ class InventoryGlReconciliationService
             '0.0000',
         );
 
-        return bcadd((string) $value, '0', 4);
+        return $this->amount($value);
+    }
+
+    private function amount(mixed $value): string
+    {
+        return number_format(is_numeric($value) ? (float) $value : 0, 4, '.', '');
     }
 
     /** @return array{key: string, label: string, subledger: string, gl: string, difference: string, status: string} */
@@ -201,7 +206,7 @@ class InventoryGlReconciliationService
             'subledger' => $subledger,
             'gl' => $gl,
             'difference' => $difference,
-            'status' => bccomp($difference, '0.0000', 4) === 0 ? 'reconciled' : 'difference',
+            'status' => abs((float) $difference) <= 0.001 ? 'reconciled' : 'difference',
         ];
     }
 }

@@ -211,6 +211,8 @@ Route::middleware('auth')
             Route::post('/{cheque}/mark-issued', 'markIssued')->middleware('can:cheques.mark_issued')->name('mark-issued');
             Route::post('/{cheque}/mark-delivered', 'markDelivered')->middleware('can:cheques.mark_delivered')->name('mark-delivered');
             Route::post('/{cheque}/mark-cleared', 'markCleared')->middleware('can:cheques.mark_cleared')->name('mark-cleared');
+            Route::post('/{cheque}/reverse-clearing', 'reverseClearing')->middleware('can:cheques.mark_cleared')->name('reverse-clearing');
+            Route::post('/{cheque}/represent', 'represent')->middleware('can:cheques.mark_issued')->name('represent');
             Route::post('/{cheque}/cancel', 'cancel')->middleware('can:cheques.cancel')->name('cancel');
             Route::get('/{cheque}/print', 'print')->middleware('can:cheques.print')->name('print');
             Route::patch('/{cheque}/restore', 'restore')->middleware('can:cheques.restore')->name('restore');

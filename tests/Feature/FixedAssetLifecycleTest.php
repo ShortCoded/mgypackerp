@@ -3,14 +3,17 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
@@ -18,6 +21,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDepreciation;
@@ -29,7 +33,12 @@ use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetReportService;
 use Modules\FixedAssets\Services\FixedAssetScheduleService;
 use Modules\FixedAssets\Services\FixedAssetService;
+use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Services\CustomerReceiptService;
+use Modules\Sales\Services\ElectronicInvoicePayloadBuilder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -115,6 +124,7 @@ function lifecycleFixedAssetContext(): array
         'depreciation_expense_account_id' => $postingAccounts[1]->getKey(),
         'disposal_gain_account_id' => $postingAccounts[2]->getKey(),
         'disposal_loss_account_id' => $postingAccounts[3]->getKey(),
+        'disposal_clearing_account_id' => $postingAccounts[4]->getKey(),
     ]);
 
     return compact('company', 'branch', 'destinationBranch', 'sourceCostCenter', 'destinationCostCenter', 'period', 'currency', 'category', 'postingAccounts');
@@ -520,6 +530,190 @@ test('transfers preserve history and sale and write-off post balanced gain and l
         $this->get(route('admin.fixed-assets.prints.disposal', $writeOff)),
         'asset-write-off-'.$writeOff->doc_num.'.pdf',
     );
+});
+
+test('customer invoiced asset disposal clears NBV once without inventory or COGS and reverses canonically', function (): void {
+    lifecycleFixedAssetActor(['fixed_assets.create', 'fixed_assets.dispose', 'fixed_assets.disposal.reverse']);
+    $context = lifecycleFixedAssetContext();
+    $context['company']->forceFill(['vat_registration_number' => '200000001'])->save();
+    $receivableClassification = AccountClassification::query()->where('code', 'accounts_receivable')->firstOrFail();
+    $receivableParent = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('account_classification_id', $receivableClassification->getKey())
+        ->where('is_group', true)
+        ->orderByDesc('level')
+        ->firstOrFail();
+    $customerAccount = Account::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'ACCOUNT-ASSET-BUYER-99001',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '112199901',
+        'name' => 'Fixed Asset Buyer Receivable',
+        'parent_id' => $receivableParent->getKey(),
+        'level' => ((int) $receivableParent->level) + 1,
+        'account_classification_id' => $receivableClassification->getKey(),
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $customer = Customer::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'CUST-ASSET-99001',
+        'company_id' => $context['company']->getKey(),
+        'account_id' => $customerAccount->getKey(),
+        'name' => 'Fixed Asset Buyer',
+        'tax_number' => '300000001',
+        'status' => 'active',
+    ]);
+    $asset = lifecycleFixedAsset($context, [
+        'asset_name' => 'Customer Invoiced Disposal Asset',
+        'purchase_value' => '120000',
+        'salvage_value' => '0',
+    ]);
+    $date = $context['period']->from_date->copy()->addDays(20)->toDateString();
+    $inventoryCount = InventoryTransaction::query()->count();
+    $cogsJournalCount = JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count();
+
+    $disposal = app(FixedAssetLifecycleService::class)->dispose($asset, [
+        'disposal_date' => $date,
+        'disposition_type' => FixedAssetDisposal::TypeSale,
+        'settlement_path' => FixedAssetDisposal::SettlementCustomerInvoice,
+        'customer_doc_num' => $customer->doc_num,
+        'proceeds' => '150000',
+        'tax_rate' => '14',
+        'due_date' => $date,
+        'reason' => 'Sold through the canonical customer receivable path.',
+    ]);
+    $invoice = $disposal->customerInvoice()->with(['lines', 'journalEntry.lines'])->firstOrFail();
+    $derecognition = $disposal->journalEntry()->with('lines')->firstOrFail();
+    $gainLoss = $disposal->gainLossJournalEntry()->with('lines')->firstOrFail();
+    $clearingAccountId = FixedAssetCategoryMapping::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('asset_group_account_id', $context['category']->getKey())
+        ->valueOrFail('disposal_clearing_account_id');
+    $clearingLines = DB::table('journal_entry_lines')
+        ->whereIn('journal_entry_id', [$derecognition->getKey(), $invoice->journal_entry_id, $gainLoss->getKey()])
+        ->where('account_id', $clearingAccountId)
+        ->selectRaw('coalesce(sum(debit_amount), 0) as debits, coalesce(sum(credit_amount), 0) as credits')
+        ->first();
+
+    expect($disposal->settlement_path)->toBe(FixedAssetDisposal::SettlementCustomerInvoice)
+        ->and($disposal->net_book_value)->toBe('120000.0000')
+        ->and($disposal->proceeds)->toBe('150000.0000')
+        ->and($disposal->gain_amount)->toBe('30000.0000')
+        ->and($disposal->tax_amount)->toBe('21000.0000')
+        ->and($disposal->gross_proceeds)->toBe('171000.0000')
+        ->and($invoice->posting_status)->toBe('posted')
+        ->and($invoice->total_amount)->toBe('171000.0000')
+        ->and($invoice->source_type)->toBe('fixed_asset_disposal')
+        ->and($invoice->source_id)->toBe($disposal->getKey())
+        ->and($invoice->lines->sole()->is_service)->toBeTrue()
+        ->and((float) $derecognition->lines->firstWhere('account_id', $asset->account_id)?->credit_amount)->toBe(120000.0)
+        ->and((float) $derecognition->lines->firstWhere('account_id', $clearingAccountId)?->debit_amount)->toBe(120000.0)
+        ->and((float) $invoice->journalEntry->lines->firstWhere('account_id', $clearingAccountId)?->credit_amount)->toBe(150000.0)
+        ->and((float) $gainLoss->lines->firstWhere('account_id', $clearingAccountId)?->debit_amount)->toBe(30000.0)
+        ->and((float) $clearingLines->debits)->toEqualWithDelta((float) $clearingLines->credits, 0.0001)
+        ->and(InventoryTransaction::query()->count())->toBe($inventoryCount)
+        ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count())->toBe($cogsJournalCount);
+
+    config([
+        'e_invoice.issuer_taxpayer_id' => null,
+        'e_invoice.branch_code' => 'FACTORY-01',
+    ]);
+    $payload = app(ElectronicInvoicePayloadBuilder::class)->build($invoice);
+    expect($payload['source'])->toBe(['type' => 'fixed_asset_disposal', 'document' => $disposal->doc_num])
+        ->and($payload['lines'][0]['unit_code'])->toBe('EA')
+        ->and($payload['lines'][0]['tax_code'])->toBe('VAT')
+        ->and($payload['totals']['total'])->toBe('171000.0000');
+
+    $reversed = app(FixedAssetLifecycleService::class)->reverseDisposal($disposal, 'Buyer cancelled before settlement.');
+    expect($reversed->status)->toBe(FixedAssetDisposal::StatusReversed)
+        ->and($reversed->reversal_journal_entry_id)->not->toBeNull()
+        ->and($reversed->gain_loss_reversal_journal_entry_id)->not->toBeNull()
+        ->and($invoice->fresh()->status)->toBe(CustomerInvoice::StatusReopened)
+        ->and($invoice->fresh()->reversal_journal_entry_id)->not->toBeNull()
+        ->and($asset->fresh()->status)->toBe(FixedAsset::StatusActive)
+        ->and($asset->fresh()->disposed_at)->toBeNull()
+        ->and(InventoryTransaction::query()->count())->toBe($inventoryCount);
+
+    $cashClassification = AccountClassification::query()->where('code', 'cash')->firstOrFail();
+    $cashParent = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('account_code', '1111')
+        ->firstOrFail();
+    $cashAccount = Account::query()->create([
+        'doc_number' => 9900002,
+        'doc_num' => 'ACCOUNT-ASSET-CASH-9900002',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '111199902',
+        'name' => 'Fixed Asset Collection Cash',
+        'parent_id' => $cashParent->getKey(),
+        'level' => ((int) $cashParent->level) + 1,
+        'account_classification_id' => $cashClassification->getKey(),
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $cashbox = Cashbox::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'CASHBOX-ASSET-99001',
+        'company_id' => $context['company']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'account_id' => $cashAccount->getKey(),
+        'name' => 'Fixed Asset Collection Cashbox',
+        'status' => 'active',
+    ]);
+    $collectedAsset = lifecycleFixedAsset($context, [
+        'asset_name' => 'Collected Customer Disposal Asset',
+        'purchase_value' => '120000',
+        'salvage_value' => '0',
+    ]);
+    $collectedDisposal = app(FixedAssetLifecycleService::class)->dispose($collectedAsset, [
+        'disposal_date' => $date,
+        'disposition_type' => FixedAssetDisposal::TypeSale,
+        'settlement_path' => FixedAssetDisposal::SettlementCustomerInvoice,
+        'customer_doc_num' => $customer->doc_num,
+        'proceeds' => '150000',
+        'tax_rate' => '14',
+        'due_date' => $date,
+        'reason' => 'Customer invoiced and collected asset sale.',
+    ]);
+    $collectedInvoice = $collectedDisposal->customerInvoice()->with('paymentSchedules')->firstOrFail();
+    app(CustomerReceiptService::class)->createAndApprove([
+        'company_id' => $context['company']->getKey(),
+        'financial_period_id' => $context['period']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'customer_id' => $customer->getKey(),
+        'receipt_date' => $date,
+        'currency_id' => $context['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $cashbox->getKey(),
+        'amount' => '171000',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $collectedInvoice->paymentSchedules->sole()->getKey(),
+        'amount' => '171000',
+    ]]);
+    $customerLedger = app(LedgerQueryService::class)->accountLedger([
+        'company_id' => $context['company']->getKey(),
+        'financial_period_id' => $context['period']->getKey(),
+        'account_id' => $customerAccount->getKey(),
+        'from_date' => $context['period']->from_date->toDateString(),
+        'to_date' => $context['period']->to_date->toDateString(),
+        'branch_id' => $context['branch']->getKey(),
+    ]);
+    expect($collectedInvoice->fresh()->paid_amount)->toBe('171000.0000')
+        ->and($collectedInvoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and($customerLedger['ending'])->toBe(['debit' => '0.0000', 'credit' => '0.0000'])
+        ->and(InventoryTransaction::query()->count())->toBe($inventoryCount)
+        ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count())->toBe($cogsJournalCount);
 });
 
 test('opening asset reconciliation consumes canonical opening GL balances without another asset journal', function (): void {

@@ -50,6 +50,10 @@
                 <tr><th>{{ __('Receipt amount') }}</th><td dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</td></tr>
             @endif
             @if(in_array($kind, ['invoice', 'credit_note'], true))<tr><th>{{ __('Electronic invoice status') }}</th><td>{{ str($record->electronic_invoice_status)->replace('_', ' ')->title() }}</td></tr>@endif
+            @if(in_array($kind, ['sales_return', 'quality_disposition'], true))
+                <tr><th>{{ __('Quarantine inventory / journal') }}</th><td>{{ $record->returnInventoryDocument?->doc_num ?? '—' }} / {{ $record->quarantineJournalEntry?->doc_num ?? '—' }}</td></tr>
+                <tr><th>{{ __('Disposition journal') }}</th><td>{{ $record->dispositionJournalEntry?->doc_num ?? __('No cross-account disposition required') }}</td></tr>
+            @endif
         </tbody>
     </table>
 

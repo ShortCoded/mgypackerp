@@ -11,12 +11,12 @@
     'toolbarActionsClass' => '',
 ])
 
-<div class="card-header">
-    <div class="row flex-between-center">
-        <div class="col-6 col-sm-auto d-flex align-items-center pe-0">
+<div class="card-header crud-index-toolbar">
+    <div class="row flex-between-center g-2">
+        <div class="col-12 col-sm-auto d-flex align-items-center">
             <h5 class="py-2 mb-0 fs-9 text-nowrap py-xl-0">{{ $title }}</h5>
         </div>
-        <div class="col-6 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2 {{ $toolbarActionsClass }}">
+        <div class="col-12 col-sm-auto ms-sm-auto text-end d-flex flex-wrap justify-content-start justify-content-sm-end align-items-center gap-2 crud-index-toolbar-actions {{ $toolbarActionsClass }}">
             @if ($showTrashFilter)
                 <div class="gap-2 d-flex align-items-center">
                     <label class="mb-0 form-label text-700 fs-10" for="{{ $trashFilterId }}">{{ __('common.trash.filter_label') }}</label>

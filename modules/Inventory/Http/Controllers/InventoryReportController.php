@@ -12,6 +12,7 @@ use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Exports\InventoryReportExport;
+use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryReportService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -21,6 +22,7 @@ class InventoryReportController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly InventoryReportService $reports,
+        private readonly InventoryAccountingMappingService $accountingMappings,
         private readonly InventoryGlReconciliationService $reconciliation,
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
@@ -39,8 +41,8 @@ class InventoryReportController extends Controller
             ...$report,
             'balances' => $balances,
             'canViewFinancial' => $canViewFinancial,
-            'agingSupported' => false,
-            'expirySupported' => false,
+            'agingSupported' => true,
+            'expirySupported' => true,
         ]);
     }
 
@@ -77,11 +79,22 @@ class InventoryReportController extends Controller
             $context['company_id'],
             $context['financial_period_id'],
             $context['branch_id'],
-            $request->only(['branch_store_id', 'warehouse_location_id', 'product_id', 'stock_status', 'transaction_type', 'from', 'to']),
+            $request->only(['branch_store_id', 'warehouse_location_id', 'product_id', 'classification', 'stock_status', 'batch_lot', 'transaction_type', 'from', 'to', 'as_of', 'expiry_within_days']),
         );
-        $report['glReconciliation'] = $canViewFinancial
-            ? $this->reconciliation->reconcile($context['company_id'], $context['financial_period_id'], $context['branch_id'])
-            : null;
+        $report['glReconciliation'] = null;
+        $report['glReconciliationUnavailableReason'] = null;
+
+        if ($canViewFinancial) {
+            if ($this->accountingMappings->forCompany($context['company_id']) === null) {
+                $report['glReconciliationUnavailableReason'] = __('inventory.reports.gl_reconciliation_unavailable');
+            } else {
+                $report['glReconciliation'] = $this->reconciliation->reconcile(
+                    $context['company_id'],
+                    $context['financial_period_id'],
+                    $context['branch_id'],
+                );
+            }
+        }
 
         return [$context, $canViewFinancial, $report];
     }

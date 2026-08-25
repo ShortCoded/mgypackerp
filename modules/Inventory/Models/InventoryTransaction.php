@@ -10,6 +10,8 @@ use Modules\Production\Models\ProductionRun;
 
 class InventoryTransaction extends Model
 {
+    public const TypePositionReconciliation = 'position_reconciliation';
+
     public const StatusAvailable = 'available';
 
     public const StatusReserved = 'reserved';
@@ -36,7 +38,11 @@ class InventoryTransaction extends Model
 
     protected function casts(): array
     {
-        return ['transaction_date' => 'date', 'quantity_in' => 'decimal:8', 'quantity_out' => 'decimal:8', 'unit_cost' => 'decimal:8', 'total_cost' => 'decimal:8', 'is_reversal' => 'boolean'];
+        return [
+            'transaction_date' => 'date', 'manufacture_date' => 'date', 'expiry_date' => 'date',
+            'quantity_in' => 'decimal:8', 'quantity_out' => 'decimal:8',
+            'unit_cost' => 'decimal:8', 'total_cost' => 'decimal:8', 'is_reversal' => 'boolean',
+        ];
     }
 
     public function product(): BelongsTo

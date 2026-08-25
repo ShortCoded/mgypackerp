@@ -26,7 +26,7 @@ class PurchaseReturn extends Model
         'supplier_id', 'purchase_order_id', 'receipt_id', 'purchase_invoice_id', 'return_date', 'reason_code',
         'status', 'total_quantity', 'total_amount', 'journal_entry_id', 'notes', 'created_by', 'updated_by',
         'approved_by', 'approved_at', 'posted_by', 'posted_at', 'cancelled_by', 'cancelled_at', 'cancel_reason',
-        'reversal_journal_entry_id', 'reversed_by', 'reversed_at', 'reversal_reason',
+        'reversal_journal_entry_id', 'reversed_by', 'reversed_at', 'reversal_reason', 'grni_reversal_journal_entry_id',
     ];
 
     protected function casts(): array
@@ -89,6 +89,11 @@ class PurchaseReturn extends Model
     public function reversalJournalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id');
+    }
+
+    public function grniReversalJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'grni_reversal_journal_entry_id');
     }
 
     public function reversedBy(): BelongsTo

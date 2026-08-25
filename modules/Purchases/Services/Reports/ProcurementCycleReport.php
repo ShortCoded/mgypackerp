@@ -3,6 +3,9 @@
 namespace Modules\Purchases\Services\Reports;
 
 use Illuminate\Support\Collection;
+use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Models\JournalEntryLine;
+use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
@@ -54,6 +57,8 @@ class ProcurementCycleReport
 
     public const ProductionAnalysis = 'production_analysis';
 
+    public const GoodsReceivedNotInvoiced = 'goods_received_not_invoiced';
+
     public static function types(): array
     {
         return [
@@ -65,6 +70,7 @@ class ProcurementCycleReport
             self::OverduePoDeliveries,
             self::DeliverySchedule,
             self::IncomingQcPending,
+            self::GoodsReceivedNotInvoiced,
             self::QcRejection,
             self::PurchasesBySupplier,
             self::PurchasesByProduct,
@@ -94,6 +100,7 @@ class ProcurementCycleReport
             self::DeliverySchedule => $this->deliverySchedule($companyId, $financialPeriodId),
             self::IncomingQcPending => $this->receiptQualityStatus($companyId, $financialPeriodId)->where('qc_status', 'pending_inspection')->values(),
             self::QcRejection => $this->receiptQualityStatus($companyId, $financialPeriodId)->filter(fn (array $row): bool => (float) $row['outstanding'] > 0)->values(),
+            self::GoodsReceivedNotInvoiced => $this->goodsReceivedNotInvoiced($companyId, $financialPeriodId),
             self::OutstandingSupplierInvoices, self::SupplierAging => $this->supplierPayables($companyId, $financialPeriodId)->filter(fn (array $row): bool => (float) $row['outstanding'] > 0)->values(),
             self::DueSupplierInstallments => $this->supplierInstallments($companyId, $financialPeriodId, false),
             self::UpcomingSupplierPayments => $this->supplierInstallments($companyId, $financialPeriodId, true),
@@ -106,8 +113,11 @@ class ProcurementCycleReport
     }
 
     /** @return list<string> */
-    public function headings(bool $showPrices = true): array
+    public function headings(bool $showPrices = true, ?string $type = null): array
     {
+        if ($type === self::GoodsReceivedNotInvoiced) {
+            return ['Receipt Date', 'GRN', 'Supplier', 'PO', 'Product', 'Store', 'Received Qty', 'Invoiced Qty', 'Returned Qty', 'Remaining Qty', 'Provisional Unit Value', 'Remaining GRNI Value', 'Currency', 'Days Outstanding', 'Status'];
+        }
         $headings = [
             'Date', 'Document', 'Status', 'Supplier', 'Product', 'Purchase Requisition', 'Purchase Order',
             'Branch', 'Warehouse', 'QC Status', 'Production Order', 'Work Order', 'Quantity',
@@ -121,11 +131,48 @@ class ProcurementCycleReport
         ];
     }
 
+    /** @return array{subledger: string, gl: string, difference: string, status: string, account: string|null} */
+    public function grniReconciliation(int $companyId, int $financialPeriodId): array
+    {
+        $mapping = InventoryAccountingMapping::query()->where('company_id', $companyId)->with('grniAccount')->first();
+        if (! $mapping?->grni_account_id) {
+            return ['subledger' => '0.0000', 'gl' => '0.0000', 'difference' => '0.0000', 'status' => 'not_configured', 'account' => null];
+        }
+
+        $subledger = $this->goodsReceivedNotInvoiced($companyId, $financialPeriodId)
+            ->reduce(fn (string $total, array $row): string => bcadd($total, (string) $row['remaining_grni_value'], 4), '0.0000');
+        $gl = bcadd((string) JournalEntryLine::query()
+            ->join('journal_entries', 'journal_entries.id', '=', 'journal_entry_lines.journal_entry_id')
+            ->where('journal_entries.company_id', $companyId)
+            ->where('journal_entries.financial_period_id', $financialPeriodId)
+            ->where('journal_entries.status', JournalEntry::StatusPosted)
+            ->whereNull('journal_entries.deleted_at')
+            ->where('journal_entry_lines.account_id', $mapping->grni_account_id)
+            ->selectRaw('coalesce(sum((journal_entry_lines.credit_amount - journal_entry_lines.debit_amount) * journal_entries.exchange_rate), 0) as balance')
+            ->value('balance'), '0', 4);
+        $difference = bcsub($subledger, $gl, 4);
+
+        return [
+            'subledger' => $subledger,
+            'gl' => $gl,
+            'difference' => $difference,
+            'status' => bccomp($difference, '0', 4) === 0 ? 'reconciled' : 'difference',
+            'account' => $mapping->grniAccount?->doc_num,
+        ];
+    }
+
     /** @param array<string, mixed> $row
      * @return list<mixed>
      */
-    public function exportMap(array $row, bool $showPrices = true): array
+    public function exportMap(array $row, bool $showPrices = true, ?string $type = null): array
     {
+        if ($type === self::GoodsReceivedNotInvoiced) {
+            return [
+                $row['date'], $row['document'], $row['supplier'], $row['purchase_order'], $row['product'], $row['warehouse'],
+                $row['received_quantity'], $row['invoiced_quantity'], $row['returned_quantity'], $row['remaining_quantity'],
+                $row['provisional_unit_value'], $row['remaining_grni_value'], $row['currency'], $row['age_days'], $row['status'],
+            ];
+        }
         $values = [
             $row['date'], $row['document'], $row['status'], $row['supplier'], $row['product'],
             $row['requisition'], $row['purchase_order'], $row['branch'], $row['warehouse'], $row['qc_status'],
@@ -296,6 +343,56 @@ class ProcurementCycleReport
     }
 
     /** @return Collection<int, array<string, mixed>> */
+    private function goodsReceivedNotInvoiced(int $companyId, int $periodId): Collection
+    {
+        return UnpricedInventoryReceiptLine::query()
+            ->with(['receipt.supplier', 'receipt.branch', 'receipt.branchStore', 'product', 'purchaseOrderLine.purchaseOrder.currency'])
+            ->where('company_id', $companyId)
+            ->where('financial_period_id', $periodId)
+            ->where('accepted_quantity', '>', 0)
+            ->whereNotNull('grni_journal_entry_id')
+            ->get()
+            ->map(function (UnpricedInventoryReceiptLine $line): array {
+                $eligibleQuantity = bcsub((string) $line->accepted_quantity, (string) $line->grni_returned_quantity, 8);
+                $remainingQuantity = bcsub($eligibleQuantity, (string) $line->grni_cleared_quantity, 8);
+                $remainingValue = bcsub(
+                    bcsub((string) $line->provisional_total_value, (string) $line->grni_returned_value, 4),
+                    (string) $line->grni_cleared_value,
+                    4,
+                );
+                $receipt = $line->receipt;
+                $order = $line->purchaseOrderLine?->purchaseOrder;
+
+                return $this->row([
+                    'date' => $receipt?->document_date?->toDateString(),
+                    'document' => $receipt?->doc_num,
+                    'status' => bccomp($remainingQuantity, '0', 8) > 0 ? 'open' : 'cleared',
+                    'supplier_doc_num' => $receipt?->supplier?->doc_num,
+                    'supplier' => $receipt?->supplier?->name,
+                    'product_doc_num' => $line->product?->doc_num,
+                    'product' => $line->product?->name,
+                    'purchase_order' => $order?->doc_num,
+                    'branch_id' => $receipt?->branch_id,
+                    'branch' => $receipt?->branch?->name,
+                    'warehouse_uuid' => $receipt?->branchStore?->public_uuid,
+                    'warehouse' => $receipt?->branchStore?->name,
+                    'quantity' => $line->accepted_quantity,
+                    'amount' => $line->provisional_unit_value,
+                    'outstanding' => $remainingValue,
+                    'received_quantity' => $line->accepted_quantity,
+                    'invoiced_quantity' => $line->grni_cleared_quantity,
+                    'returned_quantity' => $line->grni_returned_quantity,
+                    'remaining_quantity' => $remainingQuantity,
+                    'provisional_unit_value' => $line->provisional_unit_value,
+                    'remaining_grni_value' => $remainingValue,
+                    'currency' => $order?->currency?->doc_num,
+                    'age_days' => $receipt?->document_date?->diffInDays(today()) ?? 0,
+                    'overdue' => bccomp($remainingQuantity, '0', 8) > 0 && $receipt?->document_date?->lt(today()->subDays(30)),
+                ]);
+            });
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
     private function supplierPayables(int $companyId, int $periodId): Collection
     {
         return PurchaseInvoice::query()->with(['supplier', 'branch', 'purchaseOrder', 'paymentSchedules'])->where('company_id', $companyId)
@@ -327,7 +424,7 @@ class ProcurementCycleReport
             ->get()
             ->map(function (PurchaseInvoicePaymentSchedule $schedule): array {
                 $invoice = $schedule->purchaseInvoice;
-                $outstanding = max(0, (float) $schedule->amount - (float) $schedule->paid_amount - (float) $schedule->credited_amount);
+                $outstanding = $schedule->outstanding_amount;
 
                 return $this->row([
                     'date' => $schedule->due_date?->toDateString(),
@@ -340,7 +437,7 @@ class ProcurementCycleReport
                     'branch' => $invoice?->branch?->name,
                     'amount' => $schedule->amount,
                     'outstanding' => $outstanding,
-                    'overdue' => $outstanding > 0 && $schedule->due_date?->isPast(),
+                    'overdue' => (float) $outstanding > 0 && $schedule->due_date?->isPast(),
                 ]);
             })
             ->when($upcomingOnly, fn (Collection $rows): Collection => $rows
@@ -439,6 +536,9 @@ class ProcurementCycleReport
             'branch_id' => null, 'branch' => null, 'warehouse_uuid' => null, 'warehouse' => null,
             'qc_status' => null, 'production_order' => null, 'work_order' => null, 'quantity' => 0,
             'amount' => 0, 'outstanding' => 0, 'overdue' => false,
+            'received_quantity' => 0, 'invoiced_quantity' => 0, 'returned_quantity' => 0,
+            'remaining_quantity' => 0, 'provisional_unit_value' => 0,
+            'remaining_grni_value' => 0, 'currency' => null, 'age_days' => 0,
             ...$values,
         ];
     }

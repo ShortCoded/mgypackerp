@@ -188,6 +188,23 @@ class ChequeController extends Controller
         return $this->statusResponse($request, $cheque, 'markCleared', 'cleared');
     }
 
+    public function reverseClearing(Request $request, string $cheque): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+        $record = $this->findInCurrentCompany($request, $cheque);
+        $record = $this->guardDomain(fn (): Cheque => $this->service->reverseClearing($record, $data['reason']));
+
+        return response()->json(['success' => true, 'message' => __('Cheque Bank clearing reversed.'), 'data' => ['doc_num' => $record->doc_num]]);
+    }
+
+    public function represent(Request $request, string $cheque): JsonResponse
+    {
+        $record = $this->findInCurrentCompany($request, $cheque);
+        $record = $this->guardDomain(fn (): Cheque => $this->service->represent($record));
+
+        return response()->json(['success' => true, 'message' => __('Cheque marked for re-presentation.'), 'data' => ['doc_num' => $record->doc_num]]);
+    }
+
     public function cancel(CancelChequeRequest $request, string $cheque): JsonResponse
     {
         $cheque = $this->findInCurrentCompany($request, $cheque);
@@ -203,7 +220,7 @@ class ChequeController extends Controller
     public function print(Request $request, string $cheque, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $record = $this->findInCurrentCompany($request, $cheque, true);
-        $record->loadMissing(['company', 'bankAccount.bank', 'bankAccount.account', 'currency', 'lines.account']);
+        $record->loadMissing(['company', 'bankAccount.bank', 'bankAccount.account', 'currency', 'lines.account', 'clearingEvents.clearingJournalEntry', 'clearingEvents.reversalJournalEntry']);
         $identity = $printIdentities->forCompany($record->company);
 
         return $pdf->stream('modules.finance.cheques.print', [
@@ -256,7 +273,7 @@ class ChequeController extends Controller
 
     private function form(string $mode, ?Cheque $record = null, ?string $cloneSourceToken = null, ?string $defaultType = null): View
     {
-        $record?->loadMissing(['bankAccount.currency', 'currency', 'lines.account']);
+        $record?->loadMissing(['bankAccount.currency', 'currency', 'lines.account', 'clearingEvents.clearingJournalEntry', 'clearingEvents.reversalJournalEntry']);
         $defaultType = in_array($defaultType, Cheque::types(), true) ? $defaultType : Cheque::TypeReceived;
 
         return view('modules.finance.cheques.form', [

@@ -36,6 +36,7 @@ return [
             'upcoming_supplier_payments' => 'دفعات الموردين القادمة',
             'returns' => 'مرتجعات المشتريات',
             'production_analysis' => 'تحليل المشتريات المرتبطة بالإنتاج',
+            'goods_received_not_invoiced' => 'بضاعة مستلمة غير مفوترة (GRNI)',
         ],
         'metrics' => [
             'matching_rows' => 'الصفوف المطابقة',
@@ -90,6 +91,8 @@ return [
         'approved_with_variance' => 'معتمد بفروق',
         'paid' => 'مسدد',
         'partially_paid' => 'مسدد جزئياً',
+        'settled' => 'تمت التسوية بالسداد / الخصم',
+        'partially_settled' => 'تمت التسوية جزئياً',
         'posted' => 'مرحل',
         'closed' => 'مغلق',
         'cancelled' => 'ملغى',

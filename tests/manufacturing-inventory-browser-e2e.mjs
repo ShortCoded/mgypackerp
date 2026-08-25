@@ -15,6 +15,17 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
+const localDate = (daysFromToday = 0) => {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromToday);
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+};
+const localDateTime = (daysFromToday, hour, minute = 0) => `${localDate(daysFromToday)}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
 class DevToolsClient {
   constructor(webSocketUrl) {
@@ -88,7 +99,10 @@ await Promise.all([
   client.send('Log.enable'),
   client.send('Network.enable'),
 ]);
-await client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+const mobileQa = process.env.MFG_E2E_MOBILE === '1';
+await client.send('Emulation.setDeviceMetricsOverride', mobileQa
+  ? { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }
+  : { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 async function evaluate(expression) {
   const result = await client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
@@ -311,8 +325,20 @@ if (process.env.MFG_E2E_POSTCHECK_ONLY === '1') {
       await setField('[name="login"]', 'admin');
       await setField('[name="password"]', 'admin');
       await submitNavigation('form', 'Login');
-      await navigate('/admin/production/reports/operations');
     }
+    await navigate('/lang/en');
+
+    if (process.env.MFG_E2E_EXPECT_UNCONFIGURED_REPORT === '1') {
+      await navigate('/admin/inventory/reports/operations');
+      await assertBody("General Ledger reconciliation is unavailable until the company's inventory accounting mappings are configured.", 'Unconfigured Inventory report');
+      await assertBody('E2E PP Raw Material', 'Unconfigured Inventory operational balances');
+      const reconciliationBadges = await evaluate(`Array.from(document.querySelectorAll('.badge')).map((node) => node.innerText.trim()).filter((text) => text === 'Reconciled')`);
+      assert(reconciliationBadges.length === 0, `Unconfigured report falsely displayed reconciliation: ${JSON.stringify(reconciliationBadges)}`);
+      await downloadAuthenticated('/admin/inventory/reports/operations/export.xlsx', 'inventory-operations-unconfigured.xlsx', 'spreadsheetml', 'PK');
+      await streamPdf('/admin/inventory/reports/operations/print', 'inventory-operations-unconfigured.pdf');
+    }
+
+    await navigate('/admin/production/reports/operations');
     for (const text of [run1Number, run2Number, 'Material Requirements, Consumption and Variance']) await assertBody(text, 'Production report');
     await navigate(`/admin/production/work-orders/${orderDoc}`);
     await assertBody('Completed', 'Completed production order');
@@ -364,6 +390,7 @@ try {
     packaging: await remoteOption('#packaging_inventory_account_doc_num', '1134'),
     wip: await remoteOption('#wip_account_doc_num', '1132'),
     finished: await remoteOption('#finished_goods_inventory_account_doc_num', '1133'),
+    grni: await remoteOption('#grni_account_doc_num', '212'),
     waste: await remoteOption('#production_waste_account_doc_num', '551'),
     gain: await remoteOption('#inventory_adjustment_gain_account_doc_num', '432'),
   };
@@ -373,6 +400,10 @@ try {
     ['semi_finished_inventory_account_doc_num', accountingAccounts.wip.id],
     ['finished_goods_inventory_account_doc_num', accountingAccounts.finished.id],
     ['wip_account_doc_num', accountingAccounts.wip.id],
+    ['quarantine_inventory_account_doc_num', accountingAccounts.packaging.id],
+    ['rework_inventory_account_doc_num', accountingAccounts.wip.id],
+    ['grni_account_doc_num', accountingAccounts.grni.id],
+    ['purchase_price_variance_account_doc_num', accountingAccounts.waste.id],
     ['production_waste_account_doc_num', accountingAccounts.waste.id],
     ['recoverable_scrap_inventory_account_doc_num', accountingAccounts.packaging.id],
     ['warehouse_damage_loss_account_doc_num', accountingAccounts.waste.id],
@@ -479,13 +510,13 @@ try {
   })()`);
   assert(Object.values(planningIds).every(Boolean), `Planning options incomplete: ${JSON.stringify(planningIds)}`);
   const run1Result = await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '4'], ['planned_start_at', '2026-09-01T08:00'], ['planned_end_at', '2026-09-01T11:00'], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-1'],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '4'], ['planned_start_at', localDateTime(7, 8)], ['planned_end_at', localDateTime(7, 11)], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-1'],
   ]);
   const run2Result = await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '6'], ['planned_start_at', '2026-09-01T11:00'], ['planned_end_at', '2026-09-01T16:00'], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-2'],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '6'], ['planned_start_at', localDateTime(7, 11)], ['planned_end_at', localDateTime(7, 16)], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-2'],
   ]);
   await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '1'], ['planned_start_at', '2026-09-01T10:00'], ['planned_end_at', '2026-09-01T12:00'], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(7, 10)], ['planned_end_at', localDateTime(7, 12)], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold],
   ], { expectedError: true });
   const run1Url = new URL(run1Result.payload.data.url).pathname;
   const run2Url = new URL(run2Result.payload.data.url).pathname;
@@ -557,13 +588,13 @@ try {
   })()`);
   assert(Object.values(packingPlanningIds).every(Boolean), `Packing planning options incomplete: ${JSON.stringify(packingPlanningIds)}`);
   const packingRun1Result = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '400'], ['planned_start_at', '2026-09-02T08:00'], ['planned_end_at', '2026-09-02T11:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-400'],
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '400'], ['planned_start_at', localDateTime(8, 8)], ['planned_end_at', localDateTime(8, 11)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-400'],
   ]);
   const packingRun2Result = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '600'], ['planned_start_at', '2026-09-02T11:00'], ['planned_end_at', '2026-09-02T16:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-600'],
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '600'], ['planned_start_at', localDateTime(8, 11)], ['planned_end_at', localDateTime(8, 16)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-600'],
   ]);
   const packingRunBResult = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineB], ['planned_quantity', '1000'], ['planned_start_at', '2026-09-03T08:00'], ['planned_end_at', '2026-09-03T16:00'], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-B-BLOCKED'],
+    ['production_order_line_id', packingPlanningIds.lineB], ['planned_quantity', '1000'], ['planned_start_at', localDateTime(9, 8)], ['planned_end_at', localDateTime(9, 16)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-B-BLOCKED'],
   ]);
   const packingRun1Url = new URL(packingRun1Result.payload.data.url).pathname;
   const packingRun2Url = new URL(packingRun2Result.payload.data.url).pathname;
@@ -674,7 +705,7 @@ try {
   })()`);
   assert(Object.values(stressPlanningIds).every(Boolean), `25-component planning options incomplete: ${JSON.stringify(stressPlanningIds)}`);
   const stressRunResult = await post('/admin/production/runs', [
-    ['production_order_line_id', stressPlanningIds.line], ['planned_quantity', '1'], ['planned_start_at', '2026-09-04T08:00'], ['planned_end_at', '2026-09-04T10:00'], ['production_machine_id', stressPlanningIds.machine], ['production_mold_id', stressPlanningIds.mold], ['batch_lot', 'E2E-25-COMPONENT-RUN'],
+    ['production_order_line_id', stressPlanningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(10, 8)], ['planned_end_at', localDateTime(10, 10)], ['production_machine_id', stressPlanningIds.machine], ['production_mold_id', stressPlanningIds.mold], ['batch_lot', 'E2E-25-COMPONENT-RUN'],
   ]);
   const stressRunUrl = new URL(stressRunResult.payload.data.url).pathname;
   const stressRunDoc = stressRunUrl.split('/').pop();
@@ -686,13 +717,13 @@ try {
   await assertBody('TEST Stress Component 25', '25-component Material Issue lineage');
   await streamPdf(`${stressRunUrl}/materials/print`, 'production-25-component-materials-en.pdf');
 
-  const transferResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.finishedStore], ['document_type', 'inventory_transfer'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E transfer'], ['source_stock_status', 'available'], ['destination_stock_status', 'available'], ['lines[0][product_id]', movementIds.packaging], ['lines[0][quantity]', '5']]);
-  const damageResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.rawStore], ['document_type', 'inventory_damage'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damage'], ['source_stock_status', 'available'], ['destination_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
-  const scrapResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_scrap'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E damaged disposition'], ['source_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1']]);
-  await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_adjustment_out'], ['document_date', '2026-08-24'], ['movement_reason', 'MFG E2E negative stock guard'], ['source_stock_status', 'available'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '99999']], { expectedError: true });
+  const transferResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.finishedStore], ['document_type', 'inventory_transfer'], ['document_date', localDate()], ['movement_reason', 'MFG E2E transfer'], ['source_stock_status', 'available'], ['destination_stock_status', 'available'], ['lines[0][product_id]', movementIds.packaging], ['lines[0][quantity]', '5'], ['lines[0][batch_lot]', 'E2E-CARTON-OPENING']]);
+  const damageResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['destination_branch_store_id', movementIds.rawStore], ['document_type', 'inventory_damage'], ['document_date', localDate()], ['movement_reason', 'MFG E2E damage'], ['source_stock_status', 'available'], ['destination_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1'], ['lines[0][batch_lot]', 'E2E-PP-OPENING']]);
+  const scrapResult = await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_scrap'], ['document_date', localDate()], ['movement_reason', 'MFG E2E damaged disposition'], ['source_stock_status', 'damaged'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '1'], ['lines[0][batch_lot]', 'E2E-PP-OPENING']]);
+  await post('/admin/inventory/documents', [['branch_store_id', movementIds.rawStore], ['document_type', 'inventory_adjustment_out'], ['document_date', localDate()], ['movement_reason', 'MFG E2E negative stock guard'], ['source_stock_status', 'available'], ['lines[0][product_id]', movementIds.raw], ['lines[0][quantity]', '99999'], ['lines[0][batch_lot]', 'E2E-PP-OPENING']], { expectedError: true });
 
   await navigate('/admin/inventory/stock-counts');
-  const countResult = await post('/admin/inventory/stock-counts', [['branch_store_id', movementIds.rawStore], ['stock_status', 'available'], ['count_date', '2026-08-24'], ['product_ids[0]', movementIds.raw], ['notes', 'MFG E2E deliberate variance']]);
+  const countResult = await post('/admin/inventory/stock-counts', [['branch_store_id', movementIds.rawStore], ['stock_status', 'available'], ['count_date', localDate()], ['product_ids[0]', movementIds.raw], ['notes', 'MFG E2E deliberate variance']]);
   const countUrl = new URL(countResult.payload.data.url).pathname;
   await navigate(countUrl);
   const countEntries = await evaluate(`(() => {
@@ -745,19 +776,28 @@ try {
     })).filter((item) => item.href);
     return Object.fromEntries(links.map((item) => [item.label, item.href]));
   })()`);
-  for (const label of ['Material Issue', 'Additional Material Issue', 'Material Return', 'Production Waste', 'Production Receipt']) {
-    assert(runDocumentLinks[label], `Run lineage did not expose ${label}.`);
+  const lineageLink = (requiredWords, excludedWords = []) => Object.entries(runDocumentLinks)
+    .find(([label]) => requiredWords.every((word) => label.includes(word)) && excludedWords.every((word) => !label.includes(word)))?.[1];
+  const lineageDocuments = {
+    'Material Issue': lineageLink(['Material', 'Issue'], ['Additional']),
+    'Additional Material Issue': lineageLink(['Additional', 'Material', 'Issue']),
+    'Material Return': lineageLink(['Material', 'Return']),
+    'Production Waste': lineageLink(['Production', 'Waste']),
+    'Production Receipt': lineageLink(['Production', 'Receipt']),
+  };
+  for (const [label, url] of Object.entries(lineageDocuments)) {
+    assert(url, `Run lineage did not expose ${label}.`);
   }
-  await navigate(runDocumentLinks['Material Issue']);
+  await navigate(lineageDocuments['Material Issue']);
   await assertBody(run2Number, 'Material Issue to Production run lineage');
 
   await streamPdf(`${orderUrl}/requirement/print`, 'production-requirement-en.pdf');
   await streamPdf(`${run1Url}/materials/print`, 'material-requirement-en.pdf');
   await streamPdf(`${run1Url}/quality/print`, 'in-process-qc-en.pdf');
   await streamPdf(`${run1Url}/completion/print`, 'production-completion-en.pdf');
-  await streamPdf(runDocumentLinks['Material Issue'].replace(/\/$/, '') + '/print', 'material-issue-en.pdf');
-  await streamPdf(runDocumentLinks['Additional Material Issue'].replace(/\/$/, '') + '/print', 'additional-material-issue-en.pdf');
-  await streamPdf(runDocumentLinks['Material Return'].replace(/\/$/, '') + '/print', 'material-return-en.pdf');
+  await streamPdf(lineageDocuments['Material Issue'].replace(/\/$/, '') + '/print', 'material-issue-en.pdf');
+  await streamPdf(lineageDocuments['Additional Material Issue'].replace(/\/$/, '') + '/print', 'additional-material-issue-en.pdf');
+  await streamPdf(lineageDocuments['Material Return'].replace(/\/$/, '') + '/print', 'material-return-en.pdf');
   await streamPdf(`/admin/inventory/documents/${receiptDocs[0]}/print`, 'finished-goods-receipt-en.pdf');
   await streamPdf(`${run1Url}/print`, 'production-run-en.pdf');
 

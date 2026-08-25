@@ -75,6 +75,14 @@ return [
         'default_title' => 'You are offline',
         'default_message' => 'The ERP could not reach the server. Check your connection and try again.',
     ],
+    'connectivity' => [
+        'offline' => 'You are offline. Changes will not be submitted until the connection returns.',
+        'online' => 'Connection restored.',
+    ],
+    'update' => [
+        'available' => 'A new version is available.',
+        'reload' => 'Reload',
+    ],
     'messages' => [
         'updated' => 'Web app settings updated successfully.',
     ],

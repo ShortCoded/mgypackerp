@@ -34,6 +34,7 @@ class ConfigureFixedAssetCategoryMappingRequest extends FormRequest
             'depreciation_expense_account_doc_num' => ['required', 'string', $postable()],
             'disposal_gain_account_doc_num' => ['required', 'string', $postable()],
             'disposal_loss_account_doc_num' => ['required', 'string', $postable()],
+            'disposal_clearing_account_doc_num' => ['required', 'string', $postable()],
         ];
     }
 

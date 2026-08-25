@@ -4,6 +4,7 @@ namespace Modules\Sales\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 
@@ -13,6 +14,7 @@ class QuotationRevisionLine extends Model
      * @var list<string>
      */
     protected $fillable = [
+        'public_uuid',
         'quotation_revision_id',
         'line_number',
         'product_id',
@@ -38,6 +40,13 @@ class QuotationRevisionLine extends Model
         'warehouse_notes',
         'production_notes',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $line): void {
+            $line->public_uuid ??= (string) Str::uuid();
+        });
+    }
 
     protected function casts(): array
     {

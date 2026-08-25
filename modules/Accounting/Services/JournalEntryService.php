@@ -150,14 +150,17 @@ class JournalEntryService
             throw new DomainException(__('The purchase return already has an accounting entry.'));
         }
 
-        $purchaseReturn->loadMissing(['purchaseInvoice.journalEntry.lines', 'lines.product']);
+        $purchaseReturn->loadMissing(['purchaseInvoice.journalEntry.lines', 'purchaseInvoice.supplier.account', 'lines.product']);
         $invoice = $purchaseReturn->purchaseInvoice;
         $originalEntry = $invoice?->journalEntry;
         if (! $invoice instanceof PurchaseInvoice || ! $originalEntry instanceof JournalEntry || (float) $invoice->total_amount <= 0) {
             throw new DomainException(__('A posted source purchase invoice is required for the financial return adjustment.'));
         }
 
-        $supplierLine = $originalEntry->lines->first(fn ($line): bool => (float) $line->credit_amount > 0 && (int) $line->supplier_id === (int) $invoice->supplier_id);
+        $supplierAccountId = $invoice->supplier?->account_id;
+        $supplierLine = $originalEntry->lines->first(fn ($line): bool => (float) $line->credit_amount > 0
+            && (int) $line->supplier_id === (int) $invoice->supplier_id
+            && (int) $line->account_id === (int) $supplierAccountId);
         if ($supplierLine === null) {
             throw new DomainException(__('The source invoice accounting entry cannot be reversed safely.'));
         }

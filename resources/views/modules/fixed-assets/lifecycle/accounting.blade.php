@@ -22,6 +22,7 @@
                                     'depreciation_expense_account_doc_num' => $mapping?->depreciationExpenseAccount,
                                     'disposal_gain_account_doc_num' => $mapping?->disposalGainAccount,
                                     'disposal_loss_account_doc_num' => $mapping?->disposalLossAccount,
+                                    'disposal_clearing_account_doc_num' => $mapping?->disposalClearingAccount,
                                 ] as $field => $account)
                                     <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.mapping_fields.'.$field) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.credit-accounts') }}" required>@if($account)<option value="{{ $account->doc_num }}" selected>{{ $account->codeNameLabel() }}</option>@endif</select></div>
                                 @endforeach

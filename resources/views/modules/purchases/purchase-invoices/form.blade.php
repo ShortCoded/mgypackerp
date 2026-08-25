@@ -127,6 +127,10 @@
                 'public_id' => $isCreateLike || $mode === 'clone' ? null : $schedule->public_id,
                 'due_date' => $schedule->due_date ? $dates->formatDate($schedule->due_date, '') : null,
                 'amount' => $numbers->format($schedule->amount),
+                'paid_amount' => $numbers->format($schedule->paid_amount),
+                'credited_amount' => $numbers->format($schedule->credited_amount),
+                'outstanding_amount' => $numbers->format($schedule->outstanding_amount),
+                'status' => $schedule->status,
                 'payment_source_type' => $schedule->payment_source_type,
                 'cashbox_doc_num' => $schedule->cashbox?->doc_num,
                 'cashbox_label' => $cashboxLabel,
@@ -154,6 +158,11 @@
             'cash_voucher_status' => null,
             'notes' => null,
         ]];
+    }
+    $readonlyScheduleTotal = $isReadonly ? (float) ($record?->paymentSchedules?->sum('amount') ?? 0) : 0;
+    $readonlyScheduleDifference = $isReadonly ? (float) ($record?->total_amount ?? 0) - $readonlyScheduleTotal : 0;
+    if (abs($readonlyScheduleDifference) < 0.0001) {
+        $readonlyScheduleDifference = 0;
     }
 @endphp
 
@@ -753,6 +762,12 @@
                                 <tr>
                                     <th>{{ __('purchase_invoices.attributes.due_date') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.payment_amount') }}</th>
+                                    @if($isReadonly)
+                                        <th>{{ __('purchase_invoices.totals.paid') }}</th>
+                                        <th>{{ __('purchase_invoices.totals.credited') }}</th>
+                                        <th>{{ __('purchase_invoices.totals.remaining') }}</th>
+                                        <th>{{ __('purchase_invoices.attributes.status') }}</th>
+                                    @endif
                                     <th>{{ __('purchase_invoices.attributes.payment_source_type') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.cashbox') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.bank_account') }}</th>
@@ -784,6 +799,12 @@
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.amount"></div>
                                             @endif
                                         </td>
+                                        @if($isReadonly)
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['paid_amount'] ?? '0' }}</div></td>
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['credited_amount'] ?? '0' }}</div></td>
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['outstanding_amount'] ?? '0' }}</div></td>
+                                            <td><div class="form-control-plaintext">{{ __('purchase_invoices.schedule_statuses.'.($schedule['status'] ?? \Modules\Purchases\Models\PurchaseInvoicePaymentSchedule::StatusScheduled)) }}</div></td>
+                                        @endif
                                         <td>
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ __('purchase_invoices.source_types.'.($schedule['payment_source_type'] ?? PurchaseInvoice::SourceScheduled)) }}</div>
@@ -859,20 +880,20 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="{{ $isReadonly ? 8 : 9 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td>
+                                        <td colspan="{{ $isReadonly ? 12 : 9 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
                             <tfoot class="bg-light">
                                 <tr>
                                     <th class="text-nowrap text-end">{{ __('purchase_invoices.totals.schedule_total') }}</th>
-                                    <th class="text-end js-purchase-invoice-schedule-total" dir="ltr" style="min-width: 100px">0</th>
-                                    <th colspan="{{ $isReadonly ? 6 : 7 }}"></th>
+                                    <th class="text-end{{ $isReadonly ? '' : ' js-purchase-invoice-schedule-total' }}" dir="ltr" style="min-width: 100px">{{ $isReadonly ? $numbers->format($readonlyScheduleTotal) : '0' }}</th>
+                                    <th colspan="{{ $isReadonly ? 10 : 7 }}"></th>
                                 </tr>
                                 <tr>
                                     <th class="text-nowrap text-end">{{ __('purchase_invoices.totals.schedule_difference') }}</th>
-                                    <th class="text-end js-purchase-invoice-schedule-difference" dir="ltr" style="min-width: 100px">0</th>
-                                    <th colspan="{{ $isReadonly ? 6 : 7 }}"></th>
+                                    <th class="text-end{{ $isReadonly ? '' : ' js-purchase-invoice-schedule-difference' }}" dir="ltr" style="min-width: 100px">{{ $isReadonly ? $numbers->format($readonlyScheduleDifference) : '0' }}</th>
+                                    <th colspan="{{ $isReadonly ? 10 : 7 }}"></th>
                                 </tr>
                             </tfoot>
                         </table>

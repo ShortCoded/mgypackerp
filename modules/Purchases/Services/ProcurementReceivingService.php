@@ -12,6 +12,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Purchases\Models\GoodsReceiptInspection;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
@@ -24,6 +25,8 @@ class ProcurementReceivingService
         private readonly OperatingContextService $operatingContext,
         private readonly ProcurementAuditService $audit,
         private readonly ProcurementAttachmentService $attachments,
+        private readonly InventoryGrniService $grni,
+        private readonly InventoryLayerService $layers,
     ) {}
 
     public function createDeliverySchedules(PurchaseOrder $purchaseOrder, array $data): PurchaseOrder
@@ -55,7 +58,8 @@ class ProcurementReceivingService
                 }
 
                 $line->deliverySchedules()->create([
-                    ...$context,
+                    'company_id' => $context['company_id'],
+                    'financial_period_id' => $context['financial_period_id'],
                     'purchase_order_id' => $order->getKey(),
                     'sequence' => ((int) $line->deliverySchedules()->max('sequence')) + 1,
                     'scheduled_date' => $input['scheduled_date'],
@@ -159,6 +163,8 @@ class ProcurementReceivingService
                     'rejected_quantity' => 0,
                     'inventory_posted_quantity' => 0,
                     'supplier_lot_number' => $input['supplier_lot_number'] ?? null,
+                    'manufacture_date' => $input['manufacture_date'] ?? null,
+                    'expiry_date' => $input['expiry_date'] ?? null,
                     'notes' => $input['notes'] ?? null,
                     'created_by' => auth()->id(),
                 ]);
@@ -370,7 +376,11 @@ class ProcurementReceivingService
         BranchStore::query()->lockForUpdate()->findOrFail($receipt->branch_store_id);
         Product::query()->lockForUpdate()->findOrFail($line->product_id);
 
-        InventoryTransaction::query()->firstOrCreate([
+        if ($line->product?->tracks_expiry && ($line->expiry_date === null || $line->expiry_date->isBefore($receipt->document_date))) {
+            throw new DomainException(__('Expiry-tracked stock requires a non-expired receipt-layer expiry date.'));
+        }
+
+        $movement = InventoryTransaction::query()->firstOrCreate([
             'posting_key' => "purchase-receipt:{$line->getKey()}",
         ], [
             'company_id' => $receipt->company_id,
@@ -389,8 +399,14 @@ class ProcurementReceivingService
             'source_line_type' => UnpricedInventoryReceiptLine::class,
             'source_line_id' => $line->getKey(),
             'supplier_id' => $receipt->supplier_id,
+            'stock_status' => InventoryTransaction::StatusAvailable,
+            'batch_lot' => $line->supplier_lot_number,
+            'manufacture_date' => $line->manufacture_date,
+            'expiry_date' => $line->expiry_date,
             'created_by' => auth()->id(),
         ]);
+        $this->grni->postAcceptedLine($receipt, $line, $movement);
+        $this->layers->recordInbound($movement);
         $line->forceFill(['inventory_posted_quantity' => $this->quantity($quantity), 'updated_by' => auth()->id()])->save();
     }
 

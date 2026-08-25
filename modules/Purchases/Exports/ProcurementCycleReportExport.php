@@ -16,6 +16,7 @@ class ProcurementCycleReportExport implements FromCollection, ShouldAutoSize, Wi
         private readonly ProcurementCycleReport $report,
         private readonly Collection $rows,
         private readonly bool $showPrices,
+        private readonly ?string $reportType = null,
     ) {}
 
     public function collection(): Collection
@@ -25,12 +26,12 @@ class ProcurementCycleReportExport implements FromCollection, ShouldAutoSize, Wi
 
     public function headings(): array
     {
-        return $this->report->headings($this->showPrices);
+        return $this->report->headings($this->showPrices, $this->reportType);
     }
 
     /** @param array<string, mixed> $row */
     public function map($row): array
     {
-        return $this->report->exportMap($row, $this->showPrices);
+        return $this->report->exportMap($row, $this->showPrices, $this->reportType);
     }
 }

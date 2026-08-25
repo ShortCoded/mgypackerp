@@ -16,6 +16,7 @@ class FixedAssetCategoryMapping extends Model
         'depreciation_expense_account_id',
         'disposal_gain_account_id',
         'disposal_loss_account_id',
+        'disposal_clearing_account_id',
         'created_by',
         'updated_by',
     ];
@@ -48,5 +49,10 @@ class FixedAssetCategoryMapping extends Model
     public function disposalLossAccount(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'disposal_loss_account_id')->withTrashed();
+    }
+
+    public function disposalClearingAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'disposal_clearing_account_id')->withTrashed();
     }
 }

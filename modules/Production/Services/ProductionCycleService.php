@@ -568,7 +568,7 @@ class ProductionCycleService
 
             $entry = $locked->progressEntries()->create([
                 ...$values,
-                'recorded_at' => $data['recorded_at'] ?? now(),
+                'recorded_at' => now(),
                 'notes' => $data['notes'] ?? null,
                 'recorded_by' => auth()->id(),
             ]);
@@ -601,6 +601,26 @@ class ProductionCycleService
                 throw new DomainException('The selected quality inspection type is not active for the operating company.');
             }
 
+            $checkpointIds = collect($data['results'] ?? [])
+                ->pluck('quality_checkpoint_id')
+                ->map(fn (mixed $checkpointId): int => (int) $checkpointId)
+                ->unique()
+                ->values();
+
+            if ($checkpointIds->isNotEmpty()) {
+                $validCheckpointCount = DB::table('quality_checkpoints')
+                    ->whereIn('id', $checkpointIds)
+                    ->where('company_id', $locked->company_id)
+                    ->where('quality_inspection_type_id', $inspectionTypeId)
+                    ->where('is_active', true)
+                    ->whereNull('deleted_at')
+                    ->count();
+
+                if ($inspectionTypeId === null || $validCheckpointCount !== $checkpointIds->count()) {
+                    throw new DomainException('Quality checkpoints must be active and belong to the selected inspection type and operating company.');
+                }
+            }
+
             $numbers = $this->documents->nextForCompany(
                 'quality_inspections',
                 ProductionQualityInspection::class,
@@ -616,8 +636,8 @@ class ProductionCycleService
                 'production_run_id' => $locked->getKey(),
                 'quality_inspection_type_id' => $inspectionTypeId,
                 'version' => 1,
-                'inspection_date' => $data['inspection_date'] ?? now()->toDateString(),
-                'sampled_at' => $data['sampled_at'] ?? now(),
+                'inspection_date' => now()->toDateString(),
+                'sampled_at' => now(),
                 'status' => 'approved',
                 'result' => $data['result'],
                 'defect_code' => $data['defect_code'] ?? null,
@@ -751,7 +771,7 @@ class ProductionCycleService
         ?int $warehouseLocationId = null,
     ): InventoryDocument {
         return DB::transaction(function () use ($run, $branchStoreId, $baseQuantity, $warehouseLocationId): InventoryDocument {
-            $locked = ProductionRun::query()->with(['order', 'orderLine'])->lockForUpdate()->findOrFail($run->getKey());
+            $locked = ProductionRun::query()->with(['order', 'orderLine.product', 'product'])->lockForUpdate()->findOrFail($run->getKey());
 
             if ($locked->status !== ProductionRun::StatusRunning) {
                 throw new DomainException('Finished goods can only be received from a running production run that is not on quality hold.');
@@ -801,6 +821,16 @@ class ProductionCycleService
             }
 
             $unitCost = bcdiv($receiptCost, $baseQuantity, 8);
+            $manufactureDate = ($locked->actual_end_at ?? now())->toDateString();
+            $expiryDate = null;
+            if ($locked->product?->tracks_expiry) {
+                if (blank($locked->batch_lot) || ! $locked->product->default_shelf_life_days) {
+                    throw new DomainException(__('Expiry-tracked finished goods require a batch and a default shelf life before receipt.'));
+                }
+                $expiryDate = CarbonImmutable::parse($manufactureDate)
+                    ->addDays((int) $locked->product->default_shelf_life_days)
+                    ->toDateString();
+            }
             $document = $this->movements->createAndPost([
                 ...$this->movementContext($locked, $branchStoreId),
                 'document_type' => InventoryDocument::TypeProductionReceipt,
@@ -815,6 +845,8 @@ class ProductionCycleService
                 'warehouse_location_id' => $warehouseLocationId,
                 'destination_warehouse_location_id' => $warehouseLocationId,
                 'batch_lot' => $locked->batch_lot,
+                'manufacture_date' => $manufactureDate,
+                'expiry_date' => $expiryDate,
                 'source_line_type' => ProductionRun::class,
                 'source_line_id' => $locked->getKey(),
                 'unit_cost' => $unitCost,

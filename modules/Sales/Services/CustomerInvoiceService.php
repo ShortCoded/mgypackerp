@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
+use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
@@ -98,6 +99,9 @@ class CustomerInvoiceService
                         'sales_order' => $salesOrder->doc_num,
                         'sales_order_line_public_id' => $line->public_id,
                         'delivery' => $row['delivery_line']?->document?->doc_num,
+                        'tax_rate' => $line->tax_rate,
+                        'tax_code' => $row['tax'] > 0 ? 'VAT' : 'EXEMPT',
+                        'unit_code' => $line->unit?->doc_num,
                     ],
                 ]);
                 $line->increment('invoiced_quantity', $row['quantity']);
@@ -130,6 +134,48 @@ class CustomerInvoiceService
             $this->audit->record($locked, 'customer_invoice.posted', ['journal_entry' => $journal->doc_num]);
 
             return $locked->refresh()->load(['lines', 'paymentSchedules']);
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function createNonStockSourceInvoice(array $data): CustomerInvoice
+    {
+        return DB::transaction(function () use ($data): CustomerInvoice {
+            $customer = Customer::query()->forCompany((int) $data['company_id'])->active()->findOrFail($data['customer_id']);
+            $net = $this->amounts->round((string) $data['net_amount']);
+            $tax = $this->amounts->round((string) ($data['tax_amount'] ?? 0));
+            $total = $this->amounts->add($net, $tax);
+            $this->amounts->assertPositive($net, 'A non-stock source Invoice requires a positive net amount.');
+            $numbers = $this->documents->nextForCompany(
+                'customer_invoices', CustomerInvoice::class, (int) $data['company_id'],
+                fn ($query) => $query->where('financial_period_id', $data['financial_period_id']),
+            );
+            $invoice = CustomerInvoice::query()->create([
+                ...$numbers, 'company_id' => $data['company_id'], 'financial_period_id' => $data['financial_period_id'],
+                'branch_id' => $data['branch_id'], 'customer_id' => $customer->getKey(),
+                'sales_order_id' => null, 'invoice_date' => $data['invoice_date'],
+                'due_date' => $data['due_date'] ?? $data['invoice_date'], 'currency_id' => $data['currency_id'],
+                'exchange_rate' => $data['exchange_rate'] ?? 1, 'subtotal_amount' => $net,
+                'discount_amount' => 0, 'taxable_amount' => $net, 'tax_amount' => $tax,
+                'total_amount' => $total, 'remaining_amount' => $total,
+                'document_type' => CustomerInvoice::TypeInvoice, 'status' => CustomerInvoice::StatusDraft,
+                'posting_status' => 'unposted', 'source_type' => $data['source_type'],
+                'source_id' => $data['source_id'], 'source_doc_num' => $data['source_doc_num'],
+                'notes' => $data['notes'] ?? null, 'created_by' => auth()->id(),
+            ]);
+            $invoice->lines()->create([
+                'line_number' => 1, 'product_id' => null, 'unit_id' => null,
+                'description' => $data['description'], 'quantity' => '1.00000000',
+                'conversion_factor' => '1.00000000', 'base_quantity' => '1.00000000',
+                'unit_price' => $net, 'discount_amount' => 0, 'tax_amount' => $tax,
+                'line_total' => $total, 'is_service' => true, 'unit_cost' => 0,
+                'source_snapshot' => $data['source_snapshot'] ?? [],
+            ]);
+            $invoice->paymentSchedules()->create([
+                'sequence' => 1, 'due_date' => $data['due_date'] ?? $data['invoice_date'], 'amount' => $total,
+            ]);
+
+            return $invoice->load(['lines', 'paymentSchedules']);
         });
     }
 

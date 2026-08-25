@@ -18,7 +18,11 @@
     if ($record->isIssued() && in_array($record->status, ['issued', 'delivered'], true) && auth()->user()?->can('cheques.mark_cleared')) {
         $buttons[] = ['key' => 'mark_cleared', 'url' => route('admin.finance.cheques.mark-cleared', $record->doc_num), 'class' => 'btn-falcon-success'];
     }
-    $canCancel = (($record->isReceived() && in_array($record->status, ['received', 'deposited'], true)) || ($record->isIssued() && in_array($record->status, ['draft', 'issued', 'delivered'], true))) && auth()->user()?->can('cheques.cancel');
+    if ($record->isIssued() && $record->status === \Modules\Finance\Models\Cheque::StatusClearingReversed && auth()->user()?->can('cheques.mark_issued')) {
+        $buttons[] = ['key' => 'represent', 'url' => route('admin.finance.cheques.represent', $record->doc_num), 'class' => 'btn-falcon-info'];
+    }
+    $canReverseClearing = $record->isIssued() && $record->status === \Modules\Finance\Models\Cheque::StatusCleared && auth()->user()?->can('cheques.mark_cleared');
+    $canCancel = (($record->isReceived() && in_array($record->status, ['received', 'deposited'], true)) || ($record->isIssued() && in_array($record->status, ['draft', 'issued', 'delivered', 'clearing_reversed'], true))) && auth()->user()?->can('cheques.cancel');
 @endphp
 
 @foreach($buttons as $button)
@@ -26,6 +30,12 @@
         {{ __('cheques.actions.'.$button['key']) }}
     </button>
 @endforeach
+
+@if($canReverseClearing)
+    <button type="button" class="btn btn-falcon-warning btn-sm js-cheque-reverse-clearing" data-url="{{ route('admin.finance.cheques.reverse-clearing', $record->doc_num) }}">
+        {{ __('cheques.actions.reverse_clearing') }}
+    </button>
+@endif
 
 @if($canCancel)
     <button type="button" class="btn btn-falcon-warning btn-sm js-cheque-cancel" data-url="{{ route('admin.finance.cheques.cancel', $record->doc_num) }}">

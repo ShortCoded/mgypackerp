@@ -214,6 +214,8 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.delivery_schedule_public_id' => ['nullable', 'uuid'],
             'lines.*.delivered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.supplier_lot_number' => ['nullable', 'string', 'max:120'],
+            'lines.*.manufacture_date' => ['nullable', 'date', 'before_or_equal:lines.*.expiry_date'],
+            'lines.*.expiry_date' => ['nullable', 'date', 'after_or_equal:document_date'],
             'lines.*.notes' => ['nullable', 'string'],
         ];
     }

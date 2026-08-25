@@ -6,7 +6,8 @@ $screen = static fn (string $slug, string $en, string $ar, string $group = 'orde
     'title' => ['en' => $en, 'ar' => $ar],
     'group' => $group,
     'profile' => $profile,
-    'shell_enabled' => false,
+    'shell_enabled' => true,
+    'classification' => 'UI_SURFACE_PENDING_DEEP_WORKFLOW',
     ...$extra,
 ];
 
@@ -49,8 +50,8 @@ return [
             'permission_prefix' => 'sales_orders',
             'actions' => ['view', 'create', 'edit', 'delete', 'approve', 'reject', 'cancel', 'reopen', 'print', 'view_prices', 'credit_override', 'reserve', 'deliver', 'invoice', 'production'],
         ]),
-        $screen('sales-order-lines', 'Sales Order Lines', 'سطور أوامر البيع'),
-        $screen('sales-order-specifications', 'Sales Order Specifications', 'مواصفات أوامر البيع'),
+        $screen('sales-order-lines', 'Sales Order Lines', 'سطور أوامر البيع', 'orders', 'document', ['classification' => 'CHILD_ENTITY_NOT_A_SCREEN', 'menu_visible' => false, 'shell_enabled' => false]),
+        $screen('sales-order-specifications', 'Sales Order Specifications', 'مواصفات أوامر البيع', 'orders', 'document', ['classification' => 'CHILD_ENTITY_NOT_A_SCREEN', 'menu_visible' => false, 'shell_enabled' => false]),
         $screen('sales-order-change-requests', 'Sales Order Change Requests', 'طلبات تغيير أوامر البيع'),
         $screen('sales-order-approvals', 'Sales Order Approvals', 'اعتمادات أوامر البيع'),
         $screen('sales-order-payment-schedule', 'Sales Order Payment Schedule', 'جدول دفعات أمر البيع'),
@@ -67,7 +68,7 @@ return [
             'permission_prefix' => 'customer_invoices',
             'actions' => ['view', 'create', 'edit', 'post', 'cancel', 'reopen', 'print', 'view_prices'],
         ]),
-        $screen('sales-invoice-lines', 'Sales Invoice Lines', 'سطور فواتير المبيعات', 'billing'),
+        $screen('sales-invoice-lines', 'Sales Invoice Lines', 'سطور فواتير المبيعات', 'billing', 'document', ['classification' => 'CHILD_ENTITY_NOT_A_SCREEN', 'menu_visible' => false, 'shell_enabled' => false]),
         $screen('sales-returns', 'Sales Returns', 'مردودات المبيعات', 'billing', 'document', [
             'shell_enabled' => false,
             'permission_prefix' => 'sales_returns',
@@ -79,7 +80,7 @@ return [
             'permission_prefix' => 'customer_receipts',
             'actions' => ['view', 'create', 'cancel', 'reopen', 'print', 'allocate'],
         ]),
-        $screen('customer-receipt-allocations', 'Customer Receipt Allocations', 'تخصيص متحصلات العملاء', 'billing', 'document', ['permission_prefix' => 'customer_receipt_allocations']),
+        $screen('customer-receipt-allocations', 'Customer Receipt Allocations', 'تخصيص متحصلات العملاء', 'billing', 'document', ['classification' => 'CHILD_ENTITY_NOT_A_SCREEN', 'menu_visible' => false, 'shell_enabled' => false, 'permission_prefix' => 'customer_receipt_allocations']),
         $screen('delivery-notes', 'Delivery Notes', 'أذون التسليم', 'delivery', 'document', [
             'shell_enabled' => false,
             'permission_prefix' => 'sales_deliveries',

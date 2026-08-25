@@ -371,6 +371,33 @@
             });
         });
 
+        $(document).off('click.chequeReverseClearing', '.js-cheque-reverse-clearing').on('click.chequeReverseClearing', '.js-cheque-reverse-clearing', function () {
+            const url = $(this).data('url');
+
+            confirmAction({
+                title: msg('reverse_clearing_confirm_title'),
+                text: msg('reverse_clearing_confirm_text'),
+                input: 'textarea',
+                inputPlaceholder: msg('reverse_clearing_reason_placeholder'),
+                inputValidator: function (value) {
+                    return value && value.trim() !== '' ? null : msg('reverse_clearing_reason_placeholder');
+                },
+                confirmButtonText: msg('reverse_clearing_confirm_yes'),
+                confirmButtonColor: '#f5803e'
+            }).then(function (result) {
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                postAction(url, { reason: result.value }).done(function (response) {
+                    toast('success', response.message);
+                    window.location.reload();
+                }).fail(function (response) {
+                    toast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpected_error'));
+                });
+            });
+        });
+
         $(document).off('click.chequePrint', '.js-cheque-print').on('click.chequePrint', '.js-cheque-print', function () {
             $.ajax({ url: $(this).data('url'), method: 'GET', headers: headers() }).fail(function (response) {
                 toast('info', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpected_error'));

@@ -23,7 +23,12 @@ class InventoryDocumentLine extends Model
 
     protected function casts(): array
     {
-        return ['reference_quantity' => 'decimal:8', 'previous_quantity' => 'decimal:8', 'quantity' => 'decimal:8', 'base_quantity' => 'decimal:8', 'transaction_quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'rejected_quantity' => 'decimal:8', 'unit_cost' => 'decimal:8', 'total_cost' => 'decimal:8', 'product_snapshot' => 'array'];
+        return [
+            'reference_quantity' => 'decimal:8', 'previous_quantity' => 'decimal:8', 'quantity' => 'decimal:8',
+            'base_quantity' => 'decimal:8', 'transaction_quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8',
+            'rejected_quantity' => 'decimal:8', 'unit_cost' => 'decimal:8', 'total_cost' => 'decimal:8',
+            'manufacture_date' => 'date', 'expiry_date' => 'date', 'product_snapshot' => 'array',
+        ];
     }
 
     public function document(): BelongsTo

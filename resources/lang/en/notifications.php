@@ -12,6 +12,16 @@ return [
         'on' => 'Sound on',
         'off' => 'Sound off',
     ],
+    'push' => [
+        'title' => 'Push notifications',
+        'enable' => 'Enable push',
+        'disable' => 'Disable push',
+        'enabled' => 'Push notifications are enabled on this device.',
+        'disabled' => 'Push notifications are disabled on this device.',
+        'denied' => 'Notifications are blocked in this browser. Allow them in the site settings to continue.',
+        'unavailable' => 'Push notifications are unavailable until PWA and VAPID settings are configured.',
+        'failed' => 'Push notification settings could not be saved. Please try again.',
+    ],
     'types' => [
         'task_assigned' => 'Task assigned',
         'task_updated' => 'Task updated',

@@ -23,7 +23,7 @@ class ProductImageResolver
         }
 
         if (str_starts_with($path, 'archive/')) {
-            if ($this->archiveFileFromImagePath($product) instanceof ArchiveFile) {
+            if ($this->archiveFileAvailable($this->archiveFileFromImagePath($product))) {
                 return route('admin.products.image', $product->doc_num);
             }
 

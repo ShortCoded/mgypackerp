@@ -41,5 +41,10 @@
         <tfoot><tr><th colspan="3">{{ __('Total') }}</th><th class="text-end" dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</th></tr></tfoot>
     </table>
 
+    @if($record->clearingEvents->isNotEmpty())
+        <h2>{{ __('Bank Clearing and Reversal Lineage') }}</h2>
+        <table class="report-table"><thead><tr><th>#</th><th>{{ __('Clearing date') }}</th><th>{{ __('Status') }}</th><th>{{ __('Clearing Journal') }}</th><th>{{ __('Reversal Journal') }}</th><th>{{ __('Reason') }}</th></tr></thead><tbody>@foreach($record->clearingEvents as $event)<tr><td>{{ $event->sequence }}</td><td>{{ $dates->formatDate($event->clearing_date, '—') }}</td><td>{{ str($event->status)->replace('_', ' ')->title() }}</td><td>{{ $event->clearingJournalEntry?->doc_num }}</td><td>{{ $event->reversalJournalEntry?->doc_num }}</td><td>{{ $event->reversal_reason }}</td></tr>@endforeach</tbody></table>
+    @endif
+
     @include('reports.partials.company-authorization')
 @endsection

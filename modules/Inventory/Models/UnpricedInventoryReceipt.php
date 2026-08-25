@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
@@ -51,6 +52,7 @@ class UnpricedInventoryReceipt extends Model
         'received_at',
         'qc_status',
         'posting_status',
+        'grni_journal_entry_id',
         'received_by',
         'posted_by',
         'posted_at',
@@ -174,6 +176,11 @@ class UnpricedInventoryReceipt extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(UnpricedInventoryReceiptLine::class, 'receipt_id')->orderBy('line_no');
+    }
+
+    public function grniJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'grni_journal_entry_id');
     }
 
     public function createdBy(): BelongsTo

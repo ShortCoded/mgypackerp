@@ -1,4 +1,4 @@
-<nav class="navbar navbar-light navbar-glass navbar-top navbar-expand-lg" style="display:none;" data-move-target="#navbarVerticalNav" data-navbar-top="combo">
+<nav class="navbar navbar-light navbar-glass navbar-top navbar-expand-lg" data-move-target="#navbarVerticalNav" data-navbar-top="combo">
     <button class="btn navbar-toggler-humburger-icon navbar-toggler me-1 me-sm-3" type="button" data-bs-toggle="collapse" data-bs-target="#navbarVerticalCollapse" aria-controls="navbarVerticalCollapse" aria-expanded="false" aria-label="{{ __('layout.toggle_navigation') }}">
         <span class="navbar-toggle-icon"><span class="toggle-line"></span></span>
     </button>

@@ -93,6 +93,11 @@ return [
                 'icon' => 'file-invoice-dollar',
                 'route' => 'admin.sales.sales-invoices.index',
                 'permission' => 'customer_invoices.view',
+                'actions' => [
+                    'credit_allocate' => 'customer_credits.allocate',
+                    'credit_refund' => 'customer_credits.refund',
+                    'electronic_invoice_submit' => 'customer_invoices.electronic_invoice.submit',
+                ],
                 'keywords' => ['sales invoices', 'credit notes', 'فواتير المبيعات', 'إشعارات الدائن'],
                 'active' => ['admin.sales.sales-invoices.*', 'admin.sales.customer-invoices.*'],
                 'children' => [],

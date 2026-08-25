@@ -41,6 +41,8 @@ class CustomerInvoice extends Model
             'subtotal_amount' => 'decimal:4', 'discount_amount' => 'decimal:4', 'taxable_amount' => 'decimal:4',
             'tax_amount' => 'decimal:4', 'total_amount' => 'decimal:4', 'applied_advance_amount' => 'decimal:4',
             'paid_amount' => 'decimal:4', 'credited_amount' => 'decimal:4', 'remaining_amount' => 'decimal:4',
+            'credit_available_amount' => 'decimal:4', 'credit_allocated_amount' => 'decimal:4',
+            'credit_refunded_amount' => 'decimal:4',
             'payment_terms_snapshot' => 'array', 'is_closed' => 'boolean', 'issued_at' => 'datetime',
             'posting_revision' => 'integer',
             'cancelled_at' => 'datetime', 'reopened_at' => 'datetime',
@@ -139,5 +141,25 @@ class CustomerInvoice extends Model
     public function creditNotes(): HasMany
     {
         return $this->hasMany(self::class, 'original_invoice_id');
+    }
+
+    public function creditAllocations(): HasMany
+    {
+        return $this->hasMany(CustomerCreditAllocation::class, 'credit_note_id');
+    }
+
+    public function appliedCredits(): HasMany
+    {
+        return $this->hasMany(CustomerCreditAllocation::class, 'target_invoice_id');
+    }
+
+    public function creditRefunds(): HasMany
+    {
+        return $this->hasMany(CustomerCreditRefund::class, 'credit_note_id');
+    }
+
+    public function electronicInvoiceSubmissions(): HasMany
+    {
+        return $this->hasMany(ElectronicInvoiceSubmission::class);
     }
 }

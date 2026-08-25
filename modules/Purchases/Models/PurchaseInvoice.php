@@ -243,6 +243,10 @@ class PurchaseInvoice extends Model
         $paidAmount = (float) $this->paymentAllocations()
             ->whereHas('paymentContext', fn ($query) => $query->effectiveApproved())
             ->sum('amount');
+        $unallocatedPaidAmount = (float) $this->paymentAllocations()
+            ->whereNull('payment_schedule_id')
+            ->whereHas('paymentContext', fn ($query) => $query->effectiveApproved())
+            ->sum('amount');
         $creditedAmount = (float) $this->purchaseReturns()
             ->where('status', 'posted')
             ->sum('total_amount');
@@ -262,12 +266,18 @@ class PurchaseInvoice extends Model
 
             $scheduleCredit = min(max(0, (float) $schedule->amount - $schedulePaid), $remainingCredit);
             $remainingCredit -= $scheduleCredit;
+            $unallocatedSchedulePaid = min(
+                max(0, (float) $schedule->amount - $schedulePaid - $scheduleCredit),
+                $unallocatedPaidAmount,
+            );
+            $unallocatedPaidAmount -= $unallocatedSchedulePaid;
+            $schedulePaid += $unallocatedSchedulePaid;
             $scheduleSettled = $schedulePaid + $scheduleCredit;
             $scheduleStatus = match (true) {
                 $scheduleCredit > 0 && $scheduleSettled >= (float) $schedule->amount - 0.0001 => PurchaseInvoicePaymentSchedule::StatusSettled,
                 $scheduleCredit > 0 => PurchaseInvoicePaymentSchedule::StatusPartiallySettled,
                 $schedulePaid >= (float) $schedule->amount - 0.0001 => PurchaseInvoicePaymentSchedule::StatusPaid,
-                $schedulePaid > 0 => 'partially_paid',
+                $schedulePaid > 0 => PurchaseInvoicePaymentSchedule::StatusPartiallyPaid,
                 $schedule->status === PurchaseInvoicePaymentSchedule::StatusVoucherDraft => PurchaseInvoicePaymentSchedule::StatusVoucherDraft,
                 default => PurchaseInvoicePaymentSchedule::StatusScheduled,
             };

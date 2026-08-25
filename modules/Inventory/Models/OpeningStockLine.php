@@ -31,6 +31,8 @@ class OpeningStockLine extends Model
         'warehouse_location_id',
         'stock_status',
         'batch_lot',
+        'manufacture_date',
+        'expiry_date',
         'notes',
         'created_by',
         'updated_by',
@@ -51,6 +53,8 @@ class OpeningStockLine extends Model
         return [
             'quantity' => 'decimal:4',
             'product_snapshot' => 'array',
+            'manufacture_date' => 'date',
+            'expiry_date' => 'date',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',

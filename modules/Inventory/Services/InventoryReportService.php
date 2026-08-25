@@ -2,17 +2,17 @@
 
 namespace Modules\Inventory\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\StockCountLine;
-use Modules\Purchases\Models\PurchaseInvoice;
-use Modules\Purchases\Models\PurchaseInvoiceLine;
 
 class InventoryReportService
 {
@@ -31,11 +31,15 @@ class InventoryReportService
         $reservations = $this->reservations($companyId, [...$contextFilters, 'status' => InventoryReservation::StatusActive]);
 
         $movements = $this->movements($companyId, $contextFilters);
+        $agingLayers = $this->agingLayers($companyId, $contextFilters);
+        $expiryLayers = $this->expiryLayers($companyId, $contextFilters);
 
         return [
             'balances' => $balances,
             'reservations' => $reservations,
             'movements' => $movements,
+            'agingLayers' => $agingLayers,
+            'expiryLayers' => $expiryLayers,
             'qualityBalances' => $balances->whereIn('stock_status', [
                 InventoryTransaction::StatusQcHold,
                 InventoryTransaction::StatusQuarantine,
@@ -51,30 +55,96 @@ class InventoryReportService
                 'unvalued_receipt_quantity' => $this->decimalTotal($balances, 'unvalued_receipt_quantity'),
                 'quantity_in' => $this->decimalTotal($movements, 'quantity_in'),
                 'quantity_out' => $this->decimalTotal($movements, 'quantity_out'),
+                'aging_quantity' => $this->decimalTotal($agingLayers, 'remaining_quantity'),
+                'aging_value' => $agingLayers->reduce(
+                    fn (string $total, InventoryReceiptLayer $layer): string => bcadd($total, bcmul((string) $layer->remaining_quantity, (string) ($layer->unit_cost ?? 0), 8), 8),
+                    '0.00000000',
+                ),
+                'expiry_quantity' => $this->decimalTotal($expiryLayers, 'remaining_quantity'),
             ],
         ];
     }
 
     /** @param array<string, mixed> $filters */
+    public function agingLayers(int $companyId, array $filters = []): Collection
+    {
+        $asOf = CarbonImmutable::parse($filters['as_of'] ?? $filters['to'] ?? today())->startOfDay();
+
+        return InventoryReceiptLayer::query()
+            ->where('company_id', $companyId)
+            ->where('remaining_quantity', '>', 0)
+            ->whereDate('original_receipt_date', '<=', $asOf)
+            ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
+            ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
+            ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
+            ->when($filters['warehouse_location_id'] ?? null, fn ($query, $locationId) => $query->where('warehouse_location_id', $locationId))
+            ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->where('product_id', $productId))
+            ->when($filters['classification'] ?? null, fn ($query, $classification) => $query->whereHas('product', fn ($productQuery) => $productQuery->where('item_classification', $classification)))
+            ->when($filters['stock_status'] ?? null, fn ($query, $status) => $query->where('stock_status', $status))
+            ->when($filters['batch_lot'] ?? null, fn ($query, $batch) => $query->where('batch_lot', $batch))
+            ->with(['product', 'branchStore', 'warehouseLocation'])
+            ->orderBy('original_receipt_date')
+            ->orderBy('id')
+            ->get()
+            ->each(function (InventoryReceiptLayer $layer) use ($asOf): void {
+                $ageDays = $layer->original_receipt_date->diffInDays($asOf);
+                $layer->setAttribute('age_days', $ageDays);
+                $layer->setAttribute('age_bucket', $this->ageBucket($ageDays));
+                $layer->setAttribute('remaining_value', bcmul((string) $layer->remaining_quantity, (string) ($layer->unit_cost ?? 0), 8));
+            });
+    }
+
+    /** @param array<string, mixed> $filters */
+    public function expiryLayers(int $companyId, array $filters = []): Collection
+    {
+        $asOf = CarbonImmutable::parse($filters['as_of'] ?? $filters['to'] ?? today())->startOfDay();
+        $withinDays = (int) ($filters['expiry_within_days'] ?? 90);
+        $cutoff = $asOf->copy()->addDays($withinDays);
+
+        return InventoryReceiptLayer::query()
+            ->where('company_id', $companyId)
+            ->where('remaining_quantity', '>', 0)
+            ->whereNotNull('expiry_date')
+            ->whereDate('expiry_date', '<=', $cutoff)
+            ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
+            ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
+            ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
+            ->when($filters['warehouse_location_id'] ?? null, fn ($query, $locationId) => $query->where('warehouse_location_id', $locationId))
+            ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->where('product_id', $productId))
+            ->when($filters['classification'] ?? null, fn ($query, $classification) => $query->whereHas('product', fn ($productQuery) => $productQuery->where('item_classification', $classification)))
+            ->when($filters['stock_status'] ?? null, fn ($query, $status) => $query->where('stock_status', $status))
+            ->when($filters['batch_lot'] ?? null, fn ($query, $batch) => $query->where('batch_lot', $batch))
+            ->with(['product', 'branchStore', 'warehouseLocation'])
+            ->orderBy('expiry_date')
+            ->orderBy('id')
+            ->get()
+            ->each(function (InventoryReceiptLayer $layer) use ($asOf): void {
+                $daysToExpiry = $asOf->diffInDays($layer->expiry_date, false);
+                $layer->setAttribute('days_to_expiry', $daysToExpiry);
+                $layer->setAttribute('expiry_state', $daysToExpiry < 0 ? 'expired' : 'expiring');
+            });
+    }
+
+    private function ageBucket(int $ageDays): string
+    {
+        return match (true) {
+            $ageDays <= 30 => '0–30',
+            $ageDays <= 60 => '31–60',
+            $ageDays <= 90 => '61–90',
+            $ageDays <= 180 => '91–180',
+            $ageDays <= 365 => '181–365',
+            default => '365+',
+        };
+    }
+
+    /** @param array<string, mixed> $filters */
     public function balances(int $companyId, array $filters = []): Collection
     {
-        $invoicedReceiptQuantities = PurchaseInvoiceLine::query()
-            ->selectRaw('purchase_invoice_lines.receipt_line_id, sum(purchase_invoice_lines.quantity) as invoiced_quantity')
-            ->join('purchase_invoices', 'purchase_invoices.id', '=', 'purchase_invoice_lines.purchase_invoice_id')
-            ->whereIn('purchase_invoices.status', [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed])
-            ->whereNull('purchase_invoices.deleted_at')
-            ->whereNotNull('purchase_invoice_lines.receipt_line_id')
-            ->groupBy('purchase_invoice_lines.receipt_line_id');
-
         $rows = InventoryTransaction::query()
-            ->leftJoinSub($invoicedReceiptQuantities, 'receipt_invoice_totals', function ($join): void {
-                $join->on('receipt_invoice_totals.receipt_line_id', '=', 'inventory_transactions.source_line_id')
-                    ->where('inventory_transactions.transaction_type', '=', 'purchase_receipt');
-            })
             ->selectRaw('company_id, branch_store_id, warehouse_location_id, product_id, stock_status, batch_lot')
             ->selectRaw('sum(quantity_in) as quantity_in, sum(quantity_out) as quantity_out, sum(quantity_in - quantity_out) as on_hand')
             ->selectRaw('sum(case when quantity_out > 0 and quantity_in = 0 then -coalesce(total_cost, quantity_out * unit_cost, 0) else coalesce(total_cost, (quantity_in - quantity_out) * unit_cost, 0) end) as inventory_value')
-            ->selectRaw('sum(case when transaction_type = ? and quantity_in > coalesce(receipt_invoice_totals.invoiced_quantity, 0) then quantity_in - coalesce(receipt_invoice_totals.invoiced_quantity, 0) else 0 end) as unvalued_receipt_quantity', ['purchase_receipt'])
+            ->selectRaw('sum(case when transaction_type = ? and quantity_in > 0 and coalesce(unit_cost, 0) <= 0 then quantity_in else 0 end) as unvalued_receipt_quantity', ['purchase_receipt'])
             ->where('company_id', $companyId)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->whereHas('branchStore', fn ($storeQuery) => $storeQuery->where('branch_id', $branchId)))

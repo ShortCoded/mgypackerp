@@ -23,22 +23,24 @@ class PermissionSeeder extends Seeder
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $permissionNames = collect($this->permissionRegistry->all())->values();
-        $existingPermissionNames = Permission::query()
+        $existingPermissionCount = Permission::query()
             ->where('guard_name', 'web')
             ->whereIn('name', $permissionNames)
-            ->pluck('name');
-        $createdPermissionNames = $permissionNames->diff($existingPermissionNames)->values();
+            ->count();
+        $now = now();
 
-        $permissions = $permissionNames
-            ->map(fn (string $permission): Permission => Permission::query()->updateOrCreate(
-                [
-                    'name' => $permission,
-                    'guard_name' => 'web',
-                ],
-                [
-                    'name' => $permission,
-                    'guard_name' => 'web',
-                ],
+        $permissionNames
+            ->map(fn (string $permission): array => [
+                'name' => $permission,
+                'guard_name' => 'web',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ])
+            ->chunk(500)
+            ->each(fn (Collection $permissions): int => Permission::query()->upsert(
+                $permissions->all(),
+                ['name', 'guard_name'],
+                ['updated_at'],
             ));
 
         $compatibilityResult = $this->copyLegacyGrantsToCanonical();
@@ -71,15 +73,20 @@ class PermissionSeeder extends Seeder
             });
         }
 
-        $adminRole->syncPermissions($permissions);
+        $permissionIds = Permission::query()
+            ->where('guard_name', 'web')
+            ->whereIn('name', $permissionNames)
+            ->pluck((new Permission)->getKeyName());
+
+        $adminRole->permissions()->sync($permissionIds);
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $this->command?->info(sprintf(
             'Permissions discovered from menu: %d (%d created, %d existing).',
             $permissionNames->count(),
-            $createdPermissionNames->count(),
-            $existingPermissionNames->count(),
+            $permissionNames->count() - $existingPermissionCount,
+            $existingPermissionCount,
         ));
 
         if ($compatibilityResult['mapped_permissions'] !== []) {

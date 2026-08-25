@@ -10,6 +10,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Models\UserTask;
@@ -35,10 +36,11 @@ class PlasticsDashboardService
      */
     private array $tableCache = [];
 
-    /**
-     * @var array<string, bool>
-     */
-    private array $columnCache = [];
+    /** @var list<string>|null */
+    private ?array $tableListing = null;
+
+    /** @var array<string, list<string>> */
+    private array $columnListingCache = [];
 
     public function __construct(
         private readonly OperatingContextService $operatingContext,
@@ -111,11 +113,7 @@ class PlasticsDashboardService
                 ->where('status', 'active')
                 ->whereHas('components')
                 ->count();
-            $withoutComponents = $this->productQuery($user, 'products', $companyId)
-                ->productItems()
-                ->where('status', 'active')
-                ->whereDoesntHave('components')
-                ->count();
+            $withoutComponents = max(0, $products - $withComponents);
             $componentLines = $this->tableExists('product_components')
                 ? ProductComponent::query()
                     ->forCompany($companyId)
@@ -357,8 +355,7 @@ class PlasticsDashboardService
         if ($this->can($user, 'purchase_invoices.view') && $this->tableExists('purchase_invoices')) {
             $query = $this->restrictedContextQuery('purchase_invoices', $context, $user, 'purchase_invoices')
                 ->whereBetween('invoice_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
-            $count = (clone $query)->count();
-            $unpaid = (clone $query)->whereIn('payment_status', ['unpaid', 'partially_paid'])->count();
+            [$count, $unpaid] = $this->countWithValues($query, 'payment_status', ['unpaid', 'partially_paid']);
 
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.purchase_invoices.title'),
@@ -373,8 +370,7 @@ class PlasticsDashboardService
         if ($this->can($user, 'purchase_orders.view') && $this->tableExists('purchase_orders')) {
             $query = $this->restrictedContextQuery('purchase_orders', $context, $user, 'purchase_orders')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
-            $count = (clone $query)->count();
-            $draft = (clone $query)->where('status', 'draft')->count();
+            [$count, $draft] = $this->countWithValues($query, 'status', ['draft']);
 
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.purchase_orders.title'),
@@ -448,11 +444,11 @@ class PlasticsDashboardService
         if ($this->can($user, 'inventory.opening_stocks.view') && $this->tableExists('inventory_opening_stocks')) {
             $query = $this->restrictedContextQuery('inventory_opening_stocks', $context, $user, 'opening_stocks')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
-            $approved = (clone $query)->where('status', 'approved')->count();
+            [$count, $approved] = $this->countWithValues($query, 'status', ['approved']);
 
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.opening_stocks.title'),
-                $query->count(),
+                $count,
                 __('dashboard.plastics.metrics.opening_stocks.meta', ['count' => $this->formatCount($approved)]),
                 'boxes',
                 'success',
@@ -488,11 +484,11 @@ class PlasticsDashboardService
         if ($this->can($user, 'quotations.view') && $this->tableExists('quotations')) {
             $query = $this->restrictedContextQuery('quotations', $context, $user, 'quotations', branch: false, financialPeriod: false)
                 ->whereBetween('quotation_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
-            $accepted = (clone $query)->where('status', 'accepted')->count();
+            [$count, $accepted] = $this->countWithValues($query, 'status', ['accepted']);
 
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.quotations.title'),
-                $query->count(),
+                $count,
                 __('dashboard.plastics.metrics.quotations.meta', ['count' => $this->formatCount($accepted)]),
                 'file-signature',
                 'success',
@@ -522,8 +518,12 @@ class PlasticsDashboardService
             ->where('type', UserTask::TypeTask)
             ->where('is_active', true)
             ->where('status', '!=', UserTask::StatusDone);
-        $myOpen = (clone $myTasks)->count();
-        $myOverdue = (clone $myTasks)->whereNotNull('due_at')->where('due_at', '<', now())->count();
+        $myTaskCounts = (clone $myTasks)
+            ->selectRaw('COUNT(*) as aggregate')
+            ->selectRaw('COALESCE(SUM(CASE WHEN due_at IS NOT NULL AND due_at < ? THEN 1 ELSE 0 END), 0) as secondary_aggregate', [now()])
+            ->first();
+        $myOpen = (int) ($myTaskCounts?->aggregate ?? 0);
+        $myOverdue = (int) ($myTaskCounts?->secondary_aggregate ?? 0);
 
         if ($canViewMyBoard) {
             $items[] = $this->metric(
@@ -821,14 +821,41 @@ class PlasticsDashboardService
 
     private function tableExists(string $table): bool
     {
-        return $this->tableCache[$table] ??= Schema::hasTable($table);
+        $this->tableListing ??= array_map(
+            fn (string $listedTable): string => Str::afterLast($listedTable, '.'),
+            Schema::getTableListing(),
+        );
+
+        return $this->tableCache[$table] ??= in_array($table, $this->tableListing, true);
     }
 
     private function hasColumn(string $table, string $column): bool
     {
-        $key = "{$table}.{$column}";
+        if (! $this->tableExists($table)) {
+            return false;
+        }
 
-        return $this->columnCache[$key] ??= ($this->tableExists($table) && Schema::hasColumn($table, $column));
+        $columns = $this->columnListingCache[$table] ??= Schema::getColumnListing($table);
+
+        return in_array($column, $columns, true);
+    }
+
+    /**
+     * @param  list<string>  $values
+     * @return array{0: int, 1: int}
+     */
+    private function countWithValues(QueryBuilder $query, string $column, array $values): array
+    {
+        $placeholders = implode(', ', array_fill(0, count($values), '?'));
+        $counts = (clone $query)
+            ->selectRaw('COUNT(*) as aggregate')
+            ->selectRaw("COALESCE(SUM(CASE WHEN {$column} IN ({$placeholders}) THEN 1 ELSE 0 END), 0) as secondary_aggregate", $values)
+            ->first();
+
+        return [
+            (int) ($counts?->aggregate ?? 0),
+            (int) ($counts?->secondary_aggregate ?? 0),
+        ];
     }
 
     private function formatCount(int $value): string

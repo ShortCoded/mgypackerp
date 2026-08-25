@@ -63,17 +63,18 @@
         <tr><th>{{ __('purchase_invoices.totals.subtotal') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->subtotal_amount) }}</td><th>{{ __('purchase_invoices.totals.line_discounts') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->line_discount_amount) }}</td></tr>
         <tr><th>{{ __('purchase_invoices.totals.header_discount') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td><th>{{ __('Freight') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->freight_amount) }}</td></tr>
         <tr><th>{{ __('purchase_invoices.totals.tax') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->tax_amount) }}</td><th>{{ __('purchase_invoices.totals.net_total') }}</th><td class="text-end" dir="ltr"><strong>{{ $numbers->format($record->total_amount) }} {{ $record->currency?->code }}</strong></td></tr>
-        <tr><th>{{ __('purchase_invoices.totals.paid') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->paid_amount) }}</td><th>{{ __('purchase_invoices.totals.remaining') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->remaining_amount) }}</td></tr>
+        <tr><th>{{ __('purchase_invoices.totals.paid') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->paid_amount) }}</td><th>{{ __('purchase_invoices.totals.credited') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->credited_amount) }}</td></tr>
+        <tr><th>{{ __('purchase_invoices.totals.remaining') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->remaining_amount) }}</td><th>{{ __('purchase_invoices.attributes.payment_status') }}</th><td>{{ __('purchase_invoices.payment_statuses.'.$record->payment_status) }}</td></tr>
     </table>
 
     <h3>{{ __('purchase_invoices.sections.payment_schedule') }}</h3>
     <table class="report-table">
-        <thead><tr><th>#</th><th>{{ __('purchase_invoices.attributes.due_date') }}</th><th class="text-end">{{ __('purchase_invoices.attributes.payment_amount') }}</th><th class="text-end">{{ __('purchase_invoices.totals.paid') }}</th><th>{{ __('purchase_invoices.attributes.payment_source_type') }}</th><th>{{ __('purchase_invoices.attributes.linked_payment_voucher') }}</th></tr></thead>
+        <thead><tr><th>#</th><th>{{ __('purchase_invoices.attributes.due_date') }}</th><th class="text-end">{{ __('purchase_invoices.attributes.payment_amount') }}</th><th class="text-end">{{ __('purchase_invoices.totals.paid') }}</th><th class="text-end">{{ __('purchase_invoices.totals.credited') }}</th><th class="text-end">{{ __('purchase_invoices.totals.remaining') }}</th><th>{{ __('purchase_invoices.attributes.status') }}</th></tr></thead>
         <tbody>
             @forelse($record->paymentSchedules as $schedule)
-                <tr><td>{{ $schedule->line_number }}</td><td dir="ltr">{{ $dates->formatDate($schedule->due_date, '—') }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->paid_amount) }}</td><td>{{ __('purchase_invoices.source_types.'.$schedule->payment_source_type) }}</td><td dir="ltr">{{ $schedule->cashVoucher?->doc_num ?: '—' }}</td></tr>
+                <tr><td>{{ $schedule->line_number }}</td><td dir="ltr">{{ $dates->formatDate($schedule->due_date, '—') }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->paid_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->credited_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->outstanding_amount) }}</td><td>{{ __('purchase_invoices.schedule_statuses.'.$schedule->status) }}</td></tr>
             @empty
-                <tr><td colspan="6" style="text-align: center;">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td></tr>
+                <tr><td colspan="7" style="text-align: center;">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td></tr>
             @endforelse
         </tbody>
     </table>

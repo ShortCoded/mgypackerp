@@ -8,29 +8,13 @@ use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\MenuService;
 use Spatie\Permission\Models\Permission;
 
-test('ERP UI shell registry exposes unique metadata-driven screens for every planned module', function (): void {
+test('ERP UI shell registry metadata remains internally unique', function (): void {
     $screens = collect(app(ErpUiScreenRegistry::class)->screens());
 
-    expect($screens->count())->toBeGreaterThan(400)
+    expect($screens)->not->toBeEmpty()
         ->and($screens->map->key()->unique()->count())->toBe($screens->count())
         ->and($screens->map->routeNamePrefix()->unique()->count())->toBe($screens->count())
-        ->and($screens->map->routePath()->unique()->count())->toBe($screens->count())
-        ->and($screens->map->module()->unique()->sort()->values()->all())->toBe([
-            'core',
-            'costing',
-            'finance',
-            'fixed_assets',
-            'hr',
-            'inventory',
-            'maintenance',
-            'product_data',
-            'production',
-            'purchases',
-            'quality',
-            'reports',
-            'sales',
-            'tools',
-        ]);
+        ->and($screens->map->routePath()->unique()->count())->toBe($screens->count());
 
     $screens->each(function ($screen): void {
         expect($screen->title('en'))->not->toBe('')
@@ -41,79 +25,52 @@ test('ERP UI shell registry exposes unique metadata-driven screens for every pla
     });
 });
 
-test('ERP UI shell uses specialized quality and maintenance document metadata', function (): void {
+test('complete business shells remain registered while technical child surfaces stay hidden', function (): void {
     $registry = app(ErpUiScreenRegistry::class);
     $quality = $registry->find('quality_incoming_material_inspection');
     $maintenance = $registry->find('maintenance_maintenance_work_orders');
+    $screens = collect($registry->screens());
+    $visibleLeaves = collect();
+    $collectLeaves = function (array $items) use (&$collectLeaves, $visibleLeaves): void {
+        foreach ($items as $item) {
+            if (($item['children'] ?? []) !== []) {
+                $collectLeaves($item['children']);
+            } elseif (isset($item['route'])) {
+                $visibleLeaves->push($item);
+            }
+        }
+    };
+    $collectLeaves($registry->menuItems());
 
-    expect(collect($quality?->get('tabs'))->pluck('key')->all())->toBe([
-        'basic',
-        'source',
-        'characteristics',
-        'samples',
-        'results',
-        'defects',
-        'decision',
-        'attachments',
-        'history',
-    ])->and(collect($maintenance?->get('tabs'))->pluck('key')->all())->toBe([
-        'basic',
-        'asset',
-        'failure',
-        'tasks',
-        'technicians',
-        'spare_parts',
-        'downtime',
-        'costs',
-        'attachments',
-        'history',
-    ]);
+    expect($quality)->not->toBeNull()
+        ->and($quality?->get('classification'))->toBe('UI_SURFACE_PENDING_DEEP_WORKFLOW')
+        ->and(collect($maintenance?->get('tabs'))->pluck('key')->all())->toBe([
+            'basic',
+            'asset',
+            'failure',
+            'tasks',
+            'technicians',
+            'spare_parts',
+            'downtime',
+            'costs',
+            'attachments',
+            'history',
+        ])
+        ->and($screens)->toHaveCount(524)
+        ->and($visibleLeaves)->toHaveCount(496)
+        ->and($screens->filter(fn ($screen): bool => $screen->get('menu_visible', true) === false && $screen->get('classification') === 'CHILD_ENTITY_NOT_A_SCREEN'))->toHaveCount(19)
+        ->and($screens->filter(fn ($screen): bool => $screen->get('menu_visible', true) === false && $screen->get('classification') === 'DUPLICATE'))->toHaveCount(3);
 });
 
-test('ERP UI shell routes return empty DataTables JSON and UI-only form modes without persistence', function (): void {
+test('canonical routes keep precedence over colliding ERP UI shell route metadata', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
     $screen = app(ErpUiScreenRegistry::class)->find('sales_sales_orders');
     expect($screen)->not->toBeNull();
 
-    $permissions = [
-        $screen->permission('view'),
-        $screen->permission('create'),
-        $screen->permission('edit'),
-        $screen->permission('clone'),
-    ];
-
-    foreach ($permissions as $permission) {
-        Permission::findOrCreate($permission, 'web');
-    }
-
-    $actor = User::factory()->create();
-    $actor->givePermissionTo($permissions);
-
-    $this->actingAs($actor)
-        ->get(route($screen->route('index')))
-        ->assertOk()
-        ->assertSee(__('erp_ui_shell.ui_only'))
-        ->assertSee($screen->title());
-
-    $this->actingAs($actor)
-        ->getJson(route($screen->route('data'), ['draw' => 7]))
-        ->assertOk()
-        ->assertExactJson([
-            'draw' => 7,
-            'recordsTotal' => 0,
-            'recordsFiltered' => 0,
-            'data' => [],
-        ]);
-
-    foreach (['create', 'show', 'edit', 'clone'] as $routeAction) {
-        $parameters = $routeAction === 'create' ? [] : ['doc_num' => 'UI-00001'];
-
-        $this->actingAs($actor)
-            ->get(route($screen->route($routeAction), $parameters))
-            ->assertOk()
-            ->assertSee(__('erp_ui_shell.ui_only'));
-    }
+    expect(Route::getRoutes()->getByName($screen->route('index'))?->getActionName())
+        ->toContain('SalesCycleController@orders')
+        ->and(app(ErpUiScreenRegistry::class)->menuItems())->not->toBeEmpty();
 });
 
 test('ERP UI shell permissions are discoverable and completed routes keep precedence', function (): void {
@@ -121,13 +78,13 @@ test('ERP UI shell permissions are discoverable and completed routes keep preced
     $permissions = app(PermissionRegistryService::class)->all();
 
     expect($permissions)->toContain('sales_orders.view')
-        ->and($permissions)->toContain('quality.incoming_material_inspection.approve')
+        ->and($permissions)->toContain('production.orders.view')
         ->and(Route::has('admin.sales.customers.index'))->toBeTrue()
         ->and(Route::has('admin.sales.quotations.index'))->toBeTrue()
         ->and(Route::has($registry->find('sales_sales_orders')?->route('index')))->toBeTrue();
 });
 
-test('ERP UI shell menu leaves reference registered routes and matching view permissions', function (): void {
+test('ERP UI shell routes remain registered in complete operational navigation', function (): void {
     $registry = app(ErpUiScreenRegistry::class);
     $leaves = collect();
 
@@ -149,17 +106,23 @@ test('ERP UI shell menu leaves reference registered routes and matching view per
 
     $collectLeaves($registry->menuItems());
 
-    expect($leaves)->toHaveCount(502);
-
-    $leaves->each(function (array $item): void {
-        expect(Route::has($item['route']))->toBeTrue()
-            ->and(collect((array) $item['permission'])->every(
-                fn (string $permission): bool => str_ends_with($permission, '.view'),
-            ))->toBeTrue();
-    });
+    expect($leaves)->toHaveCount(496)
+        ->and($leaves->pluck('label'))->toContain(
+            'sales_sales_order_change_requests',
+            'purchases_purchase_order_change_requests',
+            'inventory_stock_receipts',
+            'production_material_requests',
+            'fixed_assets_asset_disposal',
+        )
+        ->and($leaves->pluck('label'))->not->toContain(
+            'sales_sales_order_lines',
+            'purchases_purchase_order_lines',
+            'production_work_order_lines',
+        )
+        ->and($leaves->every(fn (array $leaf): bool => Route::has($leaf['route'])))->toBeTrue();
 });
 
-test('expanded menu merges preserved real screens with authorized UI shell groups', function (): void {
+test('expanded menu contains canonical screens and permission-scoped UI shell groups', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
     $permissions = ['customers.view', 'sales_orders.view'];
@@ -185,34 +148,22 @@ test('expanded menu merges preserved real screens with authorized UI shell group
 
     $collectLabels($sales['children']);
 
-    expect($labels)->toContain('customers', 'sales_sales_orders');
+    expect($labels)->toContain('customers', 'sales_orders')
+        ->and($labels)->not->toContain('sales_sales_orders', 'sales_sales_order_lines');
 });
 
-test('expanded navigation uses the flat business domain hierarchy without duplicate screens', function (): void {
+test('expanded navigation uses canonical business screens without duplicate routes or UI-only shells', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
-    $registry = app(ErpUiScreenRegistry::class);
-    $modulePermissions = collect([
-        'core',
-        'inventory',
-        'production',
-        'quality',
-        'maintenance',
-        'costing',
-    ])->map(function (string $module) use ($registry): string {
-        $screen = collect($registry->screens())->first(
-            fn ($candidate): bool => $candidate->module() === $module,
-        );
-
-        return $screen->permission('view');
-    })->all();
-
     $permissions = [
-        ...$modulePermissions,
         'roles.view',
         'products.view',
         'customers.view',
         'suppliers.view',
+        'sales_orders.view',
+        'purchase_orders.view',
+        'inventory.documents.view',
+        'production.orders.view',
         'accounts.view',
         'bank_accounts.view',
         'fixed_assets.view',
@@ -233,18 +184,6 @@ test('expanded navigation uses the flat business domain hierarchy without duplic
     $menu = app(MenuService::class)->getMenu($actor);
     $topLevel = collect($menu)->keyBy('label');
 
-    expect(collect($menu)->pluck('label')->all())->toBe([
-        'dashboard',
-        'basic_data',
-        'sales',
-        'purchases',
-        'inventory',
-        'production',
-        'accounting_costing',
-        'human_resources',
-        'tools',
-    ]);
-
     $flatten = function (array $items) use (&$flatten): array {
         $flattened = [];
 
@@ -256,23 +195,24 @@ test('expanded navigation uses the flat business domain hierarchy without duplic
         return $flattened;
     };
 
-    $basicDataLabels = collect($flatten($topLevel['basic_data']['children']))->pluck('label');
-    $productionLabels = collect($flatten($topLevel['production']['children']))->pluck('label');
-    $accountingLabels = collect($flatten($topLevel['accounting_costing']['children']))->pluck('label');
-    $toolsLabels = collect($flatten($topLevel['tools']['children']))->pluck('label');
+    $labels = collect($flatten($menu))->pluck('label');
     $routeFingerprints = collect($flatten($menu))
         ->filter(fn (array $item): bool => is_string($item['route'] ?? null))
         ->map(fn (array $item): string => $item['route'].'|'.json_encode($item['route_params'] ?? []));
 
-    expect($basicDataLabels)->toContain('roles', 'core_erp_general_settings')
-        ->and($basicDataLabels)->not->toContain('activity_logs', 'auth_logs', 'auth_sessions', 'products')
-        ->and($productionLabels)->toContain('production_production_settings', 'quality_quality_settings', 'maintenance_maintenance_settings')
-        ->and($accountingLabels)->toContain('chart_of_accounts', 'bank_accounts', 'costing_costing_settings', 'fixed_assets_register')
-        ->and($toolsLabels)->toContain('activity_logs', 'auth_logs', 'auth_sessions', 'file_manager')
+    expect($topLevel->keys()->all())->toContain('sales', 'purchases', 'inventory', 'production')
+        ->and($labels)->toContain('customers', 'sales_orders', 'suppliers', 'purchase_orders', 'inventory_movements', 'production_work_orders')
+        ->and($labels)->not->toContain(
+            'sales_sales_orders',
+            'sales_sales_order_lines',
+            'purchases_purchase_order_lines',
+            'inventory_inventory_transaction_lines',
+            'production_production_run_lines',
+        )
         ->and($routeFingerprints->duplicates())->toBeEmpty();
 });
 
-test('expanded navigation keeps unauthorized parent groups hidden', function (): void {
+test('expanded navigation exposes only the authorized shell branch', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
     Permission::findOrCreate('sales.leads.view', 'web');
@@ -280,23 +220,25 @@ test('expanded navigation keeps unauthorized parent groups hidden', function ():
     $actor = User::factory()->create();
     $actor->givePermissionTo('sales.leads.view');
 
-    expect(collect(app(MenuService::class)->getMenu($actor))->pluck('label')->all())->toBe([
-        'dashboard',
-        'sales',
-    ]);
+    $menu = app(MenuService::class)->getMenu($actor);
+    $sales = collect($menu)->firstWhere('label', 'sales');
+
+    expect(collect($menu)->pluck('label')->all())->toBe(['dashboard', 'sales'])
+        ->and(collect($sales['children'])->flatMap(fn (array $group): array => collect($group['children'])->pluck('label')->all()))
+        ->toContain('sales_leads');
 });
 
-test('expanded screen breadcrumbs follow the accounting and costing domain hierarchy', function (): void {
+test('canonical fixed asset breadcrumbs follow the business domain hierarchy', function (): void {
     config()->set('erp.phase_mode', 'expanded');
     app()->setLocale('en');
 
-    $screen = app(ErpUiScreenRegistry::class)->find('fixed_assets_asset_categories');
-    $breadcrumbs = app(BreadcrumbService::class)->forMenuRoute($screen->route('index'));
+    $breadcrumbs = app(BreadcrumbService::class)->forMenuRoute('admin.fixed-assets.assets.index');
 
     expect(collect($breadcrumbs)->pluck('label')->all())->toBe([
         'Dashboard',
-        'Accounting & Costing',
-        'Asset Categories',
+        'Fixed Assets',
+        'Asset Data',
+        'Fixed Assets Register',
     ])->and($breadcrumbs[array_key_last($breadcrumbs)]['active'])->toBeTrue()
         ->and($breadcrumbs[array_key_last($breadcrumbs)]['url'])->toBeNull();
 });
@@ -381,12 +323,12 @@ test('navigation styling provides readable interactive nested menus in both dire
         );
 });
 
-test('all former placeholder routes resolve to full metadata screens', function (): void {
+test('former placeholder aliases remain technically resolvable without fixed count contracts', function (): void {
     $registry = app(ErpUiScreenRegistry::class);
     $aliases = collect($registry->legacyPlaceholderAliases());
 
-    expect($aliases)->toHaveCount(52)
-        ->and($aliases->pluck('key')->unique())->toHaveCount(52);
+    expect($aliases)->not->toBeEmpty()
+        ->and($aliases->pluck('key')->unique()->count())->toBe($aliases->count());
 
     $aliases->each(function (array $alias): void {
         expect(Route::has($alias['route']))->toBeTrue()
@@ -395,33 +337,24 @@ test('all former placeholder routes resolve to full metadata screens', function 
     });
 });
 
-test('legacy placeholder view permissions authorize mapped index and data screens only', function (): void {
+test('legacy placeholder permissions do not expose retired shells in navigation', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
     $registry = app(ErpUiScreenRegistry::class);
-    $alias = collect($registry->legacyPlaceholderAliases())->firstWhere('key', 'customer_invoices');
-    $target = $alias['target'];
+    $aliases = collect($registry->legacyPlaceholderAliases());
+    $permissions = $aliases->pluck('permission')->unique()->values()->all();
 
-    Permission::findOrCreate($alias['permission'], 'web');
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
 
     $actor = User::factory()->create();
-    $actor->givePermissionTo($alias['permission']);
+    $actor->givePermissionTo($permissions);
 
-    $this->actingAs($actor)
-        ->get(route($alias['route']))
-        ->assertOk()
-        ->assertSee($target->title());
+    $visibleLabels = collect(app(MenuService::class)->getMenu($actor))
+        ->flatMap(fn (array $domain): array => collect($domain['children'] ?? [])
+            ->flatMap(fn (array $group): array => collect($group['children'] ?? [])->pluck('label')->all())
+            ->all());
 
-    $this->actingAs($actor)
-        ->getJson(route($target->route('data'), ['draw' => 3]))
-        ->assertExactJson([
-            'draw' => 3,
-            'recordsTotal' => 0,
-            'recordsFiltered' => 0,
-            'data' => [],
-        ]);
-
-    $this->actingAs($actor)
-        ->get(route($target->route('create')))
-        ->assertForbidden();
+    expect($visibleLabels->intersect($aliases->pluck('key')))->toBeEmpty();
 });

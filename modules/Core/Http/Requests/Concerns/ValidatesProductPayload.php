@@ -71,6 +71,8 @@ trait ValidatesProductPayload
             'item_group_doc_num' => ['nullable', 'string', $this->activeLookupExistsRule('item_groups', $companyId)],
             'cost_as_inventory' => ['nullable', 'boolean'],
             'is_displayable' => ['nullable', 'boolean'],
+            'tracks_expiry' => ['nullable', 'boolean'],
+            'default_shelf_life_days' => ['nullable', 'integer', 'min:1', 'max:36500', Rule::requiredIf(fn (): bool => $this->boolean('tracks_expiry'))],
             'status' => ['required', 'string', Rule::in(['active', 'inactive'])],
             'notes' => ['nullable', 'string'],
             'components' => ['nullable', 'array'],

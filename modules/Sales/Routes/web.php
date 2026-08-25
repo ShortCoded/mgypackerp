@@ -41,6 +41,9 @@ Route::middleware('auth')
             Route::put('/sales-invoices/{customerInvoice}', 'updateInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.update');
             Route::get('/sales-invoices/{customerInvoice}/print', 'printInvoice')->middleware('can:customer_invoices.print')->name('sales-invoices.print');
             Route::post('/sales-invoices/{customerInvoice}/post', 'postInvoice')->middleware('can:customer_invoices.post')->name('sales-invoices.post');
+            Route::post('/sales-invoices/{customerInvoice}/credit-allocations', 'allocateCustomerCredit')->middleware('can:customer_credits.allocate')->name('sales-invoices.credit-allocations.store');
+            Route::post('/sales-invoices/{customerInvoice}/credit-refunds', 'refundCustomerCredit')->middleware('can:customer_credits.refund')->name('sales-invoices.credit-refunds.store');
+            Route::post('/sales-invoices/{customerInvoice}/electronic-invoice', 'submitElectronicInvoice')->middleware('can:customer_invoices.electronic_invoice.submit')->name('sales-invoices.electronic-invoice.submit');
             Route::post('/sales-invoices/{customerInvoice}/reopen', 'reopenInvoice')->middleware('can:customer_invoices.reopen')->name('sales-invoices.reopen');
             Route::get('/sales-invoices/{customerInvoice}/payment-schedule/print', 'printPaymentSchedule')->middleware('can:customer_invoices.print')->name('sales-invoices.payment-schedule.print');
 
@@ -52,6 +55,7 @@ Route::middleware('auth')
             Route::post('/customer-receipts', 'storeReceipt')->name('customer-receipts.store');
             Route::get('/customer-receipts/{customerReceipt}', 'showReceipt')->middleware('can:customer_receipts.view')->name('customer-receipts.show');
             Route::get('/customer-receipts/{customerReceipt}/print', 'printReceipt')->middleware('can:customer_receipts.print')->name('customer-receipts.print');
+            Route::get('/customer-credit-refunds/{customerCreditRefund}/print', 'printCustomerCreditRefund')->middleware('can:customer_credits.refund')->name('customer-credit-refunds.print');
 
             Route::get('/sales-returns', 'returns')->middleware('can:sales_returns.view')->name('sales-returns.index');
             Route::post('/sales-invoices/{customerInvoice}/returns', 'storeReturn')->name('sales-returns.store');

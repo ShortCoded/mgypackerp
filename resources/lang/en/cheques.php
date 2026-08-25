@@ -58,6 +58,7 @@ return [
         'other' => 'Other',
     ],
     'statuses' => [
+        'clearing_reversed' => 'Clearing Reversed',
         'received' => 'Received',
         'deposited' => 'Deposited',
         'collected' => 'Collected',
@@ -70,6 +71,8 @@ return [
         'deleted' => 'Deleted',
     ],
     'actions' => [
+        'reverse_clearing' => 'Reverse Clearing',
+        'represent' => 'Re-present Cheque',
         'add_line' => 'Add Line',
         'mark_deposited' => 'Mark Deposited',
         'mark_collected' => 'Mark Collected',
@@ -132,6 +135,10 @@ return [
         'updated_successfully' => 'Cheque document number settings updated successfully.',
     ],
     'js' => [
+        'reverse_clearing_confirm_title' => 'Reverse bank clearing?',
+        'reverse_clearing_confirm_text' => 'This posts a new reversal Journal and restores Bank / Notes Payable without reopening Supplier AP.',
+        'reverse_clearing_reason_placeholder' => 'Required bank reversal reason',
+        'reverse_clearing_confirm_yes' => 'Reverse clearing',
         'select_bank_account' => 'Select Bank Account',
         'select_currency' => 'Select Currency',
         'select_account' => 'Select Account',

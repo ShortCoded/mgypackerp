@@ -18,7 +18,6 @@ class ScreenDataVisibilityService
 {
     public function __construct(
         private readonly ScreenDataVisibilityRegistry $registry,
-        private readonly OperatingCompanyContextService $companies,
         private readonly OperatingContextService $operatingContext,
         private readonly RequestMemo $memo,
     ) {}
@@ -29,7 +28,7 @@ class ScreenDataVisibilityService
             return null;
         }
 
-        $companyId = $this->companies->currentCompanyId();
+        $companyId = $this->operatingContext->selectedCompanyId(request());
         if ($companyId === null || ! $this->rulesTableExists()) {
             return null;
         }

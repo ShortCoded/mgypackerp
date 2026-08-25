@@ -11,6 +11,7 @@
     "require": {
         "php": "^8.2",
         "hryagstn/laravel-scalpel": "^1.3",
+        "laravel-notification-channels/webpush": "^12.1",
         "laravel/framework": "^12.0",
         "laravel/octane": "^2.17",
         "laravel/tinker": "^2.10.1",

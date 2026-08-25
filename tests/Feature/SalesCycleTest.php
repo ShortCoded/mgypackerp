@@ -21,6 +21,8 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
+use Modules\Inventory\Models\InventoryAccountingMapping;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -29,12 +31,18 @@ use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
+use Modules\Sales\Models\CustomerCreditAllocation;
+use Modules\Sales\Models\CustomerCreditRefund;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\ElectronicInvoiceSubmission;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Services\CustomerCreditService;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\CustomerReceiptService;
+use Modules\Sales\Services\ElectronicInvoicePayloadBuilder;
+use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesReturnService;
@@ -122,7 +130,29 @@ function salesCycleFixture(): array
     $bankLedgerAccount = Account::query()->create(['doc_number' => 9803, 'doc_num' => 'Account-Bank-Sales', 'company_id' => $company->getKey(), 'account_code' => '11129803', 'name' => 'Sales Collection Bank Account', 'parent_id' => $bankParent->getKey(), 'level' => ((int) $bankParent->level) + 1, 'account_classification_id' => $cashClassification->getKey(), 'account_type' => Account::TypeAsset, 'statement_type' => Account::StatementFinancialPosition, 'normal_balance' => Account::BalanceDebit, 'is_group' => false, 'is_postable' => true, 'status' => 'active']);
     $bankAccount = BankAccount::query()->create(['doc_number' => 9801, 'doc_num' => 'BankAccount-SALES', 'company_id' => $company->getKey(), 'account_id' => $bankLedgerAccount->getKey(), 'currency_id' => $currency->getKey(), 'account_name' => 'Sales Collection Bank', 'account_number' => 'E2E-9801', 'status' => 'active']);
 
-    InventoryTransaction::query()->create(['posting_key' => 'sales-cycle-opening-stock', 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'branch_store_id' => $store->getKey(), 'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock', 'product_id' => $finished->getKey(), 'unit_id' => $unit->getKey(), 'quantity_in' => '100', 'quantity_out' => 0, 'source_type' => 'test_opening_stock', 'source_id' => 1, 'source_doc_num' => 'TEST-STOCK', 'unit_cost' => '5', 'total_cost' => '500', 'created_by' => $user->getKey()]);
+    $accountId = fn (string $code): int => (int) Account::query()
+        ->where('company_id', $company->getKey())
+        ->where('account_code', $code)
+        ->valueOrFail('id');
+    InventoryAccountingMapping::query()->create([
+        'company_id' => $company->getKey(),
+        'raw_material_inventory_account_id' => $accountId('1131'),
+        'packaging_inventory_account_id' => $accountId('1134'),
+        'semi_finished_inventory_account_id' => $accountId('1132'),
+        'finished_goods_inventory_account_id' => $accountId('1133'),
+        'wip_account_id' => $accountId('1132'),
+        'production_waste_account_id' => $accountId('551'),
+        'warehouse_damage_loss_account_id' => $accountId('551'),
+        'inventory_adjustment_gain_account_id' => $accountId('432'),
+        'inventory_adjustment_loss_account_id' => $accountId('551'),
+        'quarantine_inventory_account_id' => $accountId('1134'),
+        'rework_inventory_account_id' => $accountId('1132'),
+        'grni_account_id' => $accountId('212'),
+        'purchase_price_variance_account_id' => $accountId('551'),
+        'created_by' => $user->getKey(),
+    ]);
+
+    InventoryTransaction::query()->create(['posting_key' => 'sales-cycle-opening-stock', 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'branch_store_id' => $store->getKey(), 'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock', 'product_id' => $finished->getKey(), 'unit_id' => $unit->getKey(), 'batch_lot' => 'SALES-OPENING-BATCH', 'quantity_in' => '100', 'quantity_out' => 0, 'source_type' => 'test_opening_stock', 'source_id' => 1, 'source_doc_num' => 'TEST-STOCK', 'unit_cost' => '5', 'total_cost' => '500', 'created_by' => $user->getKey()]);
 
     return compact('user', 'company', 'branch', 'period', 'currency', 'store', 'unit', 'finished', 'service', 'raw', 'semiFinished', 'customer', 'cashbox', 'bankAccount');
 }
@@ -157,6 +187,81 @@ function salesCycleOrderPayload(array $fixture, array $overrides = []): array
         ...$overrides,
     ];
 }
+
+/** @param array<string, mixed> $fixture */
+function salesPostedServiceInvoice(array $fixture, string $netAmount, string $taxAmount = '0', string $quantity = '1'): CustomerInvoice
+{
+    $total = bcadd($netAmount, $taxAmount, 4);
+    $unitPrice = bcdiv($netAmount, $quantity, 4);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Service billing line',
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'discount_amount' => 0,
+            'tax_amount' => $taxAmount,
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Service invoice',
+            'amount' => $total,
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+
+    return app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder(
+        $order,
+        [['sales_order_line_id' => $order->lines->sole()->getKey(), 'quantity' => $quantity]],
+        [['due_date' => now()->toDateString(), 'amount' => $total]],
+    ));
+}
+
+test('sales reservations and deliveries preserve warehouse batch positions', function () {
+    $fixture = salesCycleFixture();
+    $opening = InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->firstOrFail();
+    $opening->forceFill(['quantity_in' => '40', 'total_cost' => '200'])->save();
+    InventoryTransaction::query()->create([
+        ...$opening->only([
+            'company_id', 'financial_period_id', 'branch_id', 'branch_store_id', 'transaction_date',
+            'transaction_type', 'product_id', 'unit_id', 'stock_status', 'source_type', 'source_id',
+            'source_doc_num', 'unit_cost', 'created_by',
+        ]),
+        'posting_key' => 'sales-cycle-opening-stock-second-batch',
+        'batch_lot' => 'SALES-OPENING-BATCH-2',
+        'quantity_in' => '60',
+        'quantity_out' => 0,
+        'total_cost' => '300',
+    ]);
+
+    $order = app(SalesOrderService::class)->approve(
+        app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)),
+    );
+    $line = $order->lines->firstWhere('product_id', $fixture['finished']->getKey());
+    $fulfillment = app(SalesFulfillmentService::class);
+    $reservation = $fulfillment->reserve($line, '30');
+    $delivery = $fulfillment->deliver($order, [[
+        'sales_order_line_id' => $line->getKey(),
+        'quantity' => '60',
+    ]]);
+
+    expect($reservation->batch_lot)->toBe('SALES-OPENING-BATCH')
+        ->and($delivery->lines)->toHaveCount(2)
+        ->and($delivery->lines->pluck('batch_lot')->all())->toBe([
+            'SALES-OPENING-BATCH',
+            'SALES-OPENING-BATCH-2',
+        ])
+        ->and($delivery->lines->pluck('quantity')->all())->toBe(['40.00000000', '20.00000000'])
+        ->and(InventoryTransaction::query()
+            ->where('transaction_type', InventoryDocument::TypeSalesDelivery)
+            ->whereNull('batch_lot')
+            ->count())->toBe(0)
+        ->and(InventoryTransaction::query()
+            ->where('product_id', $fixture['finished']->getKey())
+            ->groupBy('batch_lot')
+            ->havingRaw('sum(quantity_in - quantity_out) < 0')
+            ->exists())->toBeFalse();
+});
 
 test('stock sale, mixed service, installments, collection, and quality returns remain line-traceable', function () {
     $fixture = salesCycleFixture();
@@ -241,8 +346,9 @@ test('stock sale, mixed service, installments, collection, and quality returns r
     $returns->inspect($defectiveReturn, [['sales_return_line_id' => $defectiveReturn->lines->first()->getKey(), 'scrap_quantity' => '10']]);
     $returns->close($defectiveReturn->fresh());
     expect((string) InventoryTransaction::query()->where('product_id', $fixture['finished']->getKey())->sum(DB::raw('quantity_in - quantity_out')))->toBe('30');
-    expect(JournalEntry::query()->where('source_type', 'sales_return_cogs')->count())->toBe(1)
-        ->and((float) DB::table('journal_entry_lines')->whereIn('journal_entry_id', JournalEntry::query()->where('source_type', 'sales_return_cogs')->pluck('id'))->sum('debit_amount'))->toEqual(100.0)
+    expect(JournalEntry::query()->where('source_type', 'sales_return_quarantine_receipt')->count())->toBe(2)
+        ->and((float) DB::table('journal_entry_lines')->whereIn('journal_entry_id', JournalEntry::query()->where('source_type', 'sales_return_quarantine_receipt')->pluck('id'))->sum('debit_amount'))->toEqual(150.0)
+        ->and(JournalEntry::query()->where('source_type', 'sales_return_financial_disposition')->count())->toBe(2)
         ->and(InventoryTransaction::query()->where('transaction_type', 'sales_return_receipt')->count())->toBe(2);
     $stockByStatus = app(InventoryAvailabilityService::class)->statusPosition(
         $fixture['company']->getKey(),
@@ -261,6 +367,10 @@ test('stock sale, mixed service, installments, collection, and quality returns r
 
 test('fully paid invoice credit remains a customer credit and conserves every return disposition', function () {
     $fixture = salesCycleFixture();
+    InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->update([
+        'quantity_in' => '10000',
+        'total_cost' => '50000',
+    ]);
     $orders = app(SalesOrderService::class);
     $fulfillment = app(SalesFulfillmentService::class);
     $invoices = app(CustomerInvoiceService::class);
@@ -272,8 +382,8 @@ test('fully paid invoice credit remains a customer credit and conserves every re
             'product_id' => $fixture['finished']->getKey(),
             'unit_id' => $fixture['unit']->getKey(),
             'description' => 'Taxable finished goods return',
-            'quantity' => '10',
-            'unit_price' => '100',
+            'quantity' => '10000',
+            'unit_price' => '0.1',
             'discount_amount' => 0,
             'tax_amount' => '140',
         ]],
@@ -286,12 +396,12 @@ test('fully paid invoice credit remains a customer credit and conserves every re
     $orderLine = $order->lines->sole();
     $delivery = $fulfillment->deliver($order, [[
         'sales_order_line_id' => $orderLine->getKey(),
-        'quantity' => '10',
+        'quantity' => '10000',
     ]]);
     $invoice = $invoices->post($invoices->createFromOrder($order->fresh(), [[
         'sales_order_line_id' => $orderLine->getKey(),
         'delivery_line_id' => $delivery->lines->sole()->getKey(),
-        'quantity' => '10',
+        'quantity' => '10000',
     ]], [[
         'due_date' => now()->toDateString(),
         'amount' => '1140',
@@ -320,36 +430,37 @@ test('fully paid invoice credit remains a customer credit and conserves every re
     expect(fn () => $invoices->reopen($invoice, 'Unsafe paid-invoice mutation.'))
         ->toThrow(DomainException::class, 'Only an unsettled posted invoice may be reopened.');
 
-    $return = $returns->create($invoice->fresh(), SalesReturn::ReasonManufacturingDefect, 'Three pieces require quarantine.', [[
+    $return = $returns->create($invoice->fresh(), SalesReturn::ReasonManufacturingDefect, 'Ten thousand pieces require controlled QC disposition.', [[
         'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
-        'quantity' => '10',
+        'quantity' => '10000',
     ]]);
     $returns->authorize($return);
     $return = $returns->receive($return);
     $return = $returns->inspect($return, [[
         'sales_return_line_id' => $return->lines->sole()->getKey(),
-        'saleable_quantity' => '7',
-        'quarantine_quantity' => '3',
-        'rework_quantity' => '0',
-        'scrap_quantity' => '0',
+        'saleable_quantity' => '7000',
+        'quarantine_quantity' => '0',
+        'rework_quantity' => '2000',
+        'scrap_quantity' => '1000',
     ]]);
     $return = $returns->close($return);
     $returnLine = $return->lines->sole();
     $creditNote = $return->creditNote;
 
     $invoice = $invoice->fresh();
-    expect($returnLine->saleable_quantity)->toBe('7.00000000')
-        ->and($returnLine->quarantine_quantity)->toBe('3.00000000')
-        ->and($returnLine->rework_quantity)->toBe('0.00000000')
-        ->and($returnLine->scrap_quantity)->toBe('0.00000000')
-        ->and(bcadd(bcadd($returnLine->saleable_quantity, $returnLine->quarantine_quantity, 8), bcadd($returnLine->rework_quantity, $returnLine->scrap_quantity, 8), 8))->toBe('10.00000000')
+    expect($returnLine->saleable_quantity)->toBe('7000.00000000')
+        ->and($returnLine->quarantine_quantity)->toBe('0.00000000')
+        ->and($returnLine->rework_quantity)->toBe('2000.00000000')
+        ->and($returnLine->scrap_quantity)->toBe('1000.00000000')
+        ->and(bcadd(bcadd($returnLine->saleable_quantity, $returnLine->quarantine_quantity, 8), bcadd($returnLine->rework_quantity, $returnLine->scrap_quantity, 8), 8))->toBe('10000.00000000')
         ->and($returnLine->original_unit_cost)->toBe('5.00000000')
         ->and($creditNote->total_amount)->toBe('1140.0000')
         ->and($creditNote->posting_status)->toBe('posted')
         ->and($creditNote->is_closed)->toBeTrue()
         ->and($creditNote->isEditable())->toBeFalse()
         ->and($invoice->remaining_amount)->toBe('0.0000')
-        ->and($invoice->credited_amount)->toBe('1140.0000');
+        ->and($invoice->credited_amount)->toBe('0.0000')
+        ->and($creditNote->credit_available_amount)->toBe('1140.0000');
     expect(fn () => $returns->close($return))->toThrow(DomainException::class, 'required authorization and quality stages');
     expect(JournalEntry::query()->where('source_type', 'customer_credit_note')->where('source_id', $creditNote->getKey())->count())->toBe(1);
 
@@ -368,7 +479,7 @@ test('fully paid invoice credit remains a customer credit and conserves every re
         ->and($creditJournal->lines->sum('credit_amount'))->toEqual(1140.0);
 
     $costJournal = JournalEntry::query()->with('lines.account.classification')
-        ->where('source_type', 'sales_return_cogs')
+        ->where('source_type', 'sales_return_quarantine_receipt')
         ->where('source_id', $return->getKey())
         ->sole();
     $costLines = $costJournal->lines->mapWithKeys(fn ($line): array => [
@@ -377,8 +488,15 @@ test('fully paid invoice credit remains a customer credit and conserves every re
             'credit' => $line->credit_amount,
         ],
     ]);
-    expect($costLines['inventory'])->toBe(['debit' => '35.0000', 'credit' => '0.0000'])
-        ->and($costLines['cost_of_goods_sold'])->toBe(['debit' => '0.0000', 'credit' => '35.0000']);
+    expect($costLines['inventory'])->toBe(['debit' => '50000.0000', 'credit' => '0.0000'])
+        ->and($costLines['cost_of_goods_sold'])->toBe(['debit' => '0.0000', 'credit' => '50000.0000']);
+
+    $dispositionJournal = JournalEntry::query()
+        ->where('source_type', 'sales_return_financial_disposition')
+        ->where('source_id', $return->getKey())
+        ->sole();
+    expect((float) $dispositionJournal->lines()->sum('debit_amount'))->toEqual(50000.0)
+        ->and((float) $dispositionJournal->lines()->sum('credit_amount'))->toEqual(50000.0);
 
     $returnTransactions = InventoryTransaction::query()
         ->where('transaction_type', 'sales_return_receipt')
@@ -386,10 +504,9 @@ test('fully paid invoice credit remains a customer credit and conserves every re
         ->get();
     $returnByStatus = $returnTransactions->groupBy('stock_status')
         ->map(fn ($transactions): string => bcadd((string) $transactions->sum('quantity_in'), '0', 8));
-    expect($returnTransactions)->toHaveCount(2)
-        ->and($returnByStatus[InventoryTransaction::StatusAvailable])->toBe('7.00000000')
-        ->and($returnByStatus[InventoryTransaction::StatusQuarantine])->toBe('3.00000000')
-        ->and($returnTransactions->sum('quantity_in'))->toEqual(10.0)
+    expect($returnTransactions)->toHaveCount(1)
+        ->and($returnByStatus[InventoryTransaction::StatusQuarantine])->toBe('10000.00000000')
+        ->and($returnTransactions->sum('quantity_in'))->toEqual(10000.0)
         ->and($returnTransactions->every(fn (InventoryTransaction $transaction): bool => $transaction->unit_cost === '5.00000000'))->toBeTrue();
 
     $availability = app(InventoryAvailabilityService::class)->forProduct(
@@ -397,16 +514,19 @@ test('fully paid invoice credit remains a customer credit and conserves every re
         $fixture['store']->getKey(),
         $fixture['finished']->getKey(),
     );
-    expect($availability['on_hand'])->toBe('97.00000000')
-        ->and($availability['available'])->toBe('97.00000000')
-        ->and($availability['physical_on_hand'])->toBe('100.00000000');
+    expect($availability['on_hand'])->toBe('7000.00000000')
+        ->and($availability['available'])->toBe('7000.00000000')
+        ->and($availability['physical_on_hand'])->toBe('10000.00000000');
 
     $reportBalances = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
         'branch_store_id' => $fixture['store']->getKey(),
         'product_id' => $fixture['finished']->getKey(),
-    ])->keyBy('stock_status');
-    expect((string) $reportBalances[InventoryTransaction::StatusAvailable]->on_hand)->toBe('97')
-        ->and((string) $reportBalances[InventoryTransaction::StatusQuarantine]->on_hand)->toBe('3');
+    ])->groupBy('stock_status')->map(
+        fn ($balances): string => bcadd((string) $balances->sum('on_hand'), '0', 8),
+    );
+    expect($reportBalances[InventoryTransaction::StatusAvailable])->toBe('7000.00000000')
+        ->and($reportBalances[InventoryTransaction::StatusRework])->toBe('2000.00000000')
+        ->and($reportBalances[InventoryTransaction::StatusScrap])->toBe('1000.00000000');
 
     $customerLedger = DB::table('journal_entry_lines')
         ->where('customer_id', $fixture['customer']->getKey())
@@ -426,6 +546,190 @@ test('fully paid invoice credit remains a customer credit and conserves every re
     ]);
     expect($statement['period'])->toBe(['debit' => '1140.0000', 'credit' => '2280.0000'])
         ->and($statement['ending'])->toBe(['debit' => '0.0000', 'credit' => '1140.0000']);
+});
+
+test('available customer credit allocates and refunds exactly once without duplicate subledger or GL effects', function () {
+    $fixture = salesCycleFixture();
+    $originalInvoice = salesPostedServiceInvoice($fixture, '10000', quantity: '5');
+    app(CustomerReceiptService::class)->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '10000',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [[
+        'customer_invoice_payment_schedule_id' => $originalInvoice->paymentSchedules->sole()->getKey(),
+        'amount' => '10000',
+    ]]);
+
+    $return = app(SalesReturnService::class)->create(
+        $originalInvoice->fresh(),
+        SalesReturn::ReasonOrderEntry,
+        'Service billed in error.',
+        [['customer_invoice_line_id' => $originalInvoice->lines->sole()->getKey(), 'quantity' => '1']],
+    );
+    $return = app(SalesReturnService::class)->authorize($return);
+    $creditNote = app(SalesReturnService::class)->close($return)->creditNote;
+    $targetInvoice = salesPostedServiceInvoice($fixture, '1200');
+    $credits = app(CustomerCreditService::class);
+    $journalCountBeforeAllocation = JournalEntry::query()->count();
+
+    $allocation = $credits->allocate(
+        $creditNote,
+        $targetInvoice,
+        '1200',
+        now()->toDateString(),
+        idempotencyKey: '8f2de8ec-1fe8-4adc-8172-403b3c876a19',
+    );
+    $sameAllocation = $credits->allocate(
+        $creditNote,
+        $targetInvoice,
+        '1200',
+        now()->toDateString(),
+        idempotencyKey: '8f2de8ec-1fe8-4adc-8172-403b3c876a19',
+    );
+
+    expect($sameAllocation->is($allocation))->toBeTrue()
+        ->and(CustomerCreditAllocation::query()->count())->toBe(1)
+        ->and(JournalEntry::query()->count())->toBe($journalCountBeforeAllocation)
+        ->and($targetInvoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and($targetInvoice->fresh()->credited_amount)->toBe('1200.0000')
+        ->and($creditNote->fresh()->credit_available_amount)->toBe('800.0000')
+        ->and($creditNote->fresh()->credit_allocated_amount)->toBe('1200.0000');
+    expect(fn () => $credits->allocate(
+        $creditNote,
+        $targetInvoice,
+        '1',
+        now()->toDateString(),
+        idempotencyKey: '9169cbef-f3e8-4b55-b27b-ac5eb96c9e91',
+    ))->toThrow(DomainException::class);
+
+    $refundData = [
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'refund_date' => now()->toDateString(),
+        'payment_method' => CustomerCreditRefund::MethodCash,
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'amount' => '800',
+        'idempotency_key' => '8508dd1d-c8f8-41b3-9ebc-8a887b9ac9d8',
+        'notes' => 'Refund remaining customer credit.',
+    ];
+    $journalCountBeforeRefund = JournalEntry::query()->count();
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+    expect(fn () => $credits->refund($creditNote->fresh(), $refundData))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'))
+        ->and(CustomerCreditRefund::query()->count())->toBe(0)
+        ->and(JournalEntry::query()->count())->toBe($journalCountBeforeRefund)
+        ->and($creditNote->fresh()->credit_available_amount)->toBe('800.0000');
+    $fixture['period']->forceFill(['is_closed' => false])->save();
+
+    $refund = $credits->refund($creditNote->fresh(), $refundData);
+    $sameRefund = $credits->refund($creditNote->fresh(), $refundData);
+    $refundJournal = $refund->journalEntry()->with('lines')->firstOrFail();
+
+    expect($sameRefund->is($refund))->toBeTrue()
+        ->and(CustomerCreditRefund::query()->count())->toBe(1)
+        ->and($creditNote->fresh()->credit_available_amount)->toBe('0.0000')
+        ->and($creditNote->fresh()->credit_refunded_amount)->toBe('800.0000')
+        ->and((float) $refundJournal->lines->firstWhere('account_id', $fixture['customer']->account_id)?->debit_amount)->toBe(800.0)
+        ->and((float) $refundJournal->lines->firstWhere('account_id', $fixture['cashbox']->account_id)?->credit_amount)->toBe(800.0);
+
+    Permission::findOrCreate('customer_credits.refund', 'web');
+    $fixture['user']->givePermissionTo('customer_credits.refund');
+    $refundPdf = $this->actingAs($fixture['user'])
+        ->withSession(salesCycleSession($fixture))
+        ->get(route('admin.sales.customer-credit-refunds.print', $refund))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition');
+    expect(str_starts_with($refundPdf->getContent(), '%PDF-'))->toBeTrue()
+        ->and(salesPdfText($refundPdf->getContent()))->toContain($refund->doc_num, $creditNote->doc_num, '800');
+
+    expect(fn () => $credits->refund($creditNote->fresh(), [
+        ...$refundData,
+        'amount' => '1',
+        'idempotency_key' => 'de9414b4-fde1-4779-8855-06c5faf7bd12',
+    ]))->toThrow(DomainException::class);
+
+    $customerLedger = DB::table('journal_entry_lines')
+        ->where('customer_id', $fixture['customer']->getKey())
+        ->selectRaw('coalesce(sum(debit_amount), 0) as debits, coalesce(sum(credit_amount), 0) as credits')
+        ->first();
+    expect((float) $customerLedger->debits)->toEqual(12000.0)
+        ->and((float) $customerLedger->credits)->toEqual(12000.0);
+});
+
+test('electronic invoices validate immutable payloads and persist accepted rejected and retryable outcomes', function () {
+    $fixture = salesCycleFixture();
+    $fixture['company']->forceFill(['vat_registration_number' => '200000000'])->save();
+    $fixture['customer']->forceFill(['tax_number' => '300000000'])->save();
+    config([
+        'e_invoice.enabled' => true,
+        'e_invoice.provider' => 'mock',
+        'e_invoice.environment' => 'sandbox',
+        'e_invoice.issuer_taxpayer_id' => null,
+        'e_invoice.branch_code' => 'FACTORY-01',
+        'e_invoice.mock_result' => 'accepted',
+    ]);
+
+    $acceptedInvoice = salesPostedServiceInvoice($fixture, '1000', '140');
+    $payload = app(ElectronicInvoicePayloadBuilder::class)->build($acceptedInvoice);
+    $service = app(ElectronicInvoiceService::class);
+    $accepted = $service->queue($acceptedInvoice)->refresh();
+    $sameAccepted = $service->queue($acceptedInvoice)->refresh();
+
+    expect($payload['issuer']['taxpayer_id'])->toBe('200000000')
+        ->and($payload['receiver']['taxpayer_id'])->toBe('300000000')
+        ->and($payload['lines'][0]['unit_code'])->toBe($fixture['unit']->doc_num)
+        ->and($payload['lines'][0]['tax_code'])->toBe('VAT')
+        ->and($payload['totals']['total'])->toBe('1140.0000')
+        ->and($accepted->status)->toBe(ElectronicInvoiceSubmission::StatusAccepted)
+        ->and($accepted->provider_reference)->toStartWith('MOCK-')
+        ->and($acceptedInvoice->fresh()->electronic_invoice_status)->toBe(ElectronicInvoiceSubmission::StatusAccepted)
+        ->and($sameAccepted->is($accepted))->toBeTrue()
+        ->and(ElectronicInvoiceSubmission::query()->where('customer_invoice_id', $acceptedInvoice->getKey())->count())->toBe(1)
+        ->and($sameAccepted->attempt_count)->toBe(1);
+
+    $creditReturn = app(SalesReturnService::class)->create(
+        $acceptedInvoice,
+        SalesReturn::ReasonOrderEntry,
+        'Electronic correction.',
+        [['customer_invoice_line_id' => $acceptedInvoice->lines->sole()->getKey(), 'quantity' => '1']],
+    );
+    $creditNote = app(SalesReturnService::class)->close(app(SalesReturnService::class)->authorize($creditReturn))->creditNote;
+    $creditPayload = app(ElectronicInvoicePayloadBuilder::class)->build($creditNote);
+    expect($creditPayload['document_type'])->toBe(CustomerInvoice::TypeCreditNote)
+        ->and($creditPayload['original_document_reference'])->toBe($accepted->provider_reference);
+
+    config(['e_invoice.mock_result' => 'rejected']);
+    $rejectedInvoice = salesPostedServiceInvoice($fixture, '200');
+    $rejected = $service->queue($rejectedInvoice)->refresh();
+    expect($rejected->status)->toBe(ElectronicInvoiceSubmission::StatusRejected)
+        ->and($rejected->error_classification)->toBe('provider_business_rejection')
+        ->and($rejectedInvoice->fresh()->electronic_invoice_status)->toBe(ElectronicInvoiceSubmission::StatusRejected);
+
+    config(['e_invoice.mock_result' => 'retryable_failure']);
+    $retryInvoice = salesPostedServiceInvoice($fixture, '300');
+    expect(fn () => $service->queue($retryInvoice))->toThrow(RuntimeException::class, 'Mock retryable provider failure.');
+    $failed = ElectronicInvoiceSubmission::query()->where('customer_invoice_id', $retryInvoice->getKey())->sole();
+    expect($failed->status)->toBe(ElectronicInvoiceSubmission::StatusFailed)
+        ->and($failed->error_classification)->toBe('retryable_transport')
+        ->and($failed->attempt_count)->toBe(1)
+        ->and($retryInvoice->fresh()->electronic_invoice_status)->toBe('submission_failed');
+
+    config(['e_invoice.mock_result' => 'accepted']);
+    $retried = $service->submit($failed)->refresh();
+    expect($retried->status)->toBe(ElectronicInvoiceSubmission::StatusAccepted)
+        ->and($retried->attempt_count)->toBe(2)
+        ->and($retryInvoice->fresh()->electronic_invoice_status)->toBe(ElectronicInvoiceSubmission::StatusAccepted);
 });
 
 test('service-only direct sale invoices and collects without inventory reservation production or COGS', function () {

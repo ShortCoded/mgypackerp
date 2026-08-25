@@ -42,10 +42,10 @@ return [
         'exceptions' => env('DEBUGBAR_COLLECTORS_EXCEPTIONS', true),       // Exception displayer
         'log' => env('DEBUGBAR_COLLECTORS_LOG', true),              // Logs from Monolog (merged in messages if enabled)
         'db' => env('DEBUGBAR_COLLECTORS_DB', true),               // Show database (PDO) queries and bindings
-        'views' => env('DEBUGBAR_COLLECTORS_VIEWS', true),            // Views with their data
+        'views' => env('DEBUGBAR_COLLECTORS_VIEWS', false),           // Large recursive ERP menus can otherwise exhaust local memory.
         'route' => env('DEBUGBAR_COLLECTORS_ROUTE', false),           // Current route information
         'auth' => env('DEBUGBAR_COLLECTORS_AUTH', false),            // Display Laravel authentication status
-        'gate' => env('DEBUGBAR_COLLECTORS_GATE', true),             // Display Laravel Gate checks
+        'gate' => env('DEBUGBAR_COLLECTORS_GATE', false),            // Menu permission checks are intentionally high-volume.
         'session' => env('DEBUGBAR_COLLECTORS_SESSION', false),         // Display session data
         'symfony_request' => env('DEBUGBAR_COLLECTORS_SYMFONY_REQUEST', true),  // Default Request Data
         'mail' => env('DEBUGBAR_COLLECTORS_MAIL', true),             // Catch mail messages
@@ -99,7 +99,7 @@ return [
             'exclude_paths' => [       // Paths to exclude entirely from the collector
                 // 'vendor/laravel/framework/src/Illuminate/Session', // Exclude sessions queries
             ],
-            'backtrace' => env('DEBUGBAR_OPTIONS_DB_BACKTRACE', true),   // Use a backtrace to find the origin of the query in your files.
+            'backtrace' => env('DEBUGBAR_OPTIONS_DB_BACKTRACE', false),  // Use a backtrace to find the origin of the query in your files.
             'backtrace_exclude_paths' => [],   // Paths to exclude from backtrace. (in addition to defaults)
             'backtrace_editor_links' => env('DEBUGBAR_OPTIONS_DB_BACKTRACE_EDITOR_LINKS', false), // Add editor links to backtrace entries (non-vendor files only)
             'timeline' => env('DEBUGBAR_OPTIONS_DB_TIMELINE', false),  // Add the queries to the timeline

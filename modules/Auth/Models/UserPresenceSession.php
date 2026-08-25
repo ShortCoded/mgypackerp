@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\RequestMemo;
 
 class UserPresenceSession extends Model
 {
@@ -44,7 +45,12 @@ class UserPresenceSession extends Model
     protected static function booted(): void
     {
         static::creating(function (UserPresenceSession $presenceSession): void {
-            if (Schema::hasTable($presenceSession->getTable()) && Schema::hasColumn($presenceSession->getTable(), 'public_id') && (! is_string($presenceSession->public_id) || trim($presenceSession->public_id) === '')) {
+            $columns = app(RequestMemo::class)->remember(
+                'schema.columns.'.$presenceSession->getTable(),
+                fn (): array => Schema::getColumnListing($presenceSession->getTable()),
+            );
+
+            if (in_array('public_id', $columns, true) && (! is_string($presenceSession->public_id) || trim($presenceSession->public_id) === '')) {
                 $presenceSession->public_id = (string) Str::uuid();
             }
         });

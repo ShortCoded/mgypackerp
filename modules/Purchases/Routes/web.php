@@ -255,10 +255,10 @@ Route::middleware('auth')
             Route::post('supplier-payment-allocations/{supplierPayment}', 'allocateSupplierPayment')->middleware(['can:purchases.supplier_payment_allocations.create', 'can:purchases.prices.view'])->name('supplier-payment-allocations.store');
             Route::get('supplier-debit-notes', 'inquiry')->defaults('procurement_screen', 'supplier_debit_notes')->middleware('can:purchases.supplier_debit_notes.view')->name('supplier-debit-notes.index');
 
-            Route::prefix('procurement-cycle-report')->name('procurement-cycle-report.')->middleware('can:reports.purchases.view')->group(function (): void {
-                Route::get('/', 'report')->name('index');
-                Route::get('/export/excel', 'exportReportExcel')->name('export.excel');
-                Route::get('/print', 'printReport')->name('print');
+            Route::prefix('procurement-cycle-report')->name('procurement-cycle-report.')->group(function (): void {
+                Route::get('/', 'report')->middleware('can:reports.purchases.view')->name('index');
+                Route::get('/export/excel', 'exportReportExcel')->middleware('can:reports.purchases.export')->name('export.excel');
+                Route::get('/print', 'printReport')->middleware('can:reports.purchases.export')->name('print');
             });
             Route::get('procurement-print/{type}/{docNum}', 'printDocument')->name('procurement.print');
         });

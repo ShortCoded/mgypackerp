@@ -450,4 +450,7 @@ return [
             'select2_searching' => 'جاري البحث...',
         ],
     ],
+    'reports' => [
+        'gl_reconciliation_unavailable' => 'لا تتوفر المطابقة مع الأستاذ العام حتى يتم إعداد ربط حسابات المخزون للشركة.',
+    ],
 ];

@@ -31,6 +31,10 @@
                         'inventory_adjustment_gain_account_doc_num' => $mapping?->inventoryAdjustmentGainAccount,
                         'inventory_adjustment_loss_account_doc_num' => $mapping?->inventoryAdjustmentLossAccount,
                         'production_variance_account_doc_num' => $mapping?->productionVarianceAccount,
+                        'quarantine_inventory_account_doc_num' => $mapping?->quarantineInventoryAccount,
+                        'rework_inventory_account_doc_num' => $mapping?->reworkInventoryAccount,
+                        'grni_account_doc_num' => $mapping?->grniAccount,
+                        'purchase_price_variance_account_doc_num' => $mapping?->purchasePriceVarianceAccount,
                     ];
                 @endphp
                 @foreach($fields as $field => $account)

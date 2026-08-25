@@ -45,6 +45,10 @@ class ConfigureInventoryAccountingMappingRequest extends FormRequest
             'inventory_adjustment_gain_account_doc_num' => ['required', 'string', $postableAccount()],
             'inventory_adjustment_loss_account_doc_num' => ['required', 'string', $postableAccount()],
             'production_variance_account_doc_num' => ['nullable', 'string', $postableAccount()],
+            'quarantine_inventory_account_doc_num' => ['required', 'string', $postableAccount()],
+            'rework_inventory_account_doc_num' => ['required', 'string', $postableAccount()],
+            'grni_account_doc_num' => ['required', 'string', $postableAccount()],
+            'purchase_price_variance_account_doc_num' => ['required', 'string', $postableAccount()],
             'production_cost_center_doc_num' => [
                 'nullable',
                 'string',

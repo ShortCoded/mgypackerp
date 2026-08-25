@@ -118,12 +118,21 @@ class SalesReturnService
                     ...$numbers, 'company_id' => $locked->company_id, 'financial_period_id' => $locked->financial_period_id,
                     'branch_id' => $locked->branch_id, 'branch_store_id' => $locked->branch_store_id,
                     'document_type' => InventoryDocument::TypeSalesReturnReceipt, 'document_date' => now()->toDateString(),
+                    'destination_stock_status' => InventoryTransaction::StatusQuarantine,
+                    'movement_reason' => 'sales_return_received_quarantine',
                     'purpose' => 'Sales return pending quality disposition', 'source_document_type' => SalesReturn::class,
                     'source_document_id' => $locked->getKey(), 'source_doc_num' => $locked->doc_num,
                     'customer_id' => $locked->customer_id, 'status' => InventoryDocument::StatusDraft, 'created_by' => auth()->id(),
                 ]);
                 foreach ($physical->values() as $index => $line) {
                     $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
+                    $sourceIssue = InventoryTransaction::query()
+                        ->where('source_type', InventoryDocument::class)
+                        ->where('source_line_id', $line->delivery_line_id)
+                        ->where('quantity_out', '>', 0)
+                        ->where('is_reversal', false)
+                        ->latest('id')
+                        ->first();
                     $document->lines()->create([
                         'company_id' => $locked->company_id, 'financial_period_id' => $locked->financial_period_id,
                         'line_number' => $index + 1, 'product_id' => $line->product_id, 'unit_id' => $product->item_unit_id,
@@ -131,11 +140,23 @@ class SalesReturnService
                         'transaction_quantity' => $line->quantity, 'base_quantity' => $line->base_quantity,
                         'source_line_type' => SalesReturnLine::class, 'source_line_id' => $line->getKey(),
                         'source_line_public_id' => $line->public_id, 'reference_quantity' => $line->quantity,
-                        'quantity' => 0, 'rejected_quantity' => 0, 'unit_cost' => $line->original_unit_cost,
-                        'product_snapshot' => ['quality_status' => 'pending'], 'created_by' => auth()->id(),
+                        'quantity' => $line->base_quantity, 'rejected_quantity' => 0, 'unit_cost' => $line->original_unit_cost,
+                        'batch_lot' => $sourceIssue?->batch_lot,
+                        'manufacture_date' => $sourceIssue?->manufacture_date,
+                        'expiry_date' => $sourceIssue?->expiry_date,
+                        'product_snapshot' => [
+                            'quality_status' => 'pending',
+                            'source_issue_transaction_id' => $sourceIssue?->getKey(),
+                        ],
+                        'created_by' => auth()->id(),
                     ]);
                 }
-                $locked->update(['return_inventory_document_id' => $document->getKey()]);
+                $this->inventoryPosting->post($document);
+                $quarantineJournal = $this->accounting->postReturnedGoodsToQuarantine($locked);
+                $locked->update([
+                    'return_inventory_document_id' => $document->getKey(),
+                    'quarantine_journal_entry_id' => $quarantineJournal?->getKey(),
+                ]);
             }
             $locked->update(['status' => SalesReturn::StatusReceived, 'received_by' => auth()->id(), 'received_at' => now(), 'updated_by' => auth()->id()]);
             $this->recordStatus($locked, SalesReturn::StatusAuthorized, SalesReturn::StatusReceived);
@@ -177,15 +198,20 @@ class SalesReturnService
                     'scrap_quantity' => $scrap, 'scrap_base_quantity' => $scrapBase,
                     'quality_disposition' => $disposition, 'inspection_notes' => $result['notes'] ?? null,
                 ]);
-                $inventoryLine = $locked->returnInventoryDocument?->lines->firstWhere('source_line_id', $line->getKey());
-                $inventoryLine?->update(['quantity' => $saleableBase, 'base_quantity' => $saleableBase, 'rejected_quantity' => $this->amounts->sum([$quarantineBase, $reworkBase, $scrapBase], 8), 'product_snapshot' => ['quality_disposition' => $disposition]]);
             }
             $locked->load('lines');
             if ($locked->lines->where('is_service', false)->contains(fn (SalesReturnLine $line): bool => $line->quality_disposition === null)) {
                 throw new DomainException('Every physical return line requires a quality disposition.');
             }
             $this->postDispositionInventory($locked);
-            $locked->update(['status' => SalesReturn::StatusInspected, 'inspected_by' => auth()->id(), 'inspected_at' => now(), 'updated_by' => auth()->id()]);
+            $dispositionJournal = $this->accounting->postReturnDisposition($locked);
+            $locked->update([
+                'status' => SalesReturn::StatusInspected,
+                'disposition_journal_entry_id' => $dispositionJournal?->getKey(),
+                'inspected_by' => auth()->id(),
+                'inspected_at' => now(),
+                'updated_by' => auth()->id(),
+            ]);
             $this->recordStatus($locked, SalesReturn::StatusReceived, SalesReturn::StatusInspected);
             $this->audit->record($locked, 'sales_return.inspected');
 
@@ -217,7 +243,9 @@ class SalesReturnService
                 'tax_amount' => $locked->tax_amount, 'total_amount' => $locked->total_amount,
                 'remaining_amount' => 0, 'document_type' => CustomerInvoice::TypeCreditNote,
                 'original_invoice_id' => $invoice->getKey(), 'sales_return_id' => $locked->getKey(),
-                'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted', 'created_by' => auth()->id(),
+                'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted',
+                'source_type' => SalesReturn::class, 'source_id' => $locked->getKey(), 'source_doc_num' => $locked->doc_num,
+                'created_by' => auth()->id(),
             ]);
             foreach ($locked->lines as $index => $line) {
                 $source = $line->invoiceLine;
@@ -227,7 +255,10 @@ class SalesReturnService
                     'conversion_factor' => $line->conversion_factor, 'base_quantity' => $line->base_quantity,
                     'description' => $source->description, 'quantity' => $line->quantity, 'unit_price' => $line->unit_price,
                     'tax_amount' => $line->tax_amount, 'line_total' => $line->line_total, 'is_service' => $line->is_service,
-                    'unit_cost' => $line->original_unit_cost, 'source_snapshot' => ['original_invoice_line_public_id' => $source->public_id, 'sales_return' => $locked->doc_num],
+                    'unit_cost' => $line->original_unit_cost, 'source_snapshot' => [
+                        ...($source->source_snapshot ?? []), 'original_invoice_line_public_id' => $source->public_id,
+                        'sales_return' => $locked->doc_num,
+                    ],
                 ]);
                 if ($line->sales_order_line_id) {
                     SalesOrderLine::query()->whereKey($line->sales_order_line_id)->increment('returned_quantity', $line->quantity);
@@ -236,13 +267,21 @@ class SalesReturnService
             }
             $journal = $this->accounting->postCreditNote($credit);
             $credit->update(['status' => CustomerInvoice::StatusPosted, 'posting_status' => 'posted', 'is_closed' => true, 'journal_entry_id' => $journal->getKey(), 'issued_by' => auth()->id(), 'issued_at' => now()]);
-            if ($hasPhysical) {
-                $this->accounting->postSaleableReturnCost($locked);
+            $outstandingBeforeCredit = $this->amounts->subtract(
+                $this->amounts->subtract($invoice->total_amount, $invoice->paid_amount),
+                $invoice->credited_amount,
+            );
+            $appliedToOriginal = $this->amounts->compare($locked->total_amount, $outstandingBeforeCredit) > 0
+                ? $outstandingBeforeCredit
+                : (string) $locked->total_amount;
+            if ($this->amounts->compare($appliedToOriginal, '0') < 0) {
+                $appliedToOriginal = '0.0000';
             }
-            $invoice->increment('credited_amount', $locked->total_amount);
-            $remaining = $this->amounts->subtract($this->amounts->subtract($invoice->total_amount, $invoice->paid_amount), $invoice->fresh()->credited_amount);
+            $invoice->increment('credited_amount', $appliedToOriginal);
+            $remaining = $this->amounts->subtract($outstandingBeforeCredit, $appliedToOriginal);
             $invoice->update(['remaining_amount' => $this->amounts->compare($remaining, '0') < 0 ? '0.0000' : $remaining]);
-            $this->applyCreditToSchedules($invoice, (string) $locked->total_amount);
+            $this->applyCreditToSchedules($invoice, $appliedToOriginal);
+            $credit->update(['credit_available_amount' => $this->amounts->subtract($locked->total_amount, $appliedToOriginal)]);
             $locked->update(['credit_note_id' => $credit->getKey(), 'status' => SalesReturn::StatusClosed, 'closed_by' => auth()->id(), 'closed_at' => now(), 'updated_by' => auth()->id()]);
             $this->recordStatus($locked, $fromStatus, SalesReturn::StatusClosed);
             $this->audit->record($locked, 'sales_return.closed', ['credit_note' => $credit->doc_num]);
@@ -275,7 +314,6 @@ class SalesReturnService
         $return->loadMissing(['lines.product', 'returnInventoryDocument.lines']);
         $dispositions = [
             SalesReturnLine::DispositionSaleable => ['quantity' => 'saleable_quantity', 'base' => 'saleable_base_quantity', 'status' => InventoryTransaction::StatusAvailable],
-            SalesReturnLine::DispositionQuarantine => ['quantity' => 'quarantine_quantity', 'base' => 'quarantine_base_quantity', 'status' => InventoryTransaction::StatusQuarantine],
             SalesReturnLine::DispositionRework => ['quantity' => 'rework_quantity', 'base' => 'rework_base_quantity', 'status' => InventoryTransaction::StatusRework],
             SalesReturnLine::DispositionScrap => ['quantity' => 'scrap_quantity', 'base' => 'scrap_base_quantity', 'status' => InventoryTransaction::StatusScrap],
         ];
@@ -285,21 +323,6 @@ class SalesReturnService
                 ->where('is_service', false)
                 ->filter(fn (SalesReturnLine $line): bool => $this->amounts->compare($line->{$profile['base']}, '0', 8) > 0)
                 ->values();
-
-            if ($disposition === SalesReturnLine::DispositionSaleable) {
-                $document = $return->returnInventoryDocument;
-                if (! $document instanceof InventoryDocument) {
-                    continue;
-                }
-                $document->update([
-                    'destination_stock_status' => $profile['status'],
-                    'movement_reason' => 'sales_return_saleable',
-                    'purpose' => 'Sales return accepted as saleable stock',
-                ]);
-                $this->inventoryPosting->post($document);
-
-                continue;
-            }
 
             if ($lines->isEmpty()) {
                 continue;
@@ -317,8 +340,10 @@ class SalesReturnService
                 'financial_period_id' => $return->financial_period_id,
                 'branch_id' => $return->branch_id,
                 'branch_store_id' => $return->branch_store_id,
-                'document_type' => InventoryDocument::TypeSalesReturnReceipt,
+                'document_type' => InventoryDocument::TypeTransfer,
                 'document_date' => $return->return_date,
+                'destination_branch_store_id' => $return->branch_store_id,
+                'source_stock_status' => InventoryTransaction::StatusQuarantine,
                 'destination_stock_status' => $profile['status'],
                 'movement_reason' => "sales_return_{$disposition}",
                 'purpose' => "Sales return quality disposition: {$disposition}",

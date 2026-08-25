@@ -485,7 +485,7 @@
                                 </div>
                                 <div class="product-options-panel">
                                     <div class="row g-2">
-                                        @foreach (['cost_as_inventory', 'is_displayable'] as $booleanField)
+                                        @foreach (['cost_as_inventory', 'is_displayable', 'tracks_expiry'] as $booleanField)
                                             @php
                                                 $booleanDefault = $record
                                                     ? (bool) $record->{$booleanField}
@@ -514,6 +514,14 @@
                                                 <div class="invalid-feedback" data-error-for="{{ $booleanField }}"></div>
                                             </div>
                                         @endforeach
+                                        <div class="col-md-6">
+                                            <x-forms.label for="default_shelf_life_days" :label="__('products.attributes.default_shelf_life_days')" />
+                                            @if ($isView)
+                                                <x-forms.view-field for="default_shelf_life_days" :value="$record?->default_shelf_life_days" />
+                                            @else
+                                                <input class="form-control" id="default_shelf_life_days" name="default_shelf_life_days" type="number" min="1" max="36500" value="{{ old('default_shelf_life_days', $record?->default_shelf_life_days) }}">
+                                            @endif
+                                        </div>
                                     </div>
                                 </div>
                             </div>

@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
@@ -249,7 +250,6 @@ class ProductionRunController extends Controller
     {
         $this->assertRunInCurrentContext($request, $productionRun);
         $data = $request->validate([
-            'recorded_at' => ['nullable', 'date'],
             'good_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'rejected_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'rework_base_quantity' => ['nullable', 'numeric', 'min:0'],
@@ -265,8 +265,16 @@ class ProductionRunController extends Controller
     {
         $this->assertRunInCurrentContext($request, $productionRun);
         $data = $request->validate([
-            'quality_inspection_type_id' => ['nullable', 'integer', 'exists:quality_inspection_types,id'],
-            'sampled_at' => ['nullable', 'date'],
+            'quality_inspection_type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('quality_inspection_types', 'id')->where(
+                    fn ($query) => $query
+                        ->where('company_id', $productionRun->company_id)
+                        ->where('is_active', true)
+                        ->whereNull('deleted_at'),
+                ),
+            ],
             'result' => ['required', 'in:passed,failed,conditional'],
             'defect_code' => ['nullable', 'string', 'max:100'],
             'affected_base_quantity' => ['nullable', 'numeric', 'min:0'],
@@ -274,7 +282,18 @@ class ProductionRunController extends Controller
             'evidence_file' => ['nullable', 'image', 'max:5120'],
             'notes' => ['nullable', 'string'],
             'results' => ['nullable', 'array'],
-            'results.*.quality_checkpoint_id' => ['required', 'integer', 'exists:quality_checkpoints,id'],
+            'results.*.quality_checkpoint_id' => [
+                'required',
+                'integer',
+                'distinct',
+                Rule::exists('quality_checkpoints', 'id')->where(
+                    fn ($query) => $query
+                        ->where('company_id', $productionRun->company_id)
+                        ->where('quality_inspection_type_id', $request->input('quality_inspection_type_id'))
+                        ->where('is_active', true)
+                        ->whereNull('deleted_at'),
+                ),
+            ],
             'results.*.result' => ['required', 'string', 'max:30'],
             'results.*.measured_value' => ['nullable', 'string', 'max:255'],
             'results.*.notes' => ['nullable', 'string'],

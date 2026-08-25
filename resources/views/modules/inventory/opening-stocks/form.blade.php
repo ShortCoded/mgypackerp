@@ -213,6 +213,8 @@
                                 <th class="text-center" style="min-width: 130px">{{ __('inventory.opening_stocks.attributes.quantity') }}</th>
                                 <th style="min-width: 150px">{{ __('inventory.opening_stocks.attributes.stock_status') }}</th>
                                 <th style="min-width: 150px">{{ __('inventory.opening_stocks.attributes.batch_lot') }}</th>
+                                <th style="min-width: 150px">{{ __('Manufacture date') }}</th>
+                                <th style="min-width: 150px">{{ __('Expiry date') }}</th>
                                 <th>{{ __('inventory.opening_stocks.attributes.line_notes') }}</th>
                                 @unless($isReadonly)
                                     <th class="text-center" style="width: 76px">{{ __('common.fields.actions') }}</th>
@@ -261,6 +263,12 @@
                                                 @endif
                                             </div>
                                         @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['manufacture_date'] ?? null }}</div>@else<input class="form-control" name="lines[{{ $index }}][manufacture_date]" type="date" value="{{ $line['manufacture_date'] ?? '' }}"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.manufacture_date"></div>@endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['expiry_date'] ?? null }}</div>@else<input class="form-control" name="lines[{{ $index }}][expiry_date]" type="date" value="{{ $line['expiry_date'] ?? '' }}"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.expiry_date"></div>@endif
                                     </td>
                                     <td>
                                         @if($isReadonly)
@@ -320,7 +328,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="{{ $isReadonly ? 6 : 7 }}" class="text-center text-600 py-3">{{ __('common.empty_value') }}</td>
+                                    <td colspan="{{ $isReadonly ? 8 : 9 }}" class="text-center text-600 py-3">{{ __('common.empty_value') }}</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -413,6 +421,8 @@
                     <input class="form-control js-opening-stock-batch" name="lines[__INDEX__][batch_lot]" type="text" maxlength="100" value="">
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.batch_lot"></div>
                 </td>
+                <td><input class="form-control" name="lines[__INDEX__][manufacture_date]" type="date"><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.manufacture_date"></div></td>
+                <td><input class="form-control" name="lines[__INDEX__][expiry_date]" type="date"><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.expiry_date"></div></td>
                 <td>
                     <input class="form-control js-opening-stock-line-notes" name="lines[__INDEX__][notes]" type="text" value="">
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>

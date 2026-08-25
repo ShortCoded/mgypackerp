@@ -118,12 +118,12 @@
     }).join('');
   }
 
-  function render(payload) {
+  function render(payload, options) {
     const data = payload && payload.data ? payload.data : {};
     const notifications = Array.isArray(data.notifications) ? data.notifications : [];
 
     renderCount(data.unread_count || 0);
-    notifyForNewUnread(notifications);
+    notifyForNewUnread(notifications, Boolean(options?.suppressSound));
     renderNotifications(notifications);
   }
 
@@ -135,7 +135,7 @@
     }));
   }
 
-  function notifyForNewUnread(notifications) {
+  function notifyForNewUnread(notifications, suppressSound) {
     const currentUnreadIds = unreadIds(notifications);
 
     if (!baselineReady) {
@@ -150,12 +150,12 @@
 
     knownUnreadIds = currentUnreadIds;
 
-    if (hasNewUnread && window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
+    if (hasNewUnread && !suppressSound && window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
       window.AppNotificationSound.play();
     }
   }
 
-  function fetchNotifications() {
+  function fetchNotifications(options) {
     if (inFlight) {
       schedule();
       return;
@@ -173,7 +173,7 @@
       })
       .then(function (payload) {
         failureCount = 0;
-        render(payload);
+        render(payload, options);
       })
       .catch(function () {
         failureCount += 1;
@@ -238,6 +238,10 @@
 
     schedule();
   });
+
+  window.AppNotificationsClient = {
+    refresh: fetchNotifications
+  };
 
   fetchNotifications();
 })(window, document);

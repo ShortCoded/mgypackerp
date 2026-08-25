@@ -12,6 +12,8 @@ use Modules\Inventory\Models\OpeningStockPricingLine;
 
 class InventoryOpeningStockPostingService
 {
+    public function __construct(private readonly InventoryLayerService $layers) {}
+
     public function post(OpeningStock $openingStock): void
     {
         $locked = OpeningStock::query()
@@ -43,7 +45,7 @@ class InventoryOpeningStockPostingService
             $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
             $valuation = $this->valuationForLine((int) $line->getKey());
 
-            InventoryTransaction::query()->firstOrCreate(
+            $transaction = InventoryTransaction::query()->firstOrCreate(
                 ['posting_key' => "opening-stock:{$locked->id}:line:{$line->id}"],
                 [
                     'company_id' => $locked->company_id,
@@ -54,6 +56,8 @@ class InventoryOpeningStockPostingService
                     'warehouse_location_id' => $line->warehouse_location_id,
                     'stock_status' => $line->stock_status ?: InventoryTransaction::StatusAvailable,
                     'batch_lot' => $line->batch_lot,
+                    'manufacture_date' => $line->manufacture_date,
+                    'expiry_date' => $line->expiry_date,
                     'transaction_date' => $locked->document_date,
                     'transaction_type' => 'opening_stock',
                     'product_id' => $line->product_id,
@@ -70,6 +74,7 @@ class InventoryOpeningStockPostingService
                     'created_by' => auth()->id(),
                 ],
             );
+            $this->layers->recordInbound($transaction);
         }
     }
 

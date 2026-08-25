@@ -5,12 +5,14 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cheque;
+use Modules\Finance\Models\ChequeClearingEvent;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierPaymentPostingService;
 
@@ -184,11 +186,54 @@ class ChequeService
         return $this->transition($record, Cheque::StatusCleared, [Cheque::StatusIssued, Cheque::StatusDelivered], ['cleared_at' => now()], requireFullDistribution: true);
     }
 
+    public function reverseClearing(Cheque $record, string $reason): Cheque
+    {
+        return DB::transaction(function () use ($record, $reason): Cheque {
+            $cheque = Cheque::query()->with(['clearingEvents.clearingJournalEntry', 'bankAccount.account'])
+                ->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertOwned($cheque, $this->companies->requireCompanyId());
+            if (! $cheque->isIssued() || $cheque->status !== Cheque::StatusCleared) {
+                throw new DomainException(__('Only a cleared outgoing cheque can have its Bank clearing reversed.'));
+            }
+            $payment = SupplierPaymentContext::query()->where('cheque_id', $cheque->getKey())->lockForUpdate()->firstOrFail();
+            $event = $cheque->clearingEvents->where('status', ChequeClearingEvent::StatusCleared)->last();
+            if (! $event instanceof ChequeClearingEvent) {
+                $journal = JournalEntry::query()
+                    ->where('source_type', 'supplier_cheque_clearing')->where('source_id', $payment->getKey())->firstOrFail();
+                $event = ChequeClearingEvent::query()->create([
+                    'cheque_id' => $cheque->getKey(), 'sequence' => 1,
+                    'clearing_date' => $cheque->cleared_at?->toDateString() ?? now()->toDateString(),
+                    'status' => ChequeClearingEvent::StatusCleared, 'clearing_journal_entry_id' => $journal->getKey(),
+                    'cleared_by' => $cheque->updated_by, 'cleared_at' => $cheque->cleared_at ?? now(),
+                ]);
+            }
+            $reversal = $this->supplierPaymentPostings->reverseChequeClearing($payment, $event, trim($reason));
+            $event->forceFill([
+                'status' => ChequeClearingEvent::StatusReversed, 'reversal_journal_entry_id' => $reversal->getKey(),
+                'reversal_reason' => trim($reason), 'reversed_by' => auth()->id(), 'reversed_at' => now(),
+            ])->save();
+            $cheque->forceFill([
+                'status' => Cheque::StatusClearingReversed, 'clearing_reversed_at' => now(),
+                'clearing_reversed_by' => auth()->id(), 'clearing_reversal_reason' => trim($reason),
+                'updated_by' => auth()->id(),
+            ])->save();
+
+            return $cheque->refresh()->load(['clearingEvents.clearingJournalEntry', 'clearingEvents.reversalJournalEntry']);
+        }, 3);
+    }
+
+    public function represent(Cheque $record): Cheque
+    {
+        return $this->transition($record, Cheque::StatusIssued, [Cheque::StatusClearingReversed], [
+            'issued_at' => now(), 'cleared_at' => null,
+        ]);
+    }
+
     public function cancel(Cheque $record, string $reason): Cheque
     {
         $allowed = $record->isReceived()
             ? [Cheque::StatusReceived, Cheque::StatusDeposited]
-            : [Cheque::StatusDraft, Cheque::StatusIssued, Cheque::StatusDelivered];
+            : [Cheque::StatusDraft, Cheque::StatusIssued, Cheque::StatusDelivered, Cheque::StatusClearingReversed];
 
         return $this->transition($record, Cheque::StatusCancelled, $allowed, [
             'cancelled_at' => now(),
@@ -288,12 +333,19 @@ class ChequeService
                 throw new DomainException(__('The issuing Bank Account requires a postable GL account.'));
             }
 
-            $this->supplierPaymentPostings->clearIssuedCheque(
-                $payment,
-                $account,
-                (int) $bankAccount->getKey(),
-                $cheque->cleared_at,
+            $sequence = ((int) $cheque->clearing_revision) + 1;
+            $journal = $this->supplierPaymentPostings->clearIssuedCheque(
+                $payment, $account, (int) $bankAccount->getKey(), $cheque->cleared_at, $sequence,
             );
+            ChequeClearingEvent::query()->firstOrCreate(
+                ['cheque_id' => $cheque->getKey(), 'sequence' => $sequence],
+                [
+                    'clearing_date' => $cheque->cleared_at?->toDateString() ?? now()->toDateString(),
+                    'status' => ChequeClearingEvent::StatusCleared,
+                    'clearing_journal_entry_id' => $journal->getKey(), 'cleared_by' => auth()->id(), 'cleared_at' => now(),
+                ],
+            );
+            $cheque->forceFill(['clearing_revision' => $sequence])->save();
 
             return;
         }

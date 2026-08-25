@@ -17,8 +17,10 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
+use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
@@ -90,6 +92,24 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'equivalent_unit_id' => $carton->getKey(),
                 'status' => 'active',
             ]);
+            $rawMaterial = Product::query()->create([
+                'company_id' => $company->getKey(),
+                'doc_number' => 990003,
+                'doc_num' => 'Product-E2E-RESIN',
+                'name' => 'E2E Food Grade Resin',
+                'item_classification' => Product::ClassificationRawMaterial,
+                'item_unit_id' => $piece->getKey(),
+                'status' => 'active',
+            ]);
+            ProductComponent::query()->create([
+                'company_id' => $company->getKey(),
+                'product_id' => $product->getKey(),
+                'component_product_id' => $rawMaterial->getKey(),
+                'unit_id' => $piece->getKey(),
+                'calculation_method' => ProductComponent::CalculationDirect,
+                'quantity' => '1.00000000',
+                'created_by' => $admin->getKey(),
+            ]);
             Product::query()->create([
                 'company_id' => $company->getKey(),
                 'doc_number' => 990002,
@@ -98,6 +118,30 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'item_classification' => Product::ClassificationService,
                 'item_unit_id' => $piece->getKey(),
                 'status' => 'active',
+            ]);
+
+            $accountId = fn (string $code): int => (int) Account::query()
+                ->where('company_id', $company->getKey())
+                ->where('account_code', $code)
+                ->valueOrFail('id');
+            InventoryAccountingMapping::query()->create([
+                'company_id' => $company->getKey(),
+                'raw_material_inventory_account_id' => $accountId('1131'),
+                'packaging_inventory_account_id' => $accountId('1134'),
+                'semi_finished_inventory_account_id' => $accountId('1132'),
+                'finished_goods_inventory_account_id' => $accountId('1133'),
+                'wip_account_id' => $accountId('1132'),
+                'production_waste_account_id' => $accountId('551'),
+                'recoverable_scrap_inventory_account_id' => $accountId('1134'),
+                'warehouse_damage_loss_account_id' => $accountId('551'),
+                'inventory_adjustment_gain_account_id' => $accountId('432'),
+                'inventory_adjustment_loss_account_id' => $accountId('551'),
+                'production_variance_account_id' => $accountId('551'),
+                'quarantine_inventory_account_id' => $accountId('1134'),
+                'rework_inventory_account_id' => $accountId('1132'),
+                'grni_account_id' => $accountId('212'),
+                'purchase_price_variance_account_id' => $accountId('551'),
+                'created_by' => $admin->getKey(),
             ]);
 
             $receivableClassification = AccountClassification::query()->where('code', 'accounts_receivable')->firstOrFail();
@@ -165,6 +209,25 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'source_doc_num' => 'E2E-OPENING-30-CARTONS',
                 'unit_cost' => '0.0100',
                 'total_cost' => '300.0000',
+                'created_by' => $admin->getKey(),
+            ]);
+            InventoryTransaction::query()->create([
+                'posting_key' => 'sales-cycle-browser-e2e-resin-opening',
+                'company_id' => $company->getKey(),
+                'financial_period_id' => $period->getKey(),
+                'branch_id' => $branch->getKey(),
+                'branch_store_id' => $store->getKey(),
+                'transaction_date' => now()->toDateString(),
+                'transaction_type' => 'opening_stock',
+                'product_id' => $rawMaterial->getKey(),
+                'unit_id' => $piece->getKey(),
+                'quantity_in' => '100000',
+                'quantity_out' => 0,
+                'source_type' => 'sales_cycle_browser_e2e',
+                'source_id' => $rawMaterial->getKey(),
+                'source_doc_num' => 'E2E-OPENING-RESIN',
+                'unit_cost' => '0.0050',
+                'total_cost' => '500.0000',
                 'created_by' => $admin->getKey(),
             ]);
 

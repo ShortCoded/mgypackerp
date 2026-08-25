@@ -4,13 +4,17 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use Carbon\CarbonImmutable;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Modules\Accounting\Database\Seeders\BaselineCostCentersSeeder;
+use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
+use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionRegistryService;
+use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
@@ -31,8 +35,6 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RuntimeDemoDataSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
     private const Marker = 'RuntimeDemoDataSeeder';
 
     private const DemoPassword = 'RuntimeDemo2026!';
@@ -50,6 +52,7 @@ class RuntimeDemoDataSeeder extends Seeder
             return;
         }
 
+        $this->call(PermissionSeeder::class);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         DB::transaction(function (): void {
@@ -63,6 +66,13 @@ class RuntimeDemoDataSeeder extends Seeder
             $roles = $this->seedRoles($companies, $branches, $periods);
             $this->seedUsers($roles);
         });
+
+        $this->call([
+            DefaultChartOfAccountsSeeder::class,
+            BaselineCostCentersSeeder::class,
+            CurrencySeeder::class,
+            IntegratedPlasticFactorySeeder::class,
+        ]);
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
@@ -257,6 +267,15 @@ class RuntimeDemoDataSeeder extends Seeder
         ], $roles['full']);
 
         $this->persistUser([
+            'name' => 'Runtime Demo Browser Verifier',
+            'username' => 'runtime_demo_browser',
+            'email' => 'demo.browser@shortcoded.test',
+            'phone' => '+20 100 700 2699',
+            'locale' => 'en',
+            'notes' => $this->note('Dedicated unrestricted login for repeatable browser and PDF acceptance checks.'),
+        ], $roles['full']);
+
+        $this->persistUser([
             'name' => 'Runtime Demo Nile Scope Admin',
             'username' => 'runtime_demo_nile',
             'email' => 'demo.nile@shortcoded.test',
@@ -280,7 +299,8 @@ class RuntimeDemoDataSeeder extends Seeder
      */
     private function persistCompany(array $attributes): Company
     {
-        $company = Company::withTrashed()
+        $company = Company::withoutGlobalScopes()
+            ->withTrashed()
             ->where('name', $attributes['name'])
             ->first() ?? new Company;
 
@@ -291,8 +311,8 @@ class RuntimeDemoDataSeeder extends Seeder
             'status' => 'active',
             'is_main' => false,
             'country' => 'Egypt',
-            'industry' => 'Furniture manufacturing',
-            'activity_type' => 'Manufacturing and retail',
+            'industry' => $attributes['industry'] ?? 'Plastic products manufacturing',
+            'activity_type' => $attributes['activity_type'] ?? 'Manufacturing and wholesale',
             'notes' => $attributes['notes'] ?? $this->note('Runtime demo company.'),
         ])->save();
 
@@ -389,7 +409,13 @@ class RuntimeDemoDataSeeder extends Seeder
     {
         $product = Product::withTrashed()
             ->where('company_id', $company->getKey())
-            ->where('name', $attributes['name'])
+            ->where(function ($query) use ($attributes): void {
+                $query->where('name', $attributes['name']);
+
+                if (filled($attributes['barcode'] ?? null)) {
+                    $query->orWhere('barcode', $attributes['barcode']);
+                }
+            })
             ->first() ?? new Product;
 
         $this->ensureDocumentNumber($product, 'products', Product::class, $company->getKey());
@@ -480,7 +506,7 @@ class RuntimeDemoDataSeeder extends Seeder
             $role->restore();
         }
 
-        $role->syncPermissions($this->permissions($permissionNames));
+        $role->permissions()->sync($this->permissionIds($permissionNames));
         $role->companyAccessCompanies()->sync($companyIds);
         $role->branchAccessBranches()->sync($branchIds);
         $role->financialPeriodAccessPeriods()->sync($financialPeriodIds);
@@ -560,14 +586,37 @@ class RuntimeDemoDataSeeder extends Seeder
 
     /**
      * @param  list<string>  $permissionNames
-     * @return list<Permission>
+     * @return list<int>
      */
-    private function permissions(array $permissionNames): array
+    private function permissionIds(array $permissionNames): array
     {
-        return collect($permissionNames)
+        $permissionNames = collect($permissionNames)
             ->unique()
             ->values()
-            ->map(fn (string $permission): Permission => Permission::findOrCreate($permission, 'web'))
+            ->all();
+        $permissionTable = (new Permission)->getTable();
+        $existingNames = DB::table($permissionTable)
+            ->where('guard_name', 'web')
+            ->whereIn('name', $permissionNames)
+            ->pluck('name')
+            ->all();
+        $timestamp = now();
+
+        foreach (array_diff($permissionNames, $existingNames) as $permissionName) {
+            DB::table($permissionTable)->insertOrIgnore([
+                'name' => $permissionName,
+                'guard_name' => 'web',
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
+        }
+
+        return DB::table($permissionTable)
+            ->where('guard_name', 'web')
+            ->whereIn('name', $permissionNames)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(fn (mixed $id): int => (int) $id)
             ->all();
     }
 
@@ -583,9 +632,9 @@ class RuntimeDemoDataSeeder extends Seeder
     {
         return [
             'nile' => [
-                'name' => 'Nile Wood Industries - Runtime Demo',
-                'legal_name' => 'Nile Wood Industries LLC',
-                'commercial_name' => 'Nile Wood',
+                'name' => 'Mgy Plast Manufacturing - Runtime Demo',
+                'legal_name' => 'Mgy Plast Manufacturing LLC',
+                'commercial_name' => 'Mgy Plast',
                 'legal_form' => 'Limited liability company',
                 'commercial_register_number' => 'RD-CR-1002601',
                 'tax_card_number' => 'RD-TAX-1002601',
@@ -593,20 +642,22 @@ class RuntimeDemoDataSeeder extends Seeder
                 'phone' => '+20 2 2470 2601',
                 'mobile' => '+20 100 700 2601',
                 'whatsapp' => '+20 100 700 2601',
-                'email' => 'runtime-demo-nile@example.test',
-                'website' => 'https://nile-wood.example.test',
-                'governorate' => 'Cairo',
-                'city' => 'Cairo',
-                'area' => 'Nasr City',
-                'address' => 'Block 12, Industrial Services Zone, Nasr City, Cairo',
-                'postal_code' => '11765',
-                'business_description' => 'Manufactures bedrooms, wardrobes, dining rooms, and custom hotel furniture.',
-                'notes' => $this->note('Primary runtime demo manufacturer with factory, warehouse, and showroom branches.'),
+                'email' => 'runtime-demo-mgy-plast@example.test',
+                'website' => 'https://mgy-plast.example.test',
+                'governorate' => 'Sharqia',
+                'city' => '10th of Ramadan',
+                'area' => 'Industrial Zone A3',
+                'address' => 'Factory 18, Industrial Zone A3, 10th of Ramadan City',
+                'postal_code' => '44629',
+                'business_description' => 'Manufactures injection-molded pails, food containers, lids, and industrial plastic packaging.',
+                'industry' => 'Plastic packaging manufacturing',
+                'activity_type' => 'Manufacturing and wholesale',
+                'notes' => $this->note('Primary plastic factory used by every integrated golden business cycle.'),
             ],
             'delta' => [
-                'name' => 'Delta Home Furniture - Runtime Demo',
-                'legal_name' => 'Delta Home Furniture SAE',
-                'commercial_name' => 'Delta Home',
+                'name' => 'Delta Packaging Trading - Runtime Demo',
+                'legal_name' => 'Delta Packaging Trading SAE',
+                'commercial_name' => 'Delta Packaging',
                 'legal_form' => 'Joint-stock company',
                 'commercial_register_number' => 'RD-CR-1002602',
                 'tax_card_number' => 'RD-TAX-1002602',
@@ -615,19 +666,21 @@ class RuntimeDemoDataSeeder extends Seeder
                 'mobile' => '+20 111 700 2602',
                 'whatsapp' => '+20 111 700 2602',
                 'email' => 'runtime-demo-delta@example.test',
-                'website' => 'https://delta-home.example.test',
+                'website' => 'https://delta-packaging.example.test',
                 'governorate' => 'Alexandria',
                 'city' => 'Alexandria',
                 'area' => 'Smouha',
                 'address' => '14 Victor Emmanuel Square, Smouha, Alexandria',
                 'postal_code' => '21615',
-                'business_description' => 'Produces residential sofa frames, bedside tables, and upholstered furniture.',
-                'notes' => $this->note('Runtime demo company for Alexandria workshop and showroom scope testing.'),
+                'business_description' => 'Distributes plastic packaging, closures, and food-grade containers across the Delta.',
+                'industry' => 'Plastic packaging distribution',
+                'activity_type' => 'Wholesale and distribution',
+                'notes' => $this->note('Secondary packaging distributor for restricted operating-scope testing.'),
             ],
             'export' => [
-                'name' => 'Damietta Export Furniture - Runtime Demo',
-                'legal_name' => 'Damietta Export Furniture LLC',
-                'commercial_name' => 'Damietta Export',
+                'name' => 'Alexandria Plastics Export - Runtime Demo',
+                'legal_name' => 'Alexandria Plastics Export LLC',
+                'commercial_name' => 'Alex Plast Export',
                 'legal_form' => 'Limited liability company',
                 'commercial_register_number' => 'RD-CR-1002603',
                 'tax_card_number' => 'RD-TAX-1002603',
@@ -636,14 +689,16 @@ class RuntimeDemoDataSeeder extends Seeder
                 'mobile' => '+20 122 700 2603',
                 'whatsapp' => '+20 122 700 2603',
                 'email' => 'runtime-demo-export@example.test',
-                'website' => 'https://damietta-export.example.test',
-                'governorate' => 'Damietta',
-                'city' => 'Damietta',
-                'area' => 'Furniture City',
-                'address' => 'Export Services District, Damietta Furniture City',
-                'postal_code' => '34511',
-                'business_description' => 'Prepares export packaging, hotel starter sets, and container-ready shipments.',
-                'notes' => $this->note('Runtime demo export services company for multi-company selector checks.'),
+                'website' => 'https://alex-plast-export.example.test',
+                'governorate' => 'Alexandria',
+                'city' => 'Alexandria',
+                'area' => 'Amreya Free Zone',
+                'address' => 'Export Warehouse 9, Amreya Free Zone, Alexandria',
+                'postal_code' => '21934',
+                'business_description' => 'Exports food-grade plastic containers and industrial pails to regional markets.',
+                'industry' => 'Plastic products export',
+                'activity_type' => 'Export and logistics',
+                'notes' => $this->note('Export company for multi-company selectors and unrestricted-scope checks.'),
             ],
         ];
     }
@@ -656,17 +711,17 @@ class RuntimeDemoDataSeeder extends Seeder
         return [
             'nile' => [
                 'cairo_factory' => [
-                    'name' => 'Cairo Factory - Runtime Demo',
+                    'name' => '10th of Ramadan Plastic Factory - Runtime Demo',
                     'type' => Branch::TypeFactory,
-                    'address' => 'Factory 7, 10th of Ramadan Industrial Zone, Cairo',
+                    'address' => 'Factory 18, Industrial Zone A3, 10th of Ramadan City',
                     'phone' => '+20 2 2470 2611',
                     'mobile' => '+20 100 700 2611',
                     'email' => 'runtime-demo-cairo-factory@example.test',
                     'contact_person' => 'Mona Farouk',
-                    'notes' => $this->note('Production branch for limited Nile operating scope.'),
+                    'notes' => $this->note('Primary injection-molding factory for the integrated demo cycles.'),
                 ],
                 'ramadan_warehouse' => [
-                    'name' => '10th of Ramadan Warehouse - Runtime Demo',
+                    'name' => '10th of Ramadan Distribution Warehouse - Runtime Demo',
                     'type' => Branch::TypeWarehouse,
                     'address' => 'Warehouse B4, 10th of Ramadan Logistics Area',
                     'phone' => '+20 2 2470 2612',
@@ -676,30 +731,30 @@ class RuntimeDemoDataSeeder extends Seeder
                     'notes' => $this->note('Warehouse branch for inventory and operating context checks.'),
                 ],
                 'nasr_showroom' => [
-                    'name' => 'Nasr City Showroom - Runtime Demo',
-                    'type' => Branch::TypeShowroom,
+                    'name' => 'Cairo Sales Office - Runtime Demo',
+                    'type' => Branch::TypeAdministrative,
                     'address' => '18 Abbas El Akkad Street, Nasr City, Cairo',
                     'phone' => '+20 2 2470 2613',
                     'mobile' => '+20 100 700 2613',
                     'email' => 'runtime-demo-nasr-showroom@example.test',
                     'contact_person' => 'Youssef Adel',
-                    'notes' => $this->note('Nile showroom intentionally outside the limited Nile scope role.'),
+                    'notes' => $this->note('Sales office intentionally outside the limited factory scope role.'),
                 ],
             ],
             'delta' => [
                 'alex_workshop' => [
-                    'name' => 'Alexandria Workshop - Runtime Demo',
-                    'type' => Branch::TypeFactory,
-                    'address' => 'Workshop 22, Borg El Arab Industrial Zone, Alexandria',
+                    'name' => 'Alexandria Packaging Warehouse - Runtime Demo',
+                    'type' => Branch::TypeWarehouse,
+                    'address' => 'Warehouse 22, Borg El Arab Industrial Zone, Alexandria',
                     'phone' => '+20 3 420 2611',
                     'mobile' => '+20 111 700 2611',
                     'email' => 'runtime-demo-alex-workshop@example.test',
                     'contact_person' => 'Nour Hassan',
-                    'notes' => $this->note('Delta production branch outside the Delta operator scope.'),
+                    'notes' => $this->note('Delta distribution warehouse outside the operator scope.'),
                 ],
                 'alex_showroom' => [
-                    'name' => 'Alexandria Showroom - Runtime Demo',
-                    'type' => Branch::TypeShowroom,
+                    'name' => 'Alexandria Packaging Sales Office - Runtime Demo',
+                    'type' => Branch::TypeAdministrative,
                     'address' => '26 Fouad Street, Raml Station, Alexandria',
                     'phone' => '+20 3 420 2612',
                     'mobile' => '+20 111 700 2612',
@@ -710,9 +765,9 @@ class RuntimeDemoDataSeeder extends Seeder
             ],
             'export' => [
                 'damietta_office' => [
-                    'name' => 'Damietta Export Office - Runtime Demo',
+                    'name' => 'Alexandria Export Office - Runtime Demo',
                     'type' => Branch::TypeAdministrative,
-                    'address' => 'Administrative Building 3, Damietta Furniture City',
+                    'address' => 'Administrative Building 3, Amreya Free Zone',
                     'phone' => '+20 57 240 2611',
                     'mobile' => '+20 122 700 2611',
                     'email' => 'runtime-demo-damietta-office@example.test',
@@ -720,9 +775,9 @@ class RuntimeDemoDataSeeder extends Seeder
                     'notes' => $this->note('Export administration branch for full-scope checks.'),
                 ],
                 'port_warehouse' => [
-                    'name' => 'Port Said Warehouse - Runtime Demo',
+                    'name' => 'Alexandria Port Warehouse - Runtime Demo',
                     'type' => Branch::TypeWarehouse,
-                    'address' => 'Warehouse 5, Port Said Free Zone',
+                    'address' => 'Warehouse 5, Alexandria Port Free Zone',
                     'phone' => '+20 66 330 2612',
                     'mobile' => '+20 122 700 2612',
                     'email' => 'runtime-demo-port-warehouse@example.test',
@@ -782,6 +837,12 @@ class RuntimeDemoDataSeeder extends Seeder
                     'linear_meter' => ['name' => 'Linear Meter', 'notes' => $this->note('Fabric, trim, and edge banding measurement.')],
                     'kilogram' => ['name' => 'Kilogram', 'notes' => $this->note('Adhesives, foam, and bulk material measurement.')],
                     'cubic_meter' => ['name' => 'Cubic Meter', 'notes' => $this->note('Bulk wood and packing volume measurement.')],
+                    'carton' => ['name' => 'Carton', 'notes' => $this->note('Outer packaging carton measurement.')],
+                    'metric_ton' => ['name' => 'Metric Ton', 'notes' => $this->note('Bulk polymer resin purchasing measurement.')],
+                    'gram' => ['name' => 'Gram', 'notes' => $this->note('Small additive and sample-weight measurement.')],
+                    'bag' => ['name' => 'Bag', 'notes' => $this->note('Resin and printed packaging bag measurement.')],
+                    'roll' => ['name' => 'Roll', 'notes' => $this->note('Tape, labels, and film roll measurement.')],
+                    'pallet' => ['name' => 'Pallet', 'notes' => $this->note('Palletized finished-goods and bulk shipment measurement.')],
                 ],
             ],
             'sizes' => [
@@ -793,6 +854,8 @@ class RuntimeDemoDataSeeder extends Seeder
                     'dining_180_90' => ['name' => 'Dining Table 180x90 cm', 'notes' => $this->note('Six-seat dining table top size.')],
                     'king_bed_200_180' => ['name' => 'King Bed 200x180 cm', 'notes' => $this->note('Hotel and bedroom king bed size.')],
                     'sofa_220' => ['name' => 'Sofa Frame 220 cm', 'notes' => $this->note('Three-seat sofa frame size.')],
+                    'pail_20l' => ['name' => '20 Liter Pail', 'notes' => $this->note('Industrial pail nominal capacity.')],
+                    'container_5l' => ['name' => '5 Liter Container', 'notes' => $this->note('Food-grade container nominal capacity.')],
                 ],
             ],
             'colors' => [
@@ -804,6 +867,8 @@ class RuntimeDemoDataSeeder extends Seeder
                     'matte_white' => ['name' => 'Matte White', 'notes' => $this->note('Painted matte white finish.')],
                     'charcoal_gray' => ['name' => 'Charcoal Gray', 'notes' => $this->note('Modern dark gray finish.')],
                     'linen_beige' => ['name' => 'Linen Beige', 'notes' => $this->note('Neutral upholstery fabric color.')],
+                    'royal_blue' => ['name' => 'Royal Blue', 'notes' => $this->note('Industrial pail masterbatch color.')],
+                    'transparent' => ['name' => 'Transparent', 'notes' => $this->note('Natural food-grade polypropylene finish.')],
                 ],
             ],
             'decals' => [
@@ -823,6 +888,8 @@ class RuntimeDemoDataSeeder extends Seeder
                     'modern_flat_panel' => ['name' => 'Modern Flat Panel', 'notes' => $this->note('Flat contemporary furniture fronts.')],
                     'scandinavian_minimal' => ['name' => 'Scandinavian Minimal', 'notes' => $this->note('Minimal lines with light wood tones.')],
                     'hotel_contract' => ['name' => 'Hotel Contract', 'notes' => $this->note('Durable hospitality furniture specification.')],
+                    'injection_pail' => ['name' => 'Injection Pail Series', 'notes' => $this->note('Injection-molded pail and lid family.')],
+                    'food_container' => ['name' => 'Food Container Series', 'notes' => $this->note('Food-contact injection-molded container family.')],
                 ],
             ],
             'categories' => [
@@ -835,6 +902,12 @@ class RuntimeDemoDataSeeder extends Seeder
                     'raw_wood' => ['name' => 'Raw Wood', 'notes' => $this->note('Boards, veneer, MDF, and timber materials.')],
                     'upholstery' => ['name' => 'Upholstery Materials', 'notes' => $this->note('Fabric, foam, and padding materials.')],
                     'hardware' => ['name' => 'Hardware and Accessories', 'notes' => $this->note('Hinges, handles, slides, and fittings.')],
+                    'polymer_resins' => ['name' => 'Polymer Resins', 'notes' => $this->note('Virgin and recycled polymer feedstock.')],
+                    'plastic_additives' => ['name' => 'Plastic Additives', 'notes' => $this->note('Masterbatch, stabilizers, and processing additives.')],
+                    'industrial_pails' => ['name' => 'Industrial Plastic Pails', 'notes' => $this->note('Paint, chemical, and lubricant packaging.')],
+                    'food_packaging' => ['name' => 'Food-Grade Packaging', 'notes' => $this->note('Food-contact containers and closures.')],
+                    'packing_materials' => ['name' => 'Packing Materials', 'notes' => $this->note('Cartons, labels, stretch film, and pallets.')],
+                    'production_services' => ['name' => 'Production Services', 'notes' => $this->note('Setup, delivery, and technical services.')],
                 ],
             ],
             'groups' => [
@@ -845,6 +918,11 @@ class RuntimeDemoDataSeeder extends Seeder
                     'raw_materials' => ['name' => 'Raw Materials', 'notes' => $this->note('Materials consumed by production.')],
                     'semi_finished' => ['name' => 'Semi-Finished Components', 'notes' => $this->note('Frames and components awaiting finishing.')],
                     'export_collection' => ['name' => 'Export Collection', 'notes' => $this->note('Products prepared for export orders.')],
+                    'virgin_materials' => ['name' => 'Virgin Raw Materials', 'notes' => $this->note('Certified virgin polymer inventory.')],
+                    'additives' => ['name' => 'Color and Process Additives', 'notes' => $this->note('Masterbatch and process additive inventory.')],
+                    'plastic_finished_goods' => ['name' => 'Plastic Finished Goods', 'notes' => $this->note('Sellable molded plastic products.')],
+                    'packaging_consumables' => ['name' => 'Packaging Consumables', 'notes' => $this->note('Packing material consumed per production unit.')],
+                    'services' => ['name' => 'Services', 'notes' => $this->note('Non-stock sale and purchase services.')],
                 ],
             ],
             'origin_countries' => [
@@ -867,129 +945,234 @@ class RuntimeDemoDataSeeder extends Seeder
     {
         return [
             'nile' => [
-                'oak_wardrobe' => [
-                    'name' => 'Oak Wardrobe 4 Door - Runtime Demo',
+                'industrial_pail' => [
+                    'name' => '20L Blue Industrial Pail with Lid - Runtime Demo',
                     'item_classification' => Product::ClassificationFinishedProduct,
-                    'barcode' => 'NILE-WARD-0001',
-                    'reorder_point' => '4.0000',
+                    'barcode' => 'MGY-FG-PAIL-20L-BLU',
+                    'reorder_point' => '500.0000',
                     'unit' => 'piece',
-                    'size' => 'wardrobe_240_180',
-                    'color' => 'natural_oak',
-                    'decal' => 'oak_grain',
-                    'model' => 'classic_raised_panel',
+                    'size' => 'pail_20l',
+                    'color' => 'royal_blue',
+                    'model' => 'injection_pail',
                     'origin_country' => 'egypt',
-                    'category' => 'bedroom',
-                    'group' => 'finished_goods',
-                    'notes' => $this->note('Finished four-door wardrobe for showroom and inventory checks.'),
+                    'category' => 'industrial_pails',
+                    'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Primary saleable item used by procurement, production, inventory, sales, quality, and accounting cycles.'),
                 ],
-                'walnut_dining_table' => [
-                    'name' => 'Walnut Dining Table 6 Seats - Runtime Demo',
+                'food_container' => [
+                    'name' => '5L Transparent Food Container - Runtime Demo',
                     'item_classification' => Product::ClassificationFinishedProduct,
-                    'barcode' => 'NILE-DIN-0001',
-                    'reorder_point' => '3.0000',
+                    'barcode' => 'MGY-FG-FOOD-5L-CLR',
+                    'reorder_point' => '750.0000',
                     'unit' => 'piece',
-                    'size' => 'dining_180_90',
-                    'color' => 'walnut_brown',
-                    'decal' => 'walnut_grain',
-                    'model' => 'modern_flat_panel',
+                    'size' => 'container_5l',
+                    'color' => 'transparent',
+                    'model' => 'food_container',
                     'origin_country' => 'egypt',
-                    'category' => 'dining',
-                    'group' => 'finished_goods',
-                    'notes' => $this->note('Finished dining table tied to Nile company lookups.'),
+                    'category' => 'food_packaging',
+                    'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Secondary finished product for stock, reorder, and sales selection tests.'),
                 ],
-                'beech_board' => [
-                    'name' => 'Beech Wood Board 18mm - Runtime Demo',
+                'pp_resin' => [
+                    'name' => 'PP Homopolymer Injection Grade - Runtime Demo',
                     'item_classification' => Product::ClassificationRawMaterial,
-                    'barcode' => 'NILE-RAW-BOARD-18',
-                    'reorder_point' => '120.0000',
-                    'unit' => 'square_meter',
-                    'color' => 'natural_oak',
+                    'barcode' => 'MGY-RM-PP-HOMO-001',
+                    'reorder_point' => '3000.0000',
+                    'unit' => 'kilogram',
+                    'color' => 'transparent',
                     'origin_country' => 'egypt',
-                    'category' => 'raw_wood',
-                    'group' => 'raw_materials',
-                    'notes' => $this->note('Raw board material for costing and stock tests.'),
+                    'category' => 'polymer_resins',
+                    'group' => 'virgin_materials',
+                    'notes' => $this->note('Primary resin purchased, received, inspected, stocked, and consumed in production.'),
                 ],
-                'hinge_set' => [
-                    'name' => 'Soft-Close Hinge Set - Runtime Demo',
+                'blue_masterbatch' => [
+                    'name' => 'Blue Color Masterbatch - Runtime Demo',
                     'item_classification' => Product::ClassificationRawMaterial,
-                    'barcode' => 'NILE-HINGE-SET',
-                    'reorder_point' => '80.0000',
-                    'unit' => 'set',
+                    'barcode' => 'MGY-RM-MB-BLUE-001',
+                    'reorder_point' => '100.0000',
+                    'unit' => 'kilogram',
+                    'color' => 'royal_blue',
                     'origin_country' => 'turkey',
-                    'category' => 'hardware',
-                    'group' => 'raw_materials',
-                    'notes' => $this->note('Hardware material used in wardrobes and cabinets.'),
+                    'category' => 'plastic_additives',
+                    'group' => 'additives',
+                    'notes' => $this->note('Color additive consumed by the industrial pail BOM.'),
+                ],
+                'packing_carton' => [
+                    'name' => 'Printed Pail Packing Carton - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-CARTON-PAIL-24',
+                    'reorder_point' => '500.0000',
+                    'unit' => 'carton',
+                    'origin_country' => 'egypt',
+                    'category' => 'packing_materials',
+                    'group' => 'packaging_consumables',
+                    'notes' => $this->note('One carton packs twenty-four finished pails.'),
+                ],
+                'delivery_service' => [
+                    'name' => 'Plastic Products Delivery Service - Runtime Demo',
+                    'item_classification' => Product::ClassificationService,
+                    'barcode' => 'MGY-SVC-DELIVERY',
+                    'reorder_point' => null,
+                    'unit' => 'piece',
+                    'origin_country' => 'egypt',
+                    'category' => 'production_services',
+                    'group' => 'services',
+                    'cost_as_inventory' => false,
+                    'notes' => $this->note('Non-stock service line used in the mixed sales golden cycle.'),
+                ],
+                'pe_resin' => [
+                    'name' => 'HDPE Blow Molding Grade - Runtime Demo',
+                    'item_classification' => Product::ClassificationRawMaterial,
+                    'barcode' => 'MGY-RM-HDPE-BLOW-001', 'reorder_point' => '2500.0000', 'unit' => 'kilogram',
+                    'color' => 'transparent', 'origin_country' => 'egypt', 'category' => 'polymer_resins', 'group' => 'virgin_materials',
+                    'notes' => $this->note('Virgin HDPE for secondary packaging production and procurement testing.'),
+                ],
+                'black_masterbatch' => [
+                    'name' => 'Black Color Masterbatch - Runtime Demo',
+                    'item_classification' => Product::ClassificationRawMaterial,
+                    'barcode' => 'MGY-RM-MB-BLACK-001', 'reorder_point' => '100.0000', 'unit' => 'kilogram',
+                    'origin_country' => 'egypt', 'category' => 'plastic_additives', 'group' => 'additives',
+                    'notes' => $this->note('Black pigment concentrate for production formula testing.'),
+                ],
+                'white_masterbatch' => [
+                    'name' => 'White Color Masterbatch - Runtime Demo',
+                    'item_classification' => Product::ClassificationRawMaterial,
+                    'barcode' => 'MGY-RM-MB-WHITE-001', 'reorder_point' => '100.0000', 'unit' => 'kilogram',
+                    'origin_country' => 'egypt', 'category' => 'plastic_additives', 'group' => 'additives',
+                    'notes' => $this->note('White pigment concentrate for food-container production.'),
+                ],
+                'printed_bag' => [
+                    'name' => 'Printed Industrial Pail Bag - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-BAG-PRINT-001', 'reorder_point' => '5000.0000', 'unit' => 'bag',
+                    'origin_country' => 'egypt', 'category' => 'packing_materials', 'group' => 'packaging_consumables',
+                    'notes' => $this->note('Printed protective bag used for customer-specific packing.'),
+                ],
+                'transparent_bag' => [
+                    'name' => 'Transparent Food-Grade Bag - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-BAG-CLEAR-001', 'reorder_point' => '10000.0000', 'unit' => 'bag',
+                    'origin_country' => 'egypt', 'category' => 'packing_materials', 'group' => 'packaging_consumables',
+                    'notes' => $this->note('Food-grade inner packing bag.'),
+                ],
+                'product_label' => [
+                    'name' => 'Thermal Product Label Roll - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-LABEL-ROLL-001', 'reorder_point' => '50.0000', 'unit' => 'roll',
+                    'origin_country' => 'egypt', 'category' => 'packing_materials', 'group' => 'packaging_consumables',
+                    'notes' => $this->note('Traceability label roll for batch and customer identification.'),
+                ],
+                'packing_tape' => [
+                    'name' => '48mm Carton Packing Tape - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-TAPE-48-001', 'reorder_point' => '100.0000', 'unit' => 'roll',
+                    'origin_country' => 'egypt', 'category' => 'packing_materials', 'group' => 'packaging_consumables',
+                    'notes' => $this->note('Carton sealing tape used by packing operations.'),
+                ],
+                'stretch_wrapper' => [
+                    'name' => 'Pallet Stretch Wrapper Roll - Runtime Demo',
+                    'item_classification' => Product::ClassificationPackaging,
+                    'barcode' => 'MGY-PK-STRETCH-001', 'reorder_point' => '80.0000', 'unit' => 'roll',
+                    'origin_country' => 'egypt', 'category' => 'packing_materials', 'group' => 'packaging_consumables',
+                    'notes' => $this->note('Stretch film used for palletized finished-goods dispatch.'),
+                ],
+                'pail_lid' => [
+                    'name' => '20L Tamper-Evident Blue Lid - Runtime Demo',
+                    'item_classification' => Product::ClassificationFinishedProduct,
+                    'barcode' => 'MGY-FG-LID-20L-BLU', 'reorder_point' => '750.0000', 'unit' => 'piece',
+                    'size' => 'pail_20l', 'color' => 'royal_blue', 'model' => 'injection_pail',
+                    'origin_country' => 'egypt', 'category' => 'industrial_pails', 'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Separate saleable and production-consumable pail closure.'),
+                ],
+                'food_tub' => [
+                    'name' => '1L Transparent Food Tub - Runtime Demo',
+                    'item_classification' => Product::ClassificationFinishedProduct,
+                    'barcode' => 'MGY-FG-FOOD-1L-CLR', 'reorder_point' => '1200.0000', 'unit' => 'piece',
+                    'size' => 'container_5l', 'color' => 'transparent', 'model' => 'food_container',
+                    'origin_country' => 'egypt', 'category' => 'food_packaging', 'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Small food-safe tub for alternate BOM and sales testing.'),
+                ],
+                'maintenance_service' => [
+                    'name' => 'Injection Machine Preventive Maintenance - Runtime Demo',
+                    'item_classification' => Product::ClassificationService,
+                    'barcode' => 'MGY-SVC-MAINT-IMM', 'reorder_point' => null, 'unit' => 'piece',
+                    'origin_country' => 'egypt', 'category' => 'production_services', 'group' => 'services', 'cost_as_inventory' => false,
+                    'notes' => $this->note('External maintenance service available for service procurement invoices.'),
+                ],
+                'transport_service' => [
+                    'name' => 'Inbound Resin Transportation - Runtime Demo',
+                    'item_classification' => Product::ClassificationService,
+                    'barcode' => 'MGY-SVC-INBOUND-FREIGHT', 'reorder_point' => null, 'unit' => 'piece',
+                    'origin_country' => 'egypt', 'category' => 'production_services', 'group' => 'services', 'cost_as_inventory' => false,
+                    'notes' => $this->note('Inbound freight service for supplier and AP testing.'),
                 ],
             ],
             'delta' => [
                 'sofa_frame' => [
-                    'name' => 'Alexandria Sofa Frame 3 Seat - Runtime Demo',
-                    'item_classification' => Product::ClassificationSemiFinished,
-                    'barcode' => 'DELTA-SOFA-FRAME',
-                    'reorder_point' => '6.0000',
+                    'name' => 'Tamper-Evident Plastic Lid - Runtime Demo',
+                    'item_classification' => Product::ClassificationFinishedProduct,
+                    'barcode' => 'DELTA-LID-TE-001',
+                    'reorder_point' => '1000.0000',
                     'unit' => 'piece',
-                    'size' => 'sofa_220',
-                    'color' => 'charcoal_gray',
-                    'decal' => 'linen_texture',
-                    'model' => 'modern_flat_panel',
+                    'size' => 'pail_20l',
+                    'color' => 'royal_blue',
+                    'model' => 'injection_pail',
                     'origin_country' => 'egypt',
-                    'category' => 'living',
-                    'group' => 'semi_finished',
-                    'notes' => $this->note('Semi-finished sofa frame for Delta workshop checks.'),
+                    'category' => 'industrial_pails',
+                    'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Finished closure for secondary-company scope checks.'),
                 ],
                 'bedside_table' => [
-                    'name' => 'Matte White Bedside Table - Runtime Demo',
+                    'name' => '1L Plastic Tub - Runtime Demo',
                     'item_classification' => Product::ClassificationFinishedProduct,
-                    'barcode' => 'DELTA-BED-0001',
-                    'reorder_point' => '10.0000',
+                    'barcode' => 'DELTA-TUB-1L-001',
+                    'reorder_point' => '1500.0000',
                     'unit' => 'piece',
-                    'size' => 'standard_60_40',
-                    'color' => 'matte_white',
-                    'model' => 'scandinavian_minimal',
+                    'size' => 'container_5l',
+                    'color' => 'transparent',
+                    'model' => 'food_container',
                     'origin_country' => 'egypt',
-                    'category' => 'bedroom',
-                    'group' => 'finished_goods',
-                    'notes' => $this->note('Finished bedside table for Delta product list checks.'),
+                    'category' => 'food_packaging',
+                    'group' => 'plastic_finished_goods',
+                    'notes' => $this->note('Small food tub for Delta product list checks.'),
                 ],
                 'linen_roll' => [
-                    'name' => 'Linen Upholstery Roll - Runtime Demo',
+                    'name' => 'Recycled PP Regrind - Runtime Demo',
                     'item_classification' => Product::ClassificationRawMaterial,
-                    'barcode' => 'DELTA-LINEN-ROLL',
-                    'reorder_point' => '50.0000',
-                    'unit' => 'linear_meter',
-                    'color' => 'linen_beige',
-                    'origin_country' => 'italy',
-                    'category' => 'upholstery',
+                    'barcode' => 'DELTA-RM-RPP-001',
+                    'reorder_point' => '1000.0000',
+                    'unit' => 'kilogram',
+                    'origin_country' => 'egypt',
+                    'category' => 'polymer_resins',
                     'group' => 'raw_materials',
-                    'notes' => $this->note('Fabric roll material for upholstery product checks.'),
+                    'notes' => $this->note('Recycled polymer material for secondary-company checks.'),
                 ],
             ],
             'export' => [
                 'wooden_crate' => [
-                    'name' => 'Export Packing Wooden Crate - Runtime Demo',
+                    'name' => 'Export Pallet Stretch Film - Runtime Demo',
                     'item_classification' => Product::ClassificationPackaging,
-                    'barcode' => 'EXP-CRATE-0001',
-                    'reorder_point' => '25.0000',
-                    'unit' => 'cubic_meter',
+                    'barcode' => 'EXP-STRETCH-001',
+                    'reorder_point' => '80.0000',
+                    'unit' => 'kilogram',
                     'origin_country' => 'egypt',
-                    'category' => 'raw_wood',
+                    'category' => 'packing_materials',
                     'group' => 'export_collection',
                     'notes' => $this->note('Export crate material for Damietta shipment testing.'),
                 ],
                 'hotel_room_set' => [
-                    'name' => 'Hotel Room Starter Set - Runtime Demo',
+                    'name' => 'Export Food Container Set - Runtime Demo',
                     'item_classification' => Product::ClassificationFinishedProduct,
-                    'barcode' => 'EXP-HOTEL-SET',
-                    'reorder_point' => '2.0000',
+                    'barcode' => 'EXP-FOOD-SET-001',
+                    'reorder_point' => '100.0000',
                     'unit' => 'set',
-                    'size' => 'king_bed_200_180',
-                    'color' => 'walnut_brown',
-                    'decal' => 'walnut_grain',
-                    'model' => 'hotel_contract',
+                    'size' => 'container_5l',
+                    'color' => 'transparent',
+                    'model' => 'food_container',
                     'origin_country' => 'egypt',
-                    'category' => 'bedroom',
+                    'category' => 'food_packaging',
                     'group' => 'export_collection',
-                    'notes' => $this->note('Contract furniture bundle for export company checks.'),
+                    'notes' => $this->note('Food-grade plastic container bundle for export company checks.'),
                 ],
             ],
         ];
@@ -1002,22 +1185,31 @@ class RuntimeDemoDataSeeder extends Seeder
     {
         return [
             'nile' => [
-                'oak_wardrobe' => [
-                    ['component' => 'beech_board', 'quantity' => '6.5000', 'notes' => $this->note('Board requirement for one wardrobe.')],
-                    ['component' => 'hinge_set', 'quantity' => '4.0000', 'notes' => $this->note('Soft-close hinges for one wardrobe.')],
+                'industrial_pail' => [
+                    ['component' => 'pp_resin', 'quantity' => '0.7800', 'notes' => $this->note('Polypropylene resin required per completed pail and lid.')],
+                    ['component' => 'blue_masterbatch', 'quantity' => '0.0200', 'notes' => $this->note('Blue masterbatch required per completed pail and lid.')],
+                    ['component' => 'packing_carton', 'quantity' => '0.041667', 'notes' => $this->note('One packing carton per twenty-four pails.')],
                 ],
-                'walnut_dining_table' => [
-                    ['component' => 'beech_board', 'quantity' => '3.2500', 'notes' => $this->note('Board requirement for one dining table.')],
+                'food_container' => [
+                    ['component' => 'pp_resin', 'quantity' => '0.1900', 'notes' => $this->note('Polypropylene resin required per food container.')],
+                ],
+                'pail_lid' => [
+                    ['component' => 'pp_resin', 'quantity' => '0.1100', 'notes' => $this->note('Direct resin weight per tamper-evident lid.')],
+                    ['component' => 'blue_masterbatch', 'quantity' => '0.0030', 'notes' => $this->note('Blue masterbatch blend per lid.')],
+                ],
+                'food_tub' => [
+                    ['component' => 'pp_resin', 'quantity' => '0.0550', 'notes' => $this->note('Direct resin weight per one-liter food tub.')],
+                    ['component' => 'transparent_bag', 'quantity' => '0.0100', 'notes' => $this->note('One inner bag per one hundred finished tubs.')],
                 ],
             ],
             'delta' => [
                 'sofa_frame' => [
-                    ['component' => 'linen_roll', 'quantity' => '5.5000', 'notes' => $this->note('Upholstery fabric for one sofa frame.')],
+                    ['component' => 'linen_roll', 'quantity' => '0.0550', 'notes' => $this->note('Recycled polypropylene required per lid.')],
                 ],
             ],
             'export' => [
                 'hotel_room_set' => [
-                    ['component' => 'wooden_crate', 'quantity' => '1.7500', 'notes' => $this->note('Packing crate volume for one hotel set.')],
+                    ['component' => 'wooden_crate', 'quantity' => '0.2500', 'notes' => $this->note('Stretch film required per export container set.')],
                 ],
             ],
         ];
@@ -1028,17 +1220,7 @@ class RuntimeDemoDataSeeder extends Seeder
      */
     private function fullAdminPermissions(): array
     {
-        return array_values(array_unique([
-            ...$this->operatorPermissions(),
-            'roles.view',
-            'roles.create',
-            'roles.edit',
-            'roles.operating_scope.manage',
-            'users.view',
-            'users.create',
-            'users.edit',
-            'users.roles.manage',
-        ]));
+        return app(PermissionRegistryService::class)->all();
     }
 
     /**
