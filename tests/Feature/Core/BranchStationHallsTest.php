@@ -1,9 +1,12 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Product;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -448,4 +451,141 @@ test('factory branch show page renders read only halls tab', function () {
         ->assertSee('View Hall')
         ->assertDontSee('js-add-station-hall', false)
         ->assertDontSee('js-remove-station-hall', false);
+});
+
+test('branch stores persist and render their inventory classifications without false changes', function () {
+    $actor = branchStationHallsActor(['branches.create', 'branches.edit', 'branches.view']);
+    $company = branchStationHallsCompany();
+    $payload = [
+        'company_doc_num' => $company->doc_num,
+        'name' => 'Classified Stores Branch',
+        'type' => 'administrative',
+        'status' => 'active',
+        'branch_stores' => [
+            ['name' => 'Mixed Store', 'classification' => BranchStore::ClassificationGeneral],
+            ['name' => 'Raw Store', 'classification' => Product::ClassificationRawMaterial],
+        ],
+    ];
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.branches.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $branch = Branch::query()->where('name', 'Classified Stores Branch')->firstOrFail();
+
+    expect($branch->stores()->orderBy('position')->pluck('classification', 'name')->all())->toBe([
+        'Mixed Store' => BranchStore::ClassificationGeneral,
+        'Raw Store' => Product::ClassificationRawMaterial,
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession(['locale' => 'ar'])
+        ->get(route('admin.branches.show', $branch->doc_num))
+        ->assertOk()
+        ->assertSee('Mixed Store')
+        ->assertSee(__('branches.branch_stores.classifications.general'))
+        ->assertSee(__('products.classifications.raw_material', [], 'ar'))
+        ->assertDontSee('products.item_classifications.', false);
+
+    $this->actingAs($actor)
+        ->withSession(['locale' => 'en'])
+        ->get(route('admin.branches.edit', $branch->doc_num))
+        ->assertOk()
+        ->assertSee(__('products.classifications.raw_material', [], 'en'))
+        ->assertSee('class="col-auto d-flex align-items-end"', false)
+        ->assertSee('btn btn-falcon-default btn-sm btn-icon-only px-2 js-remove-branch-store', false)
+        ->assertDontSee('btn btn-falcon-default btn-sm w-100 js-remove-branch-store', false)
+        ->assertDontSee('products.item_classifications.', false);
+
+    $updatePayload = [
+        ...$payload,
+        'branch_stores' => $branch->stores()->orderBy('position')->get()->map(fn (BranchStore $store): array => [
+            'key' => $store->public_uuid,
+            'name' => $store->name,
+            'classification' => $store->classification,
+        ])->all(),
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.branches.update', $branch->doc_num), $updatePayload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    $rawStore = $branch->stores()->where('name', 'Raw Store')->firstOrFail();
+    $classificationPayload = [
+        ...$updatePayload,
+        'branch_stores' => collect($updatePayload['branch_stores'])->map(fn (array $store): array => $store['key'] === $rawStore->public_uuid
+            ? [...$store, 'classification' => Product::ClassificationPackaging]
+            : $store)->all(),
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.branches.update', $branch->doc_num), $classificationPayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($rawStore->refresh()->classification)->toBe(Product::ClassificationPackaging);
+
+    $addPayload = [
+        ...$classificationPayload,
+        'branch_stores' => [
+            ...$classificationPayload['branch_stores'],
+            ['name' => 'Semi-finished Store', 'classification' => Product::ClassificationSemiFinished],
+        ],
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.branches.update', $branch->doc_num), $addPayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($branch->stores()->where('name', 'Semi-finished Store')->value('classification'))->toBe(Product::ClassificationSemiFinished);
+
+    $currentStores = $branch->stores()->orderBy('position')->get();
+    $mixedStore = $currentStores->firstWhere('name', 'Mixed Store');
+    $removePayload = [
+        ...$payload,
+        'branch_stores' => $currentStores
+            ->reject(fn (BranchStore $store): bool => $store->is($mixedStore))
+            ->map(fn (BranchStore $store): array => [
+                'key' => $store->public_uuid,
+                'name' => $store->name,
+                'classification' => $store->classification,
+            ])->values()->all(),
+    ];
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.branches.update', $branch->doc_num), $removePayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($mixedStore?->refresh()->trashed())->toBeTrue()
+        ->and($branch->stores()->pluck('name')->all())->not->toContain('Mixed Store');
+
+    $updatedEvents = 0;
+    Branch::updated(function () use (&$updatedEvents): void {
+        $updatedEvents++;
+    });
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.branches.update', $branch->doc_num), $removePayload)
+        ->assertOk()
+        ->assertJsonPath('type', 'no_changes');
+
+    $this->actingAs($actor)
+        ->withSession(['locale' => 'ar'])
+        ->get(route('admin.branches.edit', $branch->doc_num))
+        ->assertOk()
+        ->assertSee('Semi-finished Store')
+        ->assertSee(__('products.classifications.semi_finished', [], 'ar'))
+        ->assertDontSee('Mixed Store');
+
+    $script = file_get_contents(public_path('assets/js/modules/Core/branches.js'));
+    $stationHallSerializer = Str::between($script, 'function stationHallNames', 'function nextStationHallIndex');
+    $branchStoreSerializer = Str::between($script, 'function branchStoreNames', 'function nextBranchStoreIndex');
+
+    expect($updatedEvents)->toBe(0)
+        ->and($stationHallSerializer)->not->toContain('js-branch-store-classification')
+        ->and($branchStoreSerializer)->toContain('js-branch-store-classification');
 });

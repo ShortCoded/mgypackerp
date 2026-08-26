@@ -550,7 +550,12 @@ class ProcurementSourcingService
 
     private function product(int $companyId, string $docNum): Product
     {
-        $product = Product::query()->active()->purchasable()->forCompany($companyId)->where('doc_num', $docNum)->first();
+        $product = Product::query()->active()->forCompany($companyId)->where('doc_num', $docNum)->first();
+
+        if ($product instanceof Product && ! $product->isPurchasable()) {
+            throw new DomainException(__('procurement.messages.purchase_product_type_invalid'));
+        }
+
         if (! $product instanceof Product) {
             throw new DomainException(__('The selected item is not available for purchasing.'));
         }

@@ -143,6 +143,17 @@ class Product extends Model
         ];
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function stockableItemClassifications(): array
+    {
+        return array_values(array_filter(
+            self::itemClassifications(),
+            fn (string $classification): bool => $classification !== self::ClassificationService,
+        ));
+    }
+
     public static function contextForClassification(?string $classification): string
     {
         return match ($classification) {
@@ -191,6 +202,11 @@ class Product extends Model
         return $this->item_classification === self::ClassificationService;
     }
 
+    public function isStockable(): bool
+    {
+        return in_array($this->item_classification, self::stockableItemClassifications(), true);
+    }
+
     public function isPurchasable(): bool
     {
         return in_array($this->item_classification, self::purchasableItemClassifications(), true);
@@ -214,7 +230,6 @@ class Product extends Model
             self::ClassificationRawMaterial,
             self::ClassificationSemiFinished,
             self::ClassificationPackaging,
-            self::ClassificationService,
             self::ClassificationOther,
         ];
     }

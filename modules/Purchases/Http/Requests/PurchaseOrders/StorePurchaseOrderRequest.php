@@ -196,7 +196,7 @@ class StorePurchaseOrderRequest extends FormRequest
         $this->validateExpectedDeliveryDate($validator);
         $this->validateBranchStore($validator, $companyId);
         $this->validateSupplier($validator, $companyId);
-        $this->validateLines($validator, $companyId);
+        $this->validateLines($validator, $companyId, $current);
         $this->validateDirectProcurement($validator, $current);
     }
 
@@ -235,6 +235,7 @@ class StorePurchaseOrderRequest extends FormRequest
         }
 
         $storeExists = BranchStore::query()
+            ->purchasingEligible()
             ->where('public_uuid', $uuid)
             ->whereNull('deleted_at')
             ->whereHas('branch', fn ($query) => $query
@@ -261,9 +262,10 @@ class StorePurchaseOrderRequest extends FormRequest
         }
     }
 
-    private function validateLines(Validator $validator, int $companyId): void
+    private function validateLines(Validator $validator, int $companyId, ?PurchaseOrder $current): void
     {
         $units = app(ProductComponentUnitOptionsService::class);
+        $current?->loadMissing('lines.product');
 
         foreach ($this->input('lines', []) as $index => $line) {
             if (! is_array($line)) {
@@ -273,13 +275,14 @@ class StorePurchaseOrderRequest extends FormRequest
             $product = Product::query()
                 ->with(['unit', 'equivalentUnit'])
                 ->active()
-                ->purchasable()
                 ->forCompany($companyId)
                 ->where('doc_num', $line['product_doc_num'] ?? null)
                 ->first();
 
             if (! $product instanceof Product) {
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('purchase_orders.messages.product_unavailable'));
+            } elseif (! $product->isPurchasable() && ! $this->isExistingHistoricalLine($current, $line, $product)) {
+                $validator->errors()->add("lines.{$index}.product_doc_num", __('purchase_orders.messages.purchase_product_type_invalid'));
             } elseif (! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_orders.messages.invalid_unit'));
             } elseif (trim((string) ($line['unit_doc_num'] ?? '')) !== '' && ! ItemUnit::query()->forCompany($companyId)->where('doc_num', $line['unit_doc_num'])->exists()) {
@@ -289,11 +292,25 @@ class StorePurchaseOrderRequest extends FormRequest
             $subtotal = (float) ($line['ordered_quantity'] ?? 0) * (float) ($line['unit_price'] ?? 0);
             $discountValue = (float) ($line['discount_value'] ?? 0);
             if (($line['discount_type'] ?? 'fixed') === 'percentage' && $discountValue > 100) {
-                $validator->errors()->add("lines.{$index}.discount_value", __('Percentage discount cannot exceed 100%.'));
+                $validator->errors()->add("lines.{$index}.discount_value", __('purchase_orders.messages.discount_percentage_exceeds_max'));
             } elseif (($line['discount_type'] ?? 'fixed') === 'fixed' && $discountValue > $subtotal + 0.0001) {
-                $validator->errors()->add("lines.{$index}.discount_value", __('Fixed discount cannot exceed the line subtotal.'));
+                $validator->errors()->add("lines.{$index}.discount_value", __('purchase_orders.messages.discount_fixed_exceeds_subtotal'));
             }
         }
+    }
+
+    /** @param array<string, mixed> $line */
+    private function isExistingHistoricalLine(?PurchaseOrder $current, array $line, Product $product): bool
+    {
+        $publicId = trim((string) ($line['public_id'] ?? ''));
+
+        if (! $current instanceof PurchaseOrder || $publicId === '') {
+            return false;
+        }
+
+        $existing = $current->lines->firstWhere('public_id', $publicId);
+
+        return $existing !== null && (int) $existing->product_id === (int) $product->getKey();
     }
 
     private function validateDirectProcurement(Validator $validator, ?PurchaseOrder $current): void
@@ -303,13 +320,13 @@ class StorePurchaseOrderRequest extends FormRequest
         }
 
         if (! $this->boolean('direct_procurement_override')) {
-            $validator->errors()->add('direct_procurement_override', __('Direct purchase orders require an explicit authorized override.'));
+            $validator->errors()->add('direct_procurement_override', __('purchase_orders.messages.direct_procurement_override_required'));
 
             return;
         }
 
         if (! $this->user()?->can('purchases.direct_procurement.override')) {
-            $validator->errors()->add('direct_procurement_override', __('You are not authorized to bypass the procurement sourcing workflow.'));
+            $validator->errors()->add('direct_procurement_override', __('purchase_orders.messages.direct_procurement_override_forbidden'));
         }
     }
 

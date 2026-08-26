@@ -17,6 +17,7 @@ use Modules\Core\Http\Requests\StoreBranchRequest;
 use Modules\Core\Http\Requests\UpdateBranchDocumentNumberSettingsRequest;
 use Modules\Core\Http\Requests\UpdateBranchRequest;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
@@ -288,7 +289,7 @@ class BranchController extends Controller
         $record?->loadMissing([
             'company:id,doc_num,name',
             'halls:id,public_uuid,branch_id,name,position',
-            'stores:id,public_uuid,branch_id,name,position',
+            'stores:id,public_uuid,branch_id,name,classification,position',
         ]);
 
         return view('modules.core.branches.form', [
@@ -612,7 +613,10 @@ class BranchController extends Controller
             'address' => $record->address,
             'camera_url' => $record->camera_url,
             'station_halls' => $record->type === Branch::TypeFactory ? $record->halls()->pluck('name')->all() : [],
-            'branch_stores' => $record->stores()->pluck('name')->all(),
+            'branch_stores' => $record->stores()->get(['name', 'classification'])->map(fn (BranchStore $store): array => [
+                'name' => $store->name,
+                'classification' => $store->classification,
+            ])->all(),
         ];
     }
 

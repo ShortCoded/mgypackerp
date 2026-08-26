@@ -36,6 +36,7 @@ return [
         'branch_stores' => 'المخازن',
         'branch_stores.*.key' => 'المخزن',
         'branch_stores.*.name' => 'اسم المخزن',
+        'branch_stores.*.classification' => 'تصنيف المخزن',
     ],
     'document_number_control' => [
         'helper' => 'اتركه فارغًا للإنشاء التلقائي. سيتم تطبيق البادئة وعدد الخانات تلقائيًا.',
@@ -67,7 +68,13 @@ return [
     ],
     'branch_stores' => [
         'add' => 'إضافة مخزن',
+        'classification' => 'تصنيف المخزن',
+        'classification_placeholder' => 'اختر تصنيف المخزن',
+        'classifications' => [
+            'general' => 'عام / مختلط',
+        ],
         'helper' => 'أسماء المخازن تستخدم لتحديد مخازن الفرع ويجب ألا تتكرر داخل نفس الفرع.',
+        'name' => 'اسم المخزن',
         'empty' => 'لا توجد مخازن',
         'placeholder' => 'اسم المخزن',
         'remove' => 'حذف المخزن',
@@ -125,6 +132,8 @@ return [
         'station_hall_name_max' => 'يجب ألا يزيد اسم الصالة عن 255 حرفًا.',
         'station_halls_distinct' => 'اسم الصالة مكرر داخل نفس الفرع',
         'branch_store_name_max' => 'يجب ألا يزيد اسم المخزن عن 255 حرفًا.',
+        'branch_store_classification_required' => 'اختر تصنيفًا لكل مخزن.',
+        'branch_store_classification_invalid' => 'اختر تصنيف مخزن صالحًا للأصناف المخزنية.',
         'branch_stores_distinct' => 'اسم المخزن مكرر داخل نفس الفرع.',
     ],
 ];

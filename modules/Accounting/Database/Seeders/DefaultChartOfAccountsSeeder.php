@@ -55,6 +55,9 @@ class DefaultChartOfAccountsSeeder extends Seeder
             $classificationId = isset($data['classification_code'])
                 ? $classificationsByCode->get($data['classification_code'])
                 : null;
+            if ($data['account_code'] === '5' || str_starts_with($data['account_code'], '5')) {
+                $classificationId = $classificationsByCode->get(AccountClassification::Expenses);
+            }
             $isGroup = in_array($data['account_code'], $groupCodes, true)
                 || in_array($data['account_code'], $forcedGroupCodes, true);
 

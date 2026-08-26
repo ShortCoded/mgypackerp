@@ -9,6 +9,23 @@ class AccountClassification extends Model
 {
     use SoftDeletes;
 
+    public const Expenses = 'expenses';
+
+    /**
+     * @return list<string>
+     */
+    public static function legacyExpenseCodes(): array
+    {
+        return [
+            'cost_of_goods_sold',
+            'salary_expense',
+            'rent_expense',
+            'utilities_expense',
+            'depreciation_expense',
+            'other_expense',
+        ];
+    }
+
     /**
      * @var list<string>
      */

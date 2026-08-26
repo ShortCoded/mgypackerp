@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Exceptions\CompanyDeleteBlockedException;
 use Modules\Core\Exceptions\CompanyRestoreBlockedException;
 use Modules\Core\Models\ArchiveFile;
@@ -162,6 +163,7 @@ class CompanyService
             ]);
 
             $this->crudAudit->clearCreationUpdateAudit($company);
+            app(BusinessPartnerAccountService::class)->ensureFixedAssetBaselineForCompany((int) $company->getKey());
 
             return [
                 'company' => $company->refresh(),

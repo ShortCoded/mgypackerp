@@ -405,9 +405,16 @@ class PurchaseOrderService
 
         foreach (array_values($lines) as $index => $line) {
             $product = $this->product($context['company_id'], $line['product_doc_num'] ?? null);
+            $publicId = trim((string) ($line['public_id'] ?? ''));
+            $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
 
             if (! $product instanceof Product) {
                 continue;
+            }
+
+            if (! $product->isPurchasable()
+                && (! $existingLine instanceof PurchaseOrderLine || (int) $existingLine->product_id !== (int) $product->getKey())) {
+                throw new DomainException(__('purchase_orders.messages.purchase_product_type_invalid'));
             }
 
             $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id']);
@@ -416,8 +423,6 @@ class PurchaseOrderService
                 continue;
             }
 
-            $publicId = trim((string) ($line['public_id'] ?? ''));
-            $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
             $values = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
@@ -537,7 +542,6 @@ class PurchaseOrderService
         return Product::query()
             ->with('mainImageUsage.file')
             ->active()
-            ->purchasable()
             ->forCompany($companyId)
             ->where('products.doc_num', $docNum)
             ->leftJoin('item_units', 'item_units.id', '=', 'products.item_unit_id')

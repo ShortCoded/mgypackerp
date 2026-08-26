@@ -48,6 +48,9 @@ return [
         'revenue' => 'Revenue',
         'expense' => 'Expenses',
     ],
+    'classifications' => [
+        'expenses' => 'Expenses',
+    ],
     'statement_types' => [
         'financial_position' => 'Financial Position',
         'income_statement' => 'Income Statement',
@@ -87,6 +90,7 @@ return [
         'statement_type_auto' => 'Statement direction is determined automatically from the parent account.',
         'statement_type_locked' => 'Statement direction cannot be changed manually.',
         'normal_balance_editable' => 'Normal balance defaults from the parent account and can be adjusted.',
+        'expense_classification_auto' => 'Accounts below the Expenses root automatically use the Expenses classification.',
         'clone_not_allowed' => 'This account can no longer be cloned. Please open the clone page again.',
         'filters_hint' => 'Filter by code, name, classification, statement direction, normal balance, hierarchy, or status.',
         'no_data_found' => 'No accounts match the current filters.',

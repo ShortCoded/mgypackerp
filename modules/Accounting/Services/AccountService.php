@@ -178,8 +178,11 @@ class AccountService
         $parent = ! empty($data['parent_doc_num'])
             ? Account::query()->forCompany($companyId)->where('doc_num', $data['parent_doc_num'])->first()
             : null;
-        $classification = ! empty($data['classification_code'])
-            ? AccountClassification::query()->where('code', $data['classification_code'])->first()
+        $classificationCode = $this->mustUseExpensesClassification($data, $parent, $current)
+            ? AccountClassification::Expenses
+            : ($data['classification_code'] ?? null);
+        $classification = ! empty($classificationCode)
+            ? AccountClassification::query()->where('code', $classificationCode)->first()
             : null;
         $isGroup = (bool) ($data['is_group'] ?? false);
         $accountType = $this->derivedAccountType($data, $parent, $classification);
@@ -286,5 +289,38 @@ class AccountService
         return in_array($accountType, [Account::TypeAsset, Account::TypeExpense], true)
             ? Account::BalanceDebit
             : Account::BalanceCredit;
+    }
+
+    private function mustUseExpensesClassification(array $data, ?Account $parent, ?Account $current): bool
+    {
+        if ($parent instanceof Account) {
+            return $this->isInExpensesTree($parent);
+        }
+
+        if ($current instanceof Account) {
+            return $this->isInExpensesTree($current);
+        }
+
+        return (string) ($data['account_code'] ?? '') === '5';
+    }
+
+    private function isInExpensesTree(Account $account): bool
+    {
+        $visitedIds = [];
+        $current = $account;
+
+        while ($current instanceof Account && ! in_array((int) $current->getKey(), $visitedIds, true)) {
+            $visitedIds[] = (int) $current->getKey();
+
+            if ($current->parent_id === null) {
+                return (string) $current->account_code === '5';
+            }
+
+            $current = Account::query()
+                ->where('company_id', $account->company_id)
+                ->find($current->parent_id);
+        }
+
+        return false;
     }
 }

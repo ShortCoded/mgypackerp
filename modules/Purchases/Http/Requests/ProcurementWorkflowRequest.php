@@ -4,7 +4,9 @@ namespace Modules\Purchases\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\SupplierPaymentContext;
@@ -108,6 +110,31 @@ class ProcurementWorkflowRequest extends FormRequest
             ],
             default => [],
         };
+    }
+
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            if (! $this->routeIs('admin.purchases.purchase-requisitions.store')) {
+                return;
+            }
+
+            foreach ($this->input('lines', []) as $index => $line) {
+                if (! is_array($line)) {
+                    continue;
+                }
+
+                $product = Product::query()
+                    ->active()
+                    ->forCompany($this->companyId())
+                    ->where('doc_num', $line['product_doc_num'] ?? null)
+                    ->first();
+
+                if ($product instanceof Product && ! $product->isPurchasable()) {
+                    $validator->errors()->add("lines.{$index}.product_doc_num", __('procurement.messages.purchase_product_type_invalid'));
+                }
+            }
+        }];
     }
 
     private function requisitionRules(): array

@@ -47,6 +47,7 @@ class FixedAssetsSelect2Service
             ->where('accounts.is_postable', false)
             ->where('account_classifications.code', 'fixed_assets')
             ->where('accounts.id', '!=', $root->getKey())
+            ->whereIn('accounts.id', $this->accounts->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))
             ->select(['accounts.doc_num', 'accounts.doc_number', 'accounts.account_code', 'accounts.name', 'accounts.name_en'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
 

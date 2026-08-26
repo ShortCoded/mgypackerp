@@ -279,10 +279,9 @@ test('purchasable classifications and production demand lineage are explicit', f
         Product::ClassificationRawMaterial,
         Product::ClassificationSemiFinished,
         Product::ClassificationPackaging,
-        Product::ClassificationService,
         Product::ClassificationOther,
     ])->and($fixture['raw']->isPurchasable())->toBeTrue()
-        ->and($fixture['service']->isPurchasable())->toBeTrue()
+        ->and($fixture['service']->isPurchasable())->toBeFalse()
         ->and($fixture['finished']->isPurchasable())->toBeFalse();
 
     $requisition = app(ProcurementSourcingService::class)->createRequisition([
@@ -307,7 +306,7 @@ test('purchasable classifications and production demand lineage are explicit', f
                 'source_type' => 'work_order',
                 'source_doc_num' => 'WO-EXTERNAL-1',
             ]],
-        ]))->toThrow(DomainException::class, 'no canonical Work Order domain')
+        ]))->toThrow(DomainException::class, __('procurement.messages.purchase_product_type_invalid'))
         ->and(fn () => app(ProcurementSourcingService::class)->createRequisition([
             'request_date' => now()->toDateString(),
             'branch_store_uuid' => $fixture['store']->public_uuid,
@@ -1268,7 +1267,7 @@ test('freight discount tax posting, invoice reversal, and period locks are exact
         'direct_procurement_override' => true,
         'direct_procurement_reason' => 'Approved exception.',
         'lines' => [[
-            'product_doc_num' => $fixture['service']->doc_num,
+            'product_doc_num' => $fixture['raw']->doc_num,
             'unit_doc_num' => $fixture['unit']->doc_num,
             'quantity' => 1,
             'unit_price' => 10,
@@ -1518,7 +1517,20 @@ test('purchase order stores span active company branches while remaining company
     $factoryStore = BranchStore::query()->create([
         'branch_id' => $factoryBranch->getKey(),
         'name' => 'Raw Materials Warehouse',
+        'classification' => Product::ClassificationRawMaterial,
         'position' => 1,
+    ]);
+    $finishedStore = BranchStore::query()->create([
+        'branch_id' => $factoryBranch->getKey(),
+        'name' => 'Finished Goods Warehouse',
+        'classification' => Product::ClassificationFinishedProduct,
+        'position' => 2,
+    ]);
+    $serviceStore = BranchStore::query()->create([
+        'branch_id' => $factoryBranch->getKey(),
+        'name' => 'Service Warehouse',
+        'classification' => Product::ClassificationService,
+        'position' => 3,
     ]);
     $inactiveBranch = Branch::query()->create([
         'doc_number' => 9902,
@@ -1563,15 +1575,37 @@ test('purchase order stores span active company branches while remaining company
     ]);
     $this->actingAs($fixture['user']);
 
+    $this->withSession(['locale' => 'ar'])
+        ->get(route('admin.purchases.purchase-orders.create'))
+        ->assertOk()
+        ->assertSee('شروط الدفع المحفوظة')
+        ->assertSee('تُستخدم شروط المورد الافتراضية عند ترك الحقل فارغًا')
+        ->assertSee('سبب الشراء المباشر')
+        ->assertSee('سماح معتمد بالشراء المباشر')
+        ->assertSee('نوع الخصم')
+        ->assertDontSee('Payment Terms Snapshot')
+        ->assertDontSee('Authorized Direct Procurement Override');
+    $this->withSession(['locale' => 'en']);
+
     $storeResults = $this->getJson(route('admin.purchases.select2.branch-stores'))
         ->assertOk()
         ->json('results');
 
     expect(collect($storeResults)->pluck('id')->all())
         ->toContain($fixture['store']->public_uuid, $factoryStore->public_uuid)
-        ->not->toContain($inactiveStore->public_uuid, $otherStore->public_uuid)
+        ->not->toContain($finishedStore->public_uuid, $serviceStore->public_uuid, $inactiveStore->public_uuid, $otherStore->public_uuid)
         ->and(collect($storeResults)->firstWhere('id', $factoryStore->public_uuid)['text'])
         ->toBe('Raw Materials Warehouse — Main Factory');
+
+    $productResults = $this->getJson(route('admin.purchases.select2.products'))->assertOk()->json('results');
+    $historicalService = $this->getJson(route('admin.purchases.select2.products', [
+        'selected_doc_num' => $fixture['service']->doc_num,
+    ]))->assertOk()->json('results');
+
+    expect(collect($productResults)->pluck('id'))
+        ->toContain($fixture['raw']->doc_num)
+        ->not->toContain($fixture['service']->doc_num, $fixture['finished']->doc_num)
+        ->and(collect($historicalService)->pluck('id'))->toContain($fixture['service']->doc_num);
 
     $payload = [
         'branch_store_uuid' => $factoryStore->public_uuid,
@@ -1618,6 +1652,19 @@ test('purchase order stores span active company branches while remaining company
         ...$payload,
         'branch_store_uuid' => $otherStore->public_uuid,
     ])->assertUnprocessable()->assertJsonValidationErrors(['branch_store_uuid']);
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$payload,
+        'branch_store_uuid' => $finishedStore->public_uuid,
+    ])->assertUnprocessable()->assertJsonValidationErrors(['branch_store_uuid']);
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$payload,
+        'lines' => [[
+            ...$payload['lines'][0],
+            'product_doc_num' => $fixture['service']->doc_num,
+        ]],
+    ])->assertUnprocessable()->assertJsonValidationErrors(['lines.0.product_doc_num']);
 
     expect(fn () => app(PurchaseOrderService::class)->create([
         ...$payload,

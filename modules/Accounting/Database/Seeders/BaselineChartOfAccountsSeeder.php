@@ -6,6 +6,7 @@ use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\DocumentNumberService;
 
@@ -29,6 +30,10 @@ class BaselineChartOfAccountsSeeder extends Seeder
 
     private function seedForCompany(Company $company): void
     {
+        $expensesClassificationId = AccountClassification::query()
+            ->where('code', AccountClassification::Expenses)
+            ->value('id');
+
         foreach ($this->rootAccounts() as $data) {
             $account = Account::withTrashed()
                 ->where('company_id', $company->getKey())
@@ -51,7 +56,7 @@ class BaselineChartOfAccountsSeeder extends Seeder
                 'name_en' => trim((string) $account->name_en) !== '' ? $account->name_en : $data['name_en'],
                 'parent_id' => null,
                 'level' => 1,
-                'account_classification_id' => null,
+                'account_classification_id' => $data['account_code'] === '5' ? $expensesClassificationId : null,
                 'account_type' => $data['account_type'],
                 'statement_type' => $data['statement_type'],
                 'normal_balance' => $data['normal_balance'],

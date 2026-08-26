@@ -460,17 +460,28 @@ class PurchaseInvoiceService
 
         foreach (array_values($lines) as $index => $line) {
             $product = $this->product($context['company_id'], $line['product_doc_num'] ?? null);
+            $publicId = trim((string) ($line['public_id'] ?? ''));
+            $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
 
             if (! $product instanceof Product) {
                 continue;
             }
 
-            $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id'])
-                ?: $product->unit;
-            $publicId = trim((string) ($line['public_id'] ?? ''));
-            $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
             $purchaseOrderLine = $this->purchaseOrderLine($record, $line['purchase_order_line_public_id'] ?? null);
             $receiptLine = $this->receiptLine($purchaseOrderLine, $line['receipt_line_public_id'] ?? null);
+            $isSourceLinked = $purchaseOrderLine instanceof PurchaseOrderLine
+                && (int) $purchaseOrderLine->product_id === (int) $product->getKey()
+                && (! filled($line['receipt_line_public_id'] ?? null)
+                    || ($receiptLine instanceof UnpricedInventoryReceiptLine && (int) $receiptLine->product_id === (int) $product->getKey()));
+
+            if (! $product->isPurchasable()
+                && ! $isSourceLinked
+                && (! $existingLine instanceof PurchaseInvoiceLine || (int) $existingLine->product_id !== (int) $product->getKey())) {
+                throw new DomainException(__('purchase_invoices.messages.purchase_product_type_invalid'));
+            }
+
+            $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id'])
+                ?: $product->unit;
             $values = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
@@ -1043,7 +1054,6 @@ class PurchaseInvoiceService
         return Product::query()
             ->with(['unit', 'equivalentUnit'])
             ->active()
-            ->purchasable()
             ->forCompany($companyId)
             ->where('doc_num', $docNum)
             ->first();

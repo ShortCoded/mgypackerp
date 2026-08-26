@@ -37,16 +37,24 @@
         ? $record->stores->map(fn ($store): array => [
             'key' => $store->public_uuid,
             'name' => $store->name,
+            'classification' => $store->classification,
         ])->values()->all()
         : [];
     $oldBranchStores = old('branch_stores', $storedBranchStores);
     $branchStoreRows = is_array($oldBranchStores)
         ? array_values(array_map(fn (mixed $store): array => is_array($store)
-            ? ['key' => $store['key'] ?? null, 'name' => trim((string) ($store['name'] ?? ''))]
-            : ['key' => null, 'name' => trim((string) $store)], $oldBranchStores))
+            ? [
+                'key' => $store['key'] ?? null,
+                'name' => trim((string) ($store['name'] ?? '')),
+                'classification' => trim((string) ($store['classification'] ?? '')),
+            ]
+            : ['key' => null, 'name' => trim((string) $store), 'classification' => ''], $oldBranchStores))
         : [];
-    $branchStoreNames = $branchStoreRows !== []
-        ? array_values(array_filter(array_map(fn (array $store): string => $store['name'], $branchStoreRows), fn (string $store): bool => $store !== ''))
+    $branchStoreClassificationLabel = fn (string $classification): string => $classification === \Modules\Core\Models\BranchStore::ClassificationGeneral
+        ? __('branches.branch_stores.classifications.general')
+        : __("products.classifications.{$classification}");
+    $branchStoreDisplays = $branchStoreRows !== []
+        ? array_values(array_filter(array_map(fn (array $store): ?array => $store['name'] !== '' ? $store : null, $branchStoreRows)))
         : [];
     $originalBranchData = [
         'doc_number' => $canControlDocumentNumber ? (! $isCreate ? $record?->doc_number : '') : null,
@@ -363,10 +371,13 @@
 
                         @if ($isView)
                             <x-forms.view-field for="branch_stores" as="display">
-                                @if ($branchStoreNames !== [])
-                                    <div class="d-flex flex-wrap gap-2">
-                                        @foreach ($branchStoreNames as $storeName)
-                                            <span class="badge rounded-pill badge-subtle-info">{{ $storeName }}</span>
+                                @if ($branchStoreDisplays !== [])
+                                    <div class="d-flex flex-column gap-2">
+                                        @foreach ($branchStoreDisplays as $store)
+                                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                                <span class="text-900">{{ $store['name'] }}</span>
+                                                <span class="badge rounded-pill badge-subtle-info">{{ $branchStoreClassificationLabel($store['classification'] ?: \Modules\Core\Models\BranchStore::ClassificationGeneral) }}</span>
+                                            </div>
                                         @endforeach
                                     </div>
                                 @else
@@ -375,14 +386,29 @@
                             </x-forms.view-field>
                         @else
                             <div class="js-branch-stores-list">
-                                @foreach (($branchStoreRows === [] ? [['key' => null, 'name' => '']] : $branchStoreRows) as $storeIndex => $store)
-                                    <div class="input-group input-group-sm mb-2 js-branch-store-row" data-branch-store-index="{{ $storeIndex }}">
+                                @foreach (($branchStoreRows === [] ? [['key' => null, 'name' => '', 'classification' => '']] : $branchStoreRows) as $storeIndex => $store)
+                                    <div class="row g-2 align-items-stretch mb-2 js-branch-store-row" data-branch-store-index="{{ $storeIndex }}">
                                         <input type="hidden" name="branch_stores[{{ $storeIndex }}][key]" value="{{ $store['key'] ?? '' }}">
-                                        <input class="form-control js-branch-store-input" name="branch_stores[{{ $storeIndex }}][name]" type="text" value="{{ $store['name'] ?? '' }}" placeholder="{{ __('branches.branch_stores.placeholder') }}">
-                                        <button class="btn btn-falcon-default js-remove-branch-store" type="button" aria-label="{{ __('branches.branch_stores.remove') }}">
-                                            <span class="fas fa-times"></span>
-                                        </button>
-                                        <div class="invalid-feedback" data-error-for="branch_stores.{{ $storeIndex }}.name"></div>
+                                        <div class="col-12 col-md-5">
+                                            <label class="form-label small" for="branch-store-name-{{ $storeIndex }}">{{ __('branches.branch_stores.name') }}</label>
+                                            <input class="form-control form-control-sm js-branch-store-input" id="branch-store-name-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][name]" type="text" value="{{ $store['name'] ?? '' }}" placeholder="{{ __('branches.branch_stores.placeholder') }}">
+                                            <div class="invalid-feedback" data-error-for="branch_stores.{{ $storeIndex }}.name"></div>
+                                        </div>
+                                        <div class="col">
+                                            <label class="form-label small" for="branch-store-classification-{{ $storeIndex }}">{{ __('branches.branch_stores.classification') }}</label>
+                                            <select class="form-select form-select-sm js-branch-store-classification" id="branch-store-classification-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][classification]">
+                                                <option value="">{{ __('branches.branch_stores.classification_placeholder') }}</option>
+                                                @foreach (\Modules\Core\Models\BranchStore::classifications() as $classification)
+                                                    <option value="{{ $classification }}" @selected(($store['classification'] ?? '') === $classification)>{{ $branchStoreClassificationLabel($classification) }}</option>
+                                                @endforeach
+                                            </select>
+                                            <div class="invalid-feedback" data-error-for="branch_stores.{{ $storeIndex }}.classification"></div>
+                                        </div>
+                                        <div class="col-auto d-flex align-items-end">
+                                            <button class="btn btn-falcon-default btn-sm btn-icon-only px-2 js-remove-branch-store" type="button" aria-label="{{ __('branches.branch_stores.remove') }}" title="{{ __('branches.branch_stores.remove') }}">
+                                                <span class="fas fa-times"></span>
+                                            </button>
+                                        </div>
                                     </div>
                                 @endforeach
                             </div>
@@ -417,6 +443,12 @@
             'stationHallRemove' => __('branches.station_halls.remove'),
             'branchStorePlaceholder' => __('branches.branch_stores.placeholder'),
             'branchStoreRemove' => __('branches.branch_stores.remove'),
+            'branchStoreName' => __('branches.branch_stores.name'),
+            'branchStoreClassification' => __('branches.branch_stores.classification'),
+            'branchStoreClassificationPlaceholder' => __('branches.branch_stores.classification_placeholder'),
+            'branchStoreClassifications' => collect(\Modules\Core\Models\BranchStore::classifications())
+                ->mapWithKeys(fn (string $classification): array => [$classification => $branchStoreClassificationLabel($classification)])
+                ->all(),
             'cancel' => __('common.actions.cancel'),
             'confirm' => __('common.actions.confirm'),
         ];

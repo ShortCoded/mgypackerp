@@ -36,6 +36,7 @@ return [
         'branch_stores' => 'Stores',
         'branch_stores.*.key' => 'Store',
         'branch_stores.*.name' => 'Store Name',
+        'branch_stores.*.classification' => 'Store Classification',
     ],
     'document_number_control' => [
         'helper' => 'Leave empty for automatic generation. Prefix and padding are applied automatically.',
@@ -67,7 +68,13 @@ return [
     ],
     'branch_stores' => [
         'add' => 'Add store',
+        'classification' => 'Store Classification',
+        'classification_placeholder' => 'Select store classification',
+        'classifications' => [
+            'general' => 'General / Mixed',
+        ],
         'helper' => 'Store names are used to identify branch stores and must not be repeated within the same branch.',
+        'name' => 'Store Name',
         'empty' => 'No stores',
         'placeholder' => 'Store name',
         'remove' => 'Remove store',
@@ -125,6 +132,8 @@ return [
         'station_hall_name_max' => 'Hall name must not be greater than 255 characters.',
         'station_halls_distinct' => 'Hall names must not repeat inside the same branch.',
         'branch_store_name_max' => 'Store name must not be greater than 255 characters.',
+        'branch_store_classification_required' => 'Select a classification for each store.',
+        'branch_store_classification_invalid' => 'Select a valid stockable store classification.',
         'branch_stores_distinct' => 'Store names must not repeat inside the same branch.',
     ],
 ];

@@ -60,6 +60,7 @@ class UpdateBranchRequest extends FormRequest
             'branch_stores' => ['nullable', 'array'],
             'branch_stores.*.key' => ['nullable', 'string'],
             'branch_stores.*.name' => ['nullable', 'string', 'max:255'],
+            'branch_stores.*.classification' => ['required_with:branch_stores.*.name', 'nullable', Rule::in(BranchStore::classifications())],
         ];
 
         if ($this->canControlDocumentNumber()) {
@@ -214,6 +215,8 @@ class UpdateBranchRequest extends FormRequest
             'name.unique' => __('branches.validation.name_unique'),
             'station_halls.*.name.max' => __('branches.validation.station_hall_name_max'),
             'branch_stores.*.name.max' => __('branches.validation.branch_store_name_max'),
+            'branch_stores.*.classification.required_with' => __('branches.validation.branch_store_classification_required'),
+            'branch_stores.*.classification.in' => __('branches.validation.branch_store_classification_invalid'),
         ];
     }
 
@@ -282,7 +285,7 @@ class UpdateBranchRequest extends FormRequest
     }
 
     /**
-     * @return list<array{key: string|null, name: string}>
+     * @return list<array{key: string|null, name: string, classification: string|null}>
      */
     private function branchStorePayload(): array
     {
@@ -305,6 +308,7 @@ class UpdateBranchRequest extends FormRequest
             $names[(int) $index] = [
                 'key' => trim((string) ($row['key'] ?? '')) ?: null,
                 'name' => $name,
+                'classification' => trim((string) ($row['classification'] ?? '')) ?: null,
             ];
         }
 

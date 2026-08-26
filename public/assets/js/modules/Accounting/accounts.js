@@ -424,17 +424,18 @@
   }
 
   function formFieldValue($form, name) {
-    const $field = $form.find('[name="' + name + '"]');
+    const $fields = $form.find('[name="' + name + '"]');
+    const $checkbox = $fields.filter('[type="checkbox"]').first();
 
-    if (!$field.length) {
+    if (!$fields.length) {
       return '';
     }
 
-    if ($field.attr('type') === 'checkbox') {
-      return $field.is(':checked');
+    if ($checkbox.length) {
+      return $checkbox.is(':checked');
     }
 
-    return String($field.val() || '');
+    return String($fields.first().val() || '');
   }
 
   function formSnapshot($form) {
@@ -458,7 +459,10 @@
     const normalized = $.extend({}, snapshot || {});
 
     ['is_group', 'is_postable'].forEach(function (field) {
-      normalized[field] = Boolean(normalized[field]);
+      normalized[field] = normalized[field] === true
+        || normalized[field] === 1
+        || normalized[field] === '1'
+        || normalized[field] === 'true';
     });
 
     Object.keys(normalized).forEach(function (field) {
@@ -544,6 +548,32 @@
     $form.find('[name="statement_type"]').val(statementType);
     $form.find('#statement_type_display').val(statementType);
     $form.find('[name="normal_balance"]').val(normalBalance);
+    applyParentClassification($form, data);
+  }
+
+  function applyParentClassification($form, data) {
+    const $classification = $form.find('[name="classification_code"]');
+    const classificationCode = String(data.classification_code || '').trim();
+    const expenses = derivedDefaults.expensesClassification || {};
+    const expensesCode = String(expenses.code || 'expenses');
+
+    if (!$classification.length) {
+      return;
+    }
+
+    $classification.data('expenses-locked', classificationCode === expensesCode);
+
+    if (!classificationCode) {
+      return;
+    }
+
+    const classificationText = String(data.classification_text || (classificationCode === expensesCode ? expenses.label : classificationCode) || classificationCode);
+
+    if (!$classification.find('option[value="' + classificationCode.replace(/"/g, '\\"') + '"]').length) {
+      $classification.append(new Option(classificationText, classificationCode, true, true));
+    }
+
+    $classification.val(classificationCode).trigger('change.select2');
   }
 
   function applyRootDerivedFields($form, selectedData) {
@@ -710,6 +740,18 @@
 
   $(document).off('select2:select.accountsParentDerived', '#parent_doc_num').on('select2:select.accountsParentDerived', '#parent_doc_num', function (event) {
     applyDerivedFields($(this).closest('form'), event.params && event.params.data ? event.params.data : {});
+  });
+
+  $(document).off('select2:opening.accountsExpenseClassification', '#classification_code').on('select2:opening.accountsExpenseClassification', '#classification_code', function (event) {
+    if ($(this).data('expenses-locked')) {
+      event.preventDefault();
+    }
+  });
+
+  $(document).off('select2:clearing.accountsExpenseClassification', '#classification_code').on('select2:clearing.accountsExpenseClassification', '#classification_code', function (event) {
+    if ($(this).data('expenses-locked')) {
+      event.preventDefault();
+    }
   });
 
   $(document).off('select2:clear.accountsParentDerived', '#parent_doc_num').on('select2:clear.accountsParentDerived', '#parent_doc_num', function () {

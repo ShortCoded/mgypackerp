@@ -5,6 +5,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Modules\Accounting\Models\Account;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\ArchiveFile;
@@ -233,6 +234,21 @@ test('company creation is allowed while configured company limit has room', func
 
     expect(Company::withTrashed()->whereNull('deleted_at')->count())->toBe(2)
         ->and(Company::query()->where('name', 'Second Allowed Company')->exists())->toBeTrue();
+
+    $createdCompany = Company::query()->where('name', 'Second Allowed Company')->firstOrFail();
+    $fixedAssetsRoot = Account::query()
+        ->where('company_id', $createdCompany->getKey())
+        ->where('account_code', '121')
+        ->firstOrFail();
+
+    expect($fixedAssetsRoot->is_group)->toBeTrue()
+        ->and($fixedAssetsRoot->is_postable)->toBeFalse()
+        ->and(Account::query()
+            ->where('company_id', $createdCompany->getKey())
+            ->where('parent_id', $fixedAssetsRoot->getKey())
+            ->where('is_group', true)
+            ->where('is_postable', false)
+            ->count())->toBeGreaterThanOrEqual(6);
 });
 
 test('trashed companies are not counted against configured company creation limit', function () {

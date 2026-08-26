@@ -77,12 +77,13 @@
             }).filter(function (hall) { return hall.name !== ''; }) : [],
             branch_stores: Array.isArray(original.branch_stores) ? original.branch_stores.map(function (store) {
                 if (typeof store === 'string') {
-                    return { key: '', name: store.trim() };
+                    return { key: '', name: store.trim(), classification: '' };
                 }
 
                 return {
                     key: String((store && store.key) || '').trim(),
-                    name: String((store && store.name) || '').trim()
+                    name: String((store && store.name) || '').trim(),
+                    classification: String((store && store.classification) || '').trim()
                 };
             }).filter(function (store) { return store.name !== ''; }) : [],
             address: String(original.address || '').trim(),
@@ -280,7 +281,8 @@
 
             return {
                 key: String($row.find('[name$="[key]"]').val() || '').trim(),
-                name: name
+                name: name,
+                classification: String($row.find('.js-branch-store-classification').val() || '').trim()
             };
         }).get().filter(function (store) {
             return store.name !== '';
@@ -300,17 +302,43 @@
     function branchStoreRow(index, data) {
         const placeholder = messages.branchStorePlaceholder || '';
         const removeLabel = messages.branchStoreRemove || '';
-        const store = typeof data === 'string' ? { key: '', name: data } : (data || {});
+        const nameLabel = messages.branchStoreName || '';
+        const classificationLabel = messages.branchStoreClassification || '';
+        const classificationPlaceholder = messages.branchStoreClassificationPlaceholder || '';
+        const classifications = messages.branchStoreClassifications || {};
+        const store = typeof data === 'string' ? { key: '', name: data, classification: '' } : (data || {});
+        const $classification = $('<select class="form-select form-select-sm js-branch-store-classification"></select>')
+            .attr({
+                id: 'branch-store-classification-' + index,
+                name: 'branch_stores[' + index + '][classification]'
+            })
+            .append($('<option></option>').val('').text(classificationPlaceholder));
 
-        return $('<div class="input-group input-group-sm mb-2 js-branch-store-row"></div>')
+        Object.keys(classifications).forEach(function (classification) {
+            $classification.append($('<option></option>').val(classification).text(classifications[classification]));
+        });
+        $classification.val(store.classification || '');
+
+        return $('<div class="row g-2 align-items-stretch mb-2 js-branch-store-row"></div>')
             .attr('data-branch-store-index', index)
             .append($('<input type="hidden">').attr('name', 'branch_stores[' + index + '][key]').val(store.key || ''))
-            .append($('<input class="form-control js-branch-store-input" type="text">').attr({
-                name: 'branch_stores[' + index + '][name]',
-                placeholder: placeholder
-            }).val(store.name || ''))
-            .append($('<button class="btn btn-falcon-default js-remove-branch-store" type="button"></button>').attr('aria-label', removeLabel).append('<span class="fas fa-times"></span>'))
-            .append($('<div class="invalid-feedback"></div>').attr('data-error-for', 'branch_stores.' + index + '.name'));
+            .append($('<div class="col-12 col-md-5"></div>')
+                .append($('<label class="form-label small"></label>').attr('for', 'branch-store-name-' + index).text(nameLabel))
+                .append($('<input class="form-control form-control-sm js-branch-store-input" type="text">').attr({
+                    id: 'branch-store-name-' + index,
+                    name: 'branch_stores[' + index + '][name]',
+                    placeholder: placeholder
+                }).val(store.name || ''))
+                .append($('<div class="invalid-feedback"></div>').attr('data-error-for', 'branch_stores.' + index + '.name')))
+            .append($('<div class="col"></div>')
+                .append($('<label class="form-label small"></label>').attr('for', 'branch-store-classification-' + index).text(classificationLabel))
+                .append($classification)
+                .append($('<div class="invalid-feedback"></div>').attr('data-error-for', 'branch_stores.' + index + '.classification')))
+            .append($('<div class="col-auto d-flex align-items-end"></div>')
+                .append($('<button class="btn btn-falcon-default btn-sm btn-icon-only px-2 js-remove-branch-store" type="button"></button>').attr({
+                    'aria-label': removeLabel,
+                    title: removeLabel
+                }).append('<span class="fas fa-times"></span>')));
     }
 
     function ensureBranchStoreRow($form) {

@@ -16,6 +16,9 @@ return [
             'purchase-return' => 'مرتجع مشتريات / تسوية مدينة',
         ],
     ],
+    'messages' => [
+        'purchase_product_type_invalid' => 'لا يمكن اختيار منتج تام أو خدمة ضمن بنود المشتريات.',
+    ],
     'reports' => [
         'types' => [
             'open_requirements' => 'احتياجات الشراء المفتوحة',

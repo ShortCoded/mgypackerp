@@ -4,8 +4,10 @@ namespace Modules\Accounting\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
+use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
 
 class BusinessPartnerAccountService
@@ -19,6 +21,7 @@ class BusinessPartnerAccountService
     public function __construct(
         private readonly AccountService $accounts,
         private readonly OperatingCompanyContextService $companies,
+        private readonly DocumentNumberService $documentNumbers,
     ) {}
 
     public function rootAccount(string $type): Account
@@ -154,15 +157,103 @@ class BusinessPartnerAccountService
 
     public function isSelectableGroup(string $type, Account $account): bool
     {
-        $root = $this->rootAccount($type);
+        return in_array((int) $account->getKey(), $this->selectableGroupIds($type), true);
+    }
 
-        return (int) $account->company_id === (int) $root->company_id
-            && $account->status === 'active'
-            && $account->is_group
-            && ! $account->is_postable
-            && (int) $account->getKey() !== (int) $root->getKey()
-            && $this->isPartnerAccount($type, $account)
-            && $this->isDescendantOf($account, $root);
+    /**
+     * @return list<int>
+     */
+    public function selectableGroupIds(string $type): array
+    {
+        $root = $this->rootAccount($type);
+        $descendantIds = $this->descendantIds($root);
+
+        if ($descendantIds === []) {
+            return [];
+        }
+
+        return Account::query()
+            ->where('company_id', $root->company_id)
+            ->whereIn('id', $descendantIds)
+            ->where('status', 'active')
+            ->where('is_group', true)
+            ->where('is_postable', false)
+            ->whereHas('classification', fn ($query) => $query->where('code', $this->spec($type)['classification_code']))
+            ->pluck('id')
+            ->map(fn (int|string $id): int => (int) $id)
+            ->all();
+    }
+
+    public function ensureFixedAssetBaselineForCompany(int $companyId): void
+    {
+        DB::transaction(function () use ($companyId): void {
+            $classification = $this->ensureFixedAssetClassification();
+            $assets = $this->ensureFoundationAccount($companyId, '1', 'الأصول', 'Assets', null, null);
+            $nonCurrentAssets = $this->ensureFoundationAccount($companyId, '12', 'الأصول غير المتداولة', 'Non-current Assets', $assets, null);
+            $root = $this->ensureFoundationAccount($companyId, '121', 'الأصول الثابتة', 'Fixed Assets', $nonCurrentAssets, $classification);
+
+            $root->forceFill([
+                'account_classification_id' => $classification->getKey(),
+                'is_group' => true,
+                'is_postable' => false,
+                'status' => 'active',
+            ])->save();
+
+            $candidates = Account::query()
+                ->with('classification')
+                ->where('company_id', $companyId)
+                ->whereIn('id', $this->descendantIds($root))
+                ->where('status', 'active')
+                ->where('is_group', true)
+                ->where('is_postable', false)
+                ->whereHas('classification', fn ($query) => $query->where('code', 'fixed_assets'))
+                ->orderBy('id')
+                ->get();
+            $usedIds = [];
+
+            foreach ($this->fixedAssetBaselineCategories() as $key => $category) {
+                $existing = $candidates->first(function (Account $account) use ($category, $usedIds): bool {
+                    if (in_array((int) $account->getKey(), $usedIds, true)) {
+                        return false;
+                    }
+
+                    $haystack = Str::lower(trim($account->name.' '.$account->name_en.' '.$account->notes));
+
+                    return collect($category['aliases'])->contains(
+                        fn (string $alias): bool => Str::contains($haystack, Str::lower($alias)),
+                    );
+                });
+
+                if ($existing instanceof Account) {
+                    $usedIds[] = (int) $existing->getKey();
+
+                    continue;
+                }
+
+                $accountCode = $this->availableFixedAssetCategoryCode($root, $category['preferred_code']);
+                $document = $this->documentNumbers->nextForCompany('accounts', Account::class, $companyId);
+                $created = Account::query()->create([
+                    ...$document,
+                    'company_id' => $companyId,
+                    'account_code' => $accountCode,
+                    'name' => $category['name'],
+                    'name_en' => $category['name_en'],
+                    'parent_id' => $root->getKey(),
+                    'level' => (int) $root->level + 1,
+                    'account_classification_id' => $classification->getKey(),
+                    'account_type' => Account::TypeAsset,
+                    'statement_type' => Account::StatementFinancialPosition,
+                    'normal_balance' => Account::BalanceDebit,
+                    'is_group' => true,
+                    'is_postable' => false,
+                    'is_system' => true,
+                    'status' => 'active',
+                    'notes' => "system:fixed_asset_category:{$key}",
+                ]);
+                $candidates->push($created);
+                $usedIds[] = (int) $created->getKey();
+            }
+        });
     }
 
     public function isManagedLinkedAccount(string $type, Account $account): bool
@@ -223,6 +314,131 @@ class BusinessPartnerAccountService
         }
 
         return false;
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function descendantIds(Account $ancestor): array
+    {
+        $descendantIds = [];
+        $parentIds = [(int) $ancestor->getKey()];
+
+        while ($parentIds !== []) {
+            $childIds = Account::query()
+                ->where('company_id', $ancestor->company_id)
+                ->whereIn('parent_id', $parentIds)
+                ->pluck('id')
+                ->map(fn (int|string $id): int => (int) $id)
+                ->all();
+            $newChildIds = array_values(array_diff($childIds, $descendantIds));
+
+            if ($newChildIds === []) {
+                break;
+            }
+
+            $descendantIds = [...$descendantIds, ...$newChildIds];
+            $parentIds = $newChildIds;
+        }
+
+        return $descendantIds;
+    }
+
+    private function ensureFixedAssetClassification(): AccountClassification
+    {
+        $classification = AccountClassification::withTrashed()->where('code', 'fixed_assets')->first();
+
+        if (! $classification instanceof AccountClassification) {
+            return AccountClassification::query()->create([
+                ...$this->documentNumbers->next('account_classifications', AccountClassification::class),
+                'code' => 'fixed_assets',
+                'name' => 'أصول ثابتة',
+                'name_en' => 'Fixed Assets',
+                'account_type' => Account::TypeAsset,
+                'statement_type' => Account::StatementFinancialPosition,
+                'normal_balance' => Account::BalanceDebit,
+                'is_system' => true,
+                'status' => 'active',
+            ]);
+        }
+
+        if ($classification->trashed()) {
+            $classification->restore();
+        }
+
+        $classification->forceFill(['is_system' => true, 'status' => 'active'])->save();
+
+        return $classification;
+    }
+
+    private function ensureFoundationAccount(
+        int $companyId,
+        string $accountCode,
+        string $name,
+        string $nameEn,
+        ?Account $parent,
+        ?AccountClassification $classification,
+    ): Account {
+        $account = Account::withTrashed()
+            ->where('company_id', $companyId)
+            ->where('account_code', $accountCode)
+            ->first();
+
+        if ($account instanceof Account) {
+            if ($account->trashed()) {
+                $account->restore();
+            }
+
+            return $account;
+        }
+
+        return Account::query()->create([
+            ...$this->documentNumbers->nextForCompany('accounts', Account::class, $companyId),
+            'company_id' => $companyId,
+            'account_code' => $accountCode,
+            'name' => $name,
+            'name_en' => $nameEn,
+            'parent_id' => $parent?->getKey(),
+            'level' => $parent instanceof Account ? (int) $parent->level + 1 : 1,
+            'account_classification_id' => $classification?->getKey(),
+            'account_type' => Account::TypeAsset,
+            'statement_type' => Account::StatementFinancialPosition,
+            'normal_balance' => Account::BalanceDebit,
+            'is_group' => true,
+            'is_postable' => false,
+            'is_system' => true,
+            'status' => 'active',
+        ]);
+    }
+
+    private function availableFixedAssetCategoryCode(Account $root, string $preferredCode): string
+    {
+        if (! Account::withTrashed()->where('company_id', $root->company_id)->where('account_code', $preferredCode)->exists()) {
+            return $preferredCode;
+        }
+
+        $accountCode = $this->accounts->nextChildAccountCode($root);
+
+        while (Account::withTrashed()->where('company_id', $root->company_id)->where('account_code', $accountCode)->exists()) {
+            $accountCode = (string) ((int) $accountCode + 1);
+        }
+
+        return $accountCode;
+    }
+
+    /**
+     * @return array<string, array{name: string, name_en: string, preferred_code: string, aliases: list<string>}>
+     */
+    private function fixedAssetBaselineCategories(): array
+    {
+        return [
+            'machinery' => ['name' => 'الآلات والمعدات', 'name_en' => 'Machinery and Equipment', 'preferred_code' => '1216', 'aliases' => ['system:fixed_asset_category:machinery', 'machinery', 'production equipment', 'injection molding']],
+            'vehicles' => ['name' => 'وسائل النقل', 'name_en' => 'Vehicles', 'preferred_code' => '1217', 'aliases' => ['system:fixed_asset_category:vehicles', 'vehicle', 'transport', 'material handling']],
+            'it_office' => ['name' => 'تقنية المعلومات والمعدات المكتبية', 'name_en' => 'IT and Office Equipment', 'preferred_code' => '1218', 'aliases' => ['system:fixed_asset_category:it_office', 'it & office', 'it and office', 'office equipment', 'computer']],
+            'furniture' => ['name' => 'الأثاث والتجهيزات', 'name_en' => 'Furniture and Fixtures', 'preferred_code' => '1219', 'aliases' => ['system:fixed_asset_category:furniture', 'furniture', 'fixtures']],
+            'land' => ['name' => 'الأراضي', 'name_en' => 'Land', 'preferred_code' => '12110', 'aliases' => ['system:fixed_asset_category:land', 'land']],
+            'buildings' => ['name' => 'المباني', 'name_en' => 'Buildings', 'preferred_code' => '12111', 'aliases' => ['system:fixed_asset_category:buildings', 'building']],
+        ];
     }
 
     /**

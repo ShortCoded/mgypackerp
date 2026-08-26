@@ -16,6 +16,9 @@ return [
             'purchase-return' => 'Purchase Return / Debit Adjustment',
         ],
     ],
+    'messages' => [
+        'purchase_product_type_invalid' => 'Finished products and services cannot be selected in purchase lines.',
+    ],
     'reports' => [
         'types' => [
             'open_requirements' => 'Open Purchase Requirements',

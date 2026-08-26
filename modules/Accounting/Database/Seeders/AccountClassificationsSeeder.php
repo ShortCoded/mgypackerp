@@ -68,6 +68,7 @@ class AccountClassificationsSeeder extends Seeder
             ['code' => 'service_revenue', 'name' => 'إيرادات خدمات', 'name_en' => 'Service Revenue', 'account_type' => 'revenue', 'statement_type' => 'income_statement', 'normal_balance' => 'credit'],
             ['code' => 'sales_returns', 'name' => 'مردودات مبيعات', 'name_en' => 'Sales Returns', 'account_type' => 'revenue', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],
             ['code' => 'sales_discounts', 'name' => 'خصومات مبيعات', 'name_en' => 'Sales Discounts', 'account_type' => 'revenue', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],
+            ['code' => AccountClassification::Expenses, 'name' => 'مصروفات', 'name_en' => 'Expenses', 'account_type' => 'expense', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],
             ['code' => 'cost_of_goods_sold', 'name' => 'تكلفة المبيعات', 'name_en' => 'Cost of Goods Sold', 'account_type' => 'expense', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],
             ['code' => 'salary_expense', 'name' => 'مصروف رواتب', 'name_en' => 'Salary Expense', 'account_type' => 'expense', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],
             ['code' => 'rent_expense', 'name' => 'مصروف إيجار', 'name_en' => 'Rent Expense', 'account_type' => 'expense', 'statement_type' => 'income_statement', 'normal_balance' => 'debit'],

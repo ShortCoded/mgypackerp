@@ -130,6 +130,7 @@ class FixedAssetLifecycleController extends Controller
             ->where('accounts.is_postable', false)
             ->where('accounts.status', 'active')
             ->where('account_classifications.code', 'fixed_assets')
+            ->whereIn('accounts.id', app(BusinessPartnerAccountService::class)->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))
             ->whereNull('accounts.deleted_at')
             ->select('accounts.*')
             ->orderBy('accounts.account_code')

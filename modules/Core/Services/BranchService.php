@@ -483,6 +483,7 @@ class BranchService
                 $submittedKeys[] = (string) $store->public_uuid;
                 $store->fill([
                     'name' => $storeData['name'],
+                    'classification' => $storeData['classification'],
                     'position' => $index + 1,
                 ]);
 
@@ -497,6 +498,7 @@ class BranchService
             BranchStore::query()->create([
                 'branch_id' => $record->getKey(),
                 'name' => $storeData['name'],
+                'classification' => $storeData['classification'],
                 'position' => $index + 1,
                 'created_by' => auth()->id(),
             ]);
@@ -521,7 +523,7 @@ class BranchService
 
     /**
      * @param  array<string, mixed>  $data
-     * @return list<array{key: string|null, name: string}>
+     * @return list<array{key: string|null, name: string, classification: string}>
      */
     private function normalizedStores(array $data): array
     {
@@ -544,6 +546,7 @@ class BranchService
             $payload[] = [
                 'key' => $this->normalizeNullableString($row['key'] ?? null),
                 'name' => $name,
+                'classification' => $this->normalizeString((string) ($row['classification'] ?? BranchStore::ClassificationGeneral)),
             ];
         }
 
@@ -551,7 +554,7 @@ class BranchService
     }
 
     /**
-     * @return list<array{key: string|null, name: string}>
+     * @return list<array{key: string|null, name: string, classification: string}>
      */
     private function currentStores(Branch $record): array
     {
@@ -560,6 +563,7 @@ class BranchService
             ->map(fn (BranchStore $store): array => [
                 'key' => $store->public_uuid,
                 'name' => trim($store->name),
+                'classification' => $store->classification,
             ])
             ->filter(fn (array $store): bool => $store['name'] !== '')
             ->values()

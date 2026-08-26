@@ -23,9 +23,11 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ArchiveFileService;
 use Modules\Core\Services\ArchiveFolderService;
+use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Services\FixedAssetDepreciationCalculator;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
 use Spatie\Permission\Models\Permission;
@@ -991,6 +993,86 @@ test('Fixed Asset category quick-create and selector stay under the Fixed Assets
     $selector->assertOk();
 
     expect(collect($selector->json('results'))->pluck('id')->all())->toContain($category->doc_num);
+});
+
+test('Fixed Asset categories exclude same-company groups outside the canonical root and install the baseline once', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create', 'fixed_assets.view', 'fixed_assets.accounting.configure']);
+    $this->actingAs($actor);
+    $accounts = app(BusinessPartnerAccountService::class);
+    $accounts->ensureFixedAssetBaselineForCompany((int) $context['company']->getKey());
+    $category = Account::query()->whereIn('id', $accounts->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))->orderBy('account_code')->firstOrFail();
+    $postingAccounts = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('status', 'active')
+        ->where('is_group', false)
+        ->where('is_postable', true)
+        ->orderBy('account_code')
+        ->take(5)
+        ->get();
+
+    $this->from(route('admin.fixed-assets.accounting.index'))
+        ->post(route('admin.fixed-assets.accounting.store'), [
+            'asset_group_account_doc_num' => $category->doc_num,
+            'accumulated_depreciation_account_doc_num' => $postingAccounts[0]->doc_num,
+            'depreciation_expense_account_doc_num' => $postingAccounts[1]->doc_num,
+            'disposal_gain_account_doc_num' => $postingAccounts[2]->doc_num,
+            'disposal_loss_account_doc_num' => $postingAccounts[3]->doc_num,
+            'disposal_clearing_account_doc_num' => $postingAccounts[4]->doc_num,
+        ])
+        ->assertRedirect(route('admin.fixed-assets.accounting.index'))
+        ->assertSessionHasNoErrors();
+
+    expect(FixedAssetCategoryMapping::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('asset_group_account_id', $category->getKey())
+        ->exists())->toBeTrue();
+
+    $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+        'asset_name' => 'Baseline Mapped Asset',
+        'asset_group_account_doc_num' => $category->doc_num,
+    ]))->assertOk()->assertJsonPath('success', true);
+    $asset = FixedAsset::query()->where('asset_name', 'Baseline Mapped Asset')->firstOrFail();
+
+    $this->get(route('admin.fixed-assets.assets.show', $asset->doc_num))
+        ->assertOk()
+        ->assertSee('Baseline Mapped Asset');
+
+    $root = $accounts->rootAccount(BusinessPartnerAccountService::FixedAsset);
+    $baselineCount = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('parent_id', $root->getKey())
+        ->where('is_group', true)
+        ->where('is_postable', false)
+        ->count();
+    $accounts->ensureFixedAssetBaselineForCompany((int) $context['company']->getKey());
+
+    $rogue = Account::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $context['company']->getKey()),
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '19991',
+        'name' => 'تصنيف أصل خارج الجذر',
+        'name_en' => 'Rogue Asset Category',
+        'parent_id' => null,
+        'level' => 1,
+        'account_classification_id' => $root->account_classification_id,
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => true,
+        'is_postable' => false,
+        'status' => 'active',
+    ]);
+
+    $selector = $this->getJson(route('admin.fixed-assets.select2.asset-categories', ['q' => 'Rogue']))->assertOk();
+
+    expect($baselineCount)->toBeGreaterThanOrEqual(6)
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->where('parent_id', $root->getKey())->where('is_group', true)->where('is_postable', false)->count())->toBe($baselineCount)
+        ->and(collect($selector->json('results'))->pluck('id'))->not->toContain($rogue->doc_num);
+
+    $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+        'asset_group_account_doc_num' => $rogue->doc_num,
+    ]))->assertUnprocessable()->assertJsonValidationErrors('asset_group_account_doc_num');
 });
 
 test('Fixed Asset rejects cross-company related records and outside-period dates', function (): void {

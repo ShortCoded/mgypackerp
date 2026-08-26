@@ -222,11 +222,11 @@
                     </div>
 
                     <div class="col-md-3">
-                        <label class="form-label" for="payment_terms">{{ __('Payment terms snapshot') }}</label>
+                        <label class="form-label" for="payment_terms">{{ __('purchase_orders.attributes.payment_terms') }}</label>
                         @if($isReadonly)
                             <x-forms.view-field for="payment_terms" :value="$record?->payment_terms ?: __('common.empty_value')" />
                         @else
-                            <input class="form-control" id="payment_terms" name="payment_terms" value="{{ old('payment_terms', $record?->payment_terms) }}" maxlength="255" placeholder="{{ __('Defaults from Supplier when blank') }}">
+                            <input class="form-control" id="payment_terms" name="payment_terms" value="{{ old('payment_terms', $record?->payment_terms) }}" maxlength="255" placeholder="{{ __('purchase_orders.placeholders.payment_terms_supplier_default') }}">
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="payment_terms"></div>
                     </div>
@@ -244,11 +244,11 @@
                         <div class="col-md-4">
                             <div class="form-check mt-4">
                                 <input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override'))>
-                                <label class="form-check-label" for="direct_procurement_override">{{ __('Authorized direct procurement override') }}</label>
+                                <label class="form-check-label" for="direct_procurement_override">{{ __('purchase_orders.attributes.direct_procurement_override') }}</label>
                             </div>
                         </div>
                         <div class="col-md-8">
-                            <label class="form-label" for="direct_procurement_reason">{{ __('Direct procurement reason') }}</label>
+                            <label class="form-label" for="direct_procurement_reason">{{ __('purchase_orders.attributes.direct_procurement_reason') }}</label>
                             <input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason') }}">
                             <div class="invalid-feedback d-block" data-error-for="direct_procurement_reason"></div>
                         </div>
@@ -308,9 +308,9 @@
                                 <th style="width: 13rem;">{{ __('purchase_orders.attributes.unit') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.ordered_quantity') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.unit_price') }}</th>
-                                <th style="width: 8rem;">{{ __('Discount type') }}</th>
-                                <th class="text-end" style="width: 8rem;">{{ __('Discount') }}</th>
-                                <th class="text-end" style="width: 8rem;">{{ __('Tax %') }}</th>
+                                <th style="width: 8rem;">{{ __('purchase_orders.attributes.discount_type') }}</th>
+                                <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.discount') }}</th>
+                                <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.tax_rate') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.line_total') }}</th>
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.received_quantity') }}</th>
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.remaining_quantity') }}</th>
@@ -383,8 +383,8 @@
                                             <span>{{ str($line['discount_type'] ?? 'fixed')->title() }}</span>
                                         @else
                                             <select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
-                                                <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('Fixed') }}</option>
-                                                <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('Percentage') }}</option>
+                                                <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('purchase_orders.discount_types.fixed') }}</option>
+                                                <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('purchase_orders.discount_types.percentage') }}</option>
                                             </select>
                                         @endif
                                     </td>
@@ -504,7 +504,7 @@
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
             </td>
             <td>
-                <select class="form-select js-line-discount-type" name="lines[__INDEX__][discount_type]"><option value="fixed">{{ __('Fixed') }}</option><option value="percentage">{{ __('Percentage') }}</option></select>
+                <select class="form-select js-line-discount-type" name="lines[__INDEX__][discount_type]"><option value="fixed">{{ __('purchase_orders.discount_types.fixed') }}</option><option value="percentage">{{ __('purchase_orders.discount_types.percentage') }}</option></select>
             </td>
             <td>
                 <x-forms.numeric-input class="text-end js-line-discount-value" name="lines[__INDEX__][discount_value]" :scale="4" min="0" step="0.0001" value="0" />

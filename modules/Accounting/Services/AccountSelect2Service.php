@@ -22,7 +22,7 @@ class AccountSelect2Service
         $companyId = $this->companies->currentCompanyId($request);
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance'])
+            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance', 'account_classifications.code as classification_code', 'account_classifications.name as classification_name', 'account_classifications.name_en as classification_name_en'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
 
         if ($companyId === null) {
@@ -112,6 +112,11 @@ class AccountSelect2Service
         $query = AccountClassification::query()
             ->select(['code', 'name', 'name_en', 'account_type', 'statement_type', 'normal_balance'])
             ->where('status', 'active')
+            ->where(function ($query): void {
+                $query
+                    ->where('account_type', '!=', Account::TypeExpense)
+                    ->orWhere('code', AccountClassification::Expenses);
+            })
             ->orderBy('code');
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
@@ -137,6 +142,8 @@ class AccountSelect2Service
             'account_type' => $account->account_type,
             'statement_type' => $account->statement_type,
             'normal_balance' => $account->normal_balance,
+            'classification_code' => $account->classification_code,
+            'classification_text' => AccountClassification::displayNameFor($account->classification_name, $account->classification_name_en),
         ];
     }
 

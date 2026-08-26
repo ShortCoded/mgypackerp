@@ -11,7 +11,10 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 
@@ -208,7 +211,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
     {
         $validator->after(function (Validator $validator): void {
             $this->validatePeriod($validator);
-            $this->validateLines($validator);
+            $this->validateLines($validator, $this->currentRecord());
             $this->validateDiscountsAndSchedule($validator);
             $this->validatePaymentSources($validator);
             $this->validateProcurementSource($validator);
@@ -267,10 +270,11 @@ class StorePurchaseInvoiceRequest extends FormRequest
         }
     }
 
-    private function validateLines(Validator $validator): void
+    private function validateLines(Validator $validator, ?PurchaseInvoice $current): void
     {
         $companyId = (int) $this->input('company_id');
         $units = app(ProductComponentUnitOptionsService::class);
+        $current?->loadMissing('lines.product');
 
         foreach ($this->input('lines', []) as $index => $line) {
             if (! is_array($line)) {
@@ -293,15 +297,59 @@ class StorePurchaseInvoiceRequest extends FormRequest
             $product = Product::query()
                 ->with(['unit', 'equivalentUnit'])
                 ->active()
-                ->purchasable()
                 ->forCompany($companyId)
                 ->where('doc_num', $line['product_doc_num'] ?? null)
                 ->first();
 
-            if ($product instanceof Product && ! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)) {
+            if ($product instanceof Product
+                && ! $product->isPurchasable()
+                && ! $this->isSourcedOrExistingHistoricalLine($current, $line, $product)) {
+                $validator->errors()->add("lines.{$index}.product_doc_num", __('purchase_invoices.messages.purchase_product_type_invalid'));
+            } elseif ($product instanceof Product && ! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_invoices.messages.invalid_unit'));
             }
         }
+    }
+
+    /** @param array<string, mixed> $line */
+    private function isSourcedOrExistingHistoricalLine(?PurchaseInvoice $current, array $line, Product $product): bool
+    {
+        $publicId = trim((string) ($line['public_id'] ?? ''));
+        $existing = $current instanceof PurchaseInvoice && $publicId !== ''
+            ? $current->lines->firstWhere('public_id', $publicId)
+            : null;
+
+        if ($existing !== null && (int) $existing->product_id === (int) $product->getKey()) {
+            return true;
+        }
+
+        $purchaseOrderId = PurchaseOrder::query()
+            ->where('company_id', (int) $this->input('company_id'))
+            ->where('doc_num', (string) $this->input('purchase_order_doc_num'))
+            ->value('id');
+        $purchaseOrderLinePublicId = trim((string) ($line['purchase_order_line_public_id'] ?? ''));
+
+        if (! $purchaseOrderId || $purchaseOrderLinePublicId === '') {
+            return false;
+        }
+
+        $purchaseOrderLine = PurchaseOrderLine::query()
+            ->where('purchase_order_id', $purchaseOrderId)
+            ->where('product_id', $product->getKey())
+            ->where('public_id', $purchaseOrderLinePublicId)
+            ->first();
+
+        if (! $purchaseOrderLine instanceof PurchaseOrderLine) {
+            return false;
+        }
+
+        $receiptLinePublicId = trim((string) ($line['receipt_line_public_id'] ?? ''));
+
+        return $receiptLinePublicId === '' || UnpricedInventoryReceiptLine::query()
+            ->where('purchase_order_line_id', $purchaseOrderLine->getKey())
+            ->where('product_id', $product->getKey())
+            ->where('public_id', $receiptLinePublicId)
+            ->exists();
     }
 
     private function validateDiscountsAndSchedule(Validator $validator): void
@@ -421,11 +469,11 @@ class StorePurchaseInvoiceRequest extends FormRequest
             && (bool) $this->user()?->can('purchases.direct_procurement.override');
 
         if (! $hasPurchaseOrder && ! $isAuthorizedDirect) {
-            $validator->errors()->add('purchase_order_doc_num', __('A purchase order is required unless an authorized direct-procurement override is used.'));
+            $validator->errors()->add('purchase_order_doc_num', __('purchase_invoices.messages.purchase_order_required_without_override'));
         }
 
         if ($this->boolean('direct_procurement_override') && ! $isAuthorizedDirect) {
-            $validator->errors()->add('direct_procurement_override', __('You are not authorized to bypass the procurement source workflow.'));
+            $validator->errors()->add('direct_procurement_override', __('purchase_invoices.messages.direct_procurement_override_forbidden'));
         }
     }
 

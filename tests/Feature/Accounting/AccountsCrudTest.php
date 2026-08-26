@@ -185,7 +185,7 @@ test('classification and default chart account seeders are idempotent', function
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $context = accountEnsureOperatingContext();
 
-    expect(AccountClassification::query()->count())->toBe(23)
+    expect(AccountClassification::query()->count())->toBe(24)
         ->and(Account::query()->where('company_id', $context['company']->getKey())->whereNull('parent_id')->count())->toBe(5)
         ->and(Account::query()->whereNull('company_id')->exists())->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1')->first()?->is_system)->toBeTrue()
@@ -200,7 +200,7 @@ test('classification and default chart account seeders are idempotent', function
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1133')->first()?->classification?->code)->toBe('inventory')
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '2111')->first()?->classification?->code)->toBe('accounts_payable')
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '411')->first()?->classification?->code)->toBe('sales_revenue')
-        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '521')->first()?->classification?->code)->toBe('salary_expense')
+        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '521')->first()?->classification?->code)->toBe(AccountClassification::Expenses)
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '11')->first()?->is_group)->toBeTrue()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '11')->first()?->is_postable)->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1111')->first()?->is_group)->toBeTrue()
@@ -286,6 +286,17 @@ test('accounts tree javascript exposes accessible controls and keyboard navigati
         ->toContain('visibleTreeNodes')
         ->toContain('.collapse-hidden, .treeview-list:not(.show)')
         ->toContain("document.documentElement.getAttribute('dir')");
+});
+
+test('account form state reads boolean switches instead of their hidden fallbacks', function (): void {
+    $script = file_get_contents(public_path('assets/js/modules/Accounting/accounts.js'));
+
+    expect($script)
+        ->toContain('const $checkbox = $fields.filter(\'[type="checkbox"]\').first();')
+        ->toContain("return \$checkbox.is(':checked');")
+        ->toContain("normalized[field] === '1'")
+        ->toContain("normalized[field] === 'true'")
+        ->not->toContain('normalized[field] = Boolean(normalized[field]);');
 });
 
 test('account routes data and parent validation are scoped to the operating company', function () {
@@ -667,6 +678,39 @@ test('child account derives type and statement from parent while normal balance 
         ->and($account->normal_balance)->toBe('credit');
 });
 
+test('expense descendants inherit the unified classification and legacy expense choices stay hidden', function () {
+    $this->seed(AccountClassificationsSeeder::class);
+    $this->seed(DefaultChartOfAccountsSeeder::class);
+    $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.account_code.control']);
+    $parent = Account::query()->where('account_code', '52')->firstOrFail();
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+            'account_code' => '5299',
+            'name' => 'Unified Expense Child',
+            'parent_doc_num' => $parent->doc_num,
+            'classification_code' => 'cash',
+            'account_type' => 'asset',
+            'statement_type' => 'financial_position',
+        ]))
+        ->assertOk();
+
+    $account = Account::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+    $classifications = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.account-classifications'))
+        ->assertOk()
+        ->json('results');
+    $parentItem = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['q' => $parent->account_code]))
+        ->assertOk()
+        ->json('results.0');
+
+    expect($account->classification?->code)->toBe(AccountClassification::Expenses)
+        ->and(collect($classifications)->pluck('id'))->toContain(AccountClassification::Expenses)
+        ->not->toContain('salary_expense', 'rent_expense', 'depreciation_expense', 'other_expense')
+        ->and($parentItem['classification_code'] ?? null)->toBe(AccountClassification::Expenses);
+});
+
 test('root account derives statement and defaults from classification when no parent exists', function () {
     $this->seed(AccountClassificationsSeeder::class);
     $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.account_code.control']);
@@ -861,6 +905,65 @@ test('account edit no-change and action visibility follow standard crud behavior
         ->assertOk()
         ->assertJsonPath('success', true)
         ->assertJsonPath('submit_action', 'save');
+});
+
+test('account boolean-only changes persist while unchanged updates remain no-ops', function (): void {
+    $actor = accountActor(['accounts.edit']);
+    $account = app(AccountService::class)->create(accountPayload(['account_code' => '1911']));
+    $payload = fn (array $overrides = []): array => accountPayload([
+        'account_code' => $account->account_code,
+        'name' => $account->name,
+        ...$overrides,
+    ]);
+    $updateRoute = route('admin.accounting.accounts.update', $account->doc_num);
+
+    $this->actingAs($actor)
+        ->putJson($updateRoute, $payload())
+        ->assertOk()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('type', 'no_changes');
+
+    expect($account->refresh()->updated_by)->toBeNull();
+
+    $this->actingAs($actor)
+        ->putJson($updateRoute, $payload(['is_group' => '1']))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($account->refresh()->is_group)->toBeTrue()
+        ->and($account->is_postable)->toBeFalse()
+        ->and($account->updated_by)->toBe($actor->getKey());
+
+    $this->actingAs($actor)
+        ->putJson($updateRoute, $payload([
+            'is_group' => '0',
+            'is_postable' => '0',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($account->refresh()->is_group)->toBeFalse()
+        ->and($account->is_postable)->toBeFalse();
+
+    $this->actingAs($actor)
+        ->putJson($updateRoute, $payload(['is_postable' => '1']))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($account->refresh()->is_group)->toBeFalse()
+        ->and($account->is_postable)->toBeTrue();
+
+    $this->actingAs($actor)
+        ->putJson($updateRoute, $payload([
+            'name' => 'حساب اختبار بعد تغيير مختلط',
+            'is_group' => '1',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($account->refresh()->name)->toBe('حساب اختبار بعد تغيير مختلط')
+        ->and($account->is_group)->toBeTrue()
+        ->and($account->is_postable)->toBeFalse();
 });
 
 test('system root account delete is blocked', function () {

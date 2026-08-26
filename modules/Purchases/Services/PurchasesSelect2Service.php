@@ -68,7 +68,9 @@ class PurchasesSelect2Service
         $query = $this->productQuery($companyId, $request->user());
 
         if ($selectedDocNum !== '') {
-            $selected = (clone $query)->where('products.doc_num', $selectedDocNum)->first();
+            $selected = $this->productQuery($companyId, $request->user(), true)
+                ->where('products.doc_num', $selectedDocNum)
+                ->first();
 
             return [
                 'results' => $selected instanceof Product ? [$this->productItem($selected)] : [],
@@ -136,6 +138,7 @@ class PurchasesSelect2Service
 
         $query = BranchStore::query()
             ->join('branches', 'branches.id', '=', 'branch_stores.branch_id')
+            ->purchasingEligible()
             ->where('branches.company_id', (int) $companyId)
             ->where('branches.status', 'active')
             ->whereNull('branches.deleted_at')
@@ -143,6 +146,7 @@ class PurchasesSelect2Service
             ->select([
                 'branch_stores.public_uuid',
                 'branch_stores.name',
+                'branch_stores.classification',
                 'branch_stores.position',
                 'branches.name as branch_name',
             ])
@@ -294,12 +298,12 @@ class PurchasesSelect2Service
         ];
     }
 
-    private function productQuery(?int $companyId, ?User $user): Builder
+    private function productQuery(?int $companyId, ?User $user, bool $includeHistorical = false): Builder
     {
         $query = Product::query()
             ->with(['unit', 'equivalentUnit', 'mainImageUsage.file'])
             ->active()
-            ->purchasable()
+            ->when(! $includeHistorical, fn (Builder $query) => $query->purchasable())
             ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'));
 
         if ($user instanceof User) {

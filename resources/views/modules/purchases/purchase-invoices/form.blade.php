@@ -363,8 +363,8 @@
                         </div>
 
                         @if(! $isReadonly && auth()->user()?->can('purchases.direct_procurement.override'))
-                            <div class="col-md-4"><div class="form-check mt-4"><input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))><label class="form-check-label" for="direct_procurement_override">{{ __('Authorized direct procurement override') }}</label></div></div>
-                            <div class="col-md-8"><label class="form-label" for="direct_procurement_reason">{{ __('Override reason') }}</label><input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}"></div>
+                            <div class="col-md-4"><div class="form-check mt-4"><input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))><label class="form-check-label" for="direct_procurement_override">{{ __('purchase_invoices.attributes.direct_procurement_override') }}</label></div></div>
+                            <div class="col-md-8"><label class="form-label" for="direct_procurement_reason">{{ __('purchase_invoices.attributes.direct_procurement_reason') }}</label><input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}"></div>
                         @endif
 
                         <div class="col-md-3">
