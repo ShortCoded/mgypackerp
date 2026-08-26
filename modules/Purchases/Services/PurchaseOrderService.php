@@ -283,7 +283,7 @@ class PurchaseOrderService
         return [
             'financialPeriod',
             'branch',
-            'branchStore',
+            'branchStore.branch',
             'supplier',
             'currency',
             'lines.product.unit',
@@ -327,7 +327,7 @@ class PurchaseOrderService
     {
         $supplier = $this->supplier($context['company_id'], $data['supplier_doc_num'] ?? null);
         $currency = $this->currency($context['company_id'], $data['currency_doc_num'] ?? null);
-        $branchStore = $this->branchStore($context['branch_id'], $data['branch_store_uuid'] ?? null);
+        $branchStore = $this->branchStore($context['company_id'], $data['branch_store_uuid'] ?? null);
 
         return [
             'company_id' => $context['company_id'],
@@ -508,12 +508,15 @@ class PurchaseOrderService
         return $currency;
     }
 
-    private function branchStore(int $branchId, ?string $uuid): BranchStore
+    private function branchStore(int $companyId, ?string $uuid): BranchStore
     {
         $store = BranchStore::query()
-            ->where('branch_id', $branchId)
             ->where('public_uuid', trim((string) $uuid))
             ->whereNull('deleted_at')
+            ->whereHas('branch', fn ($query) => $query
+                ->where('company_id', $companyId)
+                ->where('status', 'active')
+                ->whereNull('deleted_at'))
             ->first();
 
         if (! $store instanceof BranchStore) {

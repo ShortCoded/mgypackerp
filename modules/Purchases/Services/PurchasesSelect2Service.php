@@ -128,27 +128,36 @@ class PurchasesSelect2Service
     public function branchStores(Request $request): array
     {
         $context = $this->operatingContext->snapshot($request);
-        $branchId = $context['branch_id'];
+        $companyId = $context['company_id'];
 
-        if ($branchId === null) {
+        if ($companyId === null) {
             return $this->empty();
         }
 
         $query = BranchStore::query()
-            ->where('branch_id', (int) $branchId)
-            ->whereNull('deleted_at')
-            ->select(['public_uuid', 'name', 'position'])
-            ->orderBy('position')
-            ->orderBy('name');
+            ->join('branches', 'branches.id', '=', 'branch_stores.branch_id')
+            ->where('branches.company_id', (int) $companyId)
+            ->where('branches.status', 'active')
+            ->whereNull('branches.deleted_at')
+            ->whereNull('branch_stores.deleted_at')
+            ->select([
+                'branch_stores.public_uuid',
+                'branch_stores.name',
+                'branch_stores.position',
+                'branches.name as branch_name',
+            ])
+            ->orderBy('branches.name')
+            ->orderBy('branch_stores.position')
+            ->orderBy('branch_stores.name');
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
-            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['name']]);
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['branch_stores.name', 'branches.name']]);
         }
 
         return $this->select2->paginated($query, $request, fn (BranchStore $store): array => [
             'id' => (string) $store->public_uuid,
-            'text' => (string) $store->name,
+            'text' => trim(implode(' — ', array_filter([$store->name, $store->branch_name]))),
         ]);
     }
 

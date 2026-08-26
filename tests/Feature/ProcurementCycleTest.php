@@ -1500,6 +1500,146 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
     }
 });
 
+test('purchase order stores span active company branches while remaining company scoped', function (): void {
+    $fixture = procurementFixture();
+    $fixture['branch']->forceFill([
+        'name' => 'Administrative Headquarters',
+        'type' => Branch::TypeAdministrative,
+    ])->save();
+
+    $factoryBranch = Branch::query()->create([
+        'doc_number' => 9901,
+        'doc_num' => 'Branch-PO-09901',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Main Factory',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $factoryStore = BranchStore::query()->create([
+        'branch_id' => $factoryBranch->getKey(),
+        'name' => 'Raw Materials Warehouse',
+        'position' => 1,
+    ]);
+    $inactiveBranch = Branch::query()->create([
+        'doc_number' => 9902,
+        'doc_num' => 'Branch-PO-09902',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Inactive Branch',
+        'type' => Branch::TypeWarehouse,
+        'status' => 'inactive',
+    ]);
+    $inactiveStore = BranchStore::query()->create([
+        'branch_id' => $inactiveBranch->getKey(),
+        'name' => 'Inactive Warehouse',
+        'position' => 1,
+    ]);
+    $otherCompany = Company::query()->create([
+        'doc_number' => 9901,
+        'doc_num' => 'Company-PO-09901',
+        'name' => 'Other Purchase Company',
+        'status' => 'active',
+    ]);
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9903,
+        'doc_num' => 'Branch-PO-09903',
+        'company_id' => $otherCompany->getKey(),
+        'name' => 'Other Company Branch',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $otherStore = BranchStore::query()->create([
+        'branch_id' => $otherBranch->getKey(),
+        'name' => 'Other Company Warehouse',
+        'position' => 1,
+    ]);
+
+    $this->seed(PermissionSeeder::class);
+    $fixture['user']->givePermissionTo([
+        'purchase_orders.view',
+        'purchase_orders.create',
+        'purchase_orders.edit',
+        'purchases.prices.view',
+        'purchases.direct_procurement.override',
+    ]);
+    $this->actingAs($fixture['user']);
+
+    $storeResults = $this->getJson(route('admin.purchases.select2.branch-stores'))
+        ->assertOk()
+        ->json('results');
+
+    expect(collect($storeResults)->pluck('id')->all())
+        ->toContain($fixture['store']->public_uuid, $factoryStore->public_uuid)
+        ->not->toContain($inactiveStore->public_uuid, $otherStore->public_uuid)
+        ->and(collect($storeResults)->firstWhere('id', $factoryStore->public_uuid)['text'])
+        ->toBe('Raw Materials Warehouse — Main Factory');
+
+    $payload = [
+        'branch_store_uuid' => $factoryStore->public_uuid,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'document_date' => now()->toDateString(),
+        'exchange_rate' => '1',
+        'freight_amount' => '0',
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Administrative branch requires the factory warehouse.',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => '2',
+            'unit_price' => '10',
+            'discount_type' => 'fixed',
+            'discount_value' => '0',
+            'tax_rate' => '0',
+        ]],
+    ];
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $order = PurchaseOrder::query()->latest('id')->firstOrFail();
+
+    expect($order->branch_id)->toBe($fixture['branch']->getKey())
+        ->and($order->branch_store_id)->toBe($factoryStore->getKey())
+        ->and($order->status)->toBe(PurchaseOrder::StatusDraft);
+
+    $this->get(route('admin.purchases.purchase-orders.edit', $order->doc_num))
+        ->assertOk()
+        ->assertSee(__('purchase_orders.attributes.branch_store'))
+        ->assertSee('value="'.$factoryStore->public_uuid.'" selected', false)
+        ->assertSee('Raw Materials Warehouse — Main Factory');
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$payload,
+        'branch_store_uuid' => $inactiveStore->public_uuid,
+    ])->assertUnprocessable()->assertJsonValidationErrors(['branch_store_uuid']);
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$payload,
+        'branch_store_uuid' => $otherStore->public_uuid,
+    ])->assertUnprocessable()->assertJsonValidationErrors(['branch_store_uuid']);
+
+    expect(fn () => app(PurchaseOrderService::class)->create([
+        ...$payload,
+        'branch_store_uuid' => $otherStore->public_uuid,
+    ]))->toThrow(DomainException::class, __('purchase_orders.messages.store_unavailable'));
+
+    $factoryStore->delete();
+
+    $this->getJson(route('admin.purchases.select2.branch-stores'))
+        ->assertOk()
+        ->assertJsonMissing(['id' => $factoryStore->public_uuid]);
+
+    $this->get(route('admin.purchases.purchase-orders.edit', $order->doc_num))
+        ->assertOk()
+        ->assertSee('value="'.$factoryStore->public_uuid.'" selected', false)
+        ->assertSee('Raw Materials Warehouse — Main Factory');
+
+    $this->get(route('admin.purchases.purchase-orders.show', $order->doc_num))
+        ->assertOk()
+        ->assertSee('Raw Materials Warehouse — Main Factory');
+});
+
 test('procurement reports filter, print, and export without leaking confidential prices', function () {
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);

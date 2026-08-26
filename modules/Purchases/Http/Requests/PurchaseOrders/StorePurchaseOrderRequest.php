@@ -194,7 +194,7 @@ class StorePurchaseOrderRequest extends FormRequest
 
         $this->validateDateInsidePeriod($validator, $period);
         $this->validateExpectedDeliveryDate($validator);
-        $this->validateBranchStore($validator, $branch);
+        $this->validateBranchStore($validator, $companyId);
         $this->validateSupplier($validator, $companyId);
         $this->validateLines($validator, $companyId);
         $this->validateDirectProcurement($validator, $current);
@@ -226,7 +226,7 @@ class StorePurchaseOrderRequest extends FormRequest
         }
     }
 
-    private function validateBranchStore(Validator $validator, ?Branch $branch): void
+    private function validateBranchStore(Validator $validator, int $companyId): void
     {
         $uuid = trim((string) $this->input('branch_store_uuid'));
 
@@ -234,7 +234,16 @@ class StorePurchaseOrderRequest extends FormRequest
             return;
         }
 
-        if (! $branch instanceof Branch || ! BranchStore::query()->where('branch_id', $branch->getKey())->where('public_uuid', $uuid)->whereNull('deleted_at')->exists()) {
+        $storeExists = BranchStore::query()
+            ->where('public_uuid', $uuid)
+            ->whereNull('deleted_at')
+            ->whereHas('branch', fn ($query) => $query
+                ->where('company_id', $companyId)
+                ->where('status', 'active')
+                ->whereNull('deleted_at'))
+            ->exists();
+
+        if (! $storeExists) {
             $validator->errors()->add('branch_store_uuid', __('purchase_orders.messages.store_unavailable'));
         }
     }

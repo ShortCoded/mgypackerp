@@ -390,11 +390,23 @@ class PurchaseOrderController extends Controller
     {
         $store = $record?->branchStore;
 
-        if ($store instanceof BranchStore) {
-            return [
-                'id' => (string) $store->public_uuid,
-                'text' => (string) $store->name,
-            ];
+        if ($store instanceof BranchStore && $record instanceof PurchaseOrder) {
+            $branch = $store->branch;
+
+            if (! $branch || (int) $branch->company_id !== (int) $record->company_id) {
+                $branch = $store->branch()
+                    ->withTrashed()
+                    ->where('company_id', $record->company_id)
+                    ->first();
+            }
+
+            if (! $branch) {
+                return null;
+            }
+
+            $store->setRelation('branch', $branch);
+
+            return ['id' => (string) $store->public_uuid, 'text' => $this->storeLabel($store)];
         }
 
         $context = $this->operatingContext->snapshot(request());
@@ -405,6 +417,7 @@ class PurchaseOrderController extends Controller
         }
 
         $store = BranchStore::query()
+            ->with('branch:id,name')
             ->where('branch_id', $branchId)
             ->whereNull('deleted_at')
             ->orderBy('position')
@@ -412,8 +425,13 @@ class PurchaseOrderController extends Controller
             ->first();
 
         return $store instanceof BranchStore
-            ? ['id' => (string) $store->public_uuid, 'text' => (string) $store->name]
+            ? ['id' => (string) $store->public_uuid, 'text' => $this->storeLabel($store)]
             : null;
+    }
+
+    private function storeLabel(BranchStore $store): string
+    {
+        return trim(implode(' — ', array_filter([$store->name, $store->branch?->name])));
     }
 
     /**
