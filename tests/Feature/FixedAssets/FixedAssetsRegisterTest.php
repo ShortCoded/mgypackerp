@@ -5,12 +5,14 @@ use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
@@ -999,13 +1001,250 @@ test('Fixed Asset category quick-create and selector stay under the Fixed Assets
     expect(collect($selector->json('results'))->pluck('id')->all())->toContain($category->doc_num);
 });
 
-test('Fixed Asset categories exclude same-company groups outside the canonical root and install the baseline once', function (): void {
+test('Fixed Assets resolves its generic classification by stable code across modal selectors and account creation', function (): void {
+    $this->seed(DefaultOperatingContextSeeder::class);
+    $this->seed(AccountClassificationsSeeder::class);
+
+    $originalClassification = AccountClassification::query()
+        ->where('code', AccountClassification::FixedAssets)
+        ->firstOrFail();
+    $classificationId = (int) AccountClassification::query()->max('id') + 1000;
+
+    DB::table($originalClassification->getTable())
+        ->where($originalClassification->getKeyName(), $originalClassification->getKey())
+        ->update(['id' => $classificationId]);
+
+    $this->seed(DefaultChartOfAccountsSeeder::class);
+
+    DB::table($originalClassification->getTable())
+        ->where($originalClassification->getKeyName(), $classificationId)
+        ->update([
+            'name' => 'تسمية يجب تجاهلها',
+            'name_en' => 'Label That Must Be Ignored',
+        ]);
+
+    $this->seed(CurrencySeeder::class);
+
+    $company = Company::query()->where('status', 'active')->orderBy('id')->firstOrFail();
+    $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->orderBy('id')->firstOrFail();
+    $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->orderBy('id')->firstOrFail();
+    $currency = Currency::query()->where('company_id', $company->getKey())->where('status', 'active')->orderByDesc('is_main')->firstOrFail();
+    $context = compact('company', 'branch', 'period', 'currency');
+    $actor = fixedAssetsActor(['fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.view', 'accounts.create', 'accounts.view']);
+    $this->actingAs($actor);
+    fixedAssetsSelectContext($company, $branch, $period);
+
+    $this->get(route('admin.fixed-assets.assets.create'))
+        ->assertOk()
+        ->assertSee(route('admin.fixed-assets.assets.asset-categories.store'), false);
+
+    $categoryResponse = $this->postJson(route('admin.fixed-assets.assets.asset-categories.store'), [
+        'name' => 'Code-resolved category',
+    ])->assertOk()->assertJsonPath('success', true);
+    $category = Account::query()->where('doc_num', $categoryResponse->json('data.option.id'))->firstOrFail();
+
+    $selector = $this->getJson(route('admin.fixed-assets.select2.asset-categories', [
+        'q' => 'Code-resolved category',
+    ]))->assertOk();
+    $root = app(BusinessPartnerAccountService::class)->rootAccount(BusinessPartnerAccountService::FixedAsset);
+    $accountSelector = $this->getJson(route('admin.accounting.select2.accounts', [
+        'classification' => AccountClassification::FixedAssets,
+        'parent' => $root->doc_num,
+        'group' => true,
+        'q' => 'Code-resolved category',
+    ]))->assertOk();
+    $classificationSelector = $this->getJson(route('admin.accounting.select2.account-classifications', [
+        'q' => AccountClassification::FixedAssets,
+    ]))->assertOk();
+
+    $assetResponse = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
+        'asset_name' => 'Code-resolved asset',
+        'asset_group_account_doc_num' => $category->doc_num,
+    ]))->assertOk()->assertJsonPath('success', true);
+    $asset = FixedAsset::query()->where('doc_num', $assetResponse->json('data.doc_num'))->firstOrFail();
+    $linkedAccount = Account::query()->findOrFail($asset->account_id);
+
+    $this->putJson(route('admin.fixed-assets.assets.update', $asset->doc_num), fixedAssetsPayload($context, [
+        'asset_name' => 'Code-resolved asset updated',
+        'asset_group_account_doc_num' => $category->doc_num,
+    ]))->assertOk()->assertJsonPath('success', true);
+
+    expect($classificationId)->not->toBe((int) $originalClassification->getKey())
+        ->and(AccountClassification::query()->where('code', AccountClassification::FixedAssets)->count())->toBe(1)
+        ->and(AccountClassification::query()->count())->toBe(135)
+        ->and((int) $category->account_classification_id)->toBe($classificationId)
+        ->and((int) $linkedAccount->fresh()->account_classification_id)->toBe($classificationId)
+        ->and((int) $category->fresh()->account_classification_id)->toBe($classificationId)
+        ->and(collect($selector->json('results'))->pluck('id')->all())->toContain($category->doc_num)
+        ->and(collect($accountSelector->json('results'))->pluck('id')->all())->toContain($category->doc_num)
+        ->and(collect($classificationSelector->json('results'))->pluck('id')->all())->toContain(AccountClassification::FixedAssets);
+});
+
+test('Fixed Asset category creation never inserts a replacement classification when the canonical code is unavailable', function (): void {
     $context = fixedAssetsContext();
-    $actor = fixedAssetsActor(['fixed_assets.create', 'fixed_assets.view', 'fixed_assets.accounting.configure']);
+    $actor = fixedAssetsActor(['fixed_assets.create', 'accounts.create']);
+    $this->actingAs($actor);
+    fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
+
+    $classification = AccountClassification::query()
+        ->where('code', AccountClassification::FixedAssets)
+        ->firstOrFail();
+    $classificationId = (int) $classification->getKey();
+    $accountCount = Account::withTrashed()->count();
+    $classification->delete();
+
+    $this->postJson(route('admin.fixed-assets.assets.asset-categories.store'), [
+        'name' => 'Must not be created',
+    ])->assertUnprocessable();
+
+    expect(AccountClassification::withTrashed()->where('code', AccountClassification::FixedAssets)->count())->toBe(1)
+        ->and((int) AccountClassification::withTrashed()->where('code', AccountClassification::FixedAssets)->value('id'))->toBe($classificationId)
+        ->and(AccountClassification::query()->where('code', AccountClassification::FixedAssets)->exists())->toBeFalse()
+        ->and(Account::withTrashed()->count())->toBe($accountCount);
+});
+
+test('Fixed Asset category allocation skips company-wide active and historical account code collisions', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create', 'accounts.create']);
+    $this->actingAs($actor);
+    fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
+
+    $root = app(BusinessPartnerAccountService::class)->rootAccount(BusinessPartnerAccountService::FixedAsset);
+    $prefix = (string) $root->account_code;
+    $nextSiblingSuffix = Account::query()
+        ->withTrashed()
+        ->where('company_id', $context['company']->getKey())
+        ->where('parent_id', $root->getKey())
+        ->pluck('account_code')
+        ->map(function (string $accountCode) use ($prefix): ?int {
+            $suffix = substr($accountCode, strlen($prefix));
+
+            return $suffix !== '' && ctype_digit($suffix) ? (int) $suffix : null;
+        })
+        ->filter(fn (?int $suffix): bool => $suffix !== null)
+        ->max() + 1;
+    $activeCollisionCode = $prefix.$nextSiblingSuffix;
+    $historicalCollisionCode = $prefix.($nextSiblingSuffix + 1);
+    $outsideParent = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->whereNull('parent_id')
+        ->whereKeyNot($root->getKey())
+        ->firstOrFail();
+    $accountValues = [
+        'company_id' => $context['company']->getKey(),
+        'parent_id' => $outsideParent->getKey(),
+        'level' => (int) $outsideParent->level + 1,
+        'account_classification_id' => $root->account_classification_id,
+        'account_type' => $root->account_type,
+        'statement_type' => $root->statement_type,
+        'normal_balance' => $root->normal_balance,
+        'is_group' => true,
+        'is_postable' => false,
+        'status' => 'active',
+    ];
+
+    Account::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $context['company']->getKey()),
+        ...$accountValues,
+        'account_code' => $activeCollisionCode,
+        'name' => 'Active company-wide collision',
+    ]);
+    $historicalCollision = Account::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $context['company']->getKey()),
+        ...$accountValues,
+        'account_code' => $historicalCollisionCode,
+        'name' => 'Historical company-wide collision',
+    ]);
+    $historicalCollision->delete();
+
+    $response = $this->postJson(route('admin.fixed-assets.assets.asset-categories.store'), [
+        'name' => 'Collision-safe category',
+    ]);
+
+    $response->assertOk()->assertJsonPath('success', true);
+
+    $category = Account::query()->where('doc_num', $response->json('data.option.id'))->firstOrFail();
+
+    expect($category->account_code)
+        ->toBe($prefix.($nextSiblingSuffix + 2))
+        ->not->toBe($activeCollisionCode, $historicalCollisionCode)
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->where('account_code', $category->account_code)->count())
+        ->toBe(1);
+});
+
+test('Fixed Asset category duplicate name returns a localized field error without a partial account', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create', 'accounts.create']);
+    $this->actingAs($actor);
+    fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
+
+    $url = route('admin.fixed-assets.assets.asset-categories.store');
+    $this->postJson($url, ['name' => 'Duplicate category'])->assertOk();
+    $root = app(BusinessPartnerAccountService::class)->rootAccount(BusinessPartnerAccountService::FixedAsset);
+    $countBefore = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('parent_id', $root->getKey())
+        ->count();
+
+    $response = $this->withSession(['locale' => 'en'])->postJson($url, ['name' => 'Duplicate category']);
+
+    $response
+        ->assertStatus(422)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonPath('errors.name.0', 'This name already exists.');
+
+    expect(Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('parent_id', $root->getKey())
+        ->count())->toBe($countBefore);
+});
+
+test('Fixed Asset creation rolls back its linked account when master creation fails', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create']);
+    $this->actingAs($actor);
+    fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
+
+    $payload = fixedAssetsPayload($context, ['asset_name' => 'Atomic rollback asset']);
+    $accountCountBefore = Account::withTrashed()
+        ->where('company_id', $context['company']->getKey())
+        ->count();
+    $eventName = 'eloquent.creating: '.FixedAsset::class;
+
+    Event::listen($eventName, function (): never {
+        throw new RuntimeException('simulated master failure after linked account allocation');
+    });
+
+    try {
+        $response = $this->postJson(
+            route('admin.fixed-assets.assets.store'),
+            $payload,
+        );
+    } finally {
+        Event::forget($eventName);
+    }
+
+    $response
+        ->assertStatus(500)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('error_code', 'internal_error')
+        ->assertJsonStructure(['correlation_id']);
+
+    expect(FixedAsset::query()->where('asset_name', 'Atomic rollback asset')->exists())->toBeFalse()
+        ->and(Account::withTrashed()->where('company_id', $context['company']->getKey())->count())->toBe($accountCountBefore);
+});
+
+test('Fixed Asset categories exclude same-company groups outside the canonical root and foundation checks are write free', function (): void {
+    $context = fixedAssetsContext();
+    $actor = fixedAssetsActor(['fixed_assets.create', 'fixed_assets.view', 'fixed_assets.accounting.configure', 'accounts.create']);
     $this->actingAs($actor);
     $accounts = app(BusinessPartnerAccountService::class);
     $accounts->ensureFixedAssetBaselineForCompany((int) $context['company']->getKey());
-    $category = Account::query()->whereIn('id', $accounts->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))->orderBy('account_code')->firstOrFail();
+    $categoryResponse = $this->postJson(route('admin.fixed-assets.assets.asset-categories.store'), [
+        'name' => 'Explicit mapped category',
+    ])->assertOk();
+    $category = Account::query()->where('doc_num', $categoryResponse->json('data.option.id'))->firstOrFail();
     $postingAccounts = Account::query()
         ->where('company_id', $context['company']->getKey())
         ->where('status', 'active')
@@ -1070,8 +1309,7 @@ test('Fixed Asset categories exclude same-company groups outside the canonical r
 
     $selector = $this->getJson(route('admin.fixed-assets.select2.asset-categories', ['q' => 'Rogue']))->assertOk();
 
-    expect($baselineCount)->toBeGreaterThanOrEqual(6)
-        ->and(Account::query()->where('company_id', $context['company']->getKey())->where('parent_id', $root->getKey())->where('is_group', true)->where('is_postable', false)->count())->toBe($baselineCount)
+    expect(Account::query()->where('company_id', $context['company']->getKey())->where('parent_id', $root->getKey())->where('is_group', true)->where('is_postable', false)->count())->toBe($baselineCount)
         ->and(collect($selector->json('results'))->pluck('id'))->not->toContain($rogue->doc_num);
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
@@ -1252,7 +1490,8 @@ test('Fixed Asset delete and restore synchronize the internal linked account and
     ]);
 
     $this->deleteJson(route('admin.fixed-assets.assets.destroy', $asset->doc_num))
-        ->assertStatus(422)
+        ->assertStatus(409)
+        ->assertJsonPath('error_code', 'record_in_use')
         ->assertJsonPath('message', __('fixed_assets.messages.delete_blocked_transactions'));
 });
 

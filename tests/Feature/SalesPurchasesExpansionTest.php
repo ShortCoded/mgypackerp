@@ -3,6 +3,7 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Database\Seeders\EmergencyRecoverySeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
@@ -82,6 +83,15 @@ function salesPurchasesSelectContext(Company $company, Branch $branch, Financial
 
     session($context);
     test()->withSession($context);
+}
+
+function salesPurchasesAccountCodeCollision(): QueryException
+{
+    $message = 'database constraint "accounts_company_account_code_unique_active"';
+    $previous = new PDOException($message);
+    $previous->errorInfo = ['23505', 0, $message];
+
+    return new QueryException('pgsql', 'insert into accounts values (?)', ['safe'], $previous);
 }
 
 /**
@@ -378,6 +388,43 @@ test('Customer can be created with nullable optional fields and a postable accou
         ->and($account->is_postable)->toBeTrue();
 });
 
+test('customer and supplier linked-account collisions retry the complete master transaction', function (
+    string $modelClass,
+    string $routeName,
+    string $permission,
+    string $recordName,
+): void {
+    $context = salesPurchasesContext();
+    $actor = salesPurchasesActor([$permission]);
+    $attempts = 0;
+
+    $modelClass::creating(function () use (&$attempts): void {
+        $attempts++;
+
+        if ($attempts === 1) {
+            throw salesPurchasesAccountCodeCollision();
+        }
+    });
+
+    $this->actingAs($actor)
+        ->postJson(route($routeName), [
+            'name' => $recordName,
+            'status' => 'active',
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $record = $modelClass::query()->where('name', $recordName)->firstOrFail();
+
+    expect($attempts)->toBe(2)
+        ->and($record->company_id)->toBe($context['company']->getKey())
+        ->and(Account::query()->whereKey($record->account_id)->count())->toBe(1)
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->where('name', $recordName)->count())->toBe(1);
+})->with([
+    'customer' => [Customer::class, 'admin.sales.customers.store', 'customers.create', 'Concurrent Customer'],
+    'supplier' => [Supplier::class, 'admin.purchases.suppliers.store', 'suppliers.create', 'Concurrent Supplier'],
+]);
+
 test('Customer saves nullable locations and multi-currency credit limits transactionally', function (): void {
     $context = salesPurchasesContext();
     $actor = salesPurchasesActor(['customers.create', 'customers.edit', 'customers.view']);
@@ -466,6 +513,18 @@ test('Customer accepts independent locations and exposes location quick create',
         'name' => 'Inline Customer City',
     ])->assertOk()
         ->assertJsonPath('data.option.text', 'Inline Customer City');
+
+    $cityCount = HrCity::query()->count();
+
+    $this->postJson(route('admin.select2.inline.locations.store', 'cities'), [
+        'name' => 'Inline Customer City',
+    ])->assertUnprocessable()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonPath('message', __('erp_errors.validation_failed'))
+        ->assertJsonPath('errors.name.0', __('hr.validation.name_unique'));
+
+    expect(HrCity::query()->count())->toBe($cityCount);
 });
 
 test('Customer group selector quick create and selected group account linking are scoped', function (): void {
@@ -489,6 +548,18 @@ test('Customer group selector quick create and selected group account linking ar
         ->assertOk()
         ->assertJsonFragment(['id' => $group->doc_num])
         ->assertJsonMissing(['id' => $inactiveGroup->doc_num]);
+
+    $customerCount = Customer::query()->count();
+
+    $this->postJson(route('admin.sales.customers.store'), [
+        'name' => 'Inactive Group Customer',
+        'status' => 'active',
+        'account_group_doc_num' => $inactiveGroup->doc_num,
+    ])->assertUnprocessable()
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonPath('errors.account_group_doc_num.0', __('customers.messages.customer_group_unavailable'));
+
+    expect(Customer::query()->count())->toBe($customerCount);
 
     $this->postJson(route('admin.sales.customers.account-groups.store'), ['name' => 'Wholesale Customers'])
         ->assertOk()
@@ -631,7 +702,8 @@ test('Customer delete blocks financial movements and restore brings linked accou
     ]);
 
     $this->deleteJson(route('admin.sales.customers.destroy', $customer->doc_num))
-        ->assertStatus(422)
+        ->assertStatus(409)
+        ->assertJsonPath('error_code', 'record_in_use')
         ->assertJsonPath('message', __('customers.messages.delete_blocked_transactions'));
 });
 

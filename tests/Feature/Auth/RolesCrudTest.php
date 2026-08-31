@@ -625,13 +625,13 @@ test('first protected role cannot be cloned deleted or bulk deleted by id rule',
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.destroy', $protected->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', __('auth.roles.messages.cannot_delete_admin'));
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.bulk-delete'), ['doc_nums' => [$protected->doc_num, $other->doc_num]])
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false)
         ->assertJsonPath('data.blocked_records.0.doc_num', 'Role-00000')
         ->assertJsonPath('data.blocked_records.0.reason', 'admin_role');
@@ -1089,7 +1089,7 @@ test('trashed role restore is blocked when an active role reuses its name and gu
 
     $this->actingAs($restorer)
         ->patchJson(route('admin.roles.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('roles.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('roles.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', 'role_name_conflict')
@@ -1127,7 +1127,7 @@ test('trashed role restore is blocked when an active role reuses its document nu
 
     $this->actingAs($restorer)
         ->patchJson(route('admin.roles.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('roles.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('roles.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', 'document_number_conflict')
@@ -1156,7 +1156,7 @@ test('trashed role restore is blocked when an active role reuses its document co
 
     $this->actingAs($restorer)
         ->patchJson(route('admin.roles.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('roles.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('roles.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', 'document_code_conflict')
@@ -2057,12 +2057,12 @@ test('admin role cannot be deleted directly or in bulk', function () {
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.destroy', $admin->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.bulk-delete'), ['doc_nums' => [$admin->doc_num, $other->doc_num]])
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     expect(Role::query()->whereKey($admin->id)->exists())->toBeTrue();
@@ -2079,7 +2079,8 @@ test('role assigned to users cannot be deleted', function () {
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.destroy', $role->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('error_code', 'record_in_use')
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', __('auth.roles.messages.related_data_exists'))
         ->assertJsonPath('data.blocked_records.0.doc_num', 'Role-00001')
@@ -2109,7 +2110,7 @@ test('role assigned to soft deleted users still cannot be deleted', function () 
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.destroy', $role->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('auth.roles.messages.related_data_exists'));
 
     expect(Role::query()->whereKey($role->id)->exists())->toBeTrue();
@@ -2126,7 +2127,7 @@ test('bulk role delete is all or nothing when selected roles have dependencies',
 
     $this->actingAs($user)
         ->deleteJson(route('admin.roles.bulk-delete'), ['doc_nums' => [$blocked->doc_num, $free->doc_num]])
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false)
         ->assertJsonPath('data.blocked_records.0.doc_num', 'Role-00001')
         ->assertJsonPath('data.blocked_records.0.reason', 'users')

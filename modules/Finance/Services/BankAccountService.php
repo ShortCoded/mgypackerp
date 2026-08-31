@@ -5,6 +5,7 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Services\AccountCodeAllocator;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -19,11 +20,12 @@ class BankAccountService
         private readonly BankAccountChartAccountService $chartAccounts,
         private readonly BankAccountAccountingSyncService $accountingSync,
         private readonly OperatingCompanyContextService $companies,
+        private readonly AccountCodeAllocator $accountCodes,
     ) {}
 
     public function create(array $data): array
     {
-        return DB::transaction(function () use ($data): array {
+        return $this->accountCodes->transaction(function () use ($data): array {
             $companyId = $this->companies->requireCompanyId();
             $bankGroup = $this->bankGroup($data);
             $currency = $this->currency($data);
@@ -38,7 +40,7 @@ class BankAccountService
 
     public function update(BankAccount $record, array $data): array
     {
-        return DB::transaction(function () use ($record, $data): array {
+        return $this->accountCodes->transaction(function () use ($record, $data): array {
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
             $bankGroup = $this->bankGroup($data);

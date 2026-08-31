@@ -161,6 +161,22 @@
             'locked' => __('auth.lock_screen.locked'),
             'close' => __('auth.alerts.close'),
         ];
+        $appAjaxErrors = [
+            'loginUrl' => route('login', [], false),
+            'loginLabel' => __('auth.buttons.login'),
+            'refreshLabel' => __('auth_sessions.actions.refresh'),
+            'messages' => [
+                'authenticationRequired' => __('erp_errors.authentication_required'),
+                'permissionDenied' => __('erp_errors.permission_denied'),
+                'notFound' => __('erp_errors.not_found'),
+                'conflict' => __('erp_errors.concurrent_update'),
+                'sessionExpired' => __('erp_errors.session_expired'),
+                'validationFailed' => __('erp_errors.validation_failed'),
+                'rateLimited' => __('erp_errors.rate_limited'),
+                'networkError' => __('common.messages.unexpected_error'),
+                'unexpected' => __('common.messages.unexpected_error'),
+            ],
+        ];
     @endphp
     <script>
         window.AppSession = @json($appSession);
@@ -178,7 +194,9 @@
         window.authCsrf = Object.assign({}, window.authCsrf || {}, {
             refreshUrl: @json(route('auth.csrf-token', [], false))
         });
+        window.AppAjaxErrorsConfig = @json($appAjaxErrors);
     </script>
+    <script src="{{ $erpAsset->url('assets/js/modules/Core/ajax-errors.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Auth/helpers.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/session-timeout.js') }}"></script>
     @production

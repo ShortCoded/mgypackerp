@@ -48,6 +48,14 @@ class AccountClassificationRegistry
         return null;
     }
 
+    public function activeRecord(string $code): ?AccountClassification
+    {
+        return AccountClassification::query()
+            ->where('code', $code)
+            ->where('status', 'active')
+            ->first();
+    }
+
     /** @return list<string> */
     public function originalCodes(): array
     {
@@ -105,7 +113,10 @@ class AccountClassificationRegistry
                     continue;
                 }
 
-                $previousLabels = $this->previousSystemLabels($definition['code']);
+                $previousLabels = [
+                    'name' => $classification->getRawOriginal('name'),
+                    'name_en' => $classification->getRawOriginal('name_en'),
+                ];
                 $updated = DB::table($classification->getTable())
                     ->where($classification->getKeyName(), $classification->getKey())
                     ->where('name', $previousLabels['name'])
@@ -226,7 +237,7 @@ class AccountClassificationRegistry
             return 'unchanged';
         }
 
-        if ($currentLabels === $this->previousSystemLabels($definition['code'])) {
+        if (in_array($currentLabels, $this->previousSystemLabelPairs($definition['code']), true)) {
             return 'update';
         }
 
@@ -252,13 +263,30 @@ class AccountClassificationRegistry
      */
     public function previousSystemLabels(string $code): array
     {
+        return $this->previousSystemLabelPairs($code)[0];
+    }
+
+    /**
+     * @return list<array{name: string, name_en: string}>
+     */
+    private function previousSystemLabelPairs(string $code): array
+    {
         $definition = collect($this->previousDefinitions())->firstWhere('code', $code)
             ?? throw new DomainException("Previous system labels are missing for [{$code}].");
 
-        return [
+        $labels = [[
             'name' => $definition['name'],
             'name_en' => $definition['name_en'],
-        ];
+        ]];
+
+        if ($code === AccountClassification::FixedAssets) {
+            array_unshift($labels, [
+                'name' => 'الممتلكات والآلات والمعدات – تصنيف عام',
+                'name_en' => 'Property, Plant and Equipment – General',
+            ]);
+        }
+
+        return $labels;
     }
 
     /** @return Collection<int, AccountClassification> */
@@ -316,7 +344,7 @@ class AccountClassificationRegistry
             'bank' => ['النقدية لدى البنوك', 'Cash at Banks'],
             'accounts_receivable' => ['الذمم التجارية المدينة', 'Trade Receivables'],
             'inventory' => ['المخزون – تصنيف عام', 'Inventories – General'],
-            'fixed_assets' => ['الممتلكات والآلات والمعدات – تصنيف عام', 'Property, Plant and Equipment – General'],
+            AccountClassification::FixedAssets => ['الأصول الثابتة', 'Fixed Assets'],
             'accumulated_depreciation' => ['مجمع إهلاك الممتلكات والآلات والمعدات', 'Accumulated Depreciation – Property, Plant and Equipment'],
             'prepaid_expenses' => ['المصروفات المدفوعة مقدمًا', 'Prepaid Expenses'],
             'accounts_payable' => ['الذمم التجارية الدائنة', 'Trade Payables'],
@@ -459,7 +487,7 @@ class AccountClassificationRegistry
                 ['bank', 'بنك', 'Bank'],
                 ['accounts_receivable', 'عملاء / ذمم مدينة', 'Accounts Receivable'],
                 ['inventory', 'مخزون', 'Inventory'],
-                ['fixed_assets', 'أصول ثابتة', 'Fixed Assets'],
+                [AccountClassification::FixedAssets, 'أصول ثابتة', 'Fixed Assets'],
                 ['accumulated_depreciation', 'مجمع الإهلاك', 'Accumulated Depreciation', Account::BalanceCredit],
                 ['prepaid_expenses', 'مصروفات مدفوعة مقدمًا', 'Prepaid Expenses'],
             ], Account::TypeAsset, Account::StatementFinancialPosition, Account::BalanceDebit),

@@ -19,10 +19,19 @@
     }
 
     function responseMessage(xhr) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.message === 'function') {
+            return window.AppAjaxErrors.message(xhr);
+        }
+
         return xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : message('unexpectedError');
     }
 
     function showToast(icon, title) {
+        if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
+            window.AppAlerts.toast(icon, title);
+            return;
+        }
+
         if (!window.Swal || !title) {
             return;
         }
@@ -181,6 +190,11 @@
 
             var $form = $(this);
             var targetSelector = String($form.find('[name="target_select"]').val() || '');
+            var $button = $form.find('[type="submit"]');
+
+            if (window.AppAjaxErrors && !window.AppAjaxErrors.beginSubmission($form, $button)) {
+                return;
+            }
 
             clearValidation($form);
 
@@ -213,6 +227,11 @@
                     $modal.modal('hide');
                 }
             }).fail(function (xhr) {
+                if (window.AppAjaxErrors && typeof window.AppAjaxErrors.render === 'function') {
+                    window.AppAjaxErrors.render($form, xhr);
+                    return;
+                }
+
                 if (xhr.status === 422 && xhr.responseJSON && xhr.responseJSON.errors) {
                     renderValidation($form, xhr.responseJSON.errors);
                     var summaryTitle = message('validationSummaryTitle') || message('validationFailed');
@@ -221,6 +240,10 @@
                 }
 
                 showAlert($form.find('[data-form-alert]'), responseMessage(xhr), 'danger');
+            }).always(function () {
+                if (window.AppAjaxErrors) {
+                    window.AppAjaxErrors.endSubmission($form, $button);
+                }
             });
         })
         .off('input.hrInlineSelect2Validation change.hrInlineSelect2Validation', '#hr-inline-lookup-form input, #hr-inline-lookup-form textarea')

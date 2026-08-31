@@ -9,6 +9,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Services\AccountCodeAllocator;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
@@ -36,11 +37,12 @@ class FixedAssetService
         private readonly FilePickerService $filePicker,
         private readonly ArchiveFileUsageService $fileUsages,
         private readonly NumericFormatService $numbers,
+        private readonly AccountCodeAllocator $accountCodes,
     ) {}
 
     public function create(array $data): array
     {
-        return DB::transaction(function () use ($data): array {
+        return $this->accountCodes->transaction(function () use ($data): array {
             $companyId = $this->companies->requireCompanyId();
             $parentAccount = $this->parentAccount($data);
             $linkedAccount = $this->accounts->createOrUpdateLinkedAccount(BusinessPartnerAccountService::FixedAsset, null, $parentAccount, $this->linkedAccountData($data))['account'];
@@ -69,7 +71,7 @@ class FixedAssetService
 
     public function update(FixedAsset $record, array $data): array
     {
-        return DB::transaction(function () use ($record, $data): array {
+        return $this->accountCodes->transaction(function () use ($record, $data): array {
             $record = FixedAsset::query()
                 ->forCompany($this->companies->requireCompanyId())
                 ->whereKey($record->getKey())

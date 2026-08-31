@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
@@ -129,7 +130,8 @@ class FixedAssetLifecycleController extends Controller
             ->where('accounts.is_group', true)
             ->where('accounts.is_postable', false)
             ->where('accounts.status', 'active')
-            ->where('account_classifications.code', 'fixed_assets')
+            ->where('account_classifications.code', AccountClassification::FixedAssets)
+            ->where('account_classifications.status', 'active')
             ->whereIn('accounts.id', app(BusinessPartnerAccountService::class)->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))
             ->whereNull('accounts.deleted_at')
             ->select('accounts.*')

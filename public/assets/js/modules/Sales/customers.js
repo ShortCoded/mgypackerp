@@ -22,6 +22,38 @@
         }
     }
 
+    function responseMessage(response) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.message === 'function') {
+            return window.AppAjaxErrors.message(response);
+        }
+
+        return response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError');
+    }
+
+    function renderAjaxError($form, response) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.render === 'function') {
+            window.AppAjaxErrors.render($form, response);
+            return;
+        }
+
+        if (response.status === 422 && response.responseJSON && response.responseJSON.errors) {
+            showValidationErrors($form, response.responseJSON.errors);
+            return;
+        }
+
+        showFormNotice($form, responseMessage(response), 'danger');
+    }
+
+    function beginSubmission($form, $button) {
+        return !window.AppAjaxErrors || window.AppAjaxErrors.beginSubmission($form, $button);
+    }
+
+    function endSubmission($form, $button) {
+        if (window.AppAjaxErrors) {
+            window.AppAjaxErrors.endSubmission($form, $button);
+        }
+    }
+
     function confirmDialog(options) {
         if (!window.Swal) {
             return $.Deferred().resolve({ isConfirmed: false }).promise();
@@ -662,7 +694,7 @@
                     reloadTable();
                     showToast('success', response.message);
                 }).fail(function (response) {
-                    showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                    showToast('error', responseMessage(response));
                 });
             });
         });
@@ -686,6 +718,11 @@
             const method = $form.find('input[name="_method"]').val() || $form.attr('method') || 'POST';
 
             clearFormErrors($form);
+
+            if (!beginSubmission($form, $button)) {
+                return;
+            }
+
             setLoading($button, true);
 
             $.ajax({
@@ -711,14 +748,10 @@
                     window.location.href = response.redirect;
                 }
             }).fail(function (response) {
-                if (response.status === 422 && response.responseJSON && response.responseJSON.errors) {
-                    showValidationErrors($form, response.responseJSON.errors);
-                    return;
-                }
-
-                showFormNotice($form, response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'), 'danger');
+                renderAjaxError($form, response);
             }).always(function () {
                 setLoading($button, false);
+                endSubmission($form, $button);
             });
         });
 
@@ -746,6 +779,11 @@
                 const $button = $form.find('[type="submit"]');
 
                 clearFormErrors($form);
+
+                if (!beginSubmission($form, $button)) {
+                    return;
+                }
+
                 setLoading($button, true);
 
                 $.ajax({
@@ -766,14 +804,10 @@
 
                     showToast('success', response.message || msg('saved'));
                 }).fail(function (response) {
-                    if (response.status === 422 && response.responseJSON && response.responseJSON.errors) {
-                        showValidationErrors($form, response.responseJSON.errors);
-                        return;
-                    }
-
-                    showFormNotice($form, response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'), 'danger');
+                    renderAjaxError($form, response);
                 }).always(function () {
                     setLoading($button, false);
+                    endSubmission($form, $button);
                 });
             });
     }
@@ -808,6 +842,11 @@
                 const $button = $form.find('[type="submit"]').first();
 
                 clearFormErrors($form);
+
+                if (!beginSubmission($form, $button)) {
+                    return;
+                }
+
                 setLoading($button, true);
 
                 $.ajax({
@@ -822,14 +861,10 @@
                     showToast('success', response.message || msg('saved'));
                     hideModal($form.closest('.modal'));
                 }).fail(function (response) {
-                    if (response.status === 422 && response.responseJSON && response.responseJSON.errors) {
-                        showValidationErrors($form, response.responseJSON.errors);
-                        return;
-                    }
-
-                    showFormNotice($form, response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'), 'danger');
+                    renderAjaxError($form, response);
                 }).always(function () {
                     setLoading($button, false);
+                    endSubmission($form, $button);
                 });
             });
     }
@@ -1054,6 +1089,11 @@
                 }
 
                 clearFormErrors($form);
+
+                if (!beginSubmission($form, $button)) {
+                    return;
+                }
+
                 setLoading($button, true);
 
                 $.ajax({
@@ -1068,14 +1108,10 @@
                     showToast('success', response.message || msg('saved'));
                     hideModal($form.closest('.modal'));
                 }).fail(function (response) {
-                    if (response.status === 422 && response.responseJSON && response.responseJSON.errors) {
-                        showValidationErrors($form, response.responseJSON.errors);
-                        return;
-                    }
-
-                    showFormNotice($form, response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'), 'danger');
+                    renderAjaxError($form, response);
                 }).always(function () {
                     setLoading($button, false);
+                    endSubmission($form, $button);
                 });
             });
     }
@@ -1116,7 +1152,7 @@
                         window.location.href = $button.data('redirect-url');
                     }
                 }).fail(function (response) {
-                    showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                    showToast('error', responseMessage(response));
                 });
             });
         });
@@ -1159,7 +1195,7 @@
 
                     window.location.reload();
                 }).fail(function (response) {
-                    showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                    showToast('error', responseMessage(response));
                 }).always(function () {
                     setLoading($button, false);
                 });

@@ -736,7 +736,7 @@ test('users delete blocks current user and last admin user', function () {
 
     $this->actingAs($admin)
         ->deleteJson(route('admin.users.destroy', $admin->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('users.messages.cannot_delete_self'));
 
     $actor = userCrudActor(['users.delete']);
@@ -745,7 +745,7 @@ test('users delete blocks current user and last admin user', function () {
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.users.destroy', $admin->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('users.messages.cannot_delete_last_admin'));
 
     expect(Activity::query()->where('action', 'users.delete_blocked')->where('status', 'blocked')->exists())->toBeTrue();
@@ -879,7 +879,7 @@ test('trashed user restore is blocked when an active user reuses protected data'
 
     $response = $this->actingAs($restorer)
         ->patchJson(route('admin.users.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('users.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('users.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', $expectedType)

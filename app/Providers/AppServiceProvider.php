@@ -6,6 +6,7 @@ use App\View\Composers\AppLayoutComposer;
 use App\View\Composers\AuthLayoutComposer;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Modules\Accounting\Services\AccountCodeAllocator;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\ScreenDataVisibilityScopeRegistrar;
 
@@ -17,6 +18,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(ErpUiScreenRegistry::class);
+        $this->app->scoped(AccountCodeAllocator::class);
 
         if ($this->app->environment('local') && class_exists(\Laravel\Telescope\TelescopeServiceProvider::class)) {
             $this->app->register(\Laravel\Telescope\TelescopeServiceProvider::class);

@@ -2,7 +2,6 @@
 
 namespace Modules\Sales\Services;
 
-use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Modules\Accounting\Models\Account;
@@ -32,11 +31,7 @@ class SalesSelect2Service
             return $this->empty();
         }
 
-        try {
-            $root = $this->accounts->rootAccount(BusinessPartnerAccountService::Customer);
-        } catch (DomainException) {
-            return $this->empty();
-        }
+        $root = $this->accounts->rootAccount(BusinessPartnerAccountService::Customer);
 
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')

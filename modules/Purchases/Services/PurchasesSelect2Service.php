@@ -3,7 +3,6 @@
 namespace Modules\Purchases\Services;
 
 use App\Models\User;
-use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Modules\Accounting\Models\Account;
@@ -253,11 +252,7 @@ class PurchasesSelect2Service
             return $this->empty();
         }
 
-        try {
-            $root = $this->accounts->rootAccount(BusinessPartnerAccountService::Supplier);
-        } catch (DomainException) {
-            return $this->empty();
-        }
+        $root = $this->accounts->rootAccount(BusinessPartnerAccountService::Supplier);
 
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')

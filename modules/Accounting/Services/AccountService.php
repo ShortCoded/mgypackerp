@@ -21,11 +21,12 @@ class AccountService
         private readonly DocumentNumberService $documentNumbers,
         private readonly CrudAuditService $audit,
         private readonly OperatingCompanyContextService $companies,
+        private readonly AccountCodeAllocator $accountCodes,
     ) {}
 
     public function create(array $data): Account
     {
-        return DB::transaction(function () use ($data): Account {
+        return $this->accountCodes->transaction(function () use ($data): Account {
             $companyId = $this->companyIdForOperation();
             $document = array_key_exists('doc_number', $data) && $data['doc_number']
                 ? ['doc_number' => (int) $data['doc_number'], 'doc_num' => $this->documentNumbers->format('accounts', (int) $data['doc_number'])]
@@ -44,7 +45,7 @@ class AccountService
 
     public function createChildFromParent(Account $parent, array $data): Account
     {
-        return DB::transaction(function () use ($parent, $data): Account {
+        return $this->accountCodes->transaction(function () use ($parent, $data): Account {
             $companyId = $this->companyIdForOperation($parent);
             $parent = Account::query()
                 ->with('classification')
@@ -77,7 +78,7 @@ class AccountService
 
     public function update(Account $account, array $data): array
     {
-        return DB::transaction(function () use ($account, $data): array {
+        return $this->accountCodes->transaction(function () use ($account, $data): array {
             $companyId = $this->companyIdForOperation($account);
             $this->assertBelongsToCompany($account, $companyId);
 
@@ -208,21 +209,7 @@ class AccountService
 
     public function nextChildAccountCode(Account $parent): string
     {
-        $prefix = (string) $parent->account_code;
-        $suffixes = Account::query()
-            ->withTrashed()
-            ->where('company_id', $parent->company_id)
-            ->where('parent_id', $parent->getKey())
-            ->pluck('account_code')
-            ->map(function (string $accountCode) use ($prefix): ?int {
-                $suffix = substr($accountCode, strlen($prefix));
-
-                return $suffix !== '' && ctype_digit($suffix) ? (int) $suffix : null;
-            })
-            ->filter(fn (?int $suffix): bool => $suffix !== null)
-            ->values();
-
-        return $prefix.(string) (($suffixes->max() ?? 0) + 1);
+        return $this->accountCodes->nextChildCode($parent);
     }
 
     public function assertVisible(Account $account): void

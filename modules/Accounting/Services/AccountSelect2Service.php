@@ -42,7 +42,9 @@ class AccountSelect2Service
         }
 
         if ($request->filled('classification')) {
-            $query->where('account_classifications.code', $request->string('classification')->toString());
+            $query
+                ->where('account_classifications.code', $request->string('classification')->toString())
+                ->where('account_classifications.status', 'active');
         }
 
         if ($request->filled('parent')) {

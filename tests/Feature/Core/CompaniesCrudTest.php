@@ -236,19 +236,8 @@ test('company creation is allowed while configured company limit has room', func
         ->and(Company::query()->where('name', 'Second Allowed Company')->exists())->toBeTrue();
 
     $createdCompany = Company::query()->where('name', 'Second Allowed Company')->firstOrFail();
-    $fixedAssetsRoot = Account::query()
-        ->where('company_id', $createdCompany->getKey())
-        ->where('account_code', '121')
-        ->firstOrFail();
 
-    expect($fixedAssetsRoot->is_group)->toBeTrue()
-        ->and($fixedAssetsRoot->is_postable)->toBeFalse()
-        ->and(Account::query()
-            ->where('company_id', $createdCompany->getKey())
-            ->where('parent_id', $fixedAssetsRoot->getKey())
-            ->where('is_group', true)
-            ->where('is_postable', false)
-            ->count())->toBeGreaterThanOrEqual(6);
+    expect(Account::withTrashed()->where('company_id', $createdCompany->getKey())->count())->toBe(0);
 });
 
 test('trashed companies are not counted against configured company creation limit', function () {
@@ -1010,7 +999,9 @@ test('main company rules keep one active main company', function () {
             'is_main' => '1',
         ]))
         ->assertUnprocessable()
-        ->assertJsonPath('message', __('companies.messages.main_requires_active'));
+        ->assertJsonPath('message', __('erp_errors.validation_failed'))
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonPath('errors.is_main.0', __('companies.validation.main_requires_active'));
 });
 
 test('company clone does not copy document number and financial settings are absent', function () {
@@ -1067,7 +1058,8 @@ test('company delete blocks main company and deletes non-main company by doc num
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.companies.destroy', $main->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('error_code', 'record_in_use')
         ->assertJsonPath('message', __('companies.messages.main_company_delete_blocked'));
 
     $this->actingAs($actor)
@@ -1250,7 +1242,7 @@ test('trashed company restore is blocked when active companies reuse unique data
 
     $this->actingAs($restorer)
         ->patchJson(route('admin.companies.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('companies.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('companies.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', 'unique_data_conflict')
@@ -1290,7 +1282,7 @@ test('trashed main company restore is blocked when another active main company e
 
     $this->actingAs($restorer)
         ->patchJson(route('admin.companies.restore', $deletedMain->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('companies.messages.restore_main_conflict'))
         ->assertJsonPath('errors.restore.0', __('companies.messages.restore_main_conflict'))
         ->assertJsonPath('data.conflict_type', 'main_company_conflict')

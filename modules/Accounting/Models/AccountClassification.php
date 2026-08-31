@@ -9,6 +9,8 @@ class AccountClassification extends Model
 {
     use SoftDeletes;
 
+    public const FixedAssets = 'fixed_assets';
+
     public const Expenses = 'expenses';
 
     /**

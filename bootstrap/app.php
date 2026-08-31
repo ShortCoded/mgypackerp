@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Middleware\NormalizeJsonErrorResponse;
 use App\Http\Middleware\SetLocale;
+use App\Support\Http\JsonErrorResponse;
+use App\Support\Http\JsonExceptionRenderer;
 use Illuminate\Auth\AuthenticationException;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -36,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->web(append: [
             SetLocale::class,
+            NormalizeJsonErrorResponse::class,
             EnsureUserAccountIsActive::class,
             TrackUserActivity::class,
             EnsureRememberedUserIsLocked::class,
@@ -47,31 +50,6 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $isSalesCycleJson = static fn (Request $request): bool => ($request->is('admin/sales/*') || $request->is('admin/production/work-orders/*'))
-            && ($request->expectsJson() || $request->ajax());
-
-        $exceptions->render(function (DomainException $exception, Request $request) use ($isSalesCycleJson) {
-            if (! $isSalesCycleJson($request)) {
-                return null;
-            }
-
-            return response()->json([
-                'success' => false,
-                'message' => $exception->getMessage(),
-            ], 422);
-        });
-
-        $exceptions->render(function (QueryException $exception, Request $request) use ($isSalesCycleJson) {
-            if (! $isSalesCycleJson($request)) {
-                return null;
-            }
-
-            return response()->json([
-                'success' => false,
-                'message' => __('The operation could not be completed safely. No changes were saved.'),
-            ], 500);
-        });
-
         $isLockScreenWrite = function (Request $request): bool {
             return $request->routeIs('lock-screen.store', 'lock-screen.unlock')
                 || $request->is('lock-screen', 'lock-screen/unlock');
@@ -82,12 +60,15 @@ return Application::configure(basePath: dirname(__DIR__))
             $loginUrl = route('login', [], false);
 
             if ($request->expectsJson() || $request->ajax()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $message,
-                    'redirect' => $loginUrl,
-                    'redirect_url' => $loginUrl,
-                ], $status);
+                return app(JsonErrorResponse::class)->make(
+                    $message,
+                    'session_expired',
+                    $status,
+                    extra: [
+                        'redirect' => $loginUrl,
+                        'redirect_url' => $loginUrl,
+                    ],
+                );
             }
 
             return redirect($loginUrl)
@@ -168,12 +149,13 @@ return Application::configure(basePath: dirname(__DIR__))
                     'failure_reason' => $reason,
                 ]);
 
-                if ($request->expectsJson()) {
-                    $response = response()->json([
-                        'success' => false,
-                        'message' => $message,
-                        'redirect' => route('login', [], false),
-                    ], 401);
+                if ($request->expectsJson() || $request->ajax()) {
+                    $response = app(JsonErrorResponse::class)->make(
+                        $message,
+                        'authentication_required',
+                        401,
+                        extra: ['redirect' => route('login', [], false)],
+                    );
                 } else {
                     $response = redirect(route('login', [], false))
                         ->with('auth_error', $message);
@@ -190,7 +172,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 return $lockScreenExpiredResponse($request);
             }
 
-            if ($request->expectsJson()) {
+            if ($request->expectsJson() || $request->ajax()) {
                 return null;
             }
 
@@ -198,4 +180,26 @@ return Application::configure(basePath: dirname(__DIR__))
 
             return redirect(route('login', [], false));
         });
+
+        $exceptions->render(function (Throwable $exception, Request $request) {
+            return app(JsonExceptionRenderer::class)->render($exception, $request);
+        });
+
+        $exceptions->report(function (Throwable $exception) {
+            if (! app()->bound('request')) {
+                return null;
+            }
+
+            $request = request();
+
+            if (! $request instanceof Request || $request->route() === null) {
+                return null;
+            }
+
+            app(JsonExceptionRenderer::class)->report($exception, $request);
+
+            return false;
+        });
+
+        $exceptions->dontReportDuplicates();
     })->create();

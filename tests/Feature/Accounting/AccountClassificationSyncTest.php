@@ -1,10 +1,12 @@
 <?php
 
+use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Services\AccountClassificationRegistry;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\DocumentNumberService;
 
 function seedPreviousAccountClassifications(): array
@@ -102,6 +104,26 @@ test('canonical registry exactly matches the normalized 135 label dictionary', f
         ->and($definitions->pluck('name_en')->filter(fn (string $name): bool => trim($name) !== ''))->toHaveCount(135)
         ->and($definitions->pluck('name')->unique())->toHaveCount(135)
         ->and($definitions->pluck('name_en')->unique())->toHaveCount(135)
+        ->and($definitions->where('code', AccountClassification::FixedAssets))->toHaveCount(1)
+        ->and($definitions->get(AccountClassification::FixedAssets))->toMatchArray([
+            'name' => 'الأصول الثابتة',
+            'name_en' => 'Fixed Assets',
+            'account_type' => Account::TypeAsset,
+            'statement_type' => Account::StatementFinancialPosition,
+            'normal_balance' => Account::BalanceDebit,
+            'is_system' => true,
+            'status' => 'active',
+        ])
+        ->and($definitions->keys()->all())->toContain(
+            'machinery_equipment',
+            'molds_tooling',
+            'vehicles',
+            'it_office_equipment',
+            'furniture_fixtures',
+            'land',
+            'buildings',
+            'electrical_equipment',
+        )
         ->and($definitions->get('semi_finished_goods_inventory'))->toMatchArray([
             'name' => 'مخزون منتجات نصف مصنعة',
             'name_en' => 'Semi-finished Goods Inventory',
@@ -115,7 +137,7 @@ test('canonical registry exactly matches the normalized 135 label dictionary', f
             'statement_type' => Account::StatementIncomeStatement,
             'normal_balance' => Account::BalanceDebit,
         ])
-        ->and($labelDigest)->toBe('1970d4d298b09d843d7112504053b5db8ec869d4a1c6101a4b755a435ef03f0c');
+        ->and($labelDigest)->toBe('504ace034305677ebeee864a9a28cff24ab1c6d6c500d8eadf50766180502059');
 });
 
 test('canonical labels do not alter classification accounting metadata', function (): void {
@@ -229,4 +251,47 @@ test('service synchronization inserts missing rows and changes only safe labels 
         ->expectsOutputToContain('label_update_codes=0')
         ->expectsOutputToContain('label_conflict_codes=0')
         ->assertSuccessful();
+});
+
+test('fixed assets synchronization preserves its row and every existing account reference without duplicates', function (): void {
+    $this->seed(DefaultOperatingContextSeeder::class);
+    seedPreviousAccountClassifications();
+
+    $registry = app(AccountClassificationRegistry::class);
+    $company = Company::query()->orderBy('id')->firstOrFail();
+    $classification = AccountClassification::query()
+        ->where('code', AccountClassification::FixedAssets)
+        ->firstOrFail();
+    $classificationId = (int) $classification->getKey();
+    $account = Account::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, (int) $company->getKey()),
+        'company_id' => $company->getKey(),
+        'account_code' => '121-regression-reference',
+        'name' => 'Fixed Assets Reference',
+        'parent_id' => null,
+        'level' => 1,
+        'account_classification_id' => $classificationId,
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => true,
+        'is_postable' => false,
+        'status' => 'active',
+    ]);
+
+    $registry->synchronize();
+    $registry->synchronize();
+
+    $synchronizedClassification = AccountClassification::query()
+        ->where('code', AccountClassification::FixedAssets)
+        ->firstOrFail();
+
+    expect(AccountClassification::query()->where('code', AccountClassification::FixedAssets)->count())->toBe(1)
+        ->and((int) $synchronizedClassification->getKey())->toBe($classificationId)
+        ->and((int) $account->fresh()->account_classification_id)->toBe($classificationId)
+        ->and($synchronizedClassification->only(['name', 'name_en', 'status']))->toBe([
+            'name' => 'الأصول الثابتة',
+            'name_en' => 'Fixed Assets',
+            'status' => 'active',
+        ]);
 });

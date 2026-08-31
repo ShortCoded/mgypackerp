@@ -81,6 +81,7 @@ return [
         'delete_blocked_transactions' => 'The customer cannot be deleted because its accounting account has financial transactions.',
         'account_move_blocked_children' => 'The linked accounting account cannot be moved because it has child accounts.',
         'root_account_missing' => 'The Customers account could not be found in the chart of accounts.',
+        'root_account_ambiguous' => 'The Accounts Receivable root is ambiguous for classification :classification. Candidates: :candidates',
         'linked_account_missing' => 'The linked accounting account for this customer is missing.',
         'restore_conflict' => 'This accounting account or document number is already linked to another active customer.',
     ],

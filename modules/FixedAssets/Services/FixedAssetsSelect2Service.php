@@ -2,9 +2,9 @@
 
 namespace Modules\FixedAssets\Services;
 
-use DomainException;
 use Illuminate\Http\Request;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Models\Branch;
@@ -33,11 +33,7 @@ class FixedAssetsSelect2Service
             return $this->empty();
         }
 
-        try {
-            $root = $this->accounts->rootAccount(BusinessPartnerAccountService::FixedAsset);
-        } catch (DomainException) {
-            return $this->empty();
-        }
+        $root = $this->accounts->rootAccount(BusinessPartnerAccountService::FixedAsset);
 
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
@@ -45,7 +41,8 @@ class FixedAssetsSelect2Service
             ->where('accounts.company_id', $companyId)
             ->where('accounts.is_group', true)
             ->where('accounts.is_postable', false)
-            ->where('account_classifications.code', 'fixed_assets')
+            ->where('account_classifications.code', AccountClassification::FixedAssets)
+            ->where('account_classifications.status', 'active')
             ->where('accounts.id', '!=', $root->getKey())
             ->whereIn('accounts.id', $this->accounts->selectableGroupIds(BusinessPartnerAccountService::FixedAsset))
             ->select(['accounts.doc_num', 'accounts.doc_number', 'accounts.account_code', 'accounts.name', 'accounts.name_en'])

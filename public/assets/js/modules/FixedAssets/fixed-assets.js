@@ -22,6 +22,30 @@
         }
     }
 
+    function responseMessage(response) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.message === 'function') {
+            return window.AppAjaxErrors.message(response);
+        }
+
+        return response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError');
+    }
+
+    function renderAjaxError($form, response) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.render === 'function') {
+            window.AppAjaxErrors.render($form, response);
+            return;
+        }
+
+        const json = response.responseJSON || {};
+
+        if (json.errors) {
+            showValidationErrors($form, json.errors);
+            return;
+        }
+
+        showFormNotice($form, responseMessage(response), 'danger');
+    }
+
     function confirmDialog(options) {
         if (!window.Swal) {
             return $.Deferred().resolve({ isConfirmed: false }).promise();
@@ -689,7 +713,7 @@
                     fixedAssetsTable.ajax.reload(null, false);
                     showToast('success', response.message);
                 }).fail(function (response) {
-                    showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                    showToast('error', responseMessage(response));
                 });
             });
         });
@@ -850,6 +874,12 @@
     }
 
     function submitAjaxForm($form) {
+        const $buttons = $form.find('[type="submit"]');
+
+        if (window.AppAjaxErrors && !window.AppAjaxErrors.beginSubmission($form, $buttons)) {
+            return;
+        }
+
         clearFormErrors($form);
 
         $.ajax({
@@ -870,14 +900,11 @@
                 showFormNotice($form, response.message, 'warning');
             }
         }).fail(function (response) {
-            const json = response.responseJSON || {};
-
-            if (json.errors) {
-                showValidationErrors($form, json.errors);
-                return;
+            renderAjaxError($form, response);
+        }).always(function () {
+            if (window.AppAjaxErrors) {
+                window.AppAjaxErrors.endSubmission($form, $buttons);
             }
-
-            showFormNotice($form, json.message || msg('unexpectedError'), 'danger');
         });
     }
 
@@ -965,6 +992,11 @@
 
             const $form = $(this);
             const $target = $($form.data('target-select'));
+            const $buttons = $form.find('[type="submit"]');
+
+            if (window.AppAjaxErrors && !window.AppAjaxErrors.beginSubmission($form, $buttons)) {
+                return;
+            }
 
             clearFormErrors($form);
 
@@ -978,14 +1010,11 @@
                 $form.closest('.modal').modal('hide');
                 showToast('success', response.message);
             }).fail(function (response) {
-                const json = response.responseJSON || {};
-
-                if (json.errors) {
-                    showValidationErrors($form, json.errors);
-                    return;
+                renderAjaxError($form, response);
+            }).always(function () {
+                if (window.AppAjaxErrors) {
+                    window.AppAjaxErrors.endSubmission($form, $buttons);
                 }
-
-                showFormNotice($form, json.message || msg('unexpectedError'), 'danger');
             });
         });
     }
@@ -1019,7 +1048,7 @@
                         fixedAssetsTable.ajax.reload(null, false);
                     }
                 }).fail(function (response) {
-                    showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                    showToast('error', responseMessage(response));
                 });
             });
         });
@@ -1038,7 +1067,7 @@
                     fixedAssetsTable.ajax.reload(null, false);
                 }
             }).fail(function (response) {
-                showToast('error', response.responseJSON && response.responseJSON.message ? response.responseJSON.message : msg('unexpectedError'));
+                showToast('error', responseMessage(response));
             });
         });
     }
@@ -1048,6 +1077,11 @@
             event.preventDefault();
 
             const $form = $(this);
+            const $buttons = $form.find('[type="submit"]');
+
+            if (window.AppAjaxErrors && !window.AppAjaxErrors.beginSubmission($form, $buttons)) {
+                return;
+            }
 
             clearFormErrors($form);
 
@@ -1059,14 +1093,11 @@
             }).done(function (response) {
                 showToast('success', response.message);
             }).fail(function (response) {
-                const json = response.responseJSON || {};
-
-                if (json.errors) {
-                    showValidationErrors($form, json.errors);
-                    return;
+                renderAjaxError($form, response);
+            }).always(function () {
+                if (window.AppAjaxErrors) {
+                    window.AppAjaxErrors.endSubmission($form, $buttons);
                 }
-
-                showFormNotice($form, json.message || msg('unexpectedError'), 'danger');
             });
         });
     }

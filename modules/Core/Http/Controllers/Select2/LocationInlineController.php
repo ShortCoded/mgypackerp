@@ -2,7 +2,6 @@
 
 namespace Modules\Core\Http\Controllers\Select2;
 
-use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -37,15 +36,11 @@ class LocationInlineController extends Controller
             'city_doc_num' => __('customers.attributes.city'),
         ]);
 
-        try {
-            $record = $this->lookups->create($definition, [
-                'name' => trim((string) $data['name']),
-                'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
-                ...$this->parentPayload($type, $data),
-            ]);
-        } catch (QueryException $exception) {
-            throw $exception;
-        }
+        $record = $this->lookups->create($definition, [
+            'name' => trim((string) $data['name']),
+            'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
+            ...$this->parentPayload($type, $data),
+        ]);
 
         return response()->json([
             'success' => true,

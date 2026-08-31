@@ -21,6 +21,16 @@
         window.location.href = window.location.href;
     }
 
+    function handleAuthenticationFailure(response) {
+        if (window.AppAjaxErrors && typeof window.AppAjaxErrors.handleAuthenticationFailure === 'function') {
+            return window.AppAjaxErrors.handleAuthenticationFailure(response);
+        }
+
+        reloadCurrentPage();
+
+        return true;
+    }
+
     function currentPath() {
         return window.location.pathname + window.location.search + window.location.hash;
     }
@@ -119,7 +129,7 @@
             }
 
             if (response.status === 401 || response.status === 419) {
-                reloadCurrentPage();
+                handleAuthenticationFailure(response);
             }
         });
     }
@@ -158,14 +168,14 @@
                 refreshCsrfToken().done(function () {
                     touchSession(false);
                 }).fail(function () {
-                    reloadCurrentPage();
+                    handleAuthenticationFailure(response);
                 });
 
                 return;
             }
 
             if (response.status === 401 || response.status === 419) {
-                reloadCurrentPage();
+                handleAuthenticationFailure(response);
             }
 
             if (response.status === 423 && response.responseJSON && response.responseJSON.lock_screen_url) {
@@ -214,7 +224,7 @@
         }
 
         if (response.status === 401 || response.status === 419) {
-            reloadCurrentPage();
+            handleAuthenticationFailure(response);
         }
     });
 })(jQuery, window, document);

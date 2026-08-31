@@ -5,6 +5,7 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Services\AccountCodeAllocator;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
@@ -21,11 +22,12 @@ class CashboxService
         private readonly CashboxChartAccountService $chartAccounts,
         private readonly CashboxAccountingSyncService $accountingSync,
         private readonly OperatingCompanyContextService $companies,
+        private readonly AccountCodeAllocator $accountCodes,
     ) {}
 
     public function create(array $data): array
     {
-        return DB::transaction(function () use ($data): array {
+        return $this->accountCodes->transaction(function () use ($data): array {
             $companyId = $this->companies->requireCompanyId();
             $parentAccount = $this->parentAccount($data);
             $linkedAccount = $this->chartAccounts->createOrUpdateLinkedAccount(null, $parentAccount, $data)['account'];
@@ -39,7 +41,7 @@ class CashboxService
 
     public function update(Cashbox $record, array $data): array
     {
-        return DB::transaction(function () use ($record, $data): array {
+        return $this->accountCodes->transaction(function () use ($record, $data): array {
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
             $parentAccount = $this->parentAccount($data);

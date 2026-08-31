@@ -120,6 +120,8 @@ return [
         'bulk_deleted' => ':count fixed asset(s) were deleted successfully.',
         'asset_category_created' => 'Asset category was created successfully.',
         'root_account_missing' => 'Fixed Assets root account is missing.',
+        'root_account_ambiguous' => 'The Fixed Assets root is ambiguous for classification :classification. Candidates: :candidates',
+        'asset_category_reserved_root_name' => 'A Fixed Asset category cannot use the foundational Fixed Assets account name.',
         'linked_account_missing' => 'The linked fixed asset account is missing.',
         'asset_category_unavailable' => 'The selected asset category is not available in the current company.',
         'asset_category_must_be_group' => 'The selected asset category must be a group account.',

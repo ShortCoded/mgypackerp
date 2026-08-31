@@ -120,6 +120,8 @@ return [
         'bulk_deleted' => 'تم حذف :count أصل ثابت بنجاح.',
         'asset_category_created' => 'تم إنشاء تصنيف الأصل بنجاح.',
         'root_account_missing' => 'حساب الأصول الثابتة الرئيسي غير موجود.',
+        'root_account_ambiguous' => 'تعذر تحديد حساب الأصول الثابتة الرئيسي للتصنيف :classification بسبب وجود أكثر من حساب مطابق. الحسابات: :candidates',
+        'asset_category_reserved_root_name' => 'لا يمكن أن يحمل تصنيف الأصل اسم حساب الأصول الثابتة الأساسي.',
         'linked_account_missing' => 'حساب الأصل الثابت المرتبط غير موجود.',
         'asset_category_unavailable' => 'تصنيف الأصل المحدد غير متاح ضمن الشركة الحالية.',
         'asset_category_must_be_group' => 'تصنيف الأصل المحدد يجب أن يكون حسابًا تجميعيًا.',

@@ -1,5 +1,6 @@
 <?php
 
+use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
@@ -35,7 +36,11 @@ function createFixedAssetFoundationAccount(
     ]);
 }
 
-test('Fixed Asset foundation preserves active code owners and leaves conflicting legacy duplicates deleted', function (): void {
+beforeEach(function (): void {
+    $this->seed(AccountClassificationsSeeder::class);
+});
+
+test('Fixed Asset foundation check is write free for active and deleted account trees', function (): void {
     $company = Company::query()->create([
         'doc_number' => 91001,
         'doc_num' => 'HOTFIX-COMPANY-91001',
@@ -55,7 +60,6 @@ test('Fixed Asset foundation preserves active code owners and leaves conflicting
     $legacyRoot->delete();
     $activeRoot = createFixedAssetFoundationAccount($company, 91203, '121', 'Customer Fixed Asset Register', $activeNonCurrent);
 
-    $activeCodeTwelveAttributes = $activeNonCurrent->fresh()->getAttributes();
     $preferredCodes = [
         'machinery' => '1216',
         'vehicles' => '1217',
@@ -90,25 +94,38 @@ test('Fixed Asset foundation preserves active code owners and leaves conflicting
         $documentOffset++;
     }
 
+    $accountAttributesBefore = Account::withTrashed()
+        ->where('company_id', $company->getKey())
+        ->get()
+        ->mapWithKeys(fn (Account $account): array => [(int) $account->getKey() => $account->getAttributes()])
+        ->all();
+
     $foundation = app(BusinessPartnerAccountService::class);
     $foundation->ensureFixedAssetBaselineForCompany((int) $company->getKey());
     $foundation->ensureFixedAssetBaselineForCompany((int) $company->getKey());
 
     $classification = AccountClassification::query()->where('code', 'fixed_assets')->firstOrFail();
 
-    expect($activeNonCurrent->fresh()->getAttributes())->toBe($activeCodeTwelveAttributes)
+    $accountAttributesAfter = Account::withTrashed()
+        ->where('company_id', $company->getKey())
+        ->get()
+        ->mapWithKeys(fn (Account $account): array => [(int) $account->getKey() => $account->getAttributes()])
+        ->all();
+
+    expect($accountAttributesAfter)->toBe($accountAttributesBefore)
         ->and(Account::withTrashed()->findOrFail($legacyAssets->getKey())->trashed())->toBeTrue()
         ->and(Account::withTrashed()->findOrFail($legacyNonCurrent->getKey())->trashed())->toBeTrue()
         ->and(Account::withTrashed()->findOrFail($legacyRoot->getKey())->trashed())->toBeTrue()
         ->and($legacyCategories->every(fn (Account $account): bool => Account::withTrashed()->findOrFail($account->getKey())->trashed()))->toBeTrue()
         ->and($activeRoot->fresh()->name)->toBe('Customer Fixed Asset Register')
-        ->and((int) $activeRoot->fresh()->account_classification_id)->toBe((int) $classification->getKey())
-        ->and($activeCategories->every(fn (Account $account): bool => (int) $account->fresh()->account_classification_id === (int) $classification->getKey()))->toBeTrue()
+        ->and($activeRoot->fresh()->account_classification_id)->toBeNull()
+        ->and($activeCategories->every(fn (Account $account): bool => $account->fresh()->account_classification_id === null))->toBeTrue()
+        ->and($classification->status)->toBe('active')
         ->and(Account::query()->where('company_id', $company->getKey())->whereIn('account_code', ['1', '12', '121', ...array_values($preferredCodes)])->count())->toBe(9)
         ->and(FixedAssetCategoryMapping::query()->where('company_id', $company->getKey())->count())->toBe(0);
 });
 
-test('Fixed Asset reference classification installs without rewriting an incompatible customer account tree', function (): void {
+test('Fixed Asset foundation check does not rewrite an incompatible customer account tree', function (): void {
     $company = Company::query()->create([
         'doc_number' => 92001,
         'doc_num' => 'HOTFIX-COMPANY-92001',
