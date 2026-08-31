@@ -2,6 +2,7 @@
 
 namespace Modules\HR\Services;
 
+use Modules\Accounting\Models\CostCenter;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrDocumentType;
@@ -31,6 +32,18 @@ final class HrEnterpriseFoundationDefinitions
                 modelClass: HrDepartment::class,
                 translationKey: 'departments',
                 fields: [
+                    [
+                        'name' => 'default_cost_center_doc_num',
+                        'type' => 'relation',
+                        'model' => CostCenter::class,
+                        'select2_route' => 'admin.accounting.select2.cost-centers',
+                        'select2_parameters' => ['postable' => 1],
+                        'rules' => ['nullable', 'string'],
+                        'active_only' => true,
+                        'company_scoped' => true,
+                        'postable_only' => true,
+                        'virtual' => true,
+                    ],
                     ['name' => 'code', 'type' => 'text', 'rules' => ['nullable', 'string', 'max:80'], 'unique' => true],
                 ],
                 jsNamespace: 'hrDepartments',

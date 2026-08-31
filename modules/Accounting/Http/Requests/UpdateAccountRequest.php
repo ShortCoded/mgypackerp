@@ -54,7 +54,21 @@ class UpdateAccountRequest extends FormRequest
                 Rule::exists('accounts', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at')),
             ],
-            'classification_code' => ['nullable', 'string', 'exists:account_classifications,code'],
+            'classification_code' => [
+                'nullable',
+                'string',
+                Rule::exists('account_classifications', 'code')
+                    ->where(function ($query) use ($account): void {
+                        $query->whereNull('deleted_at')
+                            ->where(function ($classificationQuery) use ($account): void {
+                                $classificationQuery->where('status', 'active');
+
+                                if ($account?->classification?->code) {
+                                    $classificationQuery->orWhere('code', $account->classification->code);
+                                }
+                            });
+                    }),
+            ],
             'account_type' => ['nullable', Rule::in(Account::accountTypes())],
             'statement_type' => ['nullable', Rule::in(Account::statementTypes())],
             'normal_balance' => ['nullable', Rule::in(Account::normalBalances())],

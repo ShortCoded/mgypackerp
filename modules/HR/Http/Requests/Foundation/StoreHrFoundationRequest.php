@@ -228,6 +228,14 @@ class StoreHrFoundationRequest extends FormRequest
             $exists = $exists->where('status', 'active');
         }
 
+        if (($field['company_scoped'] ?? false) === true) {
+            $exists = $exists->where('company_id', app(OperatingCompanyContextService::class)->requireCompanyId());
+        }
+
+        if (($field['postable_only'] ?? false) === true) {
+            $exists = $exists->where('is_group', false);
+        }
+
         return [
             ...$rules,
             $exists,

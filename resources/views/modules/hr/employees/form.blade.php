@@ -169,7 +169,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="{{ __('common.actions.close') }}"></button>
                 </div>
 
-                <ul class="mb-3 nav nav-tabs" id="hr-employee-tabs" role="tablist">
+                <ul class="mb-3 nav nav-tabs hr-employee-form-tabs" id="hr-employee-tabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" id="tab-basic-info" data-bs-toggle="tab" data-bs-target="#pane-basic-info" type="button" role="tab">{{ __('hr.employees.sections.basic_info') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-work-info" data-bs-toggle="tab" data-bs-target="#pane-work-info" type="button" role="tab">{{ __('hr.employees.sections.work_info') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-attendance-biometric" data-bs-toggle="tab" data-bs-target="#pane-attendance-biometric" type="button" role="tab">{{ __('hr.employees.sections.attendance_biometric') }}</button></li>
@@ -500,13 +500,13 @@
                     </div>
 
                     <div class="tab-pane fade" id="pane-work-info" role="tabpanel" aria-labelledby="tab-work-info">
-                        <div class="row g-3 align-items-start">
+                        <div class="row g-3 align-items-start hr-employee-form-grid">
                             @foreach (['branch_doc_num', 'department_doc_num', 'section_doc_num', 'job_doc_num', 'employment_type_doc_num', 'hiring_status_doc_num'] as $fieldName)
                                 @php
                                     $option = $selectOption($fieldName) ?? [];
                                     $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName);
                                 @endphp
-                                <div class="col-md-6 col-xl">
+                                <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                     @include('modules.hr.partials.inline-select2-field', [
                                         'isView' => $isView,
                                         'inputId' => $inputId,
@@ -531,7 +531,7 @@
                             {{-- @foreach (['hire_date', 'start_date', 'end_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName) --}}
                             @foreach (['hire_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName)
                                 @php $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName); @endphp
-                                <div class="col-md-6 col-xl-3">
+                                <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                     <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
                                     @if ($isView)
                                         <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
@@ -542,7 +542,7 @@
                                 </div>
                             @endforeach
 
-                            <div class="col-md-6 col-xl">
+                            <div class="col-12 col-md-6 col-xl-8 col-xxl-6">
                                 <label class="form-label" for="hr-employee-work-email">{{ __('hr.employees.attributes.work_email') }}</label>
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-work-email" :value="$fieldValue('work_email')" />
@@ -677,8 +677,8 @@
                     </div>
 
                     <div class="tab-pane fade" id="pane-salary-payment" role="tabpanel" aria-labelledby="tab-salary-payment">
-                        <div class="row g-3 align-items-start">
-                            <div class="col-md-6 col-xl">
+                        <div class="row g-3 align-items-start hr-employee-form-grid">
+                            <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 @php $payBasisValue = (string) old('pay_basis', $fieldValue('pay_basis')); @endphp
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-pay-basis" :label="__('hr.employees.attributes.pay_basis')" :value="$payBasisValue !== '' ? __('hr.employees.pay_basis.' . $payBasisValue) : null" required />
@@ -698,7 +698,7 @@
                                 $fieldName = 'payroll_currency_doc_num';
                                 $option = $selectOption($fieldName) ?? [];
                             @endphp
-                            <div class="col-md-6 col-xl">
+                            <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 @include('modules.hr.partials.inline-select2-field', [
                                     'isView' => $isView,
                                     'inputId' => 'hr-employee-payroll-currency-doc-num',
@@ -714,7 +714,7 @@
                                 ])
                             </div>
 
-                            <div class="col-md-6 col-xl">
+                            <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 <x-forms.label for="hr-employee-exchange-rate" :label="__('hr.employees.attributes.exchange_rate')" required />
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-exchange-rate" :value="$fieldValue('exchange_rate', $defaults['exchange_rate'] ?? '')" numeric dir="ltr" />
@@ -730,7 +730,7 @@
                                     $payAmountScale = $fieldName === 'basic_salary' ? 2 : 4;
                                     $payAmountStep = $fieldName === 'basic_salary' ? '0.01' : '0.0001';
                                 @endphp
-                                <div class="col-md-6 col-xl js-hr-pay-amount-field" data-pay-basis="{{ $basis }}">
+                                <div class="col-12 col-md-6 col-xl-4 col-xxl-3 js-hr-pay-amount-field" data-pay-basis="{{ $basis }}">
                                     <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
                                     @if ($isView)
                                         <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" numeric dir="ltr" />
@@ -741,7 +741,7 @@
                                 </div>
                             @endforeach
 
-                            <div class="col-md-6 col-xl">
+                            <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 @php $paymentMethodValue = (string) old('payment_method', $fieldValue('payment_method')); @endphp
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-payment-method" :label="__('hr.employees.attributes.payment_method')" :value="$paymentMethodValue !== '' ? __('hr.employees.payment_methods.' . $paymentMethodValue) : null" />
@@ -761,7 +761,7 @@
                                 $fieldName = 'allowance_doc_num';
                                 $option = $selectOption($fieldName) ?? [];
                             @endphp
-                            <div class="col-md-6 col-xl">
+                            <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                 @include('modules.hr.partials.inline-select2-field', [
                                     'isView' => $isView,
                                     'inputId' => 'hr-employee-allowance-doc-num',

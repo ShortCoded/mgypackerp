@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -25,6 +26,7 @@ class PurchaseInvoiceLine extends Model
         'unit_id',
         'purchase_order_line_id',
         'receipt_line_id',
+        'cost_center_id',
         'matched_quantity',
         'quantity',
         'unit_price',
@@ -100,5 +102,10 @@ class PurchaseInvoiceLine extends Model
     public function receiptLine(): BelongsTo
     {
         return $this->belongsTo(UnpricedInventoryReceiptLine::class, 'receipt_line_id');
+    }
+
+    public function costCenter(): BelongsTo
+    {
+        return $this->belongsTo(CostCenter::class)->withTrashed();
     }
 }

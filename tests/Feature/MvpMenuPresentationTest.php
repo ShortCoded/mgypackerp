@@ -60,6 +60,22 @@ function mvpFindMenuItem(array $items, string $label): ?array
     return null;
 }
 
+/**
+ * @param  list<array<string, mixed>>  $items
+ * @return list<string>
+ */
+function mvpMenuDestinations(array $items): array
+{
+    $destinations = collect(mvpFlattenMenu($items))
+        ->filter(fn (array $item): bool => is_string($item['route'] ?? null) && $item['route'] !== '')
+        ->map(fn (array $item): string => $item['route'].'|'.json_encode($item['route_params'] ?? [], JSON_THROW_ON_ERROR))
+        ->sort()
+        ->values()
+        ->all();
+
+    return $destinations;
+}
+
 test('admin sees the clean MVP top level menu in the requested order', function (): void {
     $admin = mvpAdminActor();
     $menu = app(MenuService::class)->getMenu($admin);
@@ -73,6 +89,7 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         'production',
         'accounting_costing',
         'human_resources',
+        'reports',
         'tools',
     ]);
 
@@ -87,8 +104,96 @@ test('admin sees the clean MVP top level menu in the requested order', function 
             'general_ledger',
             'item_data',
             'planning_production',
-            'reports',
         );
+});
+
+test('top navigation moves complete fixed assets and maintenance nodes under their related parents', function (): void {
+    app()->setLocale('en');
+
+    $admin = mvpAdminActor();
+    $menuService = app(MenuService::class);
+    $sourceMenu = $menuService->structure();
+    $menu = $menuService->getMenu($admin);
+    $sourceLabels = collect($sourceMenu)->pluck('label')->all();
+    $topLevelLabels = collect($menu)->pluck('label')->all();
+    $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
+    $production = collect($menu)->firstWhere('label', 'production');
+    $sourceAccounting = collect($sourceMenu)->firstWhere('label', 'accounting_costing');
+    $sourceProduction = collect($sourceMenu)->firstWhere('label', 'production');
+    $sourceFixedAssets = collect($sourceMenu)->firstWhere('label', 'fixed_assets');
+    $sourceMaintenance = collect($sourceMenu)->firstWhere('label', 'maintenance');
+    $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
+    $maintenance = collect($production['children'])->firstWhere('label', 'maintenance');
+    $sourceQuality = collect($sourceMenu)->firstWhere('label', 'quality');
+    $expectedAccountingChildren = [
+        ...collect($sourceAccounting['children'])->pluck('label')->all(),
+        'fixed_assets',
+    ];
+    $expectedProductionChildren = [
+        ...collect($sourceProduction['children'])->pluck('label')->all(),
+        'maintenance',
+        ...($sourceQuality === null ? [] : ['quality']),
+    ];
+    $movedSourceDestinations = mvpMenuDestinations(array_values(array_filter([
+        $sourceFixedAssets,
+        $sourceMaintenance,
+        $sourceQuality,
+    ])));
+    $movedMenuDestinations = mvpMenuDestinations(array_values(array_filter([
+        $fixedAssets,
+        $maintenance,
+        mvpFindMenuItem($menu, 'quality'),
+    ])));
+    $menuDestinations = mvpMenuDestinations($menu);
+
+    expect($topLevelLabels)->not->toContain('fixed_assets', 'maintenance', 'quality')
+        ->and($fixedAssets)->toBe($sourceFixedAssets)
+        ->and($maintenance)->toBe($sourceMaintenance)
+        ->and(collect($accounting['children'])->pluck('label')->all())->toBe($expectedAccountingChildren)
+        ->and(collect($production['children'])->pluck('label')->all())->toBe($expectedProductionChildren)
+        ->and($sourceLabels)->not->toContain('quality')
+        ->and(mvpFindMenuItem($menu, 'quality'))->toBeNull()
+        ->and($movedMenuDestinations)->toBe($movedSourceDestinations)
+        ->and(array_unique($menuDestinations))->toHaveCount(count($menuDestinations));
+
+    collect($movedSourceDestinations)->each(
+        fn (string $destination) => expect(collect($menuDestinations)->filter(fn (string $candidate): bool => $candidate === $destination))->toHaveCount(1),
+    );
+
+    $englishTopHtml = view('layouts.partials.menu.top-items', [
+        'items' => $menu,
+        'menuPath' => [],
+    ])->render();
+    $englishVerticalHtml = view('layouts.partials.menu.vertical-items', [
+        'items' => $menu,
+        'menuPath' => [],
+    ])->render();
+
+    app()->setLocale('ar');
+    $arabicMenu = $menuService->getMenu($admin);
+    $arabicAccounting = collect($arabicMenu)->firstWhere('label', 'accounting_costing');
+    $arabicProduction = collect($arabicMenu)->firstWhere('label', 'production');
+    $arabicFixedAssets = collect($arabicAccounting['children'])->firstWhere('label', 'fixed_assets');
+    $arabicMaintenance = collect($arabicProduction['children'])->firstWhere('label', 'maintenance');
+    $arabicTopHtml = view('layouts.partials.menu.top-items', [
+        'items' => $arabicMenu,
+        'menuPath' => [],
+    ])->render();
+    $arabicVerticalHtml = view('layouts.partials.menu.vertical-items', [
+        'items' => $arabicMenu,
+        'menuPath' => [],
+    ])->render();
+
+    expect($fixedAssets['text'])->toBe('Fixed Assets')
+        ->and($maintenance['text'])->toBe('Maintenance')
+        ->and($englishTopHtml)->toContain('data-menu-depth="2"', 'Fixed Assets', 'Maintenance')
+        ->and($englishVerticalHtml)->toContain('Fixed Assets', 'Maintenance')
+        ->and($arabicFixedAssets['text'])->toBe('الأصول الثابتة')
+        ->and($arabicMaintenance['text'])->toBe('الصيانة')
+        ->and($arabicTopHtml)->toContain('data-menu-depth="2"', 'الأصول الثابتة', 'الصيانة')
+        ->and($arabicVerticalHtml)->toContain('الأصول الثابتة', 'الصيانة');
+
+    app()->setLocale('en');
 });
 
 test('real MVP menu entries keep their existing routes and expanded entries use their UI shell routes', function (): void {
@@ -156,9 +261,10 @@ test('HR menu keeps detailed HR screens under its independent domain', function 
     $admin = mvpAdminActor();
     $menu = app(MenuService::class)->getMenu($admin);
     $humanResources = collect($menu)->firstWhere('label', 'human_resources');
+    $humanResourceLabels = collect(mvpFlattenMenu([$humanResources]))->pluck('label')->all();
 
     expect($humanResources)->not->toBeNull()
-        ->and(collect($humanResources['children'])->pluck('label')->all())->toContain(
+        ->and($humanResourceLabels)->toContain(
             'hr_employees',
             'hr_departments',
             'hr_countries',
@@ -176,7 +282,8 @@ test('HR menu keeps detailed HR screens under its independent domain', function 
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
     expect($lookupOnlyHr)->not->toBeNull()
-        ->and(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_departments']);
+        ->and(collect(mvpFlattenMenu([$lookupOnlyHr]))->pluck('label'))->toContain('hr_departments')
+        ->and(mvpMenuDestinations([$lookupOnlyHr]))->toHaveCount(1);
 });
 
 test('legacy phase-gated permission still gates its route alias and remains assigned to admin', function (): void {
@@ -197,7 +304,7 @@ test('legacy phase-gated permission still gates its route alias and remains assi
         ->assertForbidden();
 });
 
-test('visible menu links resolve to existing routes without duplicate route label pairs', function (): void {
+test('visible menu links resolve to existing routes without duplicate routes or URLs', function (): void {
     $admin = mvpAdminActor();
     $menu = app(MenuService::class)->getMenu($admin);
     $seen = [];
@@ -212,19 +319,20 @@ test('visible menu links resolve to existing routes without duplicate route labe
         expect(Route::has($route))->toBeTrue()
             ->and($item['url'])->not->toBe('#!');
 
-        $fingerprint = $route.'|'.json_encode($item['route_params'] ?? [], JSON_THROW_ON_ERROR).'|'.$item['label'];
+        $fingerprint = $route.'|'.json_encode($item['route_params'] ?? [], JSON_THROW_ON_ERROR);
+        $normalizedUrl = rtrim((string) parse_url($item['url'], PHP_URL_PATH), '/') ?: '/';
 
         expect($seen)->not->toHaveKey($fingerprint);
+        expect($seen)->not->toHaveKey($normalizedUrl);
 
         $seen[$fingerprint] = true;
+        $seen[$normalizedUrl] = true;
     }
 });
 
 test('Tools keeps working utility and log screens as real links', function (): void {
     $admin = mvpAdminActor();
     $tools = collect(app(MenuService::class)->getMenu($admin))->firstWhere('label', 'tools');
-    $children = collect($tools['children']);
-
     foreach ([
         'open_documents' => 'admin.tools.open-documents.index',
         'file_manager' => 'admin.file-manager.index',
@@ -236,8 +344,8 @@ test('Tools keeps working utility and log screens as real links', function (): v
         'activity_logs' => 'admin.activity-logs.index',
         'auth_sessions' => 'admin.auth-sessions.index',
     ] as $label => $route) {
-        expect($children->firstWhere('label', $label)['route'])->toBe($route);
+        expect(mvpFindMenuItem([$tools], $label)['route'])->toBe($route);
     }
 
-    expect($children->firstWhere('label', 'tools_numbering_review')['route'])->toBe('admin.tools.numbering-review.index');
+    expect(mvpFindMenuItem([$tools], 'tools_numbering_review')['route'])->toBe('admin.tools.numbering-review.index');
 });

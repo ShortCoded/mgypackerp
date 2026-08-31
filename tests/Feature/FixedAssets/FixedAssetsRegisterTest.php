@@ -182,13 +182,14 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
     $menu = app(MenuService::class)->getMenu($actor);
     $labels = array_column($menu, 'label');
 
-    expect($labels)->toContain('accounting_costing', 'fixed_assets')
+    expect($labels)->toContain('accounting_costing')
         ->toContain('sales')
         ->toContain('purchases')
-        ->not->toContain('finance')
+        ->not->toContain('finance', 'fixed_assets')
         ->and(array_search('purchases', $labels, true))->toBeLessThan(array_search('accounting_costing', $labels, true));
 
-    $fixedAssets = collect($menu)->firstWhere('label', 'fixed_assets');
+    $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
+    $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
     expect(json_encode($fixedAssets, JSON_THROW_ON_ERROR))->toContain('fixed_assets_register')
         ->and(app(PermissionRegistryService::class)->all())->toContain('fixed_assets.view');
 
@@ -200,7 +201,10 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
     ]);
     $this->actingAs($fullyAuthorized);
     fixedAssetsSelectContext($context['company'], $context['branch'], $context['period']);
-    $authorizedFixedAssets = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'fixed_assets');
+    $authorizedAccounting = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'accounting_costing');
+    $authorizedFixedAssets = collect($authorizedAccounting['children'])->firstWhere('label', 'fixed_assets');
+    $authorizedReports = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'reports');
+    $assetReports = collect($authorizedReports['children'])->firstWhere('label', 'asset_reports');
     $canonicalChildren = collect($authorizedFixedAssets['children'] ?? [])
         ->flatMap(fn (array $group): array => array_column($group['children'] ?? [$group], 'label'))
         ->all();
@@ -209,8 +213,8 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
         'fixed_assets_register',
         'fixed_asset_accounting_mappings',
         'fixed_asset_depreciation',
-        'fixed_asset_reports',
-    ])->not->toContain('asset_inspection', 'asset_documents', 'asset_insurance');
+    ])->not->toContain('fixed_asset_reports', 'asset_inspection', 'asset_documents', 'asset_insurance')
+        ->and(collect($assetReports['children'])->pluck('label')->all())->toBe(['fixed_asset_reports']);
 
     $blocked = fixedAssetsActor(['customers.view']);
     $this->actingAs($blocked);

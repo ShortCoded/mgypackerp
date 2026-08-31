@@ -554,20 +554,16 @@
   function applyParentClassification($form, data) {
     const $classification = $form.find('[name="classification_code"]');
     const classificationCode = String(data.classification_code || '').trim();
-    const expenses = derivedDefaults.expensesClassification || {};
-    const expensesCode = String(expenses.code || 'expenses');
 
     if (!$classification.length) {
       return;
     }
 
-    $classification.data('expenses-locked', classificationCode === expensesCode);
-
     if (!classificationCode) {
       return;
     }
 
-    const classificationText = String(data.classification_text || (classificationCode === expensesCode ? expenses.label : classificationCode) || classificationCode);
+    const classificationText = String(data.classification_text || classificationCode);
 
     if (!$classification.find('option[value="' + classificationCode.replace(/"/g, '\\"') + '"]').length) {
       $classification.append(new Option(classificationText, classificationCode, true, true));
@@ -580,6 +576,10 @@
     const parentSelected = String($form.find('[name="parent_doc_num"]').val() || '').trim() !== '';
 
     if (parentSelected) {
+      if (selectedData && selectedData.normal_balance) {
+        $form.find('[name="normal_balance"]').val(String(selectedData.normal_balance));
+      }
+
       return;
     }
 
@@ -740,18 +740,6 @@
 
   $(document).off('select2:select.accountsParentDerived', '#parent_doc_num').on('select2:select.accountsParentDerived', '#parent_doc_num', function (event) {
     applyDerivedFields($(this).closest('form'), event.params && event.params.data ? event.params.data : {});
-  });
-
-  $(document).off('select2:opening.accountsExpenseClassification', '#classification_code').on('select2:opening.accountsExpenseClassification', '#classification_code', function (event) {
-    if ($(this).data('expenses-locked')) {
-      event.preventDefault();
-    }
-  });
-
-  $(document).off('select2:clearing.accountsExpenseClassification', '#classification_code').on('select2:clearing.accountsExpenseClassification', '#classification_code', function (event) {
-    if ($(this).data('expenses-locked')) {
-      event.preventDefault();
-    }
   });
 
   $(document).off('select2:clear.accountsParentDerived', '#parent_doc_num').on('select2:clear.accountsParentDerived', '#parent_doc_num', function () {

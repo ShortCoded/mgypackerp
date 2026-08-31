@@ -59,10 +59,6 @@
             'equity' => 'credit',
             'revenue' => 'credit',
         ],
-        'expensesClassification' => [
-            'code' => \Modules\Accounting\Models\AccountClassification::Expenses,
-            'label' => __('accounts.classifications.expenses'),
-        ],
     ];
 @endphp
 
@@ -145,12 +141,12 @@
                         @if ($isView)
                             <x-forms.view-field for="classification_code" :value="$classificationOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="classification_code" name="classification_code" data-url="{{ route('admin.accounting.select2.account-classifications') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-expenses-locked="{{ $record?->parent && $record?->classification?->code === \Modules\Accounting\Models\AccountClassification::Expenses ? '1' : '' }}">
+                            <select class="form-select js-select2-ajax" id="classification_code" name="classification_code" data-url="{{ route('admin.accounting.select2.account-classifications') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                 @if ($classificationOption)
                                     <option value="{{ $classificationOption['id'] }}" selected>{{ $classificationOption['text'] }}</option>
                                 @endif
                             </select>
-                            <div class="form-text">{{ __('accounts.messages.expense_classification_auto') }}</div>
+                            {{-- <div class="form-text">{{ __('accounts.messages.expense_classification_fallback') }}</div> --}}
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="classification_code"></div>
                     </div>

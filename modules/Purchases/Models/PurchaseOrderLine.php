@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -28,6 +29,7 @@ class PurchaseOrderLine extends Model
         'request_for_quotation_line_id',
         'supplier_quotation_line_id',
         'supplier_selection_line_id',
+        'cost_center_id',
         'ordered_quantity',
         'received_quantity',
         'remaining_quantity',
@@ -131,5 +133,10 @@ class PurchaseOrderLine extends Model
     public function receiptLines(): HasMany
     {
         return $this->hasMany(UnpricedInventoryReceiptLine::class);
+    }
+
+    public function costCenter(): BelongsTo
+    {
+        return $this->belongsTo(CostCenter::class)->withTrashed();
     }
 }

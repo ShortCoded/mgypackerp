@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -31,6 +32,7 @@ class ProductionRun extends Model
     protected $fillable = [
         'public_id', 'run_number', 'company_id', 'financial_period_id', 'branch_id',
         'production_order_id', 'production_order_line_id', 'product_id', 'unit_id',
+        'cost_center_id',
         'conversion_factor', 'planned_quantity', 'planned_base_quantity', 'good_base_quantity',
         'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity',
         'received_base_quantity', 'planned_start_at', 'planned_end_at', 'actual_start_at',
@@ -108,6 +110,11 @@ class ProductionRun extends Model
     public function machine(): BelongsTo
     {
         return $this->belongsTo(ProductionMachine::class, 'production_machine_id')->withTrashed();
+    }
+
+    public function costCenter(): BelongsTo
+    {
+        return $this->belongsTo(CostCenter::class)->withTrashed();
     }
 
     public function mold(): BelongsTo

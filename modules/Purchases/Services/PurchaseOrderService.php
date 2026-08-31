@@ -4,6 +4,7 @@ namespace Modules\Purchases\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
@@ -433,6 +434,7 @@ class PurchaseOrderService
                 'request_for_quotation_line_id' => $line['request_for_quotation_line_id'] ?? null,
                 'supplier_quotation_line_id' => $line['supplier_quotation_line_id'] ?? null,
                 'supplier_selection_line_id' => $line['supplier_selection_line_id'] ?? null,
+                'cost_center_id' => $this->lineCostCenterId($line, $context['company_id']),
                 'ordered_quantity' => $line['ordered_quantity'],
                 'received_quantity' => $line['received_quantity'],
                 'remaining_quantity' => $line['remaining_quantity'],
@@ -490,6 +492,23 @@ class PurchaseOrderService
         }
 
         return $supplier;
+    }
+
+    /** @param array<string, mixed> $line */
+    private function lineCostCenterId(array $line, int $companyId): ?int
+    {
+        $docNum = trim((string) ($line['cost_center_doc_num'] ?? ''));
+
+        if ($docNum === '') {
+            return null;
+        }
+
+        return CostCenter::query()
+            ->forCompany($companyId)
+            ->active()
+            ->where('is_group', false)
+            ->where('doc_num', $docNum)
+            ->valueOrFail('id');
     }
 
     private function currency(int $companyId, ?string $docNum): ?Currency

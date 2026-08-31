@@ -52,7 +52,7 @@ class AccountsDataTable
                         'accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en',
                         'accounts.statement_type', 'accounts.normal_balance',
                         'parent_accounts.account_code', 'parent_accounts.name', 'parent_accounts.name_en',
-                        'account_classifications.name', 'account_classifications.name_en',
+                        'account_classifications.code', 'account_classifications.name', 'account_classifications.name_en',
                         'created_users.name', 'updated_users.name',
                     ]]);
                 }
@@ -125,6 +125,7 @@ class AccountsDataTable
                 $builder->whereRaw('LOWER(accounts.account_code) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(accounts.name) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(COALESCE(accounts.name_en, \'\')) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(COALESCE(account_classifications.code, \'\')) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(COALESCE(account_classifications.name, \'\')) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(COALESCE(account_classifications.name_en, \'\')) LIKE ?', [$like]);
             });

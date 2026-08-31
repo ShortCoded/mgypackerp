@@ -22,6 +22,7 @@ class BusinessPartnerAccountService
         private readonly AccountService $accounts,
         private readonly OperatingCompanyContextService $companies,
         private readonly DocumentNumberService $documentNumbers,
+        private readonly AccountClassificationRegistry $classifications,
     ) {}
 
     public function rootAccount(string $type): Account
@@ -415,16 +416,15 @@ class BusinessPartnerAccountService
         }
 
         if (! $classification instanceof AccountClassification) {
+            $definition = $this->classifications->definition('fixed_assets');
+
+            if ($definition === null) {
+                throw new DomainException('The fixed_assets account classification is not registered.');
+            }
+
             return AccountClassification::query()->create([
                 ...$this->documentNumbers->next('account_classifications', AccountClassification::class),
-                'code' => 'fixed_assets',
-                'name' => 'أصول ثابتة',
-                'name_en' => 'Fixed Assets',
-                'account_type' => Account::TypeAsset,
-                'statement_type' => Account::StatementFinancialPosition,
-                'normal_balance' => Account::BalanceDebit,
-                'is_system' => true,
-                'status' => 'active',
+                ...$definition,
             ]);
         }
 

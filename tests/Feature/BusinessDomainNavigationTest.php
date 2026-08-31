@@ -411,6 +411,8 @@ test('only the owning business domain and functional subgroup open for child rou
     'inventory item edit' => ['admin.products.edit', 'products.view', 'inventory', 'item_data', 'legacy'],
     'production setup show' => ['admin.production.identifiers.show', 'production.identifiers.view', 'production', 'production_setup', 'legacy'],
     'accounting treasury edit' => ['admin.finance.bank-accounts.edit', 'bank_accounts.view', 'accounting_costing', 'treasury_banks', 'legacy'],
+    'fixed assets register' => ['admin.fixed-assets.assets.index', 'fixed_assets.view', 'accounting_costing', 'fixed_assets', 'expanded'],
+    'maintenance work orders' => ['admin.maintenance.maintenance-work-orders.index', 'maintenance.maintenance_work_orders.view', 'production', 'maintenance', 'expanded'],
     'tools files index' => ['admin.file-manager.index', 'file_manager.view', 'tools', 'files_documents', 'legacy'],
     'reports index' => ['admin.reports.customers.index', 'reports.customers.view', 'reports', 'sales_reports', 'legacy'],
     'expanded sales edit' => ['admin.sales.sales-orders.edit', 'sales_orders.view', 'sales', null, 'expanded'],

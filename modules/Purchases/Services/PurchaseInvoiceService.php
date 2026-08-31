@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
@@ -339,6 +340,7 @@ class PurchaseInvoiceService
             'purchaseOrder',
             'lines.product.unit',
             'lines.unit',
+            'lines.costCenter',
             'lines.purchaseOrderLine.purchaseOrder',
             'lines.receiptLine.receipt',
             'paymentSchedules.cashbox',
@@ -490,6 +492,7 @@ class PurchaseInvoiceService
                 'unit_id' => $unit?->getKey(),
                 'purchase_order_line_id' => $purchaseOrderLine?->getKey(),
                 'receipt_line_id' => $receiptLine?->getKey(),
+                'cost_center_id' => $this->lineCostCenterId($line, $purchaseOrderLine, $context['company_id']),
                 'matched_quantity' => 0,
                 'quantity' => $line['quantity'],
                 'unit_price' => $line['unit_price'],
@@ -802,7 +805,14 @@ class PurchaseInvoiceService
                     $this->addPostingAmount($posting, $varianceAccount, ltrim($variance, '-'), bccomp($variance, '0', 4) > 0, __('Purchase price variance'));
                 }
             } else {
-                $this->addPostingAmount($posting, $this->purchaseDebitAccount($line), $finalAmount, true, __('purchase_invoices.journal.inventory_line'));
+                $this->addPostingAmount(
+                    $posting,
+                    $this->purchaseDebitAccount($line),
+                    $finalAmount,
+                    true,
+                    __('purchase_invoices.journal.inventory_line'),
+                    $line->cost_center_id,
+                );
             }
         }
 
@@ -826,6 +836,7 @@ class PurchaseInvoiceService
                 'description' => $line['description'],
                 'supplier_id' => $record->supplier_id,
                 'branch_id' => $record->branch_id,
+                'cost_center_id' => $line['cost_center_id'] ?? null,
             ])
             ->values()
             ->all();
@@ -879,16 +890,22 @@ class PurchaseInvoiceService
     }
 
     /** @param array<string, array<string, mixed>> $posting */
-    private function addPostingAmount(array &$posting, Account $account, string $amount, bool $debit, string $description): void
-    {
+    private function addPostingAmount(
+        array &$posting,
+        Account $account,
+        string $amount,
+        bool $debit,
+        string $description,
+        ?int $costCenterId = null,
+    ): void {
         if (bccomp($amount, '0', 4) <= 0) {
             return;
         }
 
-        $key = ($debit ? 'd:' : 'c:').$account->getKey();
+        $key = ($debit ? 'd:' : 'c:').$account->getKey().':'.($costCenterId ?? 'none');
         $posting[$key] ??= [
             'account_id' => (int) $account->getKey(), 'debit_amount' => '0.0000',
-            'credit_amount' => '0.0000', 'description' => $description,
+            'credit_amount' => '0.0000', 'description' => $description, 'cost_center_id' => $costCenterId,
         ];
         $column = $debit ? 'debit_amount' : 'credit_amount';
         $posting[$key][$column] = bcadd((string) $posting[$key][$column], $amount, 4);
@@ -931,6 +948,23 @@ class PurchaseInvoiceService
         };
 
         return $this->accountByCode((int) $line->company_id, $code, 'purchase_debit_account_missing', ['code' => $code]);
+    }
+
+    /** @param array<string, mixed> $line */
+    private function lineCostCenterId(array $line, ?PurchaseOrderLine $purchaseOrderLine, int $companyId): ?int
+    {
+        $docNum = trim((string) ($line['cost_center_doc_num'] ?? ''));
+
+        if ($docNum === '') {
+            return $purchaseOrderLine?->cost_center_id;
+        }
+
+        return CostCenter::query()
+            ->forCompany($companyId)
+            ->active()
+            ->where('is_group', false)
+            ->where('doc_num', $docNum)
+            ->valueOrFail('id');
     }
 
     private function supplierPayableAccount(PurchaseInvoice $record): Account

@@ -1739,11 +1739,14 @@ html[dir="rtl"] .erp-date-picker-calendar {
   display: flex;
   gap: .375rem;
   align-items: stretch;
+  width: 100%;
+  min-width: 0;
 }
 
 .hr-select2-inline-control .select2-container {
   flex: 1 1 auto;
   width: 100% !important;
+  min-width: 0;
 }
 
 .hr-select2-inline-control .js-inline-lookup-create {
@@ -1754,6 +1757,34 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
 .hr-employee-form-card .select2-container {
   width: 100% !important;
+  min-width: 0;
+}
+
+.hr-employee-form-card,
+.hr-employee-form-card .card-body,
+.hr-employee-form-card .tab-content,
+.hr-employee-form-card .tab-pane,
+.hr-employee-form-card .row > * {
+  min-width: 0;
+}
+
+.hr-employee-form-card .form-control,
+.hr-employee-form-card .form-select,
+.hr-employee-form-card .input-group,
+.hr-employee-form-card .erp-date-picker-wrapper {
+  width: 100%;
+  min-width: 0;
+}
+
+.hr-employee-form-tabs {
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.hr-employee-form-tabs .nav-link {
+  white-space: nowrap;
 }
 
 .hr-employee-form-card .product-image-field .product-image-picker-panel {

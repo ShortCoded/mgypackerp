@@ -58,7 +58,8 @@ class AccountTreeReport
                     ->orWhereRaw('LOWER(accounts.name) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(COALESCE(accounts.name_en, \'\')) LIKE ?', [$like])
                     ->orWhereHas('classification', function (Builder $classification) use ($like): void {
-                        $classification->whereRaw('LOWER(account_classifications.name) LIKE ?', [$like])
+                        $classification->whereRaw('LOWER(account_classifications.code) LIKE ?', [$like])
+                            ->orWhereRaw('LOWER(account_classifications.name) LIKE ?', [$like])
                             ->orWhereRaw('LOWER(COALESCE(account_classifications.name_en, \'\')) LIKE ?', [$like]);
                     });
             });

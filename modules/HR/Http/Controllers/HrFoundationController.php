@@ -22,6 +22,7 @@ use Modules\HR\Http\Requests\Foundation\BulkDeleteHrFoundationRequest;
 use Modules\HR\Http\Requests\Foundation\StoreHrFoundationRequest;
 use Modules\HR\Http\Requests\Foundation\UpdateHrFoundationDocumentNumberSettingsRequest;
 use Modules\HR\Http\Requests\Foundation\UpdateHrFoundationRequest;
+use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Services\HrFoundationDefinition;
 use Modules\HR\Services\HrFoundationDocumentNumberSettingsService;
@@ -378,8 +379,10 @@ abstract class HrFoundationController extends Controller
                 continue;
             }
 
-            $column = (string) $field['column'];
-            $id = $record->getAttribute($column);
+            $column = (string) ($field['column'] ?? '');
+            $id = ($field['virtual'] ?? false) === true && $record instanceof HrDepartment
+                ? $record->defaultCostCenterForCompany(app(OperatingCompanyContextService::class)->requireCompanyId())?->getKey()
+                : $record->getAttribute($column);
 
             if (! $id) {
                 $selected[(string) $field['name']] = null;

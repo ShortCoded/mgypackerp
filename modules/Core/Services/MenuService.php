@@ -31,9 +31,88 @@ class MenuService
         return $this->memo->remember(
             "menu.visible.{$locale}.{$routeName}.{$userKey}.{$phaseMode}",
             fn (): array => $this->markActive(
-                $this->filterByPermissions($this->loadMenu(), $user)
+                $this->filterByPermissions($this->nestNavigationItems($this->loadMenu()), $user)
             )
         );
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $items
+     * @return list<array<string, mixed>>
+     */
+    private function nestNavigationItems(array $items): array
+    {
+        $configuredChildren = config('menu_sections.navigation_children', []);
+
+        if (! is_array($configuredChildren) || $configuredChildren === []) {
+            return $items;
+        }
+
+        $itemsByLabel = [];
+        $itemLabels = [];
+
+        foreach ($items as $item) {
+            $label = is_string($item['label'] ?? null) ? $item['label'] : '';
+
+            if ($label === '') {
+                continue;
+            }
+
+            $itemsByLabel[$label] = $item;
+            $itemLabels[] = $label;
+        }
+
+        $childrenByParent = [];
+        $parentByChild = [];
+
+        foreach ($configuredChildren as $parentLabel => $childLabels) {
+            if (! is_string($parentLabel) || ! isset($itemsByLabel[$parentLabel]) || ! is_array($childLabels)) {
+                continue;
+            }
+
+            foreach ($childLabels as $childLabel) {
+                if (! is_string($childLabel) || ! isset($itemsByLabel[$childLabel])) {
+                    continue;
+                }
+
+                if ($childLabel === $parentLabel) {
+                    throw new LogicException("Navigation item [{$childLabel}] cannot be its own parent.");
+                }
+
+                if (isset($parentByChild[$childLabel]) && $parentByChild[$childLabel] !== $parentLabel) {
+                    throw new LogicException("Navigation item [{$childLabel}] has multiple configured parents.");
+                }
+
+                $childrenByParent[$parentLabel][] = $childLabel;
+                $parentByChild[$childLabel] = $parentLabel;
+            }
+        }
+
+        $buildItem = function (string $label, array $ancestors = []) use (&$buildItem, $childrenByParent, $itemsByLabel): array {
+            if (in_array($label, $ancestors, true)) {
+                throw new LogicException("Circular navigation hierarchy detected at [{$label}].");
+            }
+
+            $item = $itemsByLabel[$label];
+
+            foreach ($childrenByParent[$label] ?? [] as $childLabel) {
+                $item['children'][] = $buildItem($childLabel, [...$ancestors, $label]);
+            }
+
+            return $item;
+        };
+
+        $nested = [];
+
+        foreach ($itemLabels as $label) {
+            if (isset($parentByChild[$label])) {
+                continue;
+            }
+
+            $nested[] = $buildItem($label);
+        }
+
+        return $nested;
     }
 
     /**
@@ -270,9 +349,9 @@ class MenuService
             }
         }
 
-        $seenRoutes = [];
+        $seenDestinations = [];
 
-        return $this->deduplicateRoutes($organized, $seenRoutes);
+        return $this->deduplicateRoutes($organized, $seenDestinations);
     }
 
     /**
@@ -495,27 +574,29 @@ class MenuService
 
     /**
      * @param  list<array<string, mixed>>  $items
-     * @param  array<string, true>  $seenRoutes
+     * @param  array<string, true>  $seenDestinations
      * @return list<array<string, mixed>>
      */
-    private function deduplicateRoutes(array $items, array &$seenRoutes): array
+    private function deduplicateRoutes(array $items, array &$seenDestinations): array
     {
         $deduplicated = [];
 
         foreach ($items as $item) {
             $children = is_array($item['children'] ?? null) ? $item['children'] : [];
-            $item['children'] = $this->deduplicateRoutes($children, $seenRoutes);
+            $item['children'] = $this->deduplicateRoutes($children, $seenDestinations);
             $route = $item['route'] ?? null;
 
             if (is_string($route) && $route !== '') {
                 $parameters = is_array($item['route_params'] ?? null) ? $item['route_params'] : [];
-                $fingerprint = $route.'|'.json_encode($parameters);
+                $routeFingerprint = 'route:'.$route.'|'.json_encode($parameters);
+                $urlFingerprint = 'url:'.$this->normalizedUrlFor($item);
 
-                if (isset($seenRoutes[$fingerprint])) {
+                if (isset($seenDestinations[$routeFingerprint]) || isset($seenDestinations[$urlFingerprint])) {
                     continue;
                 }
 
-                $seenRoutes[$fingerprint] = true;
+                $seenDestinations[$routeFingerprint] = true;
+                $seenDestinations[$urlFingerprint] = true;
             }
 
             if ($route === null && $item['children'] === []) {
@@ -526,6 +607,30 @@ class MenuService
         }
 
         return array_values($deduplicated);
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function normalizedUrlFor(array $item): string
+    {
+        $url = $this->urlFor($item);
+        $path = parse_url($url, PHP_URL_PATH);
+        $query = parse_url($url, PHP_URL_QUERY);
+        $normalizedPath = is_string($path) && $path !== '' ? '/'.ltrim($path, '/') : '/';
+
+        if ($normalizedPath !== '/') {
+            $normalizedPath = rtrim($normalizedPath, '/');
+        }
+
+        if (! is_string($query) || $query === '') {
+            return $normalizedPath;
+        }
+
+        parse_str($query, $parameters);
+        ksort($parameters);
+
+        return $normalizedPath.'?'.http_build_query($parameters);
     }
 
     /**

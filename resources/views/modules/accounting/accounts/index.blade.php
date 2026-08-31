@@ -133,7 +133,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-classification">{{ __('accounts.filters.classification') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="accounts-classification" name="classification" data-filter-label="{{ __('accounts.filters.classification') }}" data-url="{{ route('admin.accounting.select2.account-classifications') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="accounts-classification" name="classification" data-filter-label="{{ __('accounts.filters.classification') }}" data-url="{{ route('admin.accounting.select2.account-classifications', ['include_inactive' => 1]) }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                     <option value=""></option>
                 </select>
             </div>

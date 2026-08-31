@@ -34,6 +34,7 @@ class CostCenter extends Model
         'doc_num',
         'cost_center_code',
         'name',
+        'name_en',
         'is_group',
         'status',
         'notes',
@@ -70,7 +71,18 @@ class CostCenter extends Model
 
     public function codeNameLabel(): string
     {
-        return self::codeNameLabelFor($this->cost_center_code, $this->name);
+        return self::codeNameLabelFor($this->cost_center_code, $this->displayName());
+    }
+
+    public function displayName(?string $locale = null): string
+    {
+        $locale ??= app()->getLocale();
+
+        if (config("languages.available.{$locale}.dir") === 'rtl') {
+            return trim((string) $this->name);
+        }
+
+        return trim((string) $this->name_en) !== '' ? trim((string) $this->name_en) : trim((string) $this->name);
     }
 
     public function isProtectedRoot(): bool

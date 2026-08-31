@@ -68,6 +68,7 @@ class JournalEntryService
                     'employee_id' => $line->employee_id,
                     'bank_account_id' => $line->bank_account_id,
                     'cost_center_id' => $line->cost_center_id,
+                    'department_id' => $line->department_id ?? null,
                     'branch_id' => $line->branch_id,
                 ]);
             }
@@ -234,7 +235,7 @@ class JournalEntryService
 
     /**
      * @param  array{entry_date: mixed, company_id: int, financial_period_id: int, branch_id?: int|null, currency_id?: int|null, exchange_rate?: string|int|float, description: string, notes?: string|null, source_type: string, source_id: int, source_doc_num: string}  $header
-     * @param  list<array{account_id: int, debit_amount: string|int|float, credit_amount: string|int|float, description: string, customer_id?: int|null, supplier_id?: int|null, employee_id?: int|null, bank_account_id?: int|null, cost_center_id?: int|null, branch_id?: int|null}>  $lines
+     * @param  list<array{account_id: int, debit_amount: string|int|float, credit_amount: string|int|float, description: string, customer_id?: int|null, supplier_id?: int|null, employee_id?: int|null, bank_account_id?: int|null, cost_center_id?: int|null, department_id?: int|null, branch_id?: int|null}>  $lines
      */
     public function createPostedFromSource(array $header, array $lines): JournalEntry
     {
@@ -345,6 +346,7 @@ class JournalEntryService
                 'employee_id' => $line->employee_id,
                 'bank_account_id' => $line->bank_account_id,
                 'cost_center_id' => $line->cost_center_id,
+                'department_id' => $line->department_id,
                 'branch_id' => $line->branch_id,
             ])->all();
 

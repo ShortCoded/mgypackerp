@@ -5,6 +5,7 @@ namespace Modules\Production\Services;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DocumentNumberService;
@@ -237,6 +238,7 @@ class ProductionCycleService
                 'planned_end_at' => $endsAt,
                 'production_shift_id' => $data['production_shift_id'] ?? null,
                 'production_machine_id' => $machineId,
+                'cost_center_id' => $this->runCostCenterId($data, $machineId, (int) $order->company_id),
                 'production_mold_id' => $moldId,
                 'batch_lot' => $data['batch_lot'] ?? null,
                 'status' => ProductionRun::StatusPlanned,
@@ -998,6 +1000,26 @@ class ProductionCycleService
         if (($machineId !== null || $moldId !== null) && $conflictQuery->lockForUpdate()->exists()) {
             throw new DomainException('The selected machine or mold has an overlapping production run.');
         }
+    }
+
+    /** @param array<string, mixed> $data */
+    private function runCostCenterId(array $data, ?int $machineId, int $companyId): ?int
+    {
+        $docNum = trim((string) ($data['cost_center_doc_num'] ?? ''));
+        $costCenterId = $docNum === ''
+            ? ProductionMachine::query()->whereKey($machineId)->value('cost_center_id')
+            : CostCenter::query()->forCompany($companyId)->where('doc_num', $docNum)->value('id');
+
+        if ($costCenterId === null) {
+            return null;
+        }
+
+        return CostCenter::query()
+            ->forCompany($companyId)
+            ->active()
+            ->where('is_group', false)
+            ->whereKey($costCenterId)
+            ->valueOrFail('id');
     }
 
     /** @return array<string, mixed> */

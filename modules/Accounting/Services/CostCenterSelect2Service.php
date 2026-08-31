@@ -20,7 +20,7 @@ class CostCenterSelect2Service
     {
         $companyId = $this->companies->currentCompanyId($request);
         $query = CostCenter::query()
-            ->select(['doc_num', 'cost_center_code', 'name', 'doc_number'])
+            ->select(['doc_num', 'cost_center_code', 'name', 'name_en', 'doc_number'])
             ->where('status', 'active')
             ->where('is_group', ! $request->boolean('postable'))
             ->orderByRaw('LENGTH(cost_center_code), cost_center_code');
@@ -47,7 +47,7 @@ class CostCenterSelect2Service
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
-            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'cost_center_code', 'name']]);
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'cost_center_code', 'name', 'name_en']]);
         }
 
         return $this->select2->paginated($query, $request, fn (CostCenter $costCenter): array => [

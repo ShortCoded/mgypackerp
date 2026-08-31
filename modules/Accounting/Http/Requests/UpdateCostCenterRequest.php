@@ -21,6 +21,7 @@ class UpdateCostCenterRequest extends FormRequest
         $this->merge([
             'cost_center_code' => trim((string) $this->input('cost_center_code')),
             'name' => trim((string) $this->input('name')),
+            'name_en' => $this->filled('name_en') ? trim((string) $this->input('name_en')) : null,
             'parent_doc_num' => $this->filled('parent_doc_num') ? trim((string) $this->input('parent_doc_num')) : null,
             'default_account_doc_num' => $this->filled('default_account_doc_num') ? trim((string) $this->input('default_account_doc_num')) : null,
             'is_group' => $this->boolean('is_group'),
@@ -43,6 +44,7 @@ class UpdateCostCenterRequest extends FormRequest
             ],
             'cost_center_code' => ['nullable', 'string', 'max:50'],
             'name' => ['required', 'string', 'max:255'],
+            'name_en' => ['nullable', 'string', 'max:255'],
             'parent_doc_num' => [
                 'nullable',
                 'string',

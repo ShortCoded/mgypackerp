@@ -5,6 +5,7 @@ namespace Modules\Accounting\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Core\Models\Branch;
+use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrEmployee;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
@@ -23,6 +24,7 @@ class JournalEntryLine extends Model
         'employee_id',
         'bank_account_id',
         'cost_center_id',
+        'department_id',
         'branch_id',
     ];
 
@@ -54,6 +56,11 @@ class JournalEntryLine extends Model
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    public function department(): BelongsTo
+    {
+        return $this->belongsTo(HrDepartment::class);
     }
 
     public function customer(): BelongsTo

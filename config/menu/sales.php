@@ -123,8 +123,8 @@ return [
                 'children' => [],
             ],
             [
-                'label' => 'sales_reports',
-                'title' => 'Sales Reports',
+                'label' => 'reports_sales_sales_orders',
+                'title' => 'Sales Orders',
                 'icon' => 'chart-line',
                 'route' => 'admin.reports.sales.sales-orders.index',
                 'permission' => 'reports.sales.sales_orders.view',

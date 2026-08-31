@@ -178,9 +178,7 @@ class AccountService
         $parent = ! empty($data['parent_doc_num'])
             ? Account::query()->forCompany($companyId)->where('doc_num', $data['parent_doc_num'])->first()
             : null;
-        $classificationCode = $this->mustUseExpensesClassification($data, $parent, $current)
-            ? AccountClassification::Expenses
-            : ($data['classification_code'] ?? null);
+        $classificationCode = $this->classificationCode($data, $parent, $current);
         $classification = ! empty($classificationCode)
             ? AccountClassification::query()->where('code', $classificationCode)->first()
             : null;
@@ -291,17 +289,23 @@ class AccountService
             : Account::BalanceCredit;
     }
 
-    private function mustUseExpensesClassification(array $data, ?Account $parent, ?Account $current): bool
+    private function classificationCode(array $data, ?Account $parent, ?Account $current): ?string
     {
+        $classificationCode = trim((string) ($data['classification_code'] ?? ''));
+
+        if ($classificationCode !== '') {
+            return $classificationCode;
+        }
+
         if ($parent instanceof Account) {
-            return $this->isInExpensesTree($parent);
+            return $this->isInExpensesTree($parent) ? AccountClassification::Expenses : null;
         }
 
         if ($current instanceof Account) {
-            return $this->isInExpensesTree($current);
+            return $this->isInExpensesTree($current) ? AccountClassification::Expenses : null;
         }
 
-        return (string) ($data['account_code'] ?? '') === '5';
+        return (string) ($data['account_code'] ?? '') === '5' ? AccountClassification::Expenses : null;
     }
 
     private function isInExpensesTree(Account $account): bool

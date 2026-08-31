@@ -638,6 +638,14 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertSee(route('admin.hr.select2.foundation', 'insurance-offices'), false)
         ->assertSee('data-depends-on="#hr-employee-department-doc-num"', false)
         ->assertSee('data-dependent-result-field="department_doc_num"', false)
+        ->assertSee('hr-employee-form-tabs', false)
+        ->assertSee('hr-employee-form-grid', false)
+        ->assertSee('col-12 col-md-6 col-xl-4 col-xxl-3', false)
+        ->assertSee('col-12 col-md-6 col-xl-8 col-xxl-6', false)
+        ->assertDontSee('cost_center_doc_num', false)
+        ->assertDontSee('Alternative Cost Center')
+        ->assertDontSee('Cost Center Override')
+        ->assertDontSee('مركز التكلفة البديل')
         ->assertSee('js-hr-biometric-card-title', false)
         ->assertSee('documents[__INDEX__][document_number_text]', false)
         ->assertSee('name="documents[__INDEX__][alert_before_expiry_days]"', false)
@@ -646,6 +654,18 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertDontSee('hr-inline-select2.js', false)
         ->assertDontSee('data-target-select=', false)
         ->assertDontSee('data-id=', false);
+
+    $stylesheet = file_get_contents(public_path('assets/css/user.css'));
+
+    expect($stylesheet)->toContain(
+        '.hr-employee-form-tabs',
+        'flex-wrap: nowrap',
+        'overflow-x: auto',
+        '.hr-employee-form-card .row > *',
+        '.hr-select2-inline-control .select2-container',
+        'min-width: 0',
+        'width: 100% !important',
+    );
 
     $this->withSession($session)->getJson(route('admin.hr.select2.foundation', 'departments').'?q=Operations')
         ->assertOk()
@@ -1020,7 +1040,9 @@ test('HrEmployee datatable supports active inactive trashed lookup search orderi
 
     $this->actingAs($actor)
         ->withSession($session)
-        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures))
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'cost_center_doc_num' => 'REMOVED-EMPLOYEE-OVERRIDE',
+        ]))
         ->assertOk();
 
     $this->withSession($session)
@@ -1532,6 +1554,8 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
     $this->withSession($session)
         ->get(route('admin.hr.employees.edit', $employee->doc_num))
         ->assertOk()
+        ->assertSee('col-12 col-md-6 col-xl-4 col-xxl-3', false)
+        ->assertDontSee('cost_center_doc_num', false)
         ->assertSee('value="'.$fixtures['nationality']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['hiringStatus']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['allowance']->doc_num.'" selected', false)
@@ -1539,6 +1563,13 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->assertSee('name="attendance_tracking_enabled" type="checkbox"', false)
         ->assertSee('name="overtime_enabled" type="checkbox"', false)
         ->assertSee('nadia.personal@example.test');
+
+    $this->withSession($session)
+        ->get(route('admin.hr.employees.show', $employee->doc_num))
+        ->assertOk()
+        ->assertSee('col-12 col-md-6 col-xl-4 col-xxl-3', false)
+        ->assertDontSee('cost_center_doc_num', false)
+        ->assertDontSee('REMOVED-EMPLOYEE-OVERRIDE');
 
     $fixtures['device']->update(['status' => 'inactive']);
 

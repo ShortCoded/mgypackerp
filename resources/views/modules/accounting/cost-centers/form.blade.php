@@ -23,6 +23,7 @@
         'doc_number' => ! $isCreateLike ? (string) ($record?->doc_number ?? '') : '',
         'cost_center_code' => $mode === 'clone' ? '' : (string) ($record?->cost_center_code ?? ''),
         'name' => (string) ($record?->name ?? ''),
+        'name_en' => (string) ($record?->name_en ?? ''),
         'parent_doc_num' => (string) ($record?->parent?->doc_num ?? ''),
         'default_account_doc_num' => (string) ($defaultAccountOption['id'] ?? ''),
         'is_group' => (bool) ($record?->is_group ?? false),
@@ -90,6 +91,16 @@
                             <input class="form-control" id="name" name="name" value="{{ $value('name') }}" required autofocus>
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
+                    </div>
+
+                    <div class="{{ $showsDocumentNumberColumn ? 'col-md-9 col-lg-4' : 'col-md-5' }}">
+                        <label class="form-label" for="name_en">{{ __('cost_centers.attributes.name_en') }}</label>
+                        @if ($isView)
+                            <x-forms.view-field for="name_en" :value="$value('name_en')" />
+                        @else
+                            <input class="form-control" id="name_en" name="name_en" value="{{ $value('name_en') }}" dir="ltr">
+                        @endif
+                        <div class="invalid-feedback" data-error-for="name_en"></div>
                     </div>
 
                     <div class="{{ $showsDocumentNumberColumn ? 'col-md-4 col-lg-3' : 'col-md-3' }}">

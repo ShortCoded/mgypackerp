@@ -54,6 +54,7 @@ return [
             'description' => 'Description',
             'break_minutes' => 'Break Minutes',
             'department_doc_num' => 'Department',
+            'default_cost_center_doc_num' => 'Default Cost Center',
             'grade_doc_num' => 'Grade',
             'job_doc_num' => 'Job',
             'rank' => 'Rank',
@@ -121,6 +122,7 @@ return [
         ],
         'placeholders' => [
             'department_doc_num' => 'Select department',
+            'default_cost_center_doc_num' => 'Select the company default cost center',
             'grade_doc_num' => 'Select grade',
             'job_doc_num' => 'Select job',
             'default_shift_doc_num' => 'Select shift',

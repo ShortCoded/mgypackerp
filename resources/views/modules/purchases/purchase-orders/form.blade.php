@@ -306,6 +306,7 @@
                                 <th style="width: 3rem;">#</th>
                                 <th>{{ __('purchase_orders.attributes.product') }}</th>
                                 <th style="width: 13rem;">{{ __('purchase_orders.attributes.unit') }}</th>
+                                <th style="width: 16rem;">{{ __('cost_centers.singular') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.ordered_quantity') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.unit_price') }}</th>
                                 <th style="width: 8rem;">{{ __('purchase_orders.attributes.discount_type') }}</th>
@@ -360,6 +361,18 @@
                                                 @endif
                                             </select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)
+                                            <span>{{ $line['cost_center_text'] ?? __('common.empty_value') }}</span>
+                                        @else
+                                            <select class="form-select js-select2-ajax" name="lines[{{ $index }}][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true">
+                                                @if(! empty($line['cost_center_doc_num']))
+                                                    <option value="{{ $line['cost_center_doc_num'] }}" selected>{{ $line['cost_center_text'] ?? $line['cost_center_doc_num'] }}</option>
+                                                @endif
+                                            </select>
+                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.cost_center_doc_num"></div>
                                         @endif
                                     </td>
                                     <td>
@@ -494,6 +507,10 @@
             <td>
                 <select class="form-select js-purchase-order-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required></select>
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
+            </td>
+            <td>
+                <select class="form-select js-select2-ajax" name="lines[__INDEX__][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true"></select>
+                <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.cost_center_doc_num"></div>
             </td>
             <td>
                 <x-forms.numeric-input class="text-end js-line-quantity" name="lines[__INDEX__][ordered_quantity]" :scale="8" min="0.00000001" step="0.00000001" required />

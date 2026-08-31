@@ -22,7 +22,7 @@ class InventoryAccountingPostingService
             return null;
         }
 
-        $document->loadMissing(['lines.product', 'journalEntry']);
+        $document->loadMissing(['lines.product', 'journalEntry', 'productionRun']);
 
         if ($document->journalEntry instanceof JournalEntry) {
             return $document->journalEntry;
@@ -101,7 +101,7 @@ class InventoryAccountingPostingService
             InventoryDocument::TypeMaterialReturn,
             InventoryDocument::TypeProductionWaste,
             InventoryDocument::TypeProductionReceipt,
-        ], true) ? $this->mappings->productionCostCenterId($mapping, $event) : null;
+        ], true) ? ($document->productionRun?->cost_center_id ?? $this->mappings->productionCostCenterId($mapping, $event)) : null;
 
         foreach ($document->lines as $line) {
             $amount = bcadd((string) $line->total_cost, '0', 4);
@@ -161,7 +161,7 @@ class InventoryAccountingPostingService
         mixed $costCenterId,
     ): void {
         $side = bccomp($debit, '0', 4) > 0 ? 'debit' : 'credit';
-        $key = $accountId.':'.$side;
+        $key = $accountId.':'.$side.':'.($costCenterId ?? 'none');
         $grouped[$key] ??= [
             'account_id' => $accountId,
             'debit_amount' => '0.0000',

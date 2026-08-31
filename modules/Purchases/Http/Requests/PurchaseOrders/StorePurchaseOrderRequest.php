@@ -111,6 +111,15 @@ class StorePurchaseOrderRequest extends FormRequest
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'lines.*.unit_doc_num' => ['required', 'string'],
+            'lines.*.cost_center_doc_num' => [
+                'nullable',
+                'string',
+                Rule::exists('cost_centers', 'doc_num')->where(fn ($query) => $query
+                    ->where('company_id', $companyId)
+                    ->where('status', 'active')
+                    ->where('is_group', false)
+                    ->whereNull('deleted_at')),
+            ],
             'lines.*.ordered_quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,12}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
@@ -289,6 +298,10 @@ class StorePurchaseOrderRequest extends FormRequest
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_orders.messages.invalid_unit'));
             }
 
+            if ($product?->isService() && empty($line['cost_center_doc_num'])) {
+                $validator->errors()->add("lines.{$index}.cost_center_doc_num", __('A cost center is required for service and non-stock purchase lines.'));
+            }
+
             $subtotal = (float) ($line['ordered_quantity'] ?? 0) * (float) ($line['unit_price'] ?? 0);
             $discountValue = (float) ($line['discount_value'] ?? 0);
             if (($line['discount_type'] ?? 'fixed') === 'percentage' && $discountValue > 100) {
@@ -353,6 +366,7 @@ class StorePurchaseOrderRequest extends FormRequest
                 'public_id' => trim((string) ($line['public_id'] ?? '')) ?: null,
                 'product_doc_num' => trim((string) ($line['product_doc_num'] ?? '')) ?: null,
                 'unit_doc_num' => trim((string) ($line['unit_doc_num'] ?? '')) ?: null,
+                'cost_center_doc_num' => trim((string) ($line['cost_center_doc_num'] ?? '')) ?: null,
                 'ordered_quantity' => $this->decimalValue($line['ordered_quantity'] ?? null),
                 'unit_price' => $this->decimalValue($line['unit_price'] ?? null),
                 'discount_type' => trim((string) ($line['discount_type'] ?? 'fixed')) ?: 'fixed',

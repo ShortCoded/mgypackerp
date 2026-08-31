@@ -8,6 +8,7 @@ use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\HR\Models\HrDepartment;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Services\HrFoundationDefinition;
 use Modules\HR\Services\HrFoundationRegistry;
@@ -241,13 +242,45 @@ class UpdateHrFoundationRequest extends FormRequest
         $exists = Rule::exists($table, 'doc_num')->whereNull('deleted_at');
 
         if (($field['active_only'] ?? false) === true) {
-            $exists = $exists->where('status', 'active');
+            $currentRelationId = $this->currentRelationId($field);
+            $exists = $exists->where(function ($query) use ($currentRelationId): void {
+                $query->where('status', 'active');
+
+                if ($currentRelationId !== null) {
+                    $query->orWhere('id', $currentRelationId);
+                }
+            });
+        }
+
+        if (($field['company_scoped'] ?? false) === true) {
+            $exists = $exists->where('company_id', app(OperatingCompanyContextService::class)->requireCompanyId());
+        }
+
+        if (($field['postable_only'] ?? false) === true) {
+            $exists = $exists->where('is_group', false);
         }
 
         return [
             ...$rules,
             $exists,
         ];
+    }
+
+    /** @param array<string, mixed> $field */
+    private function currentRelationId(array $field): ?int
+    {
+        $record = $this->record();
+
+        if (($field['virtual'] ?? false) === true && $record instanceof HrDepartment) {
+            return $record->defaultCostCenterForCompany(
+                app(OperatingCompanyContextService::class)->requireCompanyId()
+            )?->getKey();
+        }
+
+        $column = (string) ($field['column'] ?? '');
+        $id = $record?->getAttribute($column);
+
+        return $id === null ? null : (int) $id;
     }
 
     private function canControlDocumentNumber(): bool

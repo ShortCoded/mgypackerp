@@ -21,6 +21,7 @@ class StoreCostCenterRequest extends FormRequest
         $this->merge([
             'cost_center_code' => trim((string) $this->input('cost_center_code')),
             'name' => trim((string) $this->input('name')),
+            'name_en' => $this->filled('name_en') ? trim((string) $this->input('name_en')) : null,
             'parent_doc_num' => $this->filled('parent_doc_num') ? trim((string) $this->input('parent_doc_num')) : null,
             'default_account_doc_num' => $this->filled('default_account_doc_num') ? trim((string) $this->input('default_account_doc_num')) : null,
             'is_group' => $this->boolean('is_group'),
@@ -41,6 +42,7 @@ class StoreCostCenterRequest extends FormRequest
             ],
             'cost_center_code' => ['nullable', 'string', 'max:50'],
             'name' => ['required', 'string', 'max:255'],
+            'name_en' => ['nullable', 'string', 'max:255'],
             'parent_doc_num' => [
                 'nullable',
                 'string',
@@ -86,6 +88,7 @@ class StoreCostCenterRequest extends FormRequest
             'doc_number' => __('cost_centers.attributes.doc_number'),
             'cost_center_code' => __('cost_centers.attributes.cost_center_code'),
             'name' => __('cost_centers.attributes.name'),
+            'name_en' => __('cost_centers.attributes.name_en'),
             'parent_doc_num' => __('cost_centers.attributes.parent'),
             'default_account_doc_num' => __('cost_centers.attributes.default_account'),
             'is_group' => __('cost_centers.attributes.is_group'),

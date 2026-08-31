@@ -36,7 +36,6 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
             'max:60',
             Rule::unique('hr_employees', 'social_insurance_number')->ignore($key)->withoutTrashed(),
         ];
-
         if ($this->canControlDocumentNumberForUpdate()) {
             $rules['doc_number'] = [
                 'nullable',

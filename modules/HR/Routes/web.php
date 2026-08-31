@@ -28,6 +28,7 @@ use Modules\HR\Http\Controllers\HrShiftController;
 use Modules\HR\Http\Controllers\HrSocialInsurancePolicyController;
 use Modules\HR\Http\Controllers\HrSpecializationController;
 use Modules\HR\Http\Controllers\HrUniversityController;
+use Modules\HR\Http\Controllers\PayrollCostPreviewController;
 use Modules\HR\Http\Controllers\Select2\HrSelect2Controller;
 
 Route::middleware('auth')
@@ -40,6 +41,10 @@ Route::middleware('auth')
             ->name('select2.foundation');
         Route::get('/select2/employees', [HrSelect2Controller::class, 'employees'])
             ->name('select2.employees');
+        Route::get('/payroll-runs/{payrollRun}/cost-preview', PayrollCostPreviewController::class)
+            ->whereNumber('payrollRun')
+            ->middleware('can:hr.employees.view')
+            ->name('payroll-runs.cost-preview');
         Route::post('/select2/inline/lookups/{resource}', [HrSelect2InlineController::class, 'storeLookup'])
             ->name('select2.inline.lookups.store');
         Route::post('/select2/inline/foundation/{resource}', [HrSelect2InlineController::class, 'storeFoundation'])

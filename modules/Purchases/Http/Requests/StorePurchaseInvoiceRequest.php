@@ -153,6 +153,15 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.purchase_order_line_public_id' => ['nullable', 'uuid', 'exists:purchase_order_lines,public_id'],
             'lines.*.receipt_line_public_id' => ['nullable', 'uuid', 'exists:unpriced_inventory_receipt_lines,public_id'],
+            'lines.*.cost_center_doc_num' => [
+                'nullable',
+                'string',
+                Rule::exists('cost_centers', 'doc_num')->where(fn ($query) => $query
+                    ->where('company_id', $companyId)
+                    ->where('status', 'active')
+                    ->where('is_group', false)
+                    ->whereNull('deleted_at')),
+            ],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
@@ -307,6 +316,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('purchase_invoices.messages.purchase_product_type_invalid'));
             } elseif ($product instanceof Product && ! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_invoices.messages.invalid_unit'));
+            }
+
+            if ($product?->isService() && empty($line['cost_center_doc_num'])) {
+                $validator->errors()->add("lines.{$index}.cost_center_doc_num", __('A cost center is required for service and non-stock purchase lines.'));
             }
         }
     }
@@ -490,6 +503,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'unit_doc_num' => trim((string) ($line['unit_doc_num'] ?? '')) ?: null,
                 'purchase_order_line_public_id' => trim((string) ($line['purchase_order_line_public_id'] ?? '')) ?: null,
                 'receipt_line_public_id' => trim((string) ($line['receipt_line_public_id'] ?? '')) ?: null,
+                'cost_center_doc_num' => trim((string) ($line['cost_center_doc_num'] ?? '')) ?: null,
                 'quantity' => $this->decimalValue($line['quantity'] ?? null),
                 'unit_price' => $this->decimalValue($line['unit_price'] ?? null),
                 'discount_type' => trim((string) ($line['discount_type'] ?? '')) ?: null,

@@ -283,7 +283,9 @@
                                     'placeholder' => $relPlaceholder,
                                     'selectedValue' => (string) $fieldValue($field),
                                     'selectedText' => (string) ($relationSelected['text'] ?? ''),
-                                    'dataUrl' => route('admin.hr.select2.foundation', $field['select2']),
+                                    'dataUrl' => isset($field['select2_route'])
+                                        ? route($field['select2_route'], $field['select2_parameters'] ?? [])
+                                        : route('admin.hr.select2.foundation', $field['select2']),
                                     'canCreate' => (bool) ($inline['can_create'] ?? false),
                                     'inlineUrl' => $inline['inline_url'] ?? null,
                                     'inlineMergeFields' => [],

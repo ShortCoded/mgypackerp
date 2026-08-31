@@ -185,7 +185,7 @@ test('classification and default chart account seeders are idempotent', function
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $context = accountEnsureOperatingContext();
 
-    expect(AccountClassification::query()->count())->toBe(24)
+    expect(AccountClassification::query()->count())->toBe(135)
         ->and(Account::query()->where('company_id', $context['company']->getKey())->whereNull('parent_id')->count())->toBe(5)
         ->and(Account::query()->whereNull('company_id')->exists())->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1')->first()?->is_system)->toBeTrue()
@@ -399,18 +399,18 @@ test('account classification labels are locale aware across table tree and expor
         ->assertOk()
         ->json('data.0.classification');
 
-    expect($arabicCell)->toContain('عملاء / ذمم مدينة')
+    expect($arabicCell)->toContain('الذمم التجارية المدينة')
         ->and($arabicCell)->not->toContain('accounts_receivable')
-        ->and($arabicCell)->not->toContain('Accounts Receivable');
+        ->and($arabicCell)->not->toContain('Trade Receivables');
 
     $arabicRows = $report->rows(['classification' => 'accounts_receivable']);
     $arabicExportRow = $report->map($arabicRows->firstWhere('account_code', '1121'));
     $arabicPdfRow = collect($report->pdfRows($arabicRows))->firstWhere('account_code', '1121');
     $arabicTreeNode = accountTreeNodeByCode($report->treeNodes($arabicRows), '1121');
 
-    expect($arabicExportRow[4])->toBe('عملاء / ذمم مدينة')
-        ->and($arabicPdfRow['classification'])->toBe('عملاء / ذمم مدينة')
-        ->and($arabicTreeNode['classification'] ?? null)->toBe('عملاء / ذمم مدينة');
+    expect($arabicExportRow[4])->toBe('الذمم التجارية المدينة')
+        ->and($arabicPdfRow['classification'])->toBe('الذمم التجارية المدينة')
+        ->and($arabicTreeNode['classification'] ?? null)->toBe('الذمم التجارية المدينة');
 
     $arabicSearchRows = $report->rows(['account_search' => 'ذمم']);
     expect($arabicSearchRows->pluck('account_code'))->toContain('1121');
@@ -426,7 +426,7 @@ test('account classification labels are locale aware across table tree and expor
         ->assertOk()
         ->json('data.0.classification');
 
-    expect($englishCell)->toContain('Cash')
+    expect($englishCell)->toContain('Cash on Hand')
         ->and($englishCell)->not->toContain('cash')
         ->and($englishCell)->not->toContain('نقدية');
 
@@ -434,8 +434,8 @@ test('account classification labels are locale aware across table tree and expor
     $englishExportRow = $report->map($englishRows->firstWhere('account_code', '1111'));
     $englishPdfRow = collect($report->pdfRows($englishRows))->firstWhere('account_code', '1111');
 
-    expect($englishExportRow[4])->toBe('Cash')
-        ->and($englishPdfRow['classification'])->toBe('Cash');
+    expect($englishExportRow[4])->toBe('Cash on Hand')
+        ->and($englishPdfRow['classification'])->toBe('Cash on Hand');
 
     $englishSearchRows = $report->rows(['account_search' => 'Cash']);
     expect($englishSearchRows->pluck('account_code'))->toContain('1111');
@@ -678,7 +678,7 @@ test('child account derives type and statement from parent while normal balance 
         ->and($account->normal_balance)->toBe('credit');
 });
 
-test('expense descendants inherit the unified classification and legacy expense choices stay hidden', function () {
+test('detailed classifications are selectable while expenses remains the fallback', function () {
     $this->seed(AccountClassificationsSeeder::class);
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.account_code.control']);
@@ -687,28 +687,104 @@ test('expense descendants inherit the unified classification and legacy expense 
     $response = $this->actingAs($actor)
         ->postJson(route('admin.accounting.accounts.store'), accountPayload([
             'account_code' => '5299',
-            'name' => 'Unified Expense Child',
+            'name' => 'Specific Expense Child',
             'parent_doc_num' => $parent->doc_num,
-            'classification_code' => 'cash',
-            'account_type' => 'asset',
-            'statement_type' => 'financial_position',
+            'classification_code' => 'purchase_returns',
+            'account_type' => 'expense',
+            'statement_type' => 'income_statement',
+            'normal_balance' => 'credit',
         ]))
         ->assertOk();
 
     $account = Account::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
-    $classifications = $this->actingAs($actor)
-        ->getJson(route('admin.accounting.select2.account-classifications'))
-        ->assertOk()
-        ->json('results');
     $parentItem = $this->actingAs($actor)
         ->getJson(route('admin.accounting.select2.accounts', ['q' => $parent->account_code]))
         ->assertOk()
         ->json('results.0');
 
-    expect($account->classification?->code)->toBe(AccountClassification::Expenses)
-        ->and(collect($classifications)->pluck('id'))->toContain(AccountClassification::Expenses)
-        ->not->toContain('salary_expense', 'rent_expense', 'depreciation_expense', 'other_expense')
+    expect($account->classification?->code)->toBe('purchase_returns')
+        ->and($account->normal_balance)->toBe('credit')
         ->and($parentItem['classification_code'] ?? null)->toBe(AccountClassification::Expenses);
+
+    foreach ([
+        AccountClassification::Expenses,
+        'purchase_returns',
+        'salary_expense',
+        'factory_energy_expense',
+        'semi_finished_goods_inventory',
+        'indirect_labor_cost',
+    ] as $code) {
+        $classifications = $this->actingAs($actor)
+            ->getJson(route('admin.accounting.select2.account-classifications', ['q' => $code]))
+            ->assertOk()
+            ->json('results');
+
+        expect(collect($classifications)->pluck('id'))->toContain($code);
+    }
+});
+
+test('new accounts can only choose active classifications while existing inactive choices remain usable', function () {
+    $this->seed(AccountClassificationsSeeder::class);
+    $this->seed(DefaultChartOfAccountsSeeder::class);
+    $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.edit', 'accounts.account_code.control']);
+    $actor->forceFill(['locale' => 'en'])->save();
+    app()->setLocale('en');
+    $parent = Account::query()->where('account_code', '52')->firstOrFail();
+    $inactiveClassification = AccountClassification::query()->where('code', 'factory_energy_expense')->firstOrFail();
+    $inactiveClassification->forceFill(['status' => 'inactive'])->save();
+
+    $activeChoices = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.account-classifications', ['q' => 'factory_energy_expense']))
+        ->assertOk()
+        ->json('results');
+    $filterChoices = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.account-classifications', ['q' => 'factory_energy_expense', 'include_inactive' => 1]))
+        ->assertOk()
+        ->json('results');
+
+    expect(collect($activeChoices)->pluck('id'))->not->toContain('factory_energy_expense')
+        ->and(collect($filterChoices)->pluck('id'))->toContain('factory_energy_expense');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+            'account_code' => '5297',
+            'name' => 'Rejected Inactive Classification',
+            'parent_doc_num' => $parent->doc_num,
+            'classification_code' => 'factory_energy_expense',
+            'account_type' => 'expense',
+            'statement_type' => 'income_statement',
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('classification_code');
+
+    $created = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+            'account_code' => '5298',
+            'name' => 'Existing Inactive Classification',
+            'parent_doc_num' => $parent->doc_num,
+            'classification_code' => 'salary_expense',
+            'account_type' => 'expense',
+            'statement_type' => 'income_statement',
+        ]))
+        ->assertOk();
+    $account = Account::query()->where('doc_num', $created->json('data.doc_num'))->firstOrFail();
+    $account->forceFill(['account_classification_id' => $inactiveClassification->getKey()])->save();
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.accounting.accounts.update', $account->doc_num), accountPayload([
+            'account_code' => $account->account_code,
+            'name' => 'Existing Inactive Classification Updated',
+            'parent_doc_num' => $parent->doc_num,
+            'classification_code' => 'factory_energy_expense',
+            'account_type' => 'expense',
+            'statement_type' => 'income_statement',
+        ]))
+        ->assertOk();
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.accounts.edit', $account->doc_num))
+        ->assertOk()
+        ->assertSee('Factory Energy and Utilities Cost');
 });
 
 test('root account derives statement and defaults from classification when no parent exists', function () {

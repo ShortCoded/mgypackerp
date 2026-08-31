@@ -134,6 +134,7 @@ class CostCenterService
             'default_account_id' => $this->defaultAccountId($data['default_account_doc_num'] ?? null, $companyId, $current),
             'cost_center_code' => $this->resolvedCostCenterCode($companyId, $parent, $submittedCode, $current, $parentChanged),
             'name' => $data['name'],
+            'name_en' => $data['name_en'] ?? null,
             'is_group' => (bool) ($data['is_group'] ?? false),
             'status' => $data['status'] ?? 'active',
             'notes' => $data['notes'] ?? null,

@@ -78,6 +78,8 @@
                 'unit_doc_num' => $unit?->doc_num ?? $productSnapshot['unit_doc_num'] ?? null,
                 'unit_label' => $unitLabel,
                 'unit_options' => $product ? $unitOptions->options($product) : [],
+                'cost_center_doc_num' => $line->costCenter?->doc_num,
+                'cost_center_label' => $line->costCenter?->codeNameLabel(),
                 'purchase_order_line_public_id' => $line->purchaseOrderLine?->public_id,
                 'receipt_line_public_id' => $line->receiptLine?->public_id,
                 'quantity' => $numbers->format($line->quantity),
@@ -101,6 +103,8 @@
             'unit_doc_num' => null,
             'unit_label' => null,
             'unit_options' => [],
+            'cost_center_doc_num' => null,
+            'cost_center_label' => null,
             'purchase_order_line_public_id' => null,
             'receipt_line_public_id' => null,
             'quantity' => null,
@@ -554,6 +558,7 @@
                                     <th>{{ __('Accepted receipt line') }}</th>
                                     <th class="purchase-invoice-product-cell">{{ __('purchase_invoices.attributes.product') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit') }}</th>
+                                    <th>{{ __('cost_centers.singular') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.quantity') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit_price') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.line_discount_type') }}</th>
@@ -612,6 +617,18 @@
                                                     @endif
                                                 </select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @if($isReadonly)
+                                                <div class="form-control-plaintext">{{ $line['cost_center_label'] ?? '—' }}</div>
+                                            @else
+                                                <select class="form-select js-select2-ajax" name="lines[{{ $index }}][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true">
+                                                    @if(! empty($line['cost_center_doc_num']))
+                                                        <option value="{{ $line['cost_center_doc_num'] }}" selected>{{ $line['cost_center_label'] ?? $line['cost_center_doc_num'] }}</option>
+                                                    @endif
+                                                </select>
+                                                <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.cost_center_doc_num"></div>
                                             @endif
                                         </td>
                                         <td>

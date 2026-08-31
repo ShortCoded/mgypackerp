@@ -111,13 +111,11 @@ class AccountSelect2Service
     {
         $query = AccountClassification::query()
             ->select(['code', 'name', 'name_en', 'account_type', 'statement_type', 'normal_balance'])
-            ->where('status', 'active')
-            ->where(function ($query): void {
-                $query
-                    ->where('account_type', '!=', Account::TypeExpense)
-                    ->orWhere('code', AccountClassification::Expenses);
-            })
             ->orderBy('code');
+
+        if (! $request->boolean('include_inactive')) {
+            $query->where('status', 'active');
+        }
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {

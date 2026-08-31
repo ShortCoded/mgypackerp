@@ -52,7 +52,12 @@ class StoreAccountRequest extends FormRequest
                 Rule::exists('accounts', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at')),
             ],
-            'classification_code' => ['nullable', 'string', 'exists:account_classifications,code'],
+            'classification_code' => [
+                'nullable',
+                'string',
+                Rule::exists('account_classifications', 'code')
+                    ->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at')),
+            ],
             'account_type' => ['nullable', Rule::in(Account::accountTypes())],
             'statement_type' => ['nullable', Rule::in(Account::statementTypes())],
             'normal_balance' => ['nullable', Rule::in(Account::normalBalances())],

@@ -20,6 +20,7 @@
         <div class="col-md-2"><label class="form-label">{{ __('Ends') }}</label><input class="form-control" name="planned_end_at" type="datetime-local" required></div>
         <div class="col-md-1"><label class="form-label">{{ __('Shift') }}</label><select class="form-select" name="production_shift_id"><option value="">—</option>@foreach($shifts as $shift)<option value="{{ $shift->id }}">{{ $shift->code }}</option>@endforeach</select></div>
         <div class="col-md-1"><label class="form-label">{{ __('Machine') }}</label><select class="form-select" name="production_machine_id"><option value="">—</option>@foreach($machines as $machine)<option value="{{ $machine->id }}">{{ $machine->code }}</option>@endforeach</select></div>
+        <div class="col-md-2"><label class="form-label">{{ __('cost_centers.singular') }}</label><select class="form-select js-select2-ajax" name="cost_center_doc_num" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true"></select></div>
         <div class="col-md-1"><label class="form-label">{{ __('Mold') }}</label><select class="form-select" name="production_mold_id"><option value="">—</option>@foreach($molds as $mold)<option value="{{ $mold->id }}">{{ $mold->code }}</option>@endforeach</select></div>
         <div class="col-md-1"><button class="btn btn-primary w-100" type="submit">{{ __('Create') }}</button></div>
     </form></div>

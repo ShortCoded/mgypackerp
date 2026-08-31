@@ -7,12 +7,15 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Exceptions\HrLookupRestoreBlockedException;
+use Modules\HR\Models\HrDepartment;
+use Modules\HR\Models\HrDepartmentCostCenterDefault;
 use Modules\HR\Models\HrEmploymentTaxPolicy;
 use Modules\HR\Models\HrFoundationModel;
 use Modules\HR\Models\HrSocialInsurancePolicy;
@@ -56,6 +59,7 @@ class HrFoundationService
             ]);
 
             $this->crudAudit->clearCreationUpdateAudit($record);
+            $this->syncDepartmentCostCenterDefault($definition, $record, $data);
 
             if ($definition->hasTaxBrackets && $record instanceof HrEmploymentTaxPolicy) {
                 $this->syncTaxBrackets($record, $data['tax_brackets'] ?? []);
@@ -96,6 +100,11 @@ class HrFoundationService
             }
 
             $changes = $this->changedValues($record, $newValues, $definition);
+            $departmentDefaultChange = $this->departmentDefaultChange($definition, $record, $data);
+
+            if ($departmentDefaultChange !== null) {
+                $changes['default_cost_center_doc_num'] = $departmentDefaultChange;
+            }
             $taxBracketChanges = $definition->hasTaxBrackets && $record instanceof HrEmploymentTaxPolicy
                 ? $this->taxBracketChanges($record, $data['tax_brackets'] ?? [])
                 : null;
@@ -130,6 +139,8 @@ class HrFoundationService
             if (array_diff($changedFields, ['tax_brackets', 'insurance_components']) !== []) {
                 $this->crudAudit->saveUpdate($record, $newValues);
             }
+
+            $this->syncDepartmentCostCenterDefault($definition, $record, $data);
 
             if ($taxBracketChanges !== null && $record instanceof HrEmploymentTaxPolicy) {
                 $this->syncTaxBrackets($record, $data['tax_brackets'] ?? []);
@@ -219,6 +230,10 @@ class HrFoundationService
             $requestName = (string) $field['name'];
             $column = (string) ($field['column'] ?? $requestName);
 
+            if (($field['virtual'] ?? false) === true) {
+                continue;
+            }
+
             if (! array_key_exists($requestName, $data)) {
                 if ($existing === null && array_key_exists('default', $field)) {
                     $values[$column] = $field['default'];
@@ -263,6 +278,10 @@ class HrFoundationService
 
         return $model::query()
             ->where('doc_num', $docNum)
+            ->when(
+                ($field['company_scoped'] ?? false) === true,
+                fn (Builder $query): Builder => $query->where('company_id', $this->companies->requireCompanyId())
+            )
             ->value('id');
     }
 
@@ -314,6 +333,10 @@ class HrFoundationService
                 continue;
             }
 
+            if (($field['virtual'] ?? false) === true) {
+                continue;
+            }
+
             $column = (string) $field['column'];
 
             if (! array_key_exists($column, $newValues)) {
@@ -337,6 +360,53 @@ class HrFoundationService
         }
 
         return $docNums;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{old: string|null, new: string|null}|null
+     */
+    private function departmentDefaultChange(HrFoundationDefinition $definition, HrFoundationModel $record, array $data): ?array
+    {
+        if ($definition->key !== 'departments' || ! $record instanceof HrDepartment || ! array_key_exists('default_cost_center_doc_num', $data)) {
+            return null;
+        }
+
+        $companyId = $this->companies->requireCompanyId();
+        $old = $record->defaultCostCenterForCompany($companyId)?->doc_num;
+        $new = $this->normalizeNullableString($data['default_cost_center_doc_num'] ?? null);
+
+        return $old === $new ? null : ['old' => $old, 'new' => $new];
+    }
+
+    /** @param array<string, mixed> $data */
+    private function syncDepartmentCostCenterDefault(HrFoundationDefinition $definition, HrFoundationModel $record, array $data): void
+    {
+        if ($definition->key !== 'departments' || ! $record instanceof HrDepartment || ! array_key_exists('default_cost_center_doc_num', $data)) {
+            return;
+        }
+
+        $companyId = $this->companies->requireCompanyId();
+        $docNum = $this->normalizeNullableString($data['default_cost_center_doc_num'] ?? null);
+
+        if ($docNum === null) {
+            HrDepartmentCostCenterDefault::query()
+                ->where('company_id', $companyId)
+                ->where('department_id', $record->getKey())
+                ->delete();
+
+            return;
+        }
+
+        $costCenterId = CostCenter::query()
+            ->forCompany($companyId)
+            ->where('doc_num', $docNum)
+            ->valueOrFail('id');
+
+        HrDepartmentCostCenterDefault::query()->updateOrCreate(
+            ['company_id' => $companyId, 'department_id' => $record->getKey()],
+            ['cost_center_id' => $costCenterId],
+        );
     }
 
     private function comparable(mixed $value): mixed

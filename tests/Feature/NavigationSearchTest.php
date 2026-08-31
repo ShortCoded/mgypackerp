@@ -65,6 +65,24 @@ test('navigation search matches arabic and english labels and aliases', function
         ->assertJsonPath('data.results.0.route_name', 'admin.calendar.index');
 });
 
+test('navigation search keeps moved fixed asset routes under their nested localized path', function () {
+    $user = navigationSearchActor(['fixed_assets.view']);
+
+    $this->withSession(['locale' => 'en'])
+        ->actingAs($user)
+        ->getJson(route('admin.navigation-search', ['q' => 'fixed assets register']))
+        ->assertOk()
+        ->assertJsonPath('data.results.0.route_name', 'admin.fixed-assets.assets.index')
+        ->assertJsonPath('data.results.0.parent_path', 'Accounting & Costing / Fixed Assets / Asset Data');
+
+    $this->withSession(['locale' => 'ar'])
+        ->actingAs($user)
+        ->getJson(route('admin.navigation-search', ['q' => 'دليل الأصول الثابتة']))
+        ->assertOk()
+        ->assertJsonPath('data.results.0.route_name', 'admin.fixed-assets.assets.index')
+        ->assertJsonPath('data.results.0.parent_path', 'الحسابات والتكاليف / الأصول الثابتة / بيانات الأصول');
+});
+
 test('empty query returns current user recent searches only', function () {
     $first = navigationSearchActor(['users.view']);
     $second = navigationSearchActor(['users.view']);

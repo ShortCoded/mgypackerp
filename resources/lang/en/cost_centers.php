@@ -27,6 +27,7 @@ return [
         'doc_num' => 'Document Number',
         'cost_center_code' => 'Cost Center Code',
         'name' => 'Cost Center Name',
+        'name_en' => 'English Name',
         'is_group' => 'Group',
         'group_cost_center' => 'Group Cost Center',
         'parent' => 'Parent Cost Center',

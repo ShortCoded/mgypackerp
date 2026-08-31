@@ -54,6 +54,7 @@ return [
             'description' => 'الوصف',
             'break_minutes' => 'دقائق الراحة',
             'department_doc_num' => 'الإدارة',
+            'default_cost_center_doc_num' => 'مركز التكلفة الافتراضي',
             'grade_doc_num' => 'الدرجة الوظيفية',
             'job_doc_num' => 'الوظيفة',
             'rank' => 'الترتيب',
@@ -121,6 +122,7 @@ return [
         ],
         'placeholders' => [
             'department_doc_num' => 'اختر الإدارة',
+            'default_cost_center_doc_num' => 'اختر مركز التكلفة الافتراضي للشركة',
             'grade_doc_num' => 'اختر الدرجة الوظيفية',
             'job_doc_num' => 'اختر الوظيفة',
             'default_shift_doc_num' => 'اختر الوردية',
