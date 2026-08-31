@@ -549,7 +549,9 @@ test('Customer edit syncs name status and parent account, list is company scoped
 
     $this->postJson(route('admin.sales.customers.store'), ['name' => 'Before Customer', 'status' => 'active'])->assertOk();
     $customer = Customer::query()->firstOrFail();
+    $originalAccount = Account::query()->findOrFail($customer->account_id);
     $group = app(BusinessPartnerAccountService::class)->createGroup(BusinessPartnerAccountService::Customer, 'Moved Customers');
+    $accountCountBeforeUpdate = Account::query()->where('company_id', $context['company']->getKey())->count();
 
     $this->putJson(route('admin.sales.customers.update', $customer->doc_num), [
         'name' => 'After Customer',
@@ -563,9 +565,12 @@ test('Customer edit syncs name status and parent account, list is company scoped
     expect($customer->name)->toBe('After Customer')
         ->and($customer->status)->toBe('inactive')
         ->and($customer->account_group_id)->toBe($group->getKey())
+        ->and((int) $customer->account_id)->toBe((int) $originalAccount->getKey())
+        ->and($account->doc_num)->toBe($originalAccount->doc_num)
         ->and($account->name)->toBe('After Customer')
         ->and($account->status)->toBe('inactive')
-        ->and($account->parent_id)->toBe($group->getKey());
+        ->and($account->parent_id)->toBe($group->getKey())
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->count())->toBe($accountCountBeforeUpdate);
 
     salesPurchasesSelectContext($other['company'], $other['branch'], $other['period']);
     $this->postJson(route('admin.sales.customers.store'), ['name' => 'Other Company Customer', 'status' => 'active'])->assertOk();
@@ -758,6 +763,8 @@ test('Supplier selector quick create validation list scope delete and restore be
 
     $this->postJson(route('admin.purchases.suppliers.store'), ['name' => 'Before Supplier', 'status' => 'active'])->assertOk();
     $supplier = Supplier::query()->where('name', 'Before Supplier')->firstOrFail();
+    $originalAccount = Account::query()->findOrFail($supplier->account_id);
+    $accountCountBeforeUpdate = Account::query()->where('company_id', $context['company']->getKey())->count();
 
     $this->putJson(route('admin.purchases.suppliers.update', $supplier->doc_num), [
         'name' => 'After Supplier',
@@ -768,9 +775,12 @@ test('Supplier selector quick create validation list scope delete and restore be
     $supplier->refresh();
     $account = Account::query()->findOrFail($supplier->account_id);
 
-    expect($account->name)->toBe('After Supplier')
+    expect((int) $supplier->account_id)->toBe((int) $originalAccount->getKey())
+        ->and($account->doc_num)->toBe($originalAccount->doc_num)
+        ->and($account->name)->toBe('After Supplier')
         ->and($account->status)->toBe('inactive')
-        ->and($account->parent_id)->toBe($group->getKey());
+        ->and($account->parent_id)->toBe($group->getKey())
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->count())->toBe($accountCountBeforeUpdate);
 
     salesPurchasesSelectContext($other['company'], $other['branch'], $other['period']);
     $this->postJson(route('admin.purchases.suppliers.store'), ['name' => 'Other Company Supplier', 'status' => 'active'])->assertOk();

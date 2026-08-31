@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Modules\Core\Models\Company;
 use Modules\Finance\Models\BankAccount;
+use Modules\FixedAssets\Models\FixedAsset;
 
 class Account extends Model
 {
@@ -168,6 +169,11 @@ class Account extends Model
     public function bankAccount(): HasOne
     {
         return $this->hasOne(BankAccount::class)->withTrashed();
+    }
+
+    public function fixedAsset(): HasOne
+    {
+        return $this->hasOne(FixedAsset::class)->withTrashed();
     }
 
     public function classification(): BelongsTo

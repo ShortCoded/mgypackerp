@@ -137,27 +137,37 @@ class BusinessPartnerAccountService
      */
     public function createOrUpdateLinkedAccount(string $type, ?Account $currentAccount, Account $parent, array $data): array
     {
-        $spec = $this->spec($type);
-
-        if (! $this->isAllowedLinkedAccountParent($type, $parent)) {
-            throw new DomainException(__($spec['messages']['group_unavailable']));
-        }
-
-        $name = $this->linkedAccountName($data);
-        $status = in_array($data['status'] ?? 'active', ['active', 'inactive'], true) ? $data['status'] : 'active';
-
         if (! $currentAccount instanceof Account || ! $this->isManagedLinkedAccount($type, $currentAccount)) {
+            $this->assertAllowedLinkedAccountParent($type, $parent);
+
             return [
-                'account' => $this->createLinkedAccount($type, $parent, $name, $status, $data['notes'] ?? null),
+                'account' => $this->createLinkedAccount(
+                    $type,
+                    $parent,
+                    $this->linkedAccountName($data),
+                    $this->linkedAccountStatus($data),
+                    $data['notes'] ?? null,
+                ),
                 'changed' => true,
             ];
         }
+
+        return $this->updateLinkedAccount($type, $currentAccount, $parent, $data);
+    }
+
+    /**
+     * @return array{account: Account, changed: bool}
+     */
+    public function updateLinkedAccount(string $type, Account $currentAccount, Account $parent, array $data): array
+    {
+        $spec = $this->spec($type);
+        $this->assertAllowedLinkedAccountParent($type, $parent);
 
         $values = [
             'account_code' => (int) $currentAccount->parent_id === (int) $parent->getKey()
                 ? $currentAccount->account_code
                 : $this->accounts->nextChildAccountCode($parent),
-            'name' => $name,
+            'name' => $this->linkedAccountName($data),
             'name_en' => $currentAccount->name_en,
             'parent_doc_num' => $parent->doc_num,
             'classification_code' => $spec['classification_code'],
@@ -166,7 +176,7 @@ class BusinessPartnerAccountService
             'normal_balance' => $parent->normal_balance,
             'is_group' => false,
             'is_postable' => true,
-            'status' => $status,
+            'status' => $this->linkedAccountStatus($data),
             'notes' => $currentAccount->notes,
         ];
 
@@ -181,6 +191,13 @@ class BusinessPartnerAccountService
     public function linkedAccountName(array $data): string
     {
         return trim((string) ($data['name'] ?? ''));
+    }
+
+    private function linkedAccountStatus(array $data): string
+    {
+        return in_array($data['status'] ?? 'active', ['active', 'inactive'], true)
+            ? $data['status']
+            : 'active';
     }
 
     public function isSelectableGroup(string $type, Account $account): bool
@@ -721,6 +738,13 @@ class BusinessPartnerAccountService
 
         return (int) $parent->getKey() === (int) $root->getKey()
             || $this->isSelectableGroup($type, $parent);
+    }
+
+    private function assertAllowedLinkedAccountParent(string $type, Account $parent): void
+    {
+        if (! $this->isAllowedLinkedAccountParent($type, $parent)) {
+            throw new DomainException(__($this->spec($type)['messages']['group_unavailable']));
+        }
     }
 
     private function isPartnerAccount(string $type, Account $account): bool

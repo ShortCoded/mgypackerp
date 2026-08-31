@@ -112,9 +112,7 @@ class FixedAssetAccountingSyncService
 
     private function owningFixedAsset(Account $account): ?FixedAsset
     {
-        return FixedAsset::withTrashed()
-            ->where('account_id', $account->getKey())
-            ->first();
+        return $account->fixedAsset()->first();
     }
 
     private function assertAccountCanBeSoftDeleted(Account $account): void

@@ -78,10 +78,11 @@ class FixedAssetService
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
             $parentAccount = $this->parentAccount($data);
-            $this->assertLinkedAccountCanMove($record->account, $parentAccount);
-            $chartResult = $this->syncsLinkedAccount($record, $data, $parentAccount)
-                ? $this->accounts->createOrUpdateLinkedAccount(BusinessPartnerAccountService::FixedAsset, $record->account, $parentAccount, $this->linkedAccountData($data))
-                : ['account' => $record->account, 'changed' => false];
+            $linkedAccount = $this->lockCanonicalLinkedAccount($record);
+            $this->assertLinkedAccountCanMove($linkedAccount, $parentAccount);
+            $chartResult = $this->syncsLinkedAccount($linkedAccount, $data, $parentAccount)
+                ? $this->accounts->updateLinkedAccount(BusinessPartnerAccountService::FixedAsset, $linkedAccount, $parentAccount, $this->linkedAccountData($data))
+                : ['account' => $linkedAccount, 'changed' => false];
             $values = $this->values($data, (int) $record->company_id, $chartResult['account'], $parentAccount);
             $selectedImageFile = $this->selectedArchiveImageFile($data['image_archive_file_doc_num'] ?? null, (int) $record->company_id);
             $detachesImage = ($data['remove_image'] ?? false) === true;
@@ -329,30 +330,50 @@ class FixedAssetService
         }
     }
 
-    private function assertLinkedAccountCanMove(?Account $linkedAccount, Account $parentAccount): void
+    private function lockCanonicalLinkedAccount(FixedAsset $record): Account
     {
-        if (! $linkedAccount instanceof Account || (int) $linkedAccount->parent_id === (int) $parentAccount->getKey()) {
+        if (! $record->account_id) {
+            throw new DomainException(__('fixed_assets.messages.linked_account_missing'));
+        }
+
+        $linkedAccount = Account::query()
+            ->forCompany((int) $record->company_id)
+            ->whereKey($record->account_id)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $linkedAccount instanceof Account || $linkedAccount->is_group || ! $linkedAccount->is_postable) {
+            throw new DomainException(__('fixed_assets.messages.linked_account_missing'));
+        }
+
+        $record->setRelation('account', $linkedAccount);
+
+        return $linkedAccount;
+    }
+
+    private function assertLinkedAccountCanMove(Account $linkedAccount, Account $parentAccount): void
+    {
+        if ((int) $linkedAccount->parent_id === (int) $parentAccount->getKey()) {
             return;
         }
 
-        if ($linkedAccount->children()->exists()) {
+        if ((int) $linkedAccount->getKey() === (int) $parentAccount->getKey()
+            || $linkedAccount->children()->exists()
+            || $this->accounts->isDescendantOf($parentAccount, $linkedAccount)
+        ) {
             throw new DomainException(__('fixed_assets.messages.account_move_blocked_children'));
         }
     }
 
-    private function syncsLinkedAccount(FixedAsset $record, array $data, Account $parentAccount): bool
+    private function syncsLinkedAccount(Account $linkedAccount, array $data, Account $parentAccount): bool
     {
-        if (! $record->account instanceof Account || ! $this->accounts->isManagedLinkedAccount(BusinessPartnerAccountService::FixedAsset, $record->account)) {
-            return true;
-        }
-
         $linkedAccountStatus = in_array($data['status'] ?? FixedAsset::StatusActive, [FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusFullyDepreciated], true)
             ? 'active'
             : 'inactive';
 
-        return (int) $record->account->parent_id !== (int) $parentAccount->getKey()
-            || trim((string) $record->account->name) !== trim((string) $data['asset_name'])
-            || trim((string) $record->account->status) !== $linkedAccountStatus;
+        return (int) $linkedAccount->parent_id !== (int) $parentAccount->getKey()
+            || trim((string) $linkedAccount->name) !== trim((string) $data['asset_name'])
+            || trim((string) $linkedAccount->status) !== $linkedAccountStatus;
     }
 
     private function changes(object $record, array $values): array
