@@ -127,8 +127,8 @@
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-4 report-filter-field">
-                <label class="mb-1 form-label" for="cost-centers-default-account">{{ __('cost_centers.filters.default_account') }}</label>
-                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost-centers-default-account" name="default_account_doc_num" data-filter-label="{{ __('cost_centers.filters.default_account') }}" data-url="{{ route('admin.accounting.select2.accounts', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.default_account') }}" data-allow-clear="true"></select>
+                <label class="mb-1 form-label" for="cost-centers-linked-account">{{ __('cost_centers.filters.linked_account') }}</label>
+                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost-centers-linked-account" name="linked_account_doc_num" data-filter-label="{{ __('cost_centers.filters.linked_account') }}" data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true"></select>
             </div>
         </x-admin.report.filter-panel>
 
@@ -188,7 +188,7 @@
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap dt-code">{{ __('cost_centers.attributes.cost_center_code') }}</th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap dt-text dt-ellipsis">{{ __('cost_centers.attributes.name') }}</th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap dt-text dt-ellipsis">{{ __('cost_centers.attributes.parent') }}</th>
-                                            <th class="align-middle text-900 sort pe-1 white-space-nowrap dt-text dt-ellipsis">{{ __('cost_centers.attributes.default_account') }}</th>
+                                            <th class="align-middle text-900 no-sort pe-1 white-space-nowrap dt-text dt-ellipsis" data-orderable="false">{{ __('cost_centers.attributes.linked_accounts_short') }}</th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap">{{ __('cost_centers.attributes.is_group') }}</th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap">{{ __('cost_centers.attributes.status') }}</th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap dt-text dt-ellipsis">{{ __('common.fields.created_by') }}</th>

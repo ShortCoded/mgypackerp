@@ -18,6 +18,7 @@ use Modules\Accounting\Http\Requests\BulkDeleteCostCentersRequest;
 use Modules\Accounting\Http\Requests\StoreCostCenterRequest;
 use Modules\Accounting\Http\Requests\UpdateCostCenterDocumentNumberSettingsRequest;
 use Modules\Accounting\Http\Requests\UpdateCostCenterRequest;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\CostCenterDocumentNumberSettingsService;
 use Modules\Accounting\Services\CostCenterSelect2Service;
@@ -240,7 +241,7 @@ class CostCenterController extends Controller
 
     private function form(string $mode, ?CostCenter $costCenter = null, ?string $cloneSourceToken = null): View
     {
-        $costCenter?->loadMissing(['parent', 'defaultAccount']);
+        $costCenter?->loadMissing(['parent', 'accounts.parent']);
 
         return view('modules.accounting.cost-centers.form', [
             'mode' => $mode,
@@ -249,9 +250,84 @@ class CostCenterController extends Controller
             'method' => in_array($mode, ['create', 'clone'], true) ? 'POST' : 'PUT',
             'canControlDocumentNumber' => (bool) auth()->user()?->can('cost_centers.document_number.control'),
             'metadata' => $this->metadata($costCenter),
+            'linkedAccountOptions' => $this->linkedAccountOptions($costCenter, $mode),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.accounting.cost-centers.index', [['label' => __("cost_centers.{$mode}"), 'active' => true]]),
             'cloneSourceToken' => $cloneSourceToken,
         ]);
+    }
+
+    /**
+     * @return list<array{id: string, text: string, display: string, parent: string|null, is_stale: bool}>
+     */
+    private function linkedAccountOptions(?CostCenter $costCenter, string $mode): array
+    {
+        $oldInput = session()->get('_old_input', []);
+        $hasOldInput = is_array($oldInput) && array_key_exists('linked_account_doc_nums', $oldInput);
+        $docNums = $hasOldInput
+            ? $this->linkedAccountDocNumsFromInput($oldInput['linked_account_doc_nums'])
+            : ($costCenter?->accounts
+                ->when($mode === 'clone', fn ($accounts) => $accounts->filter(
+                    fn (Account $account): bool => ! $account->trashed() && $account->status === 'active'
+                ))
+                ->pluck('doc_num')
+                ->filter()
+                ->map(fn (mixed $docNum): string => (string) $docNum)
+                ->values()
+                ->all() ?? []);
+
+        if ($docNums === []) {
+            return [];
+        }
+
+        $accounts = Account::withTrashed()
+            ->forCompany($this->companies->requireCompanyId())
+            ->whereIn('doc_num', $docNums)
+            ->with('parent')
+            ->get()
+            ->keyBy('doc_num');
+
+        return collect($docNums)
+            ->map(function (string $docNum) use ($accounts): array {
+                /** @var Account|null $account */
+                $account = $accounts->get($docNum);
+
+                if (! $account instanceof Account) {
+                    return [
+                        'id' => $docNum,
+                        'text' => __('cost_centers.messages.unavailable_linked_account', ['doc_num' => $docNum]),
+                        'display' => $docNum,
+                        'parent' => null,
+                        'is_stale' => true,
+                    ];
+                }
+
+                return [
+                    'id' => (string) $account->doc_num,
+                    'text' => $account->hierarchyLabel(),
+                    'display' => $account->codeNameLabel(),
+                    'parent' => $account->parent?->codeNameLabel(),
+                    'is_stale' => $account->trashed() || $account->status !== 'active',
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function linkedAccountDocNumsFromInput(mixed $input): array
+    {
+        if (! is_array($input)) {
+            return [];
+        }
+
+        return collect($input)
+            ->filter(fn (mixed $docNum): bool => is_string($docNum) && trim($docNum) !== '')
+            ->map(fn (string $docNum): string => trim($docNum))
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**

@@ -35,6 +35,10 @@ return [
         'no_parent' => 'No Parent Cost Center',
         'default_account' => 'Default Accounting Account',
         'default_account_doc_num' => 'Default Accounting Account Document Number',
+        'linked_accounts' => 'Linked Accounting Accounts',
+        'linked_accounts_short' => 'Linked Accounts',
+        'linked_account_doc_nums' => 'Linked Account Document Numbers',
+        'parent_account' => 'Parent Account',
         'status' => 'Status',
         'notes' => 'Notes',
     ],
@@ -70,8 +74,11 @@ return [
         'parent_must_be_group' => 'A non-group cost center cannot be selected as parent.',
         'parent_must_be_active' => 'The parent cost center must be active.',
         'historical_default_account' => 'This historical account remains linked for display, but it is no longer available for new selection.',
+        'linked_accounts_help' => 'Select any active accounts from any level of the Chart of Accounts. Selecting a parent links only that account.',
+        'unavailable' => 'Unavailable',
+        'unavailable_linked_account' => 'Unavailable account (:doc_num)',
         'clone_not_allowed' => 'This cost center can no longer be cloned. Please open the clone page again.',
-        'filters_hint' => 'Filter by code, name, hierarchy, default accounting account, or status.',
+        'filters_hint' => 'Filter by code, name, hierarchy, linked accounting account, or status.',
         'no_data_found' => 'No cost centers found',
     ],
     'filters' => [
@@ -80,6 +87,7 @@ return [
         'status' => 'Status',
         'hierarchy' => 'Hierarchy',
         'default_account' => 'Default Accounting Account',
+        'linked_account' => 'Linked Accounting Account',
         'summary' => 'Applied filters',
     ],
     'hierarchy_filters' => [
@@ -90,6 +98,7 @@ return [
     'placeholders' => [
         'search' => 'Code or name',
         'default_account' => 'Select accounting account',
+        'linked_accounts' => 'Select one or more accounts',
     ],
     'trash' => [
         'filter_label' => 'Records',

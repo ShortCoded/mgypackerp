@@ -5,7 +5,6 @@ namespace Modules\Accounting\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
-use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Services\OperatingCompanyContextService;
 
@@ -23,7 +22,7 @@ class UpdateCostCenterRequest extends FormRequest
             'name' => trim((string) $this->input('name')),
             'name_en' => $this->filled('name_en') ? trim((string) $this->input('name_en')) : null,
             'parent_doc_num' => $this->filled('parent_doc_num') ? trim((string) $this->input('parent_doc_num')) : null,
-            'default_account_doc_num' => $this->filled('default_account_doc_num') ? trim((string) $this->input('default_account_doc_num')) : null,
+            'linked_account_doc_nums' => $this->normalizedLinkedAccountDocNums(),
             'is_group' => $this->boolean('is_group'),
         ]);
     }
@@ -32,6 +31,10 @@ class UpdateCostCenterRequest extends FormRequest
     {
         $companyId = $this->companyId();
         $costCenter = $this->currentCostCenter();
+        $currentAccountIds = $costCenter?->accounts()
+            ->pluck('accounts.id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all() ?? [];
 
         return [
             'doc_number' => [
@@ -55,19 +58,21 @@ class UpdateCostCenterRequest extends FormRequest
                         ->where('is_group', true)
                         ->whereNull('deleted_at')),
             ],
-            'default_account_doc_num' => [
-                'nullable',
+            'linked_account_doc_nums' => ['nullable', 'array'],
+            'linked_account_doc_nums.*' => [
+                'required',
                 'string',
+                'distinct',
                 Rule::exists('accounts', 'doc_num')
                     ->where(fn ($query) => $query
                         ->where('company_id', $companyId)
-                        ->where(function ($query) use ($costCenter): void {
+                        ->where(function ($query) use ($currentAccountIds): void {
                             $query->where(function ($query): void {
-                                Account::applyDirectPostingEligibility($query);
+                                $query->where('status', 'active')->whereNull('deleted_at');
                             });
 
-                            if ($costCenter?->default_account_id !== null) {
-                                $query->orWhere('id', $costCenter->default_account_id);
+                            if ($currentAccountIds !== []) {
+                                $query->orWhereIn('id', $currentAccountIds);
                             }
                         })),
             ],
@@ -112,6 +117,21 @@ class UpdateCostCenterRequest extends FormRequest
     private function companyId(): int
     {
         return app(OperatingCompanyContextService::class)->requireCompanyId($this);
+    }
+
+    private function normalizedLinkedAccountDocNums(): mixed
+    {
+        $docNums = $this->input('linked_account_doc_nums', []);
+
+        if (! is_array($docNums)) {
+            return $docNums;
+        }
+
+        return collect($docNums)
+            ->map(fn (mixed $docNum): mixed => is_string($docNum) ? trim($docNum) : $docNum)
+            ->reject(fn (mixed $docNum): bool => $docNum === '')
+            ->values()
+            ->all();
     }
 
     private function currentCostCenter(): ?CostCenter

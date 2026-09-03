@@ -2,6 +2,8 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
@@ -136,7 +138,7 @@ function costCenterDataTableQuery(int $orderColumn = 2, string $direction = 'asc
         'cost_center_code',
         'name',
         'parent',
-        'default_account',
+        'linked_accounts',
         'is_group',
         'status',
         'created_by',
@@ -156,7 +158,7 @@ function costCenterDataTableQuery(int $orderColumn = 2, string $direction = 'asc
             'data' => $column,
             'name' => $column,
             'searchable' => ! in_array($column, ['checkbox', 'actions'], true) ? 'true' : 'false',
-            'orderable' => ! in_array($column, ['checkbox', 'actions'], true) ? 'true' : 'false',
+            'orderable' => ! in_array($column, ['checkbox', 'linked_accounts', 'actions'], true) ? 'true' : 'false',
             'search' => ['value' => '', 'regex' => 'false'],
         ])->all(),
     ];
@@ -175,10 +177,12 @@ test('cost center permissions are discovered under accounting and costing', func
     $actor = costCenterActor(['accounts.view', 'cost_centers.view']);
     $menu = app(MenuService::class)->getMenu($actor);
     $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
-    $children = collect($accountingCosting['children'] ?? [])->pluck('label')->all();
+    $subgroups = collect($accountingCosting['children'] ?? [])->keyBy('label');
+    $generalAccountingChildren = collect($subgroups->get('general_accounting')['children'] ?? [])->pluck('label')->all();
+    $costAccountingChildren = collect($subgroups->get('cost_accounting')['children'] ?? [])->pluck('label')->all();
 
-    expect($children)->toContain('chart_of_accounts', 'cost_centers')
-        ->and(array_search('cost_centers', $children, true))->toBe(array_search('chart_of_accounts', $children, true) + 1);
+    expect($generalAccountingChildren)->toContain('chart_of_accounts')
+        ->and($costAccountingChildren)->toContain('cost_centers');
 });
 
 test('cost centers index create form and data endpoint use the tree screen without account-only fields', function () {
@@ -211,7 +215,8 @@ test('cost centers index create form and data endpoint use the tree screen witho
         ->assertDontSee('account_type');
 
     expect(Schema::hasColumn('cost_centers', 'is_group'))->toBeTrue()
-        ->and(Schema::hasColumn('cost_centers', 'default_account_id'))->toBeTrue();
+        ->and(Schema::hasColumn('cost_centers', 'default_account_id'))->toBeFalse()
+        ->and(Schema::hasTable('cost_center_accounts'))->toBeTrue();
 
     $this->actingAs($actor)
         ->getJson(route('admin.accounting.cost-centers.data'))
@@ -224,6 +229,7 @@ test('cost centers tree javascript exposes accessible controls and keyboard navi
     $script = file_get_contents(public_path('assets/js/modules/Accounting/cost-centers.js'));
 
     expect($script)
+        ->toContain("data: 'linked_accounts', name: 'linked_accounts', orderable: false, searchable: false, defaultContent: '—'")
         ->toContain('data-cost-centers-tree-expand-all')
         ->toContain('data-cost-centers-tree-collapse-all')
         ->toContain('role="tree"')
@@ -305,7 +311,7 @@ test('cost center crud tree and exports are company scoped and public-doc-number
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.accounting.cost-centers.destroy', $root->doc_num))
-        ->assertStatus(422);
+        ->assertStatus(409);
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.accounting.cost-centers.destroy', $child->doc_num))
@@ -677,225 +683,292 @@ test('cost center validation rejects non group and inactive parents', function (
         ->assertJsonValidationErrors(['parent_doc_num']);
 });
 
-test('cost center default account is optional and uses canonical posting account document numbers', function (): void {
+test('cost centers link explicitly to multiple account hierarchy levels and accounts link to many cost centers', function (): void {
     $context = costCenterEnsureOperatingContext();
-    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create', 'cost_centers.edit']);
-    $actor->forceFill(['locale' => 'en'])->save();
+    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create']);
     costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
-    $productionExpenses = costCenterPostingAccount($context['company'], 510100, [
-        'name' => 'مصروفات الإنتاج',
-        'name_en' => 'Production Expenses',
-    ]);
-    $maintenanceExpenses = costCenterPostingAccount($context['company'], 510200, [
-        'name' => 'مصروفات الصيانة',
-        'name_en' => 'Maintenance Expenses',
-    ]);
-
-    $withoutDefaultDocNum = $this->actingAs($actor)
-        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
-            'cost_center_code' => '710',
-            'name' => 'No Default Account',
-            'default_account_doc_num' => null,
-        ]))
-        ->assertOk()
-        ->json('data.doc_num');
-    $withoutDefault = CostCenter::query()->where('doc_num', $withoutDefaultDocNum)->firstOrFail();
-
-    $withDefaultDocNum = $this->actingAs($actor)
-        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
-            'cost_center_code' => '711',
-            'name' => 'Production Line 1',
-            'default_account_doc_num' => $productionExpenses->doc_num,
-        ]))
-        ->assertOk()
-        ->json('data.doc_num');
-    $withDefault = CostCenter::query()->where('doc_num', $withDefaultDocNum)->firstOrFail();
-
-    expect($withoutDefault->default_account_id)->toBeNull()
-        ->and($withDefault->default_account_id)->toBe($productionExpenses->getKey())
-        ->and($withDefault->defaultAccount?->is($productionExpenses))->toBeTrue();
-
-    $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.edit', $withDefault->doc_num))
-        ->assertOk()
-        ->assertSee('lang="en" dir="ltr"', false)
-        ->assertSee('Default Accounting Account')
-        ->assertSee('Select accounting account')
-        ->assertSee('name="default_account_doc_num"', false)
-        ->assertSee('value="'.$productionExpenses->doc_num.'" selected', false)
-        ->assertSee('510100 / Production Expenses');
-
-    $this->actingAs($actor)
-        ->putJson(route('admin.accounting.cost-centers.update', $withDefault->doc_num), costCenterPayload([
-            'cost_center_code' => $withDefault->cost_center_code,
-            'name' => $withDefault->name,
-            'default_account_doc_num' => $maintenanceExpenses->doc_num,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    expect($withDefault->refresh()->default_account_id)->toBe($maintenanceExpenses->getKey());
-
-    $this->actingAs($actor)
-        ->putJson(route('admin.accounting.cost-centers.update', $withDefault->doc_num), costCenterPayload([
-            'cost_center_code' => $withDefault->cost_center_code,
-            'name' => $withDefault->name,
-            'default_account_doc_num' => null,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    expect($withDefault->refresh()->default_account_id)->toBeNull();
-
-    $updatedEvents = 0;
-    CostCenter::updated(function () use (&$updatedEvents): void {
-        $updatedEvents++;
-    });
-
-    $this->actingAs($actor)
-        ->putJson(route('admin.accounting.cost-centers.update', $withDefault->doc_num), costCenterPayload([
-            'cost_center_code' => $withDefault->cost_center_code,
-            'name' => $withDefault->name,
-            'default_account_doc_num' => null,
-        ]))
-        ->assertOk()
-        ->assertJsonPath('success', false)
-        ->assertJsonPath('type', 'no_changes');
-
-    expect($updatedEvents)->toBe(0);
-});
-
-test('default account selection is company scoped and limited to active posting leaf accounts', function (): void {
-    $primary = costCenterEnsureOperatingContext();
-    $secondary = costCenterCreateOperatingContext('Default Account Other Company');
-    $actor = costCenterActor(['accounts.view', 'cost_centers.create']);
-    costCenterSetOperatingContext($primary['company'], $primary['branch'], $primary['period']);
-
-    $valid = costCenterPostingAccount($primary['company'], 520100, ['name_en' => 'Valid Posting Account']);
-    $group = costCenterPostingAccount($primary['company'], 520200, [
-        'name_en' => 'Parent Account',
+    $root = costCenterPostingAccount($context['company'], 510000, [
+        'account_code' => '51',
+        'name_en' => 'Manufacturing Costs',
         'is_group' => true,
         'is_postable' => false,
+        'level' => 1,
     ]);
-    $nonPostable = costCenterPostingAccount($primary['company'], 520300, [
-        'name_en' => 'Non Posting Account',
+    $intermediate = costCenterPostingAccount($context['company'], 511000, [
+        'account_code' => '511',
+        'name_en' => 'Production Costs',
+        'parent_id' => $root->getKey(),
+        'is_group' => true,
         'is_postable' => false,
+        'level' => 2,
     ]);
-    $inactive = costCenterPostingAccount($primary['company'], 520400, [
-        'name_en' => 'Inactive Posting Account',
-        'status' => 'inactive',
+    $leaf = costCenterPostingAccount($context['company'], 511010, [
+        'account_code' => '51101',
+        'name_en' => 'Production Wages',
+        'parent_id' => $intermediate->getKey(),
+        'level' => 3,
     ]);
-    $deleted = costCenterPostingAccount($primary['company'], 520500, ['name_en' => 'Deleted Posting Account']);
-    $deleted->delete();
-    $otherCompany = costCenterPostingAccount($secondary['company'], 520600, ['name_en' => 'Other Company Posting Account']);
+    $unselectedDescendant = costCenterPostingAccount($context['company'], 511020, [
+        'account_code' => '51102',
+        'name_en' => 'Factory Electricity',
+        'parent_id' => $intermediate->getKey(),
+        'level' => 3,
+    ]);
 
-    $results = $this->actingAs($actor)
-        ->getJson(route('admin.accounting.select2.accounts', ['postable' => 1, 'q' => 'Account']))
+    $firstDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '710',
+            'name' => 'Production Factory',
+            'linked_account_doc_nums' => [$root->doc_num, $intermediate->doc_num, $leaf->doc_num],
+        ]))
         ->assertOk()
-        ->json('results');
-    $resultIds = collect($results)->pluck('id');
+        ->json('data.doc_num');
+    $first = CostCenter::query()->where('doc_num', $firstDocNum)->firstOrFail();
 
-    expect($resultIds)->toContain($valid->doc_num)
-        ->not->toContain($group->doc_num, $nonPostable->doc_num, $inactive->doc_num, $deleted->doc_num, $otherCompany->doc_num);
+    $secondDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '711',
+            'name' => 'Second Production Factory',
+            'linked_account_doc_nums' => [$root->doc_num],
+        ]))
+        ->assertOk()
+        ->json('data.doc_num');
+    $second = CostCenter::query()->where('doc_num', $secondDocNum)->firstOrFail();
 
-    foreach ([$group, $nonPostable, $inactive, $deleted, $otherCompany] as $invalidAccount) {
-        $this->actingAs($actor)
-            ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
-                'cost_center_code' => '72'.$invalidAccount->getKey(),
-                'default_account_doc_num' => $invalidAccount->doc_num,
-            ]))
-            ->assertJsonValidationErrors(['default_account_doc_num']);
-    }
+    expect($first->accounts()->pluck('accounts.id')->sort()->values()->all())
+        ->toBe(collect([$root->getKey(), $intermediate->getKey(), $leaf->getKey()])->sort()->values()->all())
+        ->and($first->accounts()->whereKey($unselectedDescendant)->exists())->toBeFalse()
+        ->and($root->costCenters()->pluck('cost_centers.id')->all())->toContain($first->getKey(), $second->getKey());
+
+    expect(fn () => DB::table('cost_center_accounts')->insert([
+        'cost_center_id' => $first->getKey(),
+        'account_id' => $root->getKey(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]))->toThrow(QueryException::class);
 });
 
-test('historical default accounts remain visible but cannot be newly selected', function (): void {
+test('cost center edit synchronizes added and removed account links', function (): void {
     $context = costCenterEnsureOperatingContext();
-    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create', 'cost_centers.edit']);
-    $actor->forceFill(['locale' => 'en'])->save();
+    $actor = costCenterActor(['accounts.view', 'cost_centers.create', 'cost_centers.edit']);
     costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
-    $historical = costCenterPostingAccount($context['company'], 530100, [
-        'name' => 'مصروف تاريخي',
-        'name_en' => 'Historical Expense',
-    ]);
+    $first = costCenterPostingAccount($context['company'], 520100);
+    $second = costCenterPostingAccount($context['company'], 520200);
+    $third = costCenterPostingAccount($context['company'], 520300);
     $docNum = $this->actingAs($actor)
         ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
-            'cost_center_code' => '730',
-            'name' => 'Historical Default Center',
-            'default_account_doc_num' => $historical->doc_num,
+            'cost_center_code' => '720',
+            'linked_account_doc_nums' => [$first->doc_num, $second->doc_num],
         ]))
         ->assertOk()
         ->json('data.doc_num');
     $costCenter = CostCenter::query()->where('doc_num', $docNum)->firstOrFail();
 
-    $historical->update(['status' => 'inactive']);
-    $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.edit', $costCenter->doc_num))
-        ->assertOk()
-        ->assertSee('530100 / Historical Expense')
-        ->assertSee(__('cost_centers.messages.historical_default_account'));
-
-    $historical->delete();
-    $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.show', $costCenter->doc_num))
-        ->assertOk()
-        ->assertSee('530100 / Historical Expense');
-    $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.edit', $costCenter->doc_num))
-        ->assertOk()
-        ->assertSee('value="'.$historical->doc_num.'" selected', false)
-        ->assertSee('530100 / Historical Expense');
-
-    $updatedEvents = 0;
-    CostCenter::updated(function () use (&$updatedEvents): void {
-        $updatedEvents++;
-    });
     $this->actingAs($actor)
         ->putJson(route('admin.accounting.cost-centers.update', $costCenter->doc_num), costCenterPayload([
             'cost_center_code' => $costCenter->cost_center_code,
             'name' => $costCenter->name,
-            'default_account_doc_num' => $historical->doc_num,
+            'linked_account_doc_nums' => [$second->doc_num, $third->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($costCenter->accounts()->pluck('accounts.id')->sort()->values()->all())
+        ->toBe(collect([$second->getKey(), $third->getKey()])->sort()->values()->all());
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.accounting.cost-centers.update', $costCenter->doc_num), costCenterPayload([
+            'cost_center_code' => $costCenter->cost_center_code,
+            'name' => $costCenter->name,
+            'linked_account_doc_nums' => [$third->doc_num, $second->doc_num],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('type', 'no_changes');
+});
+
+test('linked account validation rejects duplicates unavailable accounts and cross company values', function (): void {
+    $primary = costCenterEnsureOperatingContext();
+    $secondary = costCenterCreateOperatingContext('Linked Account Other Company');
+    $actor = costCenterActor(['accounts.view', 'cost_centers.create']);
+    costCenterSetOperatingContext($primary['company'], $primary['branch'], $primary['period']);
+    $valid = costCenterPostingAccount($primary['company'], 530100);
+    $inactive = costCenterPostingAccount($primary['company'], 530200, ['status' => 'inactive']);
+    $deleted = costCenterPostingAccount($primary['company'], 530300);
+    $deleted->delete();
+    $foreign = costCenterPostingAccount($secondary['company'], 530400);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '730',
+            'linked_account_doc_nums' => $valid->doc_num,
+        ]))
+        ->assertJsonValidationErrors(['linked_account_doc_nums']);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '731',
+            'linked_account_doc_nums' => [$valid->doc_num, $valid->doc_num],
+        ]))
+        ->assertJsonValidationErrors(['linked_account_doc_nums.1']);
+
+    foreach ([$inactive, $deleted, $foreign] as $invalidAccount) {
+        $this->actingAs($actor)
+            ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+                'cost_center_code' => '73'.$invalidAccount->getKey(),
+                'linked_account_doc_nums' => [$invalidAccount->doc_num],
+            ]))
+            ->assertJsonValidationErrors(['linked_account_doc_nums.0']);
+    }
+});
+
+test('account tree multi select searches every level and hydrates edit show and old input', function (): void {
+    $context = costCenterEnsureOperatingContext();
+    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create', 'cost_centers.edit']);
+    $actor->forceFill(['locale' => 'en'])->save();
+    costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
+    $parent = costCenterPostingAccount($context['company'], 540100, [
+        'account_code' => '54',
+        'name' => 'تكاليف التمويل',
+        'name_en' => 'Finance Costs',
+        'is_group' => true,
+        'is_postable' => false,
+        'level' => 1,
+    ]);
+    $leaf = costCenterPostingAccount($context['company'], 540200, [
+        'account_code' => '541',
+        'name' => 'فوائد بنكية',
+        'name_en' => 'Bank Interest',
+        'parent_id' => $parent->getKey(),
+        'level' => 2,
+    ]);
+
+    foreach (['54', 'تكاليف التمويل', 'Bank Interest'] as $term) {
+        $results = $this->actingAs($actor)
+            ->getJson(route('admin.accounting.select2.accounts', ['hierarchy' => 1, 'q' => $term]))
+            ->assertOk()
+            ->json('results');
+        expect(collect($results)->pluck('id')->all())->not->toBeEmpty();
+    }
+
+    $allLevels = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['hierarchy' => 1]))
+        ->assertOk()
+        ->json('results');
+    expect(collect($allLevels)->pluck('id'))->toContain($parent->doc_num, $leaf->doc_num)
+        ->and((string) collect($allLevels)->firstWhere('id', $leaf->doc_num)['text'])->toContain('└─', '[541]');
+
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '740',
+            'name' => 'Hydrated Center',
+            'linked_account_doc_nums' => [$parent->doc_num, $leaf->doc_num],
+        ]))
+        ->assertOk()
+        ->json('data.doc_num');
+    $costCenter = CostCenter::query()->where('doc_num', $docNum)->firstOrFail();
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.cost-centers.edit', $costCenter->doc_num))
+        ->assertOk()
+        ->assertSee('name="linked_account_doc_nums[]"', false)
+        ->assertSee('multiple', false)
+        ->assertSee('value="'.$parent->doc_num.'" selected', false)
+        ->assertSee('value="'.$leaf->doc_num.'" selected', false)
+        ->assertSee('Linked Accounting Accounts')
+        ->assertSee('Select one or more accounts');
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.cost-centers.show', $costCenter->doc_num))
+        ->assertOk()
+        ->assertSee('54 / Finance Costs')
+        ->assertSee('541 / Bank Interest')
+        ->assertSee(__('cost_centers.attributes.parent_account'));
+
+    $this->actingAs($actor)
+        ->from(route('admin.accounting.cost-centers.create'))
+        ->post(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '741',
+            'name' => '',
+            'linked_account_doc_nums' => [$parent->doc_num, $leaf->doc_num],
+        ]))
+        ->assertRedirect(route('admin.accounting.cost-centers.create'))
+        ->assertSessionHasErrors(['name']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.cost-centers.create'))
+        ->assertOk()
+        ->assertSee('value="'.$parent->doc_num.'" selected', false)
+        ->assertSee('value="'.$leaf->doc_num.'" selected', false);
+});
+
+test('historical linked accounts remain readable and can only be preserved or removed', function (): void {
+    $context = costCenterEnsureOperatingContext();
+    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create', 'cost_centers.edit']);
+    $actor->forceFill(['locale' => 'en'])->save();
+    costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
+    $historical = costCenterPostingAccount($context['company'], 550100, ['name_en' => 'Historical Expense']);
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+            'cost_center_code' => '750',
+            'linked_account_doc_nums' => [$historical->doc_num],
+        ]))
+        ->assertOk()
+        ->json('data.doc_num');
+    $costCenter = CostCenter::query()->where('doc_num', $docNum)->firstOrFail();
+    $historical->update(['status' => 'inactive']);
+    $historical->delete();
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.cost-centers.edit', $costCenter->doc_num))
+        ->assertOk()
+        ->assertSee('value="'.$historical->doc_num.'" selected', false)
+        ->assertSee('Historical Expense')
+        ->assertSee(__('cost_centers.messages.unavailable'));
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.accounting.cost-centers.update', $costCenter->doc_num), costCenterPayload([
+            'cost_center_code' => $costCenter->cost_center_code,
+            'name' => $costCenter->name,
+            'linked_account_doc_nums' => [$historical->doc_num],
         ]))
         ->assertOk()
         ->assertJsonPath('type', 'no_changes');
 
-    expect($costCenter->refresh()->default_account_id)->toBe($historical->getKey())
-        ->and($updatedEvents)->toBe(0);
-
     $newSelection = $this->actingAs($actor)
-        ->getJson(route('admin.accounting.select2.accounts', ['postable' => 1, 'q' => 'Historical Expense']))
+        ->getJson(route('admin.accounting.select2.accounts', ['hierarchy' => 1, 'q' => 'Historical Expense']))
         ->assertOk()
         ->json('results');
-
     expect(collect($newSelection)->pluck('id'))->not->toContain($historical->doc_num);
 
-    $actor->forceFill(['locale' => 'ar'])->save();
     $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.edit', $costCenter->doc_num))
-        ->assertOk()
-        ->assertSee('lang="ar" dir="rtl"', false)
-        ->assertSee('الحساب المحاسبي الافتراضي')
-        ->assertSee('اختر الحساب المحاسبي')
-        ->assertDontSee('اختر حساب ترحيل')
-        ->assertSee('530100 / مصروف تاريخي');
+        ->putJson(route('admin.accounting.cost-centers.update', $costCenter->doc_num), costCenterPayload([
+            'cost_center_code' => $costCenter->cost_center_code,
+            'name' => $costCenter->name,
+            'linked_account_doc_nums' => [],
+        ]))
+        ->assertOk();
+    expect($costCenter->accounts()->exists())->toBeFalse();
 });
 
-test('cost center list view filter and export expose the linked default account', function (): void {
+test('cost center list filter and export use linked accounts without duplicate rows', function (): void {
     $context = costCenterEnsureOperatingContext();
     $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create', 'cost_centers.export']);
     $actor->forceFill(['locale' => 'en'])->save();
     costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
-    $account = costCenterPostingAccount($context['company'], 540100, ['name_en' => 'Filtered Production Expense']);
-    $otherAccount = costCenterPostingAccount($context['company'], 540200, ['name_en' => 'Other Default Expense']);
+    $account = costCenterPostingAccount($context['company'], 560100, ['name_en' => 'Filtered Production Expense']);
+    $secondAccount = costCenterPostingAccount($context['company'], 560200, ['name_en' => 'Second Linked Expense']);
+    $otherAccount = costCenterPostingAccount($context['company'], 560300, ['name_en' => 'Other Linked Expense']);
 
     foreach ([
-        ['code' => '740', 'name' => 'Matching Default Center', 'account' => $account],
-        ['code' => '741', 'name' => 'Other Default Center', 'account' => $otherAccount],
+        ['code' => '760', 'name' => 'Matching Linked Center', 'accounts' => [$account->doc_num, $secondAccount->doc_num]],
+        ['code' => '761', 'name' => 'Other Linked Center', 'accounts' => [$otherAccount->doc_num]],
     ] as $record) {
         $this->actingAs($actor)
             ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
                 'cost_center_code' => $record['code'],
                 'name' => $record['name'],
-                'default_account_doc_num' => $record['account']->doc_num,
+                'linked_account_doc_nums' => $record['accounts'],
             ]))
             ->assertOk();
     }
@@ -903,25 +976,120 @@ test('cost center list view filter and export expose the linked default account'
     $index = $this->actingAs($actor)
         ->get(route('admin.accounting.cost-centers.index'))
         ->assertOk()
-        ->assertSee(__('cost_centers.attributes.default_account'))
-        ->assertSee('name="default_account_doc_num"', false)
-        ->assertSee(route('admin.accounting.select2.accounts', ['postable' => 1]), false);
-
+        ->assertSee(__('cost_centers.attributes.linked_accounts_short'))
+        ->assertSee('name="linked_account_doc_num"', false)
+        ->assertSee(route('admin.accounting.select2.accounts', ['hierarchy' => 1]), false);
     expect($index->getContent())->toContain('js-select2-ajax js-report-filter-control');
 
     $data = $this->actingAs($actor)
         ->getJson(route('admin.accounting.cost-centers.data', [
             ...costCenterDataTableQuery(),
-            'default_account_doc_num' => $account->doc_num,
+            'linked_account_doc_num' => $account->doc_num,
         ]))
         ->assertOk()
         ->json('data');
 
     expect($data)->toHaveCount(1)
-        ->and($data[0]['name'])->toContain('Matching Default Center')
-        ->and($data[0]['default_account'])->toContain('540100', 'Filtered Production Expense');
+        ->and($data[0]['name'])->toContain('Matching Linked Center')
+        ->and($data[0]['linked_accounts'])->toContain('560100', 'Filtered Production Expense', '560200', 'Second Linked Expense');
 
     $this->actingAs($actor)
-        ->get(route('admin.accounting.cost-centers.export.csv', ['default_account_doc_num' => $account->doc_num]))
+        ->get(route('admin.accounting.cost-centers.export.csv', ['linked_account_doc_num' => $account->doc_num]))
         ->assertOk();
+});
+
+test('cost center data table always returns the legacy default account display contract', function (): void {
+    $context = costCenterEnsureOperatingContext();
+    $actor = costCenterActor(['accounts.view', 'cost_centers.view', 'cost_centers.create']);
+    $actor->forceFill(['locale' => 'en'])->save();
+    costCenterSetOperatingContext($context['company'], $context['branch'], $context['period']);
+    $firstAccount = costCenterPostingAccount($context['company'], 565100, ['name_en' => 'First Compatibility Account']);
+    $secondAccount = costCenterPostingAccount($context['company'], 565200, ['name_en' => '<Second Compatibility Account>']);
+
+    foreach ([
+        ['code' => '7651', 'name' => 'Multi Account Compatibility Center', 'accounts' => [$firstAccount->doc_num, $secondAccount->doc_num]],
+        ['code' => '7652', 'name' => 'Empty Account Compatibility Center', 'accounts' => []],
+    ] as $record) {
+        $this->actingAs($actor)
+            ->postJson(route('admin.accounting.cost-centers.store'), costCenterPayload([
+                'cost_center_code' => $record['code'],
+                'name' => $record['name'],
+                'linked_account_doc_nums' => $record['accounts'],
+            ]))
+            ->assertOk();
+    }
+
+    $data = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.cost-centers.data', [
+            ...costCenterDataTableQuery(),
+            'cost_center_search' => 'Compatibility Center',
+        ]))
+        ->assertOk()
+        ->json('data');
+
+    expect($data)->toHaveCount(2);
+    foreach ($data as $row) {
+        expect($row)->toHaveKeys(['linked_accounts', 'default_account'])
+            ->and($row['default_account'])->toBe($row['linked_accounts']);
+    }
+
+    $multiAccountRow = collect($data)->first(fn (array $row): bool => str_contains($row['name'], 'Multi Account Compatibility Center'));
+    $emptyAccountRow = collect($data)->first(fn (array $row): bool => str_contains($row['name'], 'Empty Account Compatibility Center'));
+
+    expect($multiAccountRow['default_account'])
+        ->toContain('565100', 'First Compatibility Account', '565200', '&lt;Second Compatibility Account&gt;')
+        ->not->toContain('<Second Compatibility Account>')
+        ->and($emptyAccountRow['default_account'])->toBe('');
+
+    $legacyQuery = costCenterDataTableQuery(orderColumn: 5);
+    $legacyQuery['columns'][5] = [
+        'data' => 'default_account',
+        'name' => 'default_account',
+        'searchable' => 'true',
+        'orderable' => 'true',
+        'search' => ['value' => '', 'regex' => 'false'],
+    ];
+    $legacyData = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.cost-centers.data', [
+            ...$legacyQuery,
+            'default_account_doc_num' => $firstAccount->doc_num,
+        ]))
+        ->assertOk()
+        ->json('data');
+
+    expect($legacyData)->toHaveCount(1)
+        ->and($legacyData[0]['default_account'])->toContain('First Compatibility Account', 'Second Compatibility Account');
+});
+
+test('legacy default account migration preserves the existing relationship idempotently', function (): void {
+    $context = costCenterEnsureOperatingContext();
+    $account = costCenterPostingAccount($context['company'], 570100);
+    $removeLegacyColumn = require base_path('modules/Accounting/Database/Migrations/2026_09_02_232438_remove_default_account_id_from_cost_centers_table.php');
+    $backfillLinks = require base_path('modules/Accounting/Database/Migrations/2026_09_02_232436_migrate_cost_center_default_accounts_to_links.php');
+
+    $removeLegacyColumn->down();
+
+    try {
+        $costCenter = CostCenter::query()->create([
+            'company_id' => $context['company']->getKey(),
+            'doc_number' => 770,
+            'doc_num' => 'CC-00770',
+            'cost_center_code' => '770',
+            'name' => 'Legacy Default Link',
+            'status' => 'active',
+        ]);
+        DB::table('cost_centers')->where('id', $costCenter->getKey())->update(['default_account_id' => $account->getKey()]);
+
+        $backfillLinks->up();
+        $backfillLinks->up();
+
+        expect(DB::table('cost_center_accounts')
+            ->where('cost_center_id', $costCenter->getKey())
+            ->where('account_id', $account->getKey())
+            ->count())->toBe(1);
+    } finally {
+        $removeLegacyColumn->up();
+    }
+
+    expect(Schema::hasColumn('cost_centers', 'default_account_id'))->toBeFalse();
 });

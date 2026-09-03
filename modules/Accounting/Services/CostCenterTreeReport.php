@@ -22,7 +22,7 @@ class CostCenterTreeReport
     {
         $filters = [];
 
-        foreach (['cost_center_search', 'status', 'hierarchy', 'default_account_doc_num'] as $field) {
+        foreach (['cost_center_search', 'status', 'hierarchy', 'linked_account_doc_num'] as $field) {
             $value = trim((string) $request->input($field, ''));
 
             if ($value !== '') {
@@ -40,7 +40,7 @@ class CostCenterTreeReport
     public function query(array $filters = []): Builder
     {
         $companyId = $this->companies->currentCompanyId();
-        $query = CostCenter::query()->with(['parent', 'defaultAccount']);
+        $query = CostCenter::query()->with(['parent', 'accounts']);
 
         if ($companyId === null) {
             return $query->whereRaw('1 = 0');
@@ -68,8 +68,8 @@ class CostCenterTreeReport
             $query->whereNotNull('cost_centers.parent_id');
         }
 
-        if (($filters['default_account_doc_num'] ?? '') !== '') {
-            $query->whereHas('defaultAccount', fn (Builder $builder): Builder => $builder->where('doc_num', $filters['default_account_doc_num']));
+        if (($filters['linked_account_doc_num'] ?? '') !== '') {
+            $query->whereHas('accounts', fn (Builder $builder): Builder => $builder->where('accounts.doc_num', $filters['linked_account_doc_num']));
         }
 
         return $query;
@@ -111,8 +111,8 @@ class CostCenterTreeReport
             __('cost_centers.attributes.name'),
             __('cost_centers.attributes.is_group'),
             __('cost_centers.attributes.parent_code'),
-            __('cost_centers.attributes.default_account_doc_num'),
-            __('cost_centers.attributes.default_account'),
+            __('cost_centers.attributes.linked_account_doc_nums'),
+            __('cost_centers.attributes.linked_accounts'),
             __('cost_centers.attributes.status'),
         ];
     }
@@ -127,8 +127,8 @@ class CostCenterTreeReport
             $row->name,
             $row->is_group ? __('common.actions.yes') : __('common.actions.no'),
             $this->parentDisplay($row),
-            $row->defaultAccount?->doc_num ?? '',
-            $row->defaultAccount?->codeNameLabel() ?? '',
+            $row->accounts->pluck('doc_num')->filter()->implode(', '),
+            $row->accounts->map(fn (Account $account): string => $account->codeNameLabel())->implode('، '),
             __("cost_centers.statuses.{$row->status}"),
         ];
     }
@@ -145,8 +145,8 @@ class CostCenterTreeReport
                 'is_group' => $row->is_group ? __('common.actions.yes') : __('common.actions.no'),
                 'level' => $this->level($row),
                 'parent_code' => $this->parentDisplay($row),
-                'default_account_doc_num' => $row->defaultAccount?->doc_num ?? '',
-                'default_account' => $row->defaultAccount?->codeNameLabel() ?? '',
+                'linked_account_doc_nums' => $row->accounts->pluck('doc_num')->filter()->implode(', '),
+                'linked_accounts' => $row->accounts->map(fn (Account $account): string => $account->codeNameLabel())->implode('، '),
                 'status' => __("cost_centers.statuses.{$row->status}"),
             ])
             ->values()
@@ -174,7 +174,7 @@ class CostCenterTreeReport
         return match ($key) {
             'status' => __("cost_centers.statuses.{$value}"),
             'hierarchy' => __("cost_centers.hierarchy_filters.{$value}"),
-            'default_account_doc_num' => Account::withTrashed()
+            'linked_account_doc_num' => Account::withTrashed()
                 ->forCompany($this->companies->requireCompanyId())
                 ->where('doc_num', $value)
                 ->first()?->codeNameLabel() ?? $value,
@@ -215,7 +215,7 @@ class CostCenterTreeReport
 
         while ($missingParentIds->isNotEmpty()) {
             $parents = CostCenter::query()
-                ->with(['parent', 'defaultAccount'])
+                ->with(['parent', 'accounts'])
                 ->forCompany($this->companies->requireCompanyId())
                 ->whereIn('id', $missingParentIds->all())
                 ->get();

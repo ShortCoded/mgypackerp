@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Core\Models\Company;
@@ -29,7 +30,6 @@ class CostCenter extends Model
     protected $fillable = [
         'company_id',
         'parent_id',
-        'default_account_id',
         'doc_number',
         'doc_num',
         'cost_center_code',
@@ -109,9 +109,12 @@ class CostCenter extends Model
         return $this->belongsTo(self::class, 'parent_id');
     }
 
-    public function defaultAccount(): BelongsTo
+    public function accounts(): BelongsToMany
     {
-        return $this->belongsTo(Account::class, 'default_account_id')->withTrashed();
+        return $this->belongsToMany(Account::class, 'cost_center_accounts')
+            ->withTimestamps()
+            ->withTrashed()
+            ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
     }
 
     public function children(): HasMany

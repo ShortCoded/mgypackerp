@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Services;
 
 use DomainException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
@@ -22,6 +23,7 @@ class CostCenterService
     {
         return DB::transaction(function () use ($data): CostCenter {
             $companyId = $this->companies->requireCompanyId();
+            $linkedAccountIds = $this->linkedAccountIds($data['linked_account_doc_nums'] ?? [], $companyId);
             $document = array_key_exists('doc_number', $data) && $data['doc_number']
                 ? ['doc_number' => (int) $data['doc_number'], 'doc_num' => $this->documentNumbers->format('cost_centers', (int) $data['doc_number'])]
                 : $this->documentNumbers->nextForCompany('cost_centers', CostCenter::class, $companyId);
@@ -31,9 +33,10 @@ class CostCenterService
                 ...$document,
                 'created_by' => auth()->id(),
             ]);
+            $costCenter->accounts()->sync($linkedAccountIds);
             $this->audit->clearCreationUpdateAudit($costCenter);
 
-            return $costCenter->refresh();
+            return $costCenter->refresh()->load('accounts');
         });
     }
 
@@ -43,6 +46,13 @@ class CostCenterService
             $companyId = $this->companies->requireCompanyId();
             $this->assertBelongsToCompany($costCenter, $companyId);
             $values = $this->values($data, $companyId, $costCenter);
+            $linkedAccountIds = $this->linkedAccountIds($data['linked_account_doc_nums'] ?? [], $companyId, $costCenter);
+            $currentLinkedAccountIds = $costCenter->accounts()
+                ->pluck('accounts.id')
+                ->map(fn (mixed $id): int => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
 
             if (array_key_exists('doc_number', $data) && $data['doc_number']) {
                 $values['doc_number'] = (int) $data['doc_number'];
@@ -56,13 +66,22 @@ class CostCenterService
                 }
             }
 
+            $sortedLinkedAccountIds = collect($linkedAccountIds)->sort()->values()->all();
+            if ($currentLinkedAccountIds !== $sortedLinkedAccountIds) {
+                $changes['linked_account_ids'] = [
+                    'old' => $currentLinkedAccountIds,
+                    'new' => $sortedLinkedAccountIds,
+                ];
+            }
+
             if ($changes === []) {
-                return ['record' => $costCenter->refresh(), 'changed' => false, 'changes' => []];
+                return ['record' => $costCenter->refresh()->load('accounts'), 'changed' => false, 'changes' => []];
             }
 
             $this->audit->saveUpdate($costCenter, $values);
+            $costCenter->accounts()->sync($linkedAccountIds);
 
-            return ['record' => $costCenter->refresh(), 'changed' => true, 'changes' => $changes];
+            return ['record' => $costCenter->refresh()->load('accounts'), 'changed' => true, 'changes' => $changes];
         });
     }
 
@@ -131,7 +150,6 @@ class CostCenterService
         return [
             'company_id' => $companyId,
             'parent_id' => $parent?->getKey(),
-            'default_account_id' => $this->defaultAccountId($data['default_account_doc_num'] ?? null, $companyId, $current),
             'cost_center_code' => $this->resolvedCostCenterCode($companyId, $parent, $submittedCode, $current, $parentChanged),
             'name' => $data['name'],
             'name_en' => $data['name_en'] ?? null,
@@ -141,24 +159,51 @@ class CostCenterService
         ];
     }
 
-    private function defaultAccountId(mixed $docNum, int $companyId, ?CostCenter $current): ?int
+    /**
+     * @return list<int>
+     */
+    private function linkedAccountIds(mixed $docNums, int $companyId, ?CostCenter $current = null): array
     {
-        if (! is_string($docNum) || trim($docNum) === '') {
-            return null;
+        if (! is_array($docNums)) {
+            return [];
         }
 
-        $docNum = trim($docNum);
-        $current?->loadMissing('defaultAccount');
+        $normalizedDocNums = collect($docNums)
+            ->filter(fn (mixed $docNum): bool => is_string($docNum) && trim($docNum) !== '')
+            ->map(fn (string $docNum): string => trim($docNum))
+            ->unique()
+            ->values();
 
-        if ($current?->defaultAccount?->doc_num === $docNum) {
-            return (int) $current->default_account_id;
+        if ($normalizedDocNums->isEmpty()) {
+            return [];
         }
 
-        return (int) Account::query()
+        $currentAccounts = $current instanceof CostCenter
+            ? $current->accounts()
+                ->where('accounts.company_id', $companyId)
+                ->get(['accounts.id', 'accounts.doc_num'])
+                ->keyBy('doc_num')
+            : collect();
+        $selectableAccounts = Account::query()
             ->forCompany($companyId)
-            ->eligibleForDirectPosting()
-            ->where('doc_num', $docNum)
-            ->valueOrFail('id');
+            ->active()
+            ->whereIn('doc_num', $normalizedDocNums->all())
+            ->get(['id', 'doc_num'])
+            ->keyBy('doc_num');
+
+        return $normalizedDocNums
+            ->map(function (string $docNum) use ($currentAccounts, $selectableAccounts): int {
+                $account = $currentAccounts->get($docNum) ?? $selectableAccounts->get($docNum);
+
+                if (! $account instanceof Account) {
+                    throw (new ModelNotFoundException)->setModel(Account::class, [$docNum]);
+                }
+
+                return (int) $account->getKey();
+            })
+            ->unique()
+            ->values()
+            ->all();
     }
 
     public function nextCostCenterCode(?CostCenter $parent, ?int $companyId = null): string

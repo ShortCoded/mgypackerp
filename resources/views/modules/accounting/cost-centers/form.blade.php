@@ -14,10 +14,6 @@
     $value = fn (string $field, mixed $default = '') => old($field, $record?->{$field} ?? $default);
     $parentDisplay = $record?->parent ? $record->parent->cost_center_code . ' / ' . $record->parent->name : null;
     $parentOption = $record?->parent && $record->parent->status === 'active' && $record->parent->is_group ? ['id' => $record->parent->doc_num, 'text' => $parentDisplay] : null;
-    $defaultAccountDisplay = $record?->defaultAccount?->codeNameLabel();
-    $defaultAccountIsSelectable = $record?->defaultAccount && ! $record->defaultAccount->trashed() && $record->defaultAccount->status === 'active' && $record->defaultAccount->is_postable && ! $record->defaultAccount->is_group;
-    $defaultAccountOption = $record?->defaultAccount && (! $isClone || $defaultAccountIsSelectable) ? ['id' => $record->defaultAccount->doc_num, 'text' => $defaultAccountDisplay] : null;
-    $hasHistoricalDefaultAccount = ! $isClone && $record?->defaultAccount && ! $defaultAccountIsSelectable;
     $showsDocumentNumberColumn = $canControlDocumentNumber || ! $isCreateLike;
     $originalCostCenterData = [
         'doc_number' => ! $isCreateLike ? (string) ($record?->doc_number ?? '') : '',
@@ -25,7 +21,7 @@
         'name' => (string) ($record?->name ?? ''),
         'name_en' => (string) ($record?->name_en ?? ''),
         'parent_doc_num' => (string) ($record?->parent?->doc_num ?? ''),
-        'default_account_doc_num' => (string) ($defaultAccountOption['id'] ?? ''),
+        'linked_account_doc_nums' => collect($linkedAccountOptions)->pluck('id')->sort()->values()->all(),
         'is_group' => (bool) ($record?->is_group ?? false),
         'status' => (string) ($record?->status ?? 'active'),
         'notes' => (string) ($record?->notes ?? ''),
@@ -141,21 +137,33 @@
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
 
-                    <div class="col-md-6 col-lg-6">
-                        <label class="form-label" for="default_account_doc_num">{{ __('cost_centers.attributes.default_account') }}</label>
+                    <div class="col-12">
+                        <label class="form-label" for="linked_account_doc_nums">{{ __('cost_centers.attributes.linked_accounts') }}</label>
                         @if ($isView)
-                            <x-forms.view-field for="default_account_doc_num" :value="$defaultAccountDisplay" />
+                            <div class="border rounded-2 bg-body-tertiary px-3 py-2">
+                                @forelse ($linkedAccountOptions as $option)
+                                    <div class="d-flex flex-wrap align-items-center gap-2 py-1">
+                                        <span class="badge rounded-pill badge-subtle-{{ $option['is_stale'] ? 'warning' : 'primary' }}">{{ $option['display'] }}</span>
+                                        @if ($option['parent'])
+                                            <span class="text-600 fs-10">{{ __('cost_centers.attributes.parent_account') }}: {{ $option['parent'] }}</span>
+                                        @endif
+                                        @if ($option['is_stale'])
+                                            <span class="badge rounded-pill badge-subtle-warning">{{ __('cost_centers.messages.unavailable') }}</span>
+                                        @endif
+                                    </div>
+                                @empty
+                                    <span class="text-600">—</span>
+                                @endforelse
+                            </div>
                         @else
-                            <select class="form-select js-select2-ajax" id="default_account_doc_num" name="default_account_doc_num" data-url="{{ route('admin.accounting.select2.accounts', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.default_account') }}" data-allow-clear="true">
-                                @if ($defaultAccountOption)
-                                    <option value="{{ $defaultAccountOption['id'] }}" selected>{{ $defaultAccountOption['text'] }}</option>
-                                @endif
+                            <select class="form-select js-select2-ajax" id="linked_account_doc_nums" name="linked_account_doc_nums[]" multiple data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true">
+                                @foreach ($linkedAccountOptions as $option)
+                                    <option value="{{ $option['id'] }}" selected>{{ $option['text'] }}@if ($option['is_stale']) — {{ __('cost_centers.messages.unavailable') }}@endif</option>
+                                @endforeach
                             </select>
-                            @if ($hasHistoricalDefaultAccount)
-                                <div class="form-text">{{ __('cost_centers.messages.historical_default_account') }}</div>
-                            @endif
+                            <div class="form-text">{{ __('cost_centers.messages.linked_accounts_help') }}</div>
                         @endif
-                        <div class="invalid-feedback d-block" data-error-for="default_account_doc_num"></div>
+                        <div class="invalid-feedback d-block" data-error-for="linked_account_doc_nums"></div>
                     </div>
 
                     <div class="col-12">

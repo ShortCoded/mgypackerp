@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -136,6 +137,15 @@ class Account extends Model
         return self::codeNameLabelFor($this->account_code, $this->name, $this->name_en, $locale);
     }
 
+    public function hierarchyLabel(?string $locale = null): string
+    {
+        $depth = max(0, (int) $this->level - 1);
+        $indentation = str_repeat("\u{00A0}\u{00A0}\u{00A0}\u{00A0}", $depth);
+        $branch = $depth > 0 ? '└─ ' : '';
+
+        return $indentation.$branch.'['.$this->account_code.'] '.$this->displayName($locale);
+    }
+
     public function isProtectedRoot(): bool
     {
         return (bool) $this->is_system
@@ -164,6 +174,13 @@ class Account extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id')->orderBy('account_code');
+    }
+
+    public function costCenters(): BelongsToMany
+    {
+        return $this->belongsToMany(CostCenter::class, 'cost_center_accounts')
+            ->withTimestamps()
+            ->withTrashed();
     }
 
     public function bankAccount(): HasOne

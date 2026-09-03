@@ -191,7 +191,7 @@
         { data: 'cost_center_code', name: 'cost_center_code', className: 'align-middle white-space-nowrap dt-code' },
         { data: 'name', name: 'name', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
         { data: 'parent', name: 'parent', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
-        { data: 'default_account', name: 'default_account', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
+        { data: 'linked_accounts', name: 'linked_accounts', orderable: false, searchable: false, defaultContent: '—', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
         { data: 'is_group', name: 'is_group', className: 'align-middle white-space-nowrap text-center' },
         { data: 'status', name: 'status', className: 'align-middle white-space-nowrap' },
         { data: 'created_by', name: 'created_by', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
@@ -304,9 +304,10 @@
     const list = [];
 
     $.each(errors, function (field, fieldMessages) {
-      const $field = $form.find('[name="' + field + '"]');
+      const baseField = String(field || '').split('.')[0];
+      const $field = $form.find('[name="' + baseField + '"], [name="' + baseField + '[]"]');
       $field.addClass('is-invalid');
-      $form.find('[data-error-for="' + field + '"]').text(fieldMessages[0] || '');
+      $form.find('[data-error-for="' + baseField + '"]').text(fieldMessages[0] || '');
       (fieldMessages || []).forEach(function (fieldMessage) {
         list.push(fieldMessage);
       });
@@ -321,13 +322,24 @@
     return $field.length ? String($field.val() || '') : '';
   }
 
+  function normalizedValues(values) {
+    const items = Array.isArray(values) ? values : (values === undefined || values === null || values === '' ? [] : [values]);
+
+    return items.map(function (value) {
+      return String(value || '').trim();
+    }).filter(function (value, index, self) {
+      return value !== '' && self.indexOf(value) === index;
+    }).sort();
+  }
+
   function formSnapshot($form) {
     return {
       doc_number: formFieldValue($form, 'doc_number'),
       cost_center_code: formFieldValue($form, 'cost_center_code'),
       name: formFieldValue($form, 'name'),
+      name_en: formFieldValue($form, 'name_en'),
       parent_doc_num: formFieldValue($form, 'parent_doc_num'),
-      default_account_doc_num: formFieldValue($form, 'default_account_doc_num'),
+      linked_account_doc_nums: normalizedValues($form.find('select[name="linked_account_doc_nums[]"]').val() || []),
       is_group: $form.find('[name="is_group"]').is(':checked') ? '1' : '0',
       status: formFieldValue($form, 'status'),
       notes: formFieldValue($form, 'notes')
@@ -340,6 +352,8 @@
     Object.keys(normalized).forEach(function (field) {
       if (typeof normalized[field] === 'string') {
         normalized[field] = normalized[field].trim();
+      } else if (Array.isArray(normalized[field])) {
+        normalized[field] = normalizedValues(normalized[field]);
       }
     });
 
@@ -374,9 +388,9 @@
   }
 
   function resetCreateForm($form) {
-    $form.find('[name="doc_number"], [name="cost_center_code"], [name="name"], [name="notes"]').val('');
+    $form.find('[name="doc_number"], [name="cost_center_code"], [name="name"], [name="name_en"], [name="notes"]').val('');
     clearSelect2Field($form.find('[name="parent_doc_num"]'));
-    clearSelect2Field($form.find('[name="default_account_doc_num"]'));
+    clearSelect2Field($form.find('select[name="linked_account_doc_nums[]"]'));
     $form.find('[name="is_group"]').prop('checked', false);
     $form.find('[name="status"]').val('active');
     $form.find('input[name="submit_action"]').val('save');
@@ -967,7 +981,7 @@
   });
 
   $(document).off('input.costCentersValidation change.costCentersValidation', '#cost-center-form input, #cost-center-form select, #cost-center-form textarea').on('input.costCentersValidation change.costCentersValidation', '#cost-center-form input, #cost-center-form select, #cost-center-form textarea', function () {
-    const name = $(this).attr('name');
+    const name = String($(this).attr('name') || '').replace(/\[\]$/, '');
     $(this).removeClass('is-invalid');
     $('[data-error-for="' + name + '"]').text('');
   });

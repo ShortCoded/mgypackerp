@@ -22,7 +22,7 @@ class AccountSelect2Service
         $companyId = $this->companies->currentCompanyId($request);
         $query = Account::query()
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance', 'account_classifications.code as classification_code', 'account_classifications.name as classification_name', 'account_classifications.name_en as classification_name_en'])
+            ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.parent_id', 'accounts.level', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance', 'account_classifications.code as classification_code', 'account_classifications.name as classification_name', 'account_classifications.name_en as classification_name_en'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
 
         if ($companyId === null) {
@@ -106,7 +106,11 @@ class AccountSelect2Service
             $this->search->applyMultiTermSearch($query, $terms, ['text' => ['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en']]);
         }
 
-        return $this->select2->paginated($query, $request, fn (Account $account): array => $this->item($account));
+        return $this->select2->paginated(
+            $query,
+            $request,
+            fn (Account $account): array => $this->item($account, $request->boolean('hierarchy')),
+        );
     }
 
     public function classifications(Request $request): array
@@ -133,11 +137,11 @@ class AccountSelect2Service
         ]);
     }
 
-    public function item(Account $account): array
+    public function item(Account $account, bool $withHierarchy = false): array
     {
         return [
             'id' => $account->doc_num,
-            'text' => $account->codeNameLabel(),
+            'text' => $withHierarchy ? $account->hierarchyLabel() : $account->codeNameLabel(),
             'account_code' => $account->account_code,
             'account_type' => $account->account_type,
             'statement_type' => $account->statement_type,

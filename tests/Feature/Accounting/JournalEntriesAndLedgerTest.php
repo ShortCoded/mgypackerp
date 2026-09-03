@@ -284,10 +284,10 @@ test('posting revalidates draft accounts before creating ledger movements', func
         ->and($entry->is_posted)->toBeFalse();
 });
 
-test('journal lines persist gl account and cost center independently of the cost center default', function (): void {
+test('journal lines persist gl account and cost center independently of linked cost center accounts', function (): void {
     $context = journalEntryContext();
     [$debit, $credit] = journalEntryAccounts($context['company']);
-    $defaultAccount = Account::query()
+    $linkedAccount = Account::query()
         ->forCompany($context['company']->getKey())
         ->active()
         ->where('is_group', false)
@@ -297,7 +297,6 @@ test('journal lines persist gl account and cost center independently of the cost
         ->firstOrFail();
     $costCenter = CostCenter::query()->create([
         'company_id' => $context['company']->getKey(),
-        'default_account_id' => $defaultAccount->getKey(),
         'doc_number' => 88001,
         'doc_num' => 'CC-88001',
         'cost_center_code' => '88001',
@@ -305,6 +304,7 @@ test('journal lines persist gl account and cost center independently of the cost
         'is_group' => false,
         'status' => 'active',
     ]);
+    $costCenter->accounts()->attach($linkedAccount);
     $actor = journalEntryActor(['journal_entries.create', 'journal_entries.post']);
     $payload = journalEntryPayload($debit, $credit);
     $payload['lines'][0]['cost_center_doc_num'] = $costCenter->doc_num;
@@ -315,24 +315,24 @@ test('journal lines persist gl account and cost center independently of the cost
         ->assertOk()
         ->json('data.doc_num');
     $entry = JournalEntry::query()->where('doc_num', $entryDocNum)->firstOrFail();
-    $linesBeforeDefaultChange = $entry->lines()->orderBy('line_no')->get();
+    $linesBeforeLinkChange = $entry->lines()->orderBy('line_no')->get();
 
-    expect($linesBeforeDefaultChange[0]->account_id)->toBe($debit->getKey())
-        ->and($linesBeforeDefaultChange[0]->account_id)->not->toBe($defaultAccount->getKey())
-        ->and($linesBeforeDefaultChange[0]->cost_center_id)->toBe($costCenter->getKey())
-        ->and($linesBeforeDefaultChange[1]->account_id)->toBe($credit->getKey())
-        ->and($linesBeforeDefaultChange[1]->cost_center_id)->toBe($costCenter->getKey());
+    expect($linesBeforeLinkChange[0]->account_id)->toBe($debit->getKey())
+        ->and($linesBeforeLinkChange[0]->account_id)->not->toBe($linkedAccount->getKey())
+        ->and($linesBeforeLinkChange[0]->cost_center_id)->toBe($costCenter->getKey())
+        ->and($linesBeforeLinkChange[1]->account_id)->toBe($credit->getKey())
+        ->and($linesBeforeLinkChange[1]->cost_center_id)->toBe($costCenter->getKey());
 
     $this->actingAs($actor)
         ->postJson(route('admin.accounting.journal-entries.post', $entry->doc_num))
         ->assertOk()
         ->assertJsonPath('success', true);
 
-    $costCenter->update(['default_account_id' => $credit->getKey()]);
-    $linesAfterDefaultChange = $entry->lines()->orderBy('line_no')->get();
+    $costCenter->accounts()->sync([$credit->getKey()]);
+    $linesAfterLinkChange = $entry->lines()->orderBy('line_no')->get();
 
-    expect($linesAfterDefaultChange->pluck('account_id')->all())->toBe([$debit->getKey(), $credit->getKey()])
-        ->and($linesAfterDefaultChange->pluck('cost_center_id')->all())->toBe([$costCenter->getKey(), $costCenter->getKey()])
+    expect($linesAfterLinkChange->pluck('account_id')->all())->toBe([$debit->getKey(), $credit->getKey()])
+        ->and($linesAfterLinkChange->pluck('cost_center_id')->all())->toBe([$costCenter->getKey(), $costCenter->getKey()])
         ->and($entry->refresh()->is_posted)->toBeTrue();
 });
 
