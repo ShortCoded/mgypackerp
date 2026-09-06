@@ -24,8 +24,8 @@
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.assets.index') }}">{{ __('common.actions.back') }}</a>
         @can('fixed_assets.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.fixed-assets.prints.asset', $asset) }}">{{ __('common.actions.print') }}</a>@endcan
-        @if($canEditMaster)@can('fixed_assets.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.edit', $asset) }}">{{ __('common.actions.edit') }}</a>@endcan
-        @can('fixed_assets.delete')<button class="btn btn-falcon-danger btn-sm js-delete-record" type="button" data-doc-num="{{ $asset->doc_num }}" data-delete-url="{{ route('admin.fixed-assets.assets.destroy', $asset) }}" data-redirect-url="{{ route('admin.fixed-assets.assets.index') }}">{{ __('common.actions.delete') }}</button>@endcan @endif
+        @if($canEditBasicData)@can('fixed_assets.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.edit', $asset) }}"><span class="fas fa-edit me-1" aria-hidden="true"></span>{{ __('common.actions.edit') }}</a>@endcan @endif
+        @if($canEditMaster)@can('fixed_assets.delete')<button class="btn btn-falcon-danger btn-sm js-delete-record" type="button" data-doc-num="{{ $asset->doc_num }}" data-delete-url="{{ route('admin.fixed-assets.assets.destroy', $asset) }}" data-redirect-url="{{ route('admin.fixed-assets.assets.index') }}"><span class="fas fa-trash-alt me-1" aria-hidden="true"></span>{{ __('common.actions.delete') }}</button>@endcan @endif
     </div>
 </div></div>
 @if($purchaseInvoice)

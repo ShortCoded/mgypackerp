@@ -151,7 +151,9 @@
                                     @foreach($columns as $index => $column)
                                         <th class="text-900 sort pe-1 align-middle white-space-nowrap {{ $index === 0 ? 'all no-colvis dt-code' : 'dt-text dt-ellipsis' }}">{{ in_array($column, $auditColumns, true) ? __("common.fields.{$column}") : __(match ($column) { 'purchase_value' => 'fixed_assets.reports.columns.cost', 'previous_depreciation' => 'fixed_assets.reports.columns.accumulated_depreciation', 'net_value' => 'fixed_assets.reports.columns.net_book_value', default => "fixed_assets.columns.{$column}" }) }}</th>
                                     @endforeach
-                                    <th class="text-900 no-sort pe-1 align-middle data-table-row-action all no-colvis dt-actions"></th>
+                                    <th class="text-900 no-sort pe-1 align-middle text-center white-space-nowrap data-table-row-action all no-colvis dt-actions">
+                                        <span class="fas fa-cog me-1" aria-hidden="true"></span>{{ __('common.fields.actions') }}
+                                    </th>
                                 </tr>
                             </thead>
                         </table>

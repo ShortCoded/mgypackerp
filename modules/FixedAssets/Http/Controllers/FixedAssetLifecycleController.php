@@ -120,6 +120,7 @@ class FixedAssetLifecycleController extends Controller
                 ['label' => __('fixed_assets.lifecycle.asset_card')],
             ]),
             'canEditMaster' => $fixedAsset->canEditMaster(),
+            'canEditBasicData' => $fixedAsset->canEditBasicData(),
             'canRecognize' => ! $fixedAsset->hasPostedRecognition() && ! $fixedAsset->isDisposed()
                 && $fixedAsset->source_type !== FixedAssetPurchaseIntegrationService::SourceType,
             'today' => app(DateFormatService::class)->formatDate(now(), ''),

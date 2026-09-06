@@ -522,7 +522,7 @@ class StoreFixedAssetRequest extends FormRequest
         }
     }
 
-    private function validateImageSelection(Validator $validator): void
+    protected function validateImageSelection(Validator $validator): void
     {
         $publicId = trim((string) $this->input('image_archive_file_doc_num'));
 

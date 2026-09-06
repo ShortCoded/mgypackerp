@@ -393,7 +393,12 @@ class FixedAsset extends Model
 
     public function canEditMaster(): bool
     {
-        return ! $this->trashed() && $this->status === self::StatusDraft && ! $this->isMasterLocked();
+        return ! $this->trashed() && ! $this->isDisposed() && ! $this->isMasterLocked();
+    }
+
+    public function canEditBasicData(): bool
+    {
+        return ! $this->trashed() && ! $this->isDisposed();
     }
 
     public function isLockedForEditing(): bool

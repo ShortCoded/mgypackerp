@@ -1018,7 +1018,7 @@
         applyMainCurrencyExchangeRate($form);
         resetAssetImagePreview($form.find('.js-fixed-asset-image-picker-field').first());
         if (String($form.data('financial-locked')) === '1') {
-            const fields = ['asset_date', 'branch_doc_num', 'branch_hall_uuid', 'cost_center_doc_num', 'asset_group_account_doc_num', 'credit_account_doc_num', 'currency_doc_num', 'entry_type', 'source_type', 'source_id', 'source_doc_num', 'purchase_date', 'acquisition_date', 'operation_date', 'purchase_value', 'salvage_value', 'exchange_rate', 'previous_depreciation', 'previous_depreciation_until_date', 'depreciation_start_date', 'annual_depreciation_rate', 'expected_usage_units', 'useful_life', 'is_depreciable', 'depreciation_method', 'location_address', 'status'];
+            const fields = ['doc_number', 'asset_date', 'branch_doc_num', 'branch_hall_uuid', 'cost_center_doc_num', 'asset_group_account_doc_num', 'credit_account_doc_num', 'currency_doc_num', 'entry_type', 'source_type', 'source_id', 'source_doc_num', 'purchase_date', 'acquisition_date', 'operation_date', 'purchase_value', 'salvage_value', 'exchange_rate', 'previous_depreciation', 'previous_depreciation_until_date', 'depreciation_start_date', 'annual_depreciation_rate', 'expected_usage_units', 'useful_life', 'is_depreciable', 'depreciation_method', 'location_address', 'status'];
             fields.forEach(function (name) {
                 const $field = $form.find('[name="' + name + '"]').first();
                 if (!$field.length) { return; }
@@ -1026,9 +1026,9 @@
                     $('<input>', {type: 'hidden', name: name, value: $field.val() || ''}).appendTo($form);
                     $field.prop('disabled', true);
                 } else {
-                    $field.prop('readonly', true);
                     if ($field[0]._flatpickr) { $field[0]._flatpickr.destroy(); }
                     $field.removeClass('js-date-picker');
+                    $field.prop('readonly', true).attr('aria-readonly', 'true').addClass('bg-100');
                 }
             });
         }

@@ -153,12 +153,12 @@
                         @if($record && ! $record->trashed())
                             <a class="btn btn-falcon-info btn-sm" href="{{ route('admin.fixed-assets.lifecycle.show', $record) }}"><span class="fas fa-id-card me-1"></span>{{ __('fixed_assets.lifecycle.asset_card') }}</a>
                         @endif
-                        @include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditMaster() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])
+                        @include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditBasicData() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])
                     </div>
                 </div>
             </div>
             <div class="card-body">
-                @if($financialLocked)<div class="alert alert-info">{{ __('fixed_assets.messages.master_locked') }}</div>@endif
+                @if($financialLocked)<div class="alert alert-info"><span class="fas fa-lock me-1" aria-hidden="true"></span>{{ __('fixed_assets.messages.financial_fields_locked') }}</div>@endif
                 @if($linkedPurchaseLine?->purchaseInvoice)
                     <div class="alert alert-info d-flex flex-wrap align-items-start justify-content-between gap-2">
                         <div>
@@ -335,7 +335,7 @@
                                                 <option value="{{ $accountOption($groupAccount)['id'] }}" selected>{{ $accountOption($groupAccount)['text'] }}</option>
                                             @endif
                                         </select>
-                                        @if($canCreateAccounts)
+                                        @if($canCreateAccounts && ! $financialLocked)
                                             <button class="btn btn-falcon-default btn-sm js-fixed-asset-inline-create" type="button" data-modal="#fixed-asset-category-modal">
                                                 <span class="fas fa-plus"></span><span class="ms-1">{{ __('fixed_assets.actions.add_category') }}</span>
                                             </button>
@@ -627,7 +627,7 @@
                     />
                 @endif
             </div>
-            <div class="card-footer">@include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditMaster() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])</div>
+            <div class="card-footer">@include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditBasicData() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])</div>
         </div>
     </form>
 

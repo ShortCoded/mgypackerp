@@ -26,6 +26,46 @@ use Modules\FixedAssets\Models\FixedAsset;
 
 class FixedAssetService
 {
+    private const LOCKED_MASTER_FIELDS = [
+        'company_id',
+        'period_id',
+        'doc_number',
+        'doc_num',
+        'asset_date',
+        'branch_id',
+        'branch_hall_id',
+        'cost_center_id',
+        'account_id',
+        'asset_group_account_id',
+        'credit_account_id',
+        'currency_id',
+        'entry_type',
+        'source_type',
+        'source_id',
+        'source_doc_num',
+        'purchase_date',
+        'acquisition_date',
+        'operation_date',
+        'purchase_value',
+        'base_acquisition_value',
+        'salvage_value',
+        'exchange_rate',
+        'previous_depreciation',
+        'previous_depreciation_until_date',
+        'depreciation_start_date',
+        'annual_depreciation_rate',
+        'expected_usage_units',
+        'useful_life',
+        'is_depreciable',
+        'depreciation_method',
+        'location_address',
+        'status',
+        'locked_at',
+        'capitalized_at',
+        'disposed_at',
+        'legacy_recognition',
+    ];
+
     public function __construct(
         private readonly DocumentNumberService $documents,
         private readonly CrudAuditService $audit,
@@ -80,6 +120,13 @@ class FixedAssetService
             app(FixedAssetAccessService::class)->assertAsset($record);
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
+
+            if ($record->isMasterLocked()) {
+                $this->assertLockedMasterPayload($record, $data);
+
+                return $this->updateBasicData($record, $data, $oldDocNumber, $oldDocNum);
+            }
+
             $parentAccount = $this->parentAccount($data);
             $linkedAccount = $this->lockCanonicalLinkedAccount($record);
             $this->assertLinkedAccountCanMove($linkedAccount, $parentAccount);
@@ -146,6 +193,112 @@ class FixedAssetService
                 'old_doc_num' => $oldDocNum,
             ];
         });
+    }
+
+    /**
+     * @return array{record: FixedAsset, changed: bool, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string}
+     */
+    private function updateBasicData(FixedAsset $record, array $data, ?int $oldDocNumber, string $oldDocNum): array
+    {
+        $values = Arr::only($data, ['asset_name', 'description', 'serial_number', 'notes']);
+        $selectedImageFile = $this->selectedArchiveImageFile($data['image_archive_file_doc_num'] ?? null, (int) $record->company_id);
+        $detachesImage = ($data['remove_image'] ?? false) === true;
+
+        if ($selectedImageFile instanceof ArchiveFile) {
+            $values['image_path'] = (string) $selectedImageFile->path;
+        } elseif ($detachesImage) {
+            $values['image_path'] = null;
+        }
+
+        $changes = $this->changes($record, $values);
+        $usageChangeNeeded = $selectedImageFile instanceof ArchiveFile
+            && ! $this->fileUsages->recordUsesFile($record, $selectedImageFile, FixedAsset::ImageCollection, FixedAsset::MainImageRole);
+        $detachChangeNeeded = $detachesImage
+            && $this->fileUsages->recordHasActiveUsage($record, FixedAsset::ImageCollection, FixedAsset::MainImageRole);
+
+        if (($usageChangeNeeded || $detachChangeNeeded) && ! array_key_exists('image_path', $changes)) {
+            $changes['image_path'] = [
+                'old' => $record->image_path ? 'image_present' : null,
+                'new' => $selectedImageFile instanceof ArchiveFile ? 'image_updated' : null,
+            ];
+        }
+
+        $chartChanged = false;
+        if (array_key_exists('asset_name', $changes)) {
+            $linkedAccount = $this->lockCanonicalLinkedAccount($record);
+            $parentAccount = Account::query()
+                ->forCompany((int) $record->company_id)
+                ->whereKey($record->asset_group_account_id ?: $linkedAccount->parent_id)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $parentAccount instanceof Account) {
+                throw new DomainException(__('fixed_assets.messages.asset_category_unavailable'));
+            }
+
+            $chartChanged = (bool) $this->accounts->updateLinkedAccount(
+                BusinessPartnerAccountService::FixedAsset,
+                $linkedAccount,
+                $parentAccount,
+                $this->linkedAccountData(['asset_name' => $data['asset_name'], 'status' => $record->status]),
+            )['changed'];
+        }
+
+        if ($changes === [] && ! $chartChanged) {
+            return [
+                'record' => $record->refresh(),
+                'changed' => false,
+                'changes' => [],
+                'old_doc_number' => $oldDocNumber,
+                'old_doc_num' => $oldDocNum,
+            ];
+        }
+
+        if ($changes !== []) {
+            $this->audit->saveUpdate($record, $values);
+        }
+
+        if ($selectedImageFile instanceof ArchiveFile) {
+            $this->fileUsages->replaceFileForRecord($selectedImageFile, $record, FixedAsset::ImageCollection, FixedAsset::MainImageRole);
+        } elseif ($detachesImage) {
+            $this->fileUsages->detachUsage($record, FixedAsset::ImageCollection, FixedAsset::MainImageRole);
+        }
+
+        return [
+            'record' => $record->refresh(),
+            'changed' => true,
+            'changes' => $changes,
+            'old_doc_number' => $oldDocNumber,
+            'old_doc_num' => $oldDocNum,
+        ];
+    }
+
+    private function assertLockedMasterPayload(FixedAsset $record, array $data): void
+    {
+        $candidate = clone $record;
+        $candidate->fill(Arr::only($data, self::LOCKED_MASTER_FIELDS));
+
+        foreach (self::LOCKED_MASTER_FIELDS as $field) {
+            if (array_key_exists($field, $data) && $candidate->isDirty($field)) {
+                throw new DomainException(__('fixed_assets.messages.master_locked'));
+            }
+        }
+
+        $record->loadMissing(['assetGroupAccount', 'creditAccount', 'currency', 'branch', 'branchHall', 'costCenter']);
+        $references = [
+            'asset_group_account_doc_num' => $record->assetGroupAccount?->doc_num,
+            'credit_account_doc_num' => $record->creditAccount?->doc_num,
+            'currency_doc_num' => $record->currency?->doc_num,
+            'branch_doc_num' => $record->branch?->doc_num,
+            'branch_hall_uuid' => $record->branchHall?->public_uuid,
+            'cost_center_doc_num' => $record->costCenter?->doc_num,
+        ];
+
+        foreach ($references as $field => $currentValue) {
+            if (array_key_exists($field, $data) && trim((string) $data[$field]) !== trim((string) $currentValue)) {
+                throw new DomainException(__('fixed_assets.messages.master_locked'));
+            }
+        }
     }
 
     public function delete(FixedAsset $record): void
@@ -302,39 +455,7 @@ class FixedAssetService
             return;
         }
 
-        $protected = [
-            'asset_date',
-            'branch_id',
-            'branch_hall_id',
-            'cost_center_id',
-            'account_id',
-            'asset_group_account_id',
-            'credit_account_id',
-            'currency_id',
-            'entry_type',
-            'source_type',
-            'source_id',
-            'source_doc_num',
-            'purchase_date',
-            'acquisition_date',
-            'operation_date',
-            'purchase_value',
-            'base_acquisition_value',
-            'salvage_value',
-            'exchange_rate',
-            'previous_depreciation',
-            'previous_depreciation_until_date',
-            'depreciation_start_date',
-            'annual_depreciation_rate',
-            'expected_usage_units',
-            'useful_life',
-            'is_depreciable',
-            'depreciation_method',
-            'location_address',
-            'status',
-        ];
-
-        if (array_intersect(array_keys($changes), $protected) !== []) {
+        if (array_intersect(array_keys($changes), self::LOCKED_MASTER_FIELDS) !== []) {
             throw new DomainException(__('fixed_assets.messages.master_locked'));
         }
     }

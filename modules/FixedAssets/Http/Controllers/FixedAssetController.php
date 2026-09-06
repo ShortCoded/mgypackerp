@@ -83,7 +83,7 @@ class FixedAssetController extends Controller
     {
         app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
 
-        abort_unless($fixedAsset->canEditMaster(), 409, __('fixed_assets.messages.master_locked'));
+        abort_unless($fixedAsset->canEditBasicData(), 409, __('fixed_assets.messages.edit_blocked_disposed'));
 
         return $this->form('edit', $fixedAsset);
     }
