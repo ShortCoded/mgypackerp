@@ -19,6 +19,8 @@ return [
         'no_custodian' => 'لا يوجد',
         'start_period' => 'ابدأ بتشغيل إهلاك :period',
         'open_period' => 'فتح الفترة المطلوبة',
+        'required_period_closed' => 'الفترة المطلوبة مقفولة: :period',
+        'required_period_missing' => 'لا توجد فترة مالية متاحة لتاريخ :date',
         'open_asset' => 'فتح الأصل',
         'needs_action' => 'أصول تحتاج إجراء',
         'ready' => 'جاهز للإهلاك',

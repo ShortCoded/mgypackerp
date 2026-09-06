@@ -9,10 +9,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Carbon;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\FixedAssets\Http\Requests\FixedAssetDepreciationRunRequest;
 use Modules\FixedAssets\Http\Requests\ReverseFixedAssetDocumentRequest;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -42,6 +44,7 @@ class FixedAssetDepreciationController extends Controller
             'financialPeriod' => $period,
             'postingDate' => app(DateFormatService::class)->formatDate(app(DateFormatService::class)->normalizeForStorage(request('posting_date')) ?: now()->endOfMonth(), ''),
             'recentRuns' => $this->recentRuns($context['company_id'] ? (int) $context['company_id'] : null),
+            'requiredPeriods' => [],
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.depreciation.index'),
         ]);
     }
@@ -73,8 +76,47 @@ class FixedAssetDepreciationController extends Controller
             'financialPeriod' => $preview['financialPeriod'],
             'postingDate' => $request->input('posting_date'),
             'recentRuns' => $this->recentRuns((int) $preview['financialPeriod']->company_id),
+            'requiredPeriods' => $this->requiredPeriods($preview),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.depreciation.index'),
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $preview
+     * @return array<string, array{doc_num: string, label: string, is_closed: bool}>
+     */
+    private function requiredPeriods(array $preview): array
+    {
+        $dates = collect($preview['excluded'] ?? [])
+            ->pluck('next_date')
+            ->filter()
+            ->unique()
+            ->values();
+        $user = auth()->user();
+
+        if ($dates->isEmpty() || $user === null) {
+            return [];
+        }
+
+        $periods = app(OperatingScopeAccessService::class)
+            ->allowedFinancialPeriodQuery($user)
+            ->where('financial_periods.company_id', (int) $preview['financialPeriod']->company_id)
+            ->get();
+
+        return $dates->mapWithKeys(function (string $date) use ($periods): array {
+            $requiredDate = Carbon::parse($date);
+            $period = $periods->first(fn (FinancialPeriod $candidate): bool => $requiredDate->betweenIncluded($candidate->from_date, $candidate->to_date));
+
+            if (! $period instanceof FinancialPeriod) {
+                return [];
+            }
+
+            return [$date => [
+                'doc_num' => $period->doc_num,
+                'label' => $period->doc_num.' / '.$period->name,
+                'is_closed' => (bool) $period->is_closed,
+            ]];
+        })->all();
     }
 
     private function selectedAssets(): Collection

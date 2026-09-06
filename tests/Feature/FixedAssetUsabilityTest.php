@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ArchiveFileService;
 use Modules\Core\Services\ArchiveFolderService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
@@ -61,6 +62,45 @@ test('depreciation missing period provides a usable action and informational exc
 test('opening a depreciation preview URL directly returns to the run screen', function (): void {
     $this->get('/admin/fixed-assets/depreciation/preview')
         ->assertRedirect(route('admin.fixed-assets.depreciation.index'));
+});
+
+test('missing depreciation action opens the financial period that covers the required month', function (): void {
+    $context = coreFixedAssetContext();
+    $year = $context['period']->from_date->year;
+    $context['period']->forceFill([
+        'from_date' => "{$year}-07-01",
+        'to_date' => "{$year}-12-31",
+    ])->save();
+    $firstHalf = FinancialPeriod::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => (int) FinancialPeriod::query()->max('doc_number') + 1,
+        'doc_num' => 'PERIOD-FIRST-HALF-'.$year,
+        'name' => 'First half '.$year,
+        'from_date' => "{$year}-01-01",
+        'to_date' => "{$year}-06-30",
+        'is_closed' => false,
+    ]);
+    $asset = coreRecognizedAsset($context, [
+        'purchase_date' => "{$year}-01-10",
+        'acquisition_date' => "{$year}-01-10",
+        'operation_date' => "{$year}-01-10",
+        'depreciation_start_date' => "{$year}-01-10",
+    ]);
+
+    $response = $this->post(route('admin.fixed-assets.depreciation.preview'), [
+        'financial_period_doc_num' => $context['period']->doc_num,
+        'posting_date' => "{$year}-09-30",
+        'asset_doc_nums' => [$asset->doc_num],
+    ])->assertOk();
+
+    $response->assertSee('name="financial_period_doc_num" value="'.$firstHalf->doc_num.'"', false)
+        ->assertSee('name="posting_date" value="'.$year.'-01-31"', false);
+
+    $this->post(route('admin.fixed-assets.depreciation.preview'), [
+        'financial_period_doc_num' => $firstHalf->doc_num,
+        'posting_date' => "{$year}-01-31",
+        'asset_doc_nums' => [$asset->doc_num],
+    ])->assertOk()->assertSee('data-asset="'.$asset->doc_num.'"', false);
 });
 
 test('asset movements render with bootstrap pagination and a responsive mobile history', function (): void {

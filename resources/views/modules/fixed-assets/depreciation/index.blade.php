@@ -40,7 +40,14 @@
             @foreach($rows as $row)<tr><td><a href="{{ route('admin.fixed-assets.assets.show', $row['asset']) }}">{{ $row['asset']->doc_num }} / {{ $row['asset']->asset_name }}</a></td><td class="{{ $actionable ? 'text-warning' : 'text-600' }}">{{ $row['reason'] }}</td><td>
                 @if($actionable)
                     @if($row['next_date'] ?? null)
-                    <form method="POST" action="{{ route('admin.fixed-assets.depreciation.preview') }}">@csrf<input type="hidden" name="financial_period_doc_num" value="{{ $preview['financialPeriod']->doc_num }}"><input type="hidden" name="posting_date" value="{{ $row['next_date'] }}"><input type="hidden" name="asset_doc_nums[]" value="{{ $row['asset']->doc_num }}"><button class="btn btn-falcon-primary btn-sm" type="submit">{{ __('fixed_assets.usability.open_period') }}</button></form>
+                    @php($requiredPeriod = $requiredPeriods[$row['next_date']] ?? null)
+                    @if($requiredPeriod && ! $requiredPeriod['is_closed'])
+                    <form method="POST" action="{{ route('admin.fixed-assets.depreciation.preview') }}">@csrf<input type="hidden" name="financial_period_doc_num" value="{{ $requiredPeriod['doc_num'] }}"><input type="hidden" name="posting_date" value="{{ $row['next_date'] }}"><input type="hidden" name="asset_doc_nums[]" value="{{ $row['asset']->doc_num }}"><button class="btn btn-falcon-primary btn-sm" type="submit" title="{{ $requiredPeriod['label'] }}">{{ __('fixed_assets.usability.open_period') }}</button></form>
+                    @elseif($requiredPeriod)
+                    <span class="badge badge-subtle-warning text-wrap">{{ __('fixed_assets.usability.required_period_closed', ['period' => $requiredPeriod['label']]) }}</span>
+                    @else
+                    <span class="badge badge-subtle-warning text-wrap">{{ __('fixed_assets.usability.required_period_missing', ['date' => $dates->formatDate($row['next_date'], '')]) }}</span>
+                    @endif
                     @else<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.show', $row['asset']) }}">{{ __('fixed_assets.usability.open_asset') }}</a>@endif
                 @endif
             </td></tr>@endforeach

@@ -19,6 +19,8 @@ return [
         'no_custodian' => 'None',
         'start_period' => 'Start with depreciation for :period',
         'open_period' => 'Open required period',
+        'required_period_closed' => 'The required period is closed: :period',
+        'required_period_missing' => 'No accessible financial period covers :date',
         'open_asset' => 'Open asset',
         'needs_action' => 'Assets requiring action',
         'ready' => 'Ready for depreciation',
