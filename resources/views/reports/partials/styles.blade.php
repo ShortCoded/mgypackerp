@@ -204,4 +204,24 @@
     [dir="rtl"] .text-end {
         text-align: left;
     }
+    .operational-print { font-size: 10.5px; line-height: 1.55; color: #172b3a; }
+    .operational-print .document-title-row { border-bottom: 2px solid #23475b; padding-bottom: 8px; margin-bottom: 12px; }
+    .operational-print .document-title-row h1 { font-size: 21px; color: #17374b; margin: 0 0 4px; }
+    .operational-print .report-table th { background: #e9f0f3; color: #183b50; white-space: normal; padding: 7px 5px; }
+    .operational-print .report-table td { padding: 7px 5px; border-color: #dbe4e8; }
+    .operational-print .report-table tr:nth-child(even) td { background: #f7f9fa; }
+    .operational-print .document-meta-table td { border: 0; border-bottom: 1px solid #e2e8ed; padding: 7px; }
+    .operational-print .document-meta-table strong { color: #526672; font-size: 9px; }
+    .document-item-code { color: #526672; font-size: 9px; }
+    .document-item-details { color: #526672; font-size: 9px; margin-top: 3px; }
+    .document-signatures { width: 100%; border-collapse: collapse; margin-top: 24px; page-break-inside: avoid; }
+    .document-signatures td { text-align: center; padding: 9px; border-top: 1px solid #718692; vertical-align: top; }
+    .document-signature-space { height: 35px; }
+    .document-amount-words { margin-top: 10px; padding: 8px; background: #f1f5f7; }
+    .document-notes { margin-top: 12px; white-space: pre-line; }
+    .document-terms { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .document-terms td { width: 50%; vertical-align: top; border-top: 1px solid #dbe4e8; padding: 8px; }
+    .document-terms tr { page-break-inside: avoid; }
+    .document-terms p { margin: 3px 0; }
+    .operational-print h3 { font-size: 11px; margin: 12px 0 5px; }
 </style>

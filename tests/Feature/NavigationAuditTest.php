@@ -212,6 +212,8 @@ test('every visible label has paired menu translations or the approved bilingual
         $hasArabicKey = Lang::has($translationKey, 'ar');
 
         expect($hasArabicKey)->toBe($hasEnglishKey);
+        expect($english['title'])->toBe($english['text'])
+            ->and($arabic['title'])->toBe($arabic['text']);
 
         if (! $hasEnglishKey) {
             expect($registryLabels)->toContain($english['label'])
@@ -222,6 +224,7 @@ test('every visible label has paired menu translations or the approved bilingual
 
         if (! in_array($arabic['text'], $approvedAcronyms, true)) {
             expect(preg_match('/[\x{0600}-\x{06FF}]/u', $arabic['text']))->toBe(1);
+            expect(preg_match('/[A-Za-z]/', $arabic['text']))->toBe(0);
         }
     }
 

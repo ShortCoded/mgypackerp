@@ -30,7 +30,18 @@
             @endcan
         @endif
 
-        @if(! $isTrashed && $record->isDraft())
+        @if(!$isTrashed && $record->status === 'draft')
+            @can('purchase_orders.submit')<button class="dropdown-item js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.submit', $docNum) }}" data-action="submit">{{ __('Submit') }}</button>@endcan
+        @endif
+        @if(!$isTrashed && $record->status === 'submitted')
+            @can('purchase_orders.reject')<button class="dropdown-item text-danger js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.reject', $docNum) }}" data-action="reject">{{ __('Reject') }}</button>@endcan
+        @endif
+        @if(!$isTrashed && $record->isApproved())
+            @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $docNum) }}">{{ __('Create goods receipt') }}</a>@endcan
+            @can('purchase_invoices.create')<a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $docNum]) }}">{{ __('Create supplier invoice') }}</a>@endcan
+            @if(!$record->sent_at) @can('purchase_orders.send')<button class="dropdown-item js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.sent', $docNum) }}" data-action="send">{{ __('Mark as sent') }}</button>@endcan @endif
+        @endif
+        @if(! $isTrashed && $record->status === 'submitted')
             @can('purchase_orders.approve')
                 <button class="dropdown-item js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.approve', $docNum) }}" data-method="POST" data-action="approve">
                     <span class="fas fa-check me-2"></span>{{ __('purchase_orders.actions.approve') }}

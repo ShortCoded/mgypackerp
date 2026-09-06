@@ -5,10 +5,11 @@
 @section('content')
 <form class="card" method="POST" action="{{ route('admin.inventory.documents.store') }}">
     @csrf
+        <x-forms.line-item-cards />
     <div class="card-header"><h5 class="mb-0">{{ __('New Inventory Movement') }}</h5></div>
     <div class="card-body">
         <div class="row g-3">
-            <div class="col-md-3"><label class="form-label">{{ __('Type') }}</label><select class="form-select" name="document_type" required>@foreach($allowedDocumentTypes as $type)<option value="{{ $type }}">{{ str($type)->replace('_', ' ')->title() }}</option>@endforeach</select></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Type') }}</label><select class="form-select" name="document_type" required>@foreach($allowedDocumentTypes as $type)<option value="{{ $type }}">{{ __(str($type)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</select></div>
             <div class="col-md-3"><label class="form-label">{{ __('Source store') }}</label><select class="form-select" name="branch_store_id" required>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</select></div>
             <div class="col-md-3"><label class="form-label">{{ __('Destination store') }}</label><select class="form-select" name="destination_branch_store_id"><option value="">—</option>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</select></div>
             <div class="col-md-3"><label class="form-label">{{ __('Date') }}</label><input class="form-control" type="date" name="document_date" value="{{ now()->toDateString() }}" required></div>

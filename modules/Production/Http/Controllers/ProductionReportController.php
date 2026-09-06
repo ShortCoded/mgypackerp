@@ -13,6 +13,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Production\Exports\ProductionReportExport;
 use Modules\Production\Services\ProductionReportService;
+use Modules\Sales\Services\SalesCycleReadService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ProductionReportController extends Controller
@@ -73,6 +74,8 @@ class ProductionReportController extends Controller
             ],
             $canViewFinancial,
         );
+
+        $report['backorders'] = app(SalesCycleReadService::class)->backorders((int) $context['company_id'], (int) $context['branch_id']);
 
         return [$context, $canViewFinancial, $report];
     }

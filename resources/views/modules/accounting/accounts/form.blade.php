@@ -65,6 +65,9 @@
 @section('title', $title)
 
 @section('content')
+    @if($record?->exists && $record->fixedAsset && auth()->user()?->can('fixed_assets.view') && in_array((int) $record->fixedAsset->branch_id, app(\Modules\FixedAssets\Services\FixedAssetAccessService::class)->branchIds(), true))
+        <div class="alert alert-info"><a href="{{ route('admin.fixed-assets.lifecycle.show', $record->fixedAsset) }}">{{ __('fixed_assets.lifecycle.asset_card') }}: {{ $record->fixedAsset->doc_num }} / {{ $record->fixedAsset->asset_name }}</a></div>
+    @endif
     <form id="account-form" class="js-account-form" action="{{ $action }}" method="{{ $method }}" data-mode="{{ $mode }}" data-original='@json($originalAccountData)' novalidate>
         @csrf
         @if ($method !== 'POST')

@@ -91,7 +91,7 @@ final class CostCenterHierarchyRegistry
             $plan = $this->plan($companyId);
 
             if ($plan['conflicts'] !== [] || $plan['blocked'] !== []) {
-                throw new DomainException('Cost-center hierarchy conflicts require manual review.');
+                throw new DomainException(__('Cost-center hierarchy conflicts require manual review.'));
             }
 
             $companyIds = Company::query()

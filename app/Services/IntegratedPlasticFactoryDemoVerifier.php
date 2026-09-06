@@ -515,7 +515,7 @@ class IntegratedPlasticFactoryDemoVerifier
                     ->sum('total_amount');
                 $receipts = (float) DB::table('customer_receipts')
                     ->where('customer_id', $customer->id)
-                    ->where('status', 'approved')
+                    ->where('status', 'approved')->whereNotNull('journal_entry_id')
                     ->sum('amount');
                 $refunds = (float) DB::table('customer_credit_refunds')
                     ->where('customer_id', $customer->id)
@@ -569,7 +569,7 @@ class IntegratedPlasticFactoryDemoVerifier
                 ->sum('total_amount');
             $receipts = (float) DB::table('customer_receipts')
                 ->where('customer_id', $customer->id)
-                ->where('status', 'approved')
+                ->where('status', 'approved')->whereNotNull('journal_entry_id')
                 ->sum('amount');
 
             return [$label => [

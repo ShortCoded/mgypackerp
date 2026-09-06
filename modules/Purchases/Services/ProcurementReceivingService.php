@@ -5,18 +5,25 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Purchases\Models\GoodsReceiptInspection;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
 use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\PurchaseReturnLine;
 
 class ProcurementReceivingService
 {
@@ -27,6 +34,8 @@ class ProcurementReceivingService
         private readonly ProcurementAttachmentService $attachments,
         private readonly InventoryGrniService $grni,
         private readonly InventoryLayerService $layers,
+        private readonly InventoryAvailabilityService $availability,
+        private readonly JournalEntryService $journals,
     ) {}
 
     public function createDeliverySchedules(PurchaseOrder $purchaseOrder, array $data): PurchaseOrder
@@ -78,10 +87,78 @@ class ProcurementReceivingService
         }, 3);
     }
 
-    public function receive(PurchaseOrder $purchaseOrder, array $data): UnpricedInventoryReceipt
+    public function createReceipt(PurchaseOrder $order, array $data): UnpricedInventoryReceipt
     {
-        return DB::transaction(function () use ($data, $purchaseOrder): UnpricedInventoryReceipt {
+        return $this->receiveDocument($order, $data, false);
+    }
+
+    public function updateReceipt(UnpricedInventoryReceipt $receipt, array $data): UnpricedInventoryReceipt
+    {
+        return DB::transaction(function () use ($receipt, $data): UnpricedInventoryReceipt {
+            $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($receipt->getKey());
+            $this->assertReceiptContext($locked, $this->context());
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted') {
+                throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
+            }
+
+            return $this->receiveDocument($locked->purchaseOrder, $data, false, $locked);
+        }, 3);
+    }
+
+    public function deleteReceipt(UnpricedInventoryReceipt $receipt): UnpricedInventoryReceipt
+    {
+        return DB::transaction(function () use ($receipt): UnpricedInventoryReceipt {
+            $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($receipt->getKey());
+            $this->assertReceiptContext($locked, $this->context());
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted') {
+                throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
+            }
+            $locked->forceFill(['deleted_by' => auth()->id()])->save();
+            $locked->delete();
+            $this->audit->record($locked, 'goods_receipt.deleted');
+
+            return $locked;
+        }, 3);
+    }
+
+    public function receive(PurchaseOrder $order, array $data): UnpricedInventoryReceipt
+    {
+        return $this->receiveDocument($order, $data, true);
+    }
+
+    public function postReceipt(UnpricedInventoryReceipt $receipt): UnpricedInventoryReceipt
+    {
+        return DB::transaction(function () use ($receipt): UnpricedInventoryReceipt {
+            $locked = UnpricedInventoryReceipt::query()->with(['lines.purchaseOrderLine', 'lines.deliverySchedule'])
+                ->lockForUpdate()->findOrFail($receipt->getKey());
+            $this->assertReceiptContext($locked, $this->context());
+            if (in_array($locked->posting_status, ['posted', 'partially_posted'], true)) {
+                return $locked;
+            }
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || ! $locked->purchase_order_id) {
+                throw new DomainException(__('Only a draft goods receipt can be posted.'));
+            }
+
+            return $this->receiveDocument($locked->purchaseOrder, [
+                'document_date' => $locked->document_date->format('Y-m-d'),
+                'supplier_delivery_note' => $locked->supplier_delivery_note,
+                'supplier_delivery_date' => $locked->reference_date?->format('Y-m-d'),
+                'received_at' => $locked->received_at, 'notes' => $locked->notes,
+                'lines' => $locked->lines->map(fn (UnpricedInventoryReceiptLine $line): array => [
+                    'purchase_order_line_public_id' => $line->purchaseOrderLine->public_id,
+                    'delivery_schedule_public_id' => $line->deliverySchedule?->public_id,
+                    'delivered_quantity' => $line->delivered_quantity, 'supplier_lot_number' => $line->supplier_lot_number,
+                    'manufacture_date' => $line->manufacture_date, 'expiry_date' => $line->expiry_date, 'notes' => $line->notes,
+                ])->all(),
+            ], true, $locked);
+        }, 3);
+    }
+
+    private function receiveDocument(PurchaseOrder $purchaseOrder, array $data, bool $postNow, ?UnpricedInventoryReceipt $draft = null): UnpricedInventoryReceipt
+    {
+        return DB::transaction(function () use ($data, $purchaseOrder, $postNow, $draft): UnpricedInventoryReceipt {
             $context = $this->context();
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['document_date'], $context['financial_period_id'], lockForUpdate: true);
             $order = PurchaseOrder::query()->with('lines.product')->lockForUpdate()->findOrFail($purchaseOrder->getKey());
             $this->assertOrderContext($order, $context);
 
@@ -89,8 +166,15 @@ class ProcurementReceivingService
                 throw new DomainException(__('Only an approved open purchase order may be received.'));
             }
 
-            $receipt = UnpricedInventoryReceipt::query()->create([
-                ...$this->number('unpriced_inventory_receipts', UnpricedInventoryReceipt::class, $context),
+            if ($postNow && FinancialPeriod::query()->lockForUpdate()->findOrFail($context['financial_period_id'])->is_closed) {
+                throw new DomainException(__('Inventory movements cannot be posted in a closed financial period.'));
+            }
+            if (empty($data['lines']) || count(array_unique(array_column($data['lines'], 'purchase_order_line_public_id'))) !== count($data['lines'])) {
+                throw new DomainException(__('A goods receipt requires distinct purchase order lines.'));
+            }
+            $receipt = $draft ?? new UnpricedInventoryReceipt;
+            $receipt->fill([
+                ...($draft ? [] : $this->number('unpriced_inventory_receipts', UnpricedInventoryReceipt::class, $context)),
                 ...$context,
                 'document_date' => $data['document_date'],
                 'branch_hall_id' => null,
@@ -100,20 +184,29 @@ class ProcurementReceivingService
                 'reference_number' => $data['supplier_delivery_note'] ?? null,
                 'reference_date' => $data['supplier_delivery_date'] ?? null,
                 'supplier_delivery_note' => $data['supplier_delivery_note'] ?? null,
-                'received_at' => $data['received_at'] ?? now(),
+                'received_at' => $data['received_at'] ?? $receipt->received_at ?? now(),
                 'notes' => $data['notes'] ?? null,
-                'approved' => true,
+                'approved' => $postNow,
                 'is_closed' => false,
-                'status' => UnpricedInventoryReceipt::StatusApproved,
+                'status' => $postNow ? UnpricedInventoryReceipt::StatusApproved : UnpricedInventoryReceipt::StatusDraft,
                 'pricing_status' => UnpricedInventoryReceipt::PricingStatusUnpriced,
                 'qc_status' => 'not_required',
                 'posting_status' => 'unposted',
-                'received_by' => auth()->id(),
-                'approved_by' => auth()->id(),
-                'approved_at' => now(),
-                'created_by' => auth()->id(),
+                'received_by' => $receipt->received_by ?? auth()->id(),
+                'approved_by' => $postNow ? auth()->id() : null,
+                'approved_at' => $postNow ? now() : null,
+                'created_by' => $receipt->created_by ?? auth()->id(),
             ]);
+            if ($receipt->isDirty() || ! $receipt->exists) {
+                if ($receipt->exists) {
+                    $receipt->updated_by = auth()->id();
+                }
+                $receipt->save();
+            }
 
+            $attachmentsChanged = app(ProcurementAttachmentService::class)->attach($receipt, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
+            $changed = $receipt->wasChanged() || $receipt->wasRecentlyCreated || $attachmentsChanged;
+            $keptLineIds = [];
             $requiresInspection = false;
             foreach (array_values($data['lines']) as $index => $input) {
                 $line = PurchaseOrderLine::query()->with('product')->lockForUpdate()
@@ -128,12 +221,13 @@ class ProcurementReceivingService
                 }
 
                 $quantity = (float) $input['delivered_quantity'];
-                if ($quantity <= 0 || $quantity > (float) $line->remaining_quantity + 0.00000001) {
+                $receivedBefore = $line->netReceivedQuantity($draft?->getKey());
+                if ($quantity <= 0 || $quantity > max(0, (float) $line->ordered_quantity - $receivedBefore) + 0.00000001) {
                     throw new DomainException(__('Delivered quantity exceeds the remaining purchase order quantity.'));
                 }
 
                 $schedule = $this->schedule($line, $input['delivery_schedule_public_id'] ?? null);
-                if ($schedule instanceof PurchaseOrderDeliverySchedule) {
+                if ($schedule instanceof PurchaseOrderDeliverySchedule && $postNow) {
                     $scheduleRemaining = (float) $schedule->scheduled_quantity - (float) $schedule->received_quantity;
                     if ($quantity > $scheduleRemaining + 0.00000001) {
                         throw new DomainException(__('Delivered quantity exceeds the remaining scheduled quantity.'));
@@ -148,7 +242,8 @@ class ProcurementReceivingService
 
                 $lineNeedsInspection = $line->product->requiresIncomingInspection();
                 $requiresInspection = $requiresInspection || $lineNeedsInspection;
-                $receiptLine = $receipt->lines()->create([
+                $receiptLine = $draft ? ($receipt->lines()->where('purchase_order_line_id', $line->getKey())->first() ?? new UnpricedInventoryReceiptLine) : new UnpricedInventoryReceiptLine;
+                $receiptLine->fill([
                     ...$context,
                     'receipt_id' => $receipt->getKey(),
                     'line_no' => $index + 1,
@@ -159,40 +254,123 @@ class ProcurementReceivingService
                     'product_snapshot' => $line->product_snapshot,
                     'quantity' => $this->quantity($quantity),
                     'delivered_quantity' => $this->quantity($quantity),
-                    'accepted_quantity' => $lineNeedsInspection ? 0 : $this->quantity($quantity),
+                    'accepted_quantity' => $postNow && ! $lineNeedsInspection ? $this->quantity($quantity) : 0,
                     'rejected_quantity' => 0,
                     'inventory_posted_quantity' => 0,
                     'supplier_lot_number' => $input['supplier_lot_number'] ?? null,
                     'manufacture_date' => $input['manufacture_date'] ?? null,
                     'expiry_date' => $input['expiry_date'] ?? null,
                     'notes' => $input['notes'] ?? null,
-                    'created_by' => auth()->id(),
+                    'created_by' => $receiptLine->created_by ?? auth()->id(),
                 ]);
+                if ($receiptLine->isDirty() || ! $receiptLine->exists) {
+                    if ($receiptLine->exists) {
+                        $receiptLine->updated_by = auth()->id();
+                    }
+                    $receiptLine->save();
+                }
 
-                $received = (float) $line->received_quantity + $quantity;
-                $line->forceFill([
-                    'received_quantity' => $this->quantity($received),
-                    'remaining_quantity' => $this->quantity(max(0, (float) $line->ordered_quantity - $received)),
-                    'updated_by' => auth()->id(),
-                ])->save();
-
-                if (! $lineNeedsInspection) {
+                $changed = $changed || $receiptLine->wasChanged() || $receiptLine->wasRecentlyCreated;
+                $keptLineIds[] = $receiptLine->getKey();
+                if ($postNow && ! $lineNeedsInspection) {
                     $this->postAcceptedMovement($receipt, $receiptLine);
                 }
             }
 
-            $this->refreshOrderReceiptTotals($order);
+            if (! $postNow) {
+                $removed = $receipt->lines()->whereNotIn('id', $keptLineIds)->delete();
+                $changed = $changed || $removed > 0;
+            }
             $receipt->forceFill([
-                'qc_status' => $requiresInspection ? 'pending_inspection' : 'accepted',
-                'posting_status' => $requiresInspection ? 'partially_posted' : 'posted',
-                'posted_by' => $requiresInspection ? null : auth()->id(),
-                'posted_at' => $requiresInspection ? null : now(),
-            ])->save();
+                'qc_status' => ! $postNow ? 'not_required' : ($requiresInspection ? 'pending_inspection' : 'accepted'),
+                'posting_status' => ! $postNow ? 'unposted' : ($requiresInspection ? 'partially_posted' : 'posted'),
+                'posted_by' => $postNow && ! $requiresInspection ? auth()->id() : null,
+                'posted_at' => $postNow && ! $requiresInspection ? now() : null,
+            ]);
+            if ($receipt->isDirty() || $changed) {
+                if ($draft && $changed) {
+                    $receipt->updated_by = auth()->id();
+                }
+                $receipt->save();
+            }
+            if ($postNow) {
+                $this->refreshOrderReceiptTotals($order);
+            }
 
             $receipt = $receipt->refresh()->load(['purchaseOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit']);
-            $this->audit->record($receipt, 'goods_receipt.posted', ['qc_status' => $receipt->qc_status]);
+            if ($postNow || $changed) {
+                $this->audit->record($receipt, $postNow ? 'goods_receipt.posted' : ($draft ? 'goods_receipt.updated' : 'goods_receipt.created'), ['qc_status' => $receipt->qc_status]);
+            }
 
             return $receipt;
+        }, 3);
+    }
+
+    public function reverseReceipt(UnpricedInventoryReceipt $receipt, string $reason): UnpricedInventoryReceipt
+    {
+        return DB::transaction(function () use ($receipt, $reason): UnpricedInventoryReceipt {
+            $locked = UnpricedInventoryReceipt::query()->with('lines')->lockForUpdate()->findOrFail($receipt->getKey());
+            $context = $this->context();
+            $this->assertReceiptContext($locked, $context);
+            if ($locked->status === UnpricedInventoryReceipt::StatusReversed) {
+                return $locked;
+            }
+            if (! in_array($locked->posting_status, ['posted', 'partially_posted'], true) || blank($reason)) {
+                throw new DomainException(__('A posted receipt and reversal reason are required.'));
+            }
+            $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
+            if ($period->is_closed) {
+                throw new DomainException(__('Inventory movements cannot be reversed in a closed financial period.'));
+            }
+            $lineIds = $locked->lines->modelKeys();
+            $billed = PurchaseInvoiceLine::query()->whereIn('receipt_line_id', $lineIds)
+                ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))->exists();
+            $returned = PurchaseReturnLine::query()->whereIn('receipt_line_id', $lineIds)
+                ->whereHas('purchaseReturn', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))->exists();
+            if ($billed || $returned) {
+                throw new DomainException(__('Resolve the related invoices and returns before reversing this receipt.'));
+            }
+            $order = PurchaseOrder::query()->lockForUpdate()->findOrFail($locked->purchase_order_id);
+            BranchStore::query()->lockForUpdate()->findOrFail($locked->branch_store_id);
+            foreach ($locked->lines as $line) {
+                $movement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$line->getKey()}")->lockForUpdate()->first();
+                if ($movement) {
+                    Product::query()->lockForUpdate()->findOrFail($line->product_id);
+                    $position = $this->availability->forProduct((int) $locked->company_id, (int) $locked->branch_store_id,
+                        (int) $line->product_id, null, $movement->warehouse_location_id, $movement->stock_status, $movement->batch_lot, true);
+                    if (bccomp((string) $movement->quantity_in, $position['available'], 8) > 0) {
+                        throw new DomainException(__('The received stock is consumed, reserved, or moved and cannot be reversed.'));
+                    }
+                    $reversal = InventoryTransaction::query()->firstOrCreate(['posting_key' => $movement->posting_key.':reversal'], [
+                        ...$movement->only(['company_id', 'financial_period_id', 'branch_id', 'branch_store_id', 'warehouse_location_id',
+                            'stock_status', 'batch_lot', 'manufacture_date', 'expiry_date', 'product_id', 'unit_id',
+                            'source_type', 'source_id', 'source_doc_num', 'source_line_type', 'source_line_id', 'supplier_id', 'unit_cost', 'total_cost']),
+                        'transaction_date' => now()->toDateString(), 'transaction_type' => 'purchase_receipt_reversal',
+                        'quantity_in' => 0, 'quantity_out' => $movement->quantity_in, 'is_reversal' => true,
+                        'reversal_of_id' => $movement->getKey(), 'notes' => $reason, 'created_by' => auth()->id(),
+                    ]);
+                    $this->layers->allocateIssue($reversal, $movement->getKey());
+                }
+                if ($line->grni_journal_entry_id) {
+                    $this->journals->createPostedReversalFromSource(JournalEntry::query()->findOrFail($line->grni_journal_entry_id), [
+                        'company_id' => (int) $locked->company_id, 'financial_period_id' => (int) $locked->financial_period_id,
+                        'branch_id' => $locked->branch_id, 'currency_id' => $order->currency_id, 'exchange_rate' => $order->exchange_rate,
+                        'entry_date' => now()->toDateString(), 'description' => __('Goods receipt reversal :document', ['document' => $locked->doc_num]),
+                        'notes' => $reason, 'source_type' => 'grni_receipt_reversal', 'source_id' => $line->getKey(), 'source_doc_num' => $locked->doc_num,
+                    ]);
+                }
+                if ($line->delivery_schedule_id) {
+                    $schedule = PurchaseOrderDeliverySchedule::query()->lockForUpdate()->findOrFail($line->delivery_schedule_id);
+                    $quantity = max(0, (float) $schedule->received_quantity - (float) $line->delivered_quantity);
+                    $schedule->forceFill(['received_quantity' => $this->quantity($quantity), 'status' => $quantity > 0 ? 'partially_received' : 'scheduled', 'updated_by' => auth()->id()])->save();
+                }
+            }
+            $locked->forceFill(['status' => UnpricedInventoryReceipt::StatusReversed, 'posting_status' => 'reversed',
+                'approved' => false, 'reversed_by' => auth()->id(), 'reversed_at' => now(), 'reversal_reason' => trim($reason), 'updated_by' => auth()->id()])->save();
+            $this->refreshOrderReceiptTotals($order);
+            $this->audit->record($locked, 'goods_receipt.reversed', ['reason' => trim($reason)]);
+
+            return $locked->refresh();
         }, 3);
     }
 
@@ -203,7 +381,7 @@ class ProcurementReceivingService
             $locked = UnpricedInventoryReceipt::query()->with('lines.product')->lockForUpdate()->findOrFail($receipt->getKey());
             $this->assertReceiptContext($locked, $context);
 
-            if ($locked->qc_status !== 'pending_inspection' || $locked->inspection()->exists()) {
+            if (! $locked->approved || in_array($locked->status, ['cancelled', 'reversed'], true) || $locked->qc_status !== 'pending_inspection' || $locked->inspection()->exists()) {
                 throw new DomainException(__('This goods receipt is not awaiting an incoming inspection.'));
             }
 
@@ -349,7 +527,6 @@ class ProcurementReceivingService
                 }
             }
 
-            $this->refreshOrderReceiptTotals($order);
             $locked->forceFill([
                 'approved' => false,
                 'status' => UnpricedInventoryReceipt::StatusCancelled,
@@ -360,6 +537,7 @@ class ProcurementReceivingService
                 'cancel_reason' => $reason,
                 'updated_by' => auth()->id(),
             ])->save();
+            $this->refreshOrderReceiptTotals($order);
             $this->audit->record($locked, 'goods_receipt.cancelled_before_quality', ['reason' => $reason]);
 
             return $locked->refresh()->load(['purchaseOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit']);
@@ -388,10 +566,10 @@ class ProcurementReceivingService
             'branch_id' => $receipt->branch_id,
             'branch_store_id' => $receipt->branch_store_id,
             'product_id' => $line->product_id,
-            'unit_id' => $line->unit_id,
+            'unit_id' => $line->purchaseOrderLine->product_snapshot['stock_unit_id'] ?? $line->product->item_unit_id,
             'transaction_date' => $receipt->document_date,
             'transaction_type' => 'purchase_receipt',
-            'quantity_in' => $this->quantity($quantity),
+            'quantity_in' => bcmul($this->quantity($quantity), $line->purchaseOrderLine->stockConversionFactor(), 8),
             'quantity_out' => 0,
             'source_type' => UnpricedInventoryReceipt::class,
             'source_id' => $receipt->getKey(),
@@ -410,15 +588,32 @@ class ProcurementReceivingService
         $line->forceFill(['inventory_posted_quantity' => $this->quantity($quantity), 'updated_by' => auth()->id()])->save();
     }
 
-    private function refreshOrderReceiptTotals(PurchaseOrder $order): void
+    public function refreshOrderReceiptTotals(PurchaseOrder $order): void
     {
-        $received = (float) $order->lines()->sum('received_quantity');
-        $remaining = (float) $order->lines()->sum('remaining_quantity');
-        $order->forceFill([
+        $received = 0.0;
+        $remaining = 0.0;
+        foreach ($order->lines()->orderBy('id')->lockForUpdate()->get() as $line) {
+            $quantity = $line->netReceivedQuantity();
+            $outstanding = max(0, (float) $line->ordered_quantity - $quantity);
+            PurchaseOrderLine::withoutTimestamps(fn () => $line->forceFill(['received_quantity' => $this->quantity($quantity), 'remaining_quantity' => $this->quantity($outstanding)])->save());
+            foreach ($line->deliverySchedules()->orderBy('id')->lockForUpdate()->get() as $schedule) {
+                $scheduleReceipts = UnpricedInventoryReceiptLine::query()->where('delivery_schedule_id', $schedule->getKey())
+                    ->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))->get();
+                $scheduleReturns = (float) PurchaseReturnLine::query()->whereIn('receipt_line_id', $scheduleReceipts->modelKeys())
+                    ->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted'))->sum('quantity');
+                $netScheduled = max(0, (float) $scheduleReceipts->sum('delivered_quantity') - $scheduleReturns);
+                PurchaseOrderDeliverySchedule::withoutTimestamps(fn () => $schedule->forceFill([
+                    'received_quantity' => $this->quantity($netScheduled),
+                    'status' => $netScheduled <= 0 ? 'scheduled' : ($netScheduled >= (float) $schedule->scheduled_quantity - 0.00000001 ? 'received' : 'partially_received'),
+                ])->save());
+            }
+            $received += $quantity;
+            $remaining += $outstanding;
+        }
+        PurchaseOrder::withoutTimestamps(fn () => $order->forceFill([
             'total_received_quantity' => $this->quantity($received),
             'total_remaining_quantity' => $this->quantity($remaining),
-            'updated_by' => auth()->id(),
-        ])->save();
+        ])->save());
     }
 
     private function schedule(PurchaseOrderLine $line, ?string $publicId): ?PurchaseOrderDeliverySchedule
@@ -442,7 +637,6 @@ class ProcurementReceivingService
     private function assertOrderContext(PurchaseOrder $order, array $context): void
     {
         if ((int) $order->company_id !== $context['company_id']
-            || (int) $order->financial_period_id !== $context['financial_period_id']
             || (int) $order->branch_id !== $context['branch_id']) {
             throw new DomainException(__('The purchase order is outside the active operating context.'));
         }
@@ -450,6 +644,9 @@ class ProcurementReceivingService
 
     private function assertReceiptContext(UnpricedInventoryReceipt $receipt, array $context): void
     {
+        if (FinancialPeriod::query()->whereKey($receipt->financial_period_id)->value('is_closed')) {
+            throw new DomainException(__('journal_entries.messages.period_closed'));
+        }
         if ((int) $receipt->company_id !== $context['company_id']
             || (int) $receipt->financial_period_id !== $context['financial_period_id']
             || (int) $receipt->branch_id !== $context['branch_id']) {
@@ -479,7 +676,6 @@ class ProcurementReceivingService
             $key,
             $model,
             $context['company_id'],
-            fn ($query) => $query->where('financial_period_id', $context['financial_period_id']),
         );
     }
 

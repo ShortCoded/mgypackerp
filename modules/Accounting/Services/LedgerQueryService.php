@@ -62,7 +62,7 @@ class LedgerQueryService
             ->leftJoin('branches', 'branches.id', '=', 'journal_entry_lines.branch_id')
             ->whereNull('journal_entries.deleted_at')
             ->where('journal_entries.company_id', $filters['company_id'])
-            ->where('journal_entries.financial_period_id', $filters['financial_period_id'])
+            ->when(! ($filters['all_periods'] ?? false), fn (Builder $query): Builder => $query->where('journal_entries.financial_period_id', $filters['financial_period_id']))
             ->where('journal_entries.status', JournalEntry::StatusPosted)
             ->where('journal_entries.is_posted', true)
             ->when($filters['branch_id'] ?? null, fn (Builder $query, int $branchId): Builder => $query->where(function (Builder $query) use ($branchId): void {

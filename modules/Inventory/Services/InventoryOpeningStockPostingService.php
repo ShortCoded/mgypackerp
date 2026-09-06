@@ -22,13 +22,13 @@ class InventoryOpeningStockPostingService
             ->findOrFail($openingStock->getKey());
 
         if (! $locked->isApproved()) {
-            throw new DomainException('Opening stock must be approved before it can reach the stock ledger.');
+            throw new DomainException(__('Opening stock must be approved before it can reach the stock ledger.'));
         }
 
         $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
 
         if ($period->is_closed || ! $period->allows_opening_entries) {
-            throw new DomainException('Opening inventory cannot be posted to this financial period.');
+            throw new DomainException(__('Opening inventory cannot be posted to this financial period.'));
         }
 
         if (! $locked->branch_store_id) {
@@ -184,7 +184,7 @@ class InventoryOpeningStockPostingService
             ->exists();
 
         if ($hasLaterMovement) {
-            throw new DomainException('Opening stock pricing cannot change after a later Inventory movement exists for the same product and store.');
+            throw new DomainException(__('Opening stock pricing cannot change after a later Inventory movement exists for the same product and store.'));
         }
     }
 }

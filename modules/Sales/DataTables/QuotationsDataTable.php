@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
@@ -32,6 +33,12 @@ class QuotationsDataTable
         };
 
         $query = $this->companies->applyCompanyScope($query, 'quotations', $request);
+
+        $query->when($request->filled('status'), fn ($query) => $query->where('quotations.status', $request->string('status')->toString()));
+        if ($request->filled('date_from')) {
+            $date = app(DateFormatService::class)->normalizeForStorage($request->string('date_from')->toString());
+            $query->whereDate('quotations.quotation_date', '>=', $date);
+        }
 
         $query
             ->leftJoin('customers', 'customers.id', '=', 'quotations.customer_id')
@@ -77,7 +84,7 @@ class QuotationsDataTable
             ->addColumn('customer', fn (Quotation $record): string => $this->ellipsisText($this->customerLabel($record)))
             ->addColumn('subject_project', fn (Quotation $record): string => $this->ellipsisText($record->subject ?: $record->project_name ?: __('common.empty_value')))
             ->editColumn('quotation_type', fn (Quotation $record): string => $this->plainText(__("quotations.types.{$record->quotation_type}")))
-            ->addColumn('current_revision', fn (Quotation $record): string => $this->plainText($record->current_revision_code ?: __('common.empty_value')))
+            ->addColumn('current_revision', fn (Quotation $record): string => $this->plainText($record->current_revision_number ? 'R'.str_pad((string) $record->current_revision_number, 2, '0', STR_PAD_LEFT) : __('common.empty_value')))
             ->editColumn('status', fn (Quotation $record): string => view('modules.sales.quotations.partials.status', ['status' => $record->status])->render())
             ->addColumn('currency', fn (Quotation $record): string => $this->ellipsisText(trim(implode(' / ', array_filter([$record->currency_code, $record->currency_name]))) ?: __('common.empty_value')))
             ->addColumn('total', fn (Quotation $record): string => $this->plainText($this->numbers->format($record->current_revision_total)))

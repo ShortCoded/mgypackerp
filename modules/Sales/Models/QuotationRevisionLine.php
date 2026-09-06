@@ -14,6 +14,7 @@ class QuotationRevisionLine extends Model
      * @var list<string>
      */
     protected $fillable = [
+        'sales_request_line_id',
         'public_uuid',
         'quotation_revision_id',
         'line_number',
@@ -51,7 +52,7 @@ class QuotationRevisionLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity' => 'decimal:4',
+            'quantity' => 'decimal:8',
             'conversion_factor' => 'decimal:8',
             'base_quantity' => 'decimal:8',
             'unit_price' => 'decimal:4',

@@ -52,10 +52,11 @@
         method="POST"
         data-mode="{{ $mode }}"
         data-readonly="{{ $isReadonly ? '1' : '0' }}"
-        data-product-url="{{ route('admin.purchases.select2.products') }}"
+        data-product-url="{{ route('admin.purchases.select2.products') }}" data-source-url="{{ route('admin.purchases.purchase-orders.create') }}" data-currency-rate-url="{{ route('admin.purchases.select2.currency-rate') }}"
         data-primary-focus="document_date"
         novalidate>
         @csrf
+        <x-forms.line-item-cards />
         @if($method !== 'POST')
             @method($method)
         @endif
@@ -76,6 +77,9 @@
                     ])
                     @if($mode === 'view' && $record?->isApproved())
                         <div class="d-flex flex-wrap gap-2 mt-2">
+                            @can('purchase_invoices.create')
+                            <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $record->doc_num]) }}">{{ __('Create supplier invoice') }}</a>
+                            @endcan
                             @can('purchases.purchase_order_delivery_schedule.create')
                             <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-order-delivery-schedule.create', $record->doc_num) }}">{{ __('Delivery schedule') }}</a>
                             @endcan
@@ -103,6 +107,15 @@
                     <div class="alert alert-warning">{{ __('purchase_orders.messages.document_locked') }}</div>
                 @endif
 
+                @unless($isReadonly)
+                <div class="mb-3">
+                    <label class="form-label" for="purchase_requisition_doc_nums">{{ __('procurement.ui.source_requisitions') }}</label>
+                    <select id="purchase_requisition_doc_nums" class="form-select js-select2-ajax js-order-requisitions" name="purchase_requisition_doc_nums[]" multiple data-url="{{ route('admin.purchases.select2.requisitions') }}" data-placeholder="{{ __('procurement.ui.select_approved_requests') }}">
+                        @foreach($sourceRequests ?? [] as $sourceRequest)<option selected value="{{ $sourceRequest->doc_num }}">{{ $sourceRequest->doc_num }}</option>@endforeach
+                    </select>
+                    <div class="form-text" data-source-loading aria-live="polite"></div>
+                </div>
+                @endunless
                 <h6 class="text-700 mb-3">{{ __('purchase_orders.sections.header') }}</h6>
                 <div class="row g-3">
                     @if($canControlDocumentNumber)
@@ -188,7 +201,7 @@
                         @else
                             <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
                         @endif
-                        <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
+                        <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div><div class="form-text" data-rate-source></div>
                     </div>
 
                     <div class="col-md-2">
@@ -240,16 +253,16 @@
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
-                    @if($isCreateLike && ! $record?->purchase_requisition_id && auth()->user()?->can('purchases.direct_procurement.override'))
+                    @if(! $isReadonly && ! $record?->purchase_requisition_id && auth()->user()?->can('purchases.direct_procurement.override'))
                         <div class="col-md-4">
-                            <div class="form-check mt-4">
-                                <input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override'))>
+                            <div class="form-check">
+                                <input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))>
                                 <label class="form-check-label" for="direct_procurement_override">{{ __('purchase_orders.attributes.direct_procurement_override') }}</label>
                             </div>
                         </div>
-                        <div class="col-md-8">
+                        <div class="col-md-8" data-direct-purchase-reason>
                             <label class="form-label" for="direct_procurement_reason">{{ __('purchase_orders.attributes.direct_procurement_reason') }}</label>
-                            <input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason') }}">
+                            <input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}">
                             <div class="invalid-feedback d-block" data-error-for="direct_procurement_reason"></div>
                         </div>
                     @endif
@@ -258,35 +271,12 @@
         </div>
 
         @if($mode === 'view')
-            <div class="card mb-3">
-                <div class="card-header py-2"><h6 class="mb-0">{{ __('Document lineage') }}</h6></div>
-                <div class="card-body py-2 d-flex flex-wrap gap-2">
-                    @can('purchases.purchase_requisitions.view')
-                        @if($record->requisition)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-requisitions.show', $record->requisition->doc_num) }}">{{ __('Purchase Requisition') }}: <span dir="ltr">{{ $record->requisition->doc_num }}</span></a>@endif
-                    @endcan
-                    @can('purchases.request_for_quotations.view')
-                        @if($record->requestForQuotation)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.request-for-quotations.show', $record->requestForQuotation->doc_num) }}">{{ __('RFQ') }}: <span dir="ltr">{{ $record->requestForQuotation->doc_num }}</span></a>@endif
-                    @endcan
-                    @can('purchases.supplier_quotation_entry.view')
-                        @if($record->supplierQuotation)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.show', $record->supplierQuotation->doc_num) }}">{{ __('Supplier Quotation') }}: <span dir="ltr">{{ $record->supplierQuotation->doc_num }}</span></a>@endif
-                    @endcan
-                    @can('purchases.supplier_selection.view')
-                        @if($record->supplierSelection)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-selection.show', $record->supplierSelection->doc_num) }}">{{ __('Supplier Selection') }}: <span dir="ltr">{{ $record->supplierSelection->doc_num }}</span></a>@endif
-                    @endcan
-                    @can('purchases.goods_receipt_notes.view')
-                        @foreach($record->receipts as $receipt)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.show', $receipt->doc_num) }}">{{ __('GRN') }}: <span dir="ltr">{{ $receipt->doc_num }}</span></a>@endforeach
-                    @endcan
-                    @can('purchase_invoices.view')
-                        @foreach($record->purchaseInvoices as $invoice)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.show', $invoice->doc_num) }}">{{ __('Purchase Invoice') }}: <span dir="ltr">{{ $invoice->doc_num }}</span></a>@endforeach
-                    @endcan
-                    @can('purchases.purchase_returns.view')
-                        @foreach($record->purchaseReturns as $return)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.show', $return->doc_num) }}">{{ __('Purchase Return') }}: <span dir="ltr">{{ $return->doc_num }}</span></a>@endforeach
-                    @endcan
-                    @can('supplier_payments.view')
-                        @foreach($record->supplierPayments as $payment)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-payments.show', $payment->doc_num) }}">{{ __('Supplier Payment') }}: <span dir="ltr">{{ $payment->doc_num }}</span></a>@endforeach
-                    @endcan
-                </div>
-            </div>
+            @if($record->isApproved() && ! $record->sent_at)
+            @can('purchase_orders.send')
+            <button type="submit" form="purchase-order-mark-sent" class="btn btn-outline-primary mb-3">{{ __('Mark as sent') }}</button>
+            @endcan
+            @endif
+            @include('modules.purchases.procurement.document-cycle', ['record' => $record])
         @endif
 
         <div class="card mb-3">
@@ -306,7 +296,6 @@
                                 <th style="width: 3rem;">#</th>
                                 <th>{{ __('purchase_orders.attributes.product') }}</th>
                                 <th style="width: 13rem;">{{ __('purchase_orders.attributes.unit') }}</th>
-                                <th style="width: 16rem;">{{ __('cost_centers.singular') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.ordered_quantity') }}</th>
                                 <th class="text-end" style="width: 9rem;">{{ __('purchase_orders.attributes.unit_price') }}</th>
                                 <th style="width: 8rem;">{{ __('purchase_orders.attributes.discount_type') }}</th>
@@ -334,6 +323,8 @@
                                 <tr class="js-purchase-order-line">
                                     <td class="text-center text-700 js-line-number">{{ $index + 1 }}</td>
                                     <td class="purchase-order-product-picker">
+                                        <input type="hidden" name="lines[{{ $index }}][purchase_requisition_line_id]" value="{{ $line['purchase_requisition_line_id'] ?? '' }}">
+                                        @if(filled($line['source_doc_num'] ?? null))<div class="small text-600" dir="ltr">{{ $line['source_doc_num'] }}</div>@endif
                                         <input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}">
                                         @if($isReadonly)
                                             <div class="d-flex align-items-center gap-2">
@@ -355,24 +346,12 @@
                                         @if($isReadonly)
                                             <span>{{ $unitText ?: __('common.empty_value') }}</span>
                                         @else
-                                            <select class="form-select js-purchase-order-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required>
+                                            <select class="form-select js-select2-local js-purchase-order-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required>
                                                 @if($unitDocNum)
                                                     <option value="{{ $unitDocNum }}" selected>{{ $unitText ?: $unitDocNum }}</option>
                                                 @endif
                                             </select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
-                                        @endif
-                                    </td>
-                                    <td>
-                                        @if($isReadonly)
-                                            <span>{{ $line['cost_center_text'] ?? __('common.empty_value') }}</span>
-                                        @else
-                                            <select class="form-select js-select2-ajax" name="lines[{{ $index }}][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true">
-                                                @if(! empty($line['cost_center_doc_num']))
-                                                    <option value="{{ $line['cost_center_doc_num'] }}" selected>{{ $line['cost_center_text'] ?? $line['cost_center_doc_num'] }}</option>
-                                                @endif
-                                            </select>
-                                            <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.cost_center_doc_num"></div>
                                         @endif
                                     </td>
                                     <td>
@@ -393,7 +372,7 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <span>{{ str($line['discount_type'] ?? 'fixed')->title() }}</span>
+                                            <span>{{ __(str($line['discount_type'] ?? 'fixed')->replace('_', ' ')->title()->toString()) }}</span>
                                         @else
                                             <select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
                                                 <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('purchase_orders.discount_types.fixed') }}</option>
@@ -430,7 +409,7 @@
                                     </td>
                                     @unless($isReadonly)
                                         <td class="text-center">
-                                            <button class="btn btn-falcon-danger btn-sm js-purchase-order-remove-line" type="button" aria-label="{{ __('common.actions.delete') }}">
+                                            @if(empty($line['purchase_requisition_line_id']))<button class="btn btn-falcon-default btn-sm js-purchase-order-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>@endif<button class="btn btn-falcon-danger btn-sm js-purchase-order-remove-line" type="button" aria-label="{{ __('common.actions.delete') }}">
                                                 <span class="fas fa-trash-alt"></span>
                                             </button>
                                         </td>
@@ -494,23 +473,41 @@
                 </div>
             </div>
         </div>
+        @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => $isReadonly])
     </form>
+    @if($mode === 'view' && $record && in_array($record->status, ['draft', 'submitted', 'rejected'], true))
+    <section class="card mb-3"><div class="card-body">
+        @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+        <div class="d-flex flex-wrap gap-2">
+        @if($record->isDraft())
+            @can('purchase_orders.submit')<form method="POST" action="{{ route('admin.purchases.purchase-orders.submit', $record->doc_num) }}">@csrf<button class="btn btn-primary">{{ __('Submit for approval') }}</button></form>@endcan
+        @elseif($record->status === 'submitted')
+            @can('purchase_orders.approve')<button type="button" class="btn btn-success js-purchase-order-row-action" data-url="{{ route('admin.purchases.purchase-orders.approve', $record->doc_num) }}" data-method="POST" data-action="approve">{{ __('Approve') }}</button>@endcan
+            @can('purchase_orders.reject')<form class="d-flex flex-wrap gap-2" method="POST" action="{{ route('admin.purchases.purchase-orders.reject', $record->doc_num) }}">@csrf<input class="form-control" name="reason" required placeholder="{{ __('Rejection reason') }}" aria-label="{{ __('Rejection reason') }}"><button class="btn btn-outline-danger">{{ __('Reject') }}</button></form>@endcan
+        @else
+            <div class="alert alert-warning mb-0">{{ $record->rejection_reason }}</div>
+        @endif
+        </div>
+        @if($record->submitted_at)<div class="small text-600 mt-2">{{ __('Submitted at') }}: {{ $dates->formatDateTime($record->submitted_at) }}</div>@endif
+    </div></section>
+    @endif
+    @if($record?->isApproved() && ! $record->sent_at)
+    @can('purchase_orders.send')
+    <form id="purchase-order-mark-sent" method="POST" action="{{ route('admin.purchases.purchase-orders.sent', $record->doc_num) }}">@csrf</form>
+    @endcan
+    @endif
 
     <template id="purchase-order-line-template">
         <tr class="js-purchase-order-line">
             <td class="text-center text-700 js-line-number">__NUMBER__</td>
             <td class="purchase-order-product-picker">
-                <input type="hidden" name="lines[__INDEX__][public_id]" value="">
+                <input type="hidden" name="lines[__INDEX__][public_id]" value=""><input type="hidden" name="lines[__INDEX__][purchase_requisition_line_id]" value=""><div class="small text-600" data-source-label></div>
                 <select class="form-select js-select2-ajax js-purchase-order-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_orders.placeholders.product') }}" data-allow-clear="true" required></select>
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.product_doc_num"></div>
             </td>
             <td>
-                <select class="form-select js-purchase-order-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required></select>
+                <select class="form-select js-select2-local js-purchase-order-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required></select>
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
-            </td>
-            <td>
-                <select class="form-select js-select2-ajax" name="lines[__INDEX__][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true"></select>
-                <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.cost_center_doc_num"></div>
             </td>
             <td>
                 <x-forms.numeric-input class="text-end js-line-quantity" name="lines[__INDEX__][ordered_quantity]" :scale="8" min="0.00000001" step="0.00000001" required />
@@ -539,7 +536,7 @@
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
             </td>
             <td class="text-center">
-                <button class="btn btn-falcon-danger btn-sm js-purchase-order-remove-line" type="button" aria-label="{{ __('common.actions.delete') }}">
+                <button class="btn btn-falcon-default btn-sm js-purchase-order-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-falcon-danger btn-sm js-purchase-order-remove-line" type="button" aria-label="{{ __('common.actions.delete') }}">
                     <span class="fas fa-trash-alt"></span>
                 </button>
             </td>
@@ -549,8 +546,8 @@
 
 @push('scripts')
     <script>
-        window.purchaseOrderMessages = @json(__('purchase_orders.js'));
+        window.purchaseOrderMessages = {{ \Illuminate\Support\Js::from([...__('purchase_orders.js'), 'source_loading' => __('procurement.ui.loading_lines'), 'source_loaded' => __('procurement.ui.lines_loaded'), 'rate_source' => __('procurement.ui.previous_rate'), 'rate_required' => __('procurement.ui.enter_rate')]) }};
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-orders.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Purchases/purchase-orders.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-orders.js')) }}"></script>
 @endpush

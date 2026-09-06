@@ -13,6 +13,7 @@ use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -22,6 +23,7 @@ use Modules\FixedAssets\Models\FixedAssetDepreciation;
 use Modules\FixedAssets\Models\FixedAssetDepreciationRun;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class FixedAssetDepreciationService
 {
@@ -44,19 +46,21 @@ class FixedAssetDepreciationService
         [$financialPeriod, $periodStart, $periodEnd, $postingDate] = $this->period($companyId, $filters);
         $query = FixedAsset::query()
             ->forCompany($companyId)
-            ->with(['account', 'assetGroupAccount', 'branch', 'branchHall', 'costCenter', 'currency', 'movements.sourceCostCenter', 'postedDepreciations']);
+            ->with(['account', 'assetGroupAccount', 'branch', 'branchHall', 'costCenter', 'currency', 'movements.sourceCostCenter', 'postedDepreciations', 'costMovements.journalEntry', 'disposals', 'categoryMapping']);
 
+        app(FixedAssetAccessService::class)->scopeAssets($query);
         $this->applyFilters($query, $filters, $companyId);
 
         $eligible = [];
         $excluded = [];
+        $mappingStatuses = [];
 
         foreach ($query->orderBy('doc_number')->get() as $asset) {
             if (! $this->matchesDimensionFilters($asset, $periodEnd, $filters, $companyId)) {
                 continue;
             }
 
-            $result = $this->previewAsset($asset, $financialPeriod, $periodStart, $periodEnd, $filters);
+            $result = $this->previewAsset($asset, $financialPeriod, $periodStart, $periodEnd, $filters, $mappingStatuses);
 
             if ($result['eligible']) {
                 $eligible[] = $result;
@@ -85,13 +89,15 @@ class FixedAssetDepreciationService
             $assets = FixedAsset::query()
                 ->forCompany($companyId)
                 ->whereKey($assetIds)
-                ->with(['account', 'assetGroupAccount', 'branch', 'branchHall', 'costCenter', 'currency', 'movements.sourceCostCenter', 'postedDepreciations'])
+                ->with(['account', 'assetGroupAccount', 'branch', 'branchHall', 'costCenter', 'currency', 'movements.sourceCostCenter', 'postedDepreciations', 'costMovements.journalEntry', 'disposals', 'categoryMapping'])
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
             $prepared = [];
+            $mappingStatuses = [];
 
             foreach ($assets as $asset) {
+                app(FixedAssetAccessService::class)->assertAsset($asset);
                 if (! $this->matchesDimensionFilters($asset, $periodEnd, $filters, $companyId)) {
                     throw new DomainException(__('fixed_assets.lifecycle.errors.asset_ineligible', [
                         'asset' => $asset->doc_num,
@@ -99,7 +105,7 @@ class FixedAssetDepreciationService
                     ]));
                 }
 
-                $result = $this->previewAsset($asset, $financialPeriod, $periodStart, $periodEnd, [...$filters, '_posting' => true]);
+                $result = $this->previewAsset($asset, $financialPeriod, $periodStart, $periodEnd, [...$filters, '_posting' => true], $mappingStatuses);
 
                 if (! $result['eligible']) {
                     throw new DomainException(__('fixed_assets.lifecycle.errors.asset_ineligible', [
@@ -138,13 +144,16 @@ class FixedAssetDepreciationService
                 /** @var FixedAssetCategoryMapping $mapping */
                 $mapping = $row['mapping'];
                 $amount = $row['base_period_depreciation'];
+                if (bccomp($amount, '0', 4) === 0) {
+                    continue;
+                }
                 $description = __('fixed_assets.lifecycle.journal.depreciation_line', ['asset' => $asset->doc_num, 'period' => $periodEnd->format('Y-m')]);
                 $dimensions = ['cost_center_id' => $row['effective_cost_center_id'], 'branch_id' => $row['effective_branch_id']];
                 $journalLines[] = ['account_id' => $mapping->depreciation_expense_account_id, 'debit_amount' => $amount, 'credit_amount' => 0, 'description' => $description, ...$dimensions];
                 $journalLines[] = ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => 0, 'credit_amount' => $amount, 'description' => $description, ...$dimensions];
             }
 
-            $journal = $this->journals->createPostedFromSource([
+            $journal = $journalLines === [] ? null : $this->journals->createPostedFromSource([
                 'entry_date' => $postingDate,
                 'company_id' => $companyId,
                 'financial_period_id' => $financialPeriod->getKey(),
@@ -163,6 +172,8 @@ class FixedAssetDepreciationService
                 $asset = $row['asset'];
                 FixedAssetDepreciation::query()->create([
                     'depreciation_run_id' => $run->getKey(),
+                    'accumulated_account_id' => $row['mapping']->accumulated_depreciation_account_id,
+                    'expense_account_id' => $row['mapping']->depreciation_expense_account_id,
                     'fixed_asset_id' => $asset->getKey(),
                     'company_id' => $companyId,
                     'financial_period_id' => $financialPeriod->getKey(),
@@ -183,23 +194,85 @@ class FixedAssetDepreciationService
                     'base_closing_net_book_value' => $row['base_closing_net_book_value'],
                     'branch_id' => $row['effective_branch_id'],
                     'cost_center_id' => $row['effective_cost_center_id'],
-                    'journal_entry_id' => $journal->getKey(),
+                    'journal_entry_id' => $journal?->getKey(),
                     'status' => FixedAssetDepreciation::StatusPosted,
                     'posted_at' => now(),
                     'posted_by' => auth()->id(),
                 ]);
 
+                $asset->unsetRelation('postedDepreciations');
+                $currentPosition = $this->bookValues->position($asset);
+                app(ActivityLogger::class)->log(request(), 'fixed_assets', 'depreciation', 'success', ['subject' => $asset, 'properties_only' => true, 'properties' => ['run' => $run->doc_num, 'amount' => $row['period_depreciation'], 'journal_entry_id' => $journal?->getKey()]]);
                 $asset->forceFill([
-                    'net_value' => $row['closing_net_book_value'],
-                    'status' => bccomp($row['closing_net_book_value'], $row['residual_value'], 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive,
+                    'updated_by' => auth()->id(),
+                    'net_value' => $currentPosition['net_book_value'],
+                    'status' => bccomp($currentPosition['net_book_value'], $currentPosition['residual_value'], 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive,
                     'locked_at' => $asset->locked_at ?: now(),
                 ])->save();
             }
 
-            $run->forceFill(['journal_entry_id' => $journal->getKey()])->save();
+            $run->forceFill(['journal_entry_id' => $journal?->getKey()])->save();
 
             return $run->load(['lines.asset', 'journalEntry']);
         }, attempts: 3);
+    }
+
+    public function canReverse(FixedAssetDepreciationRun $run): bool
+    {
+        try {
+            $this->assertReversible($run);
+
+            return true;
+        } catch (DomainException|HttpException $exception) {
+            return false;
+        }
+    }
+
+    private function assertReversible(FixedAssetDepreciationRun $run, bool $lockForUpdate = false): void
+    {
+        if ($run->status !== FixedAssetDepreciationRun::StatusPosted) {
+            throw new DomainException(__('fixed_assets.lifecycle.errors.run_not_posted'));
+        }
+
+        $reversalPeriod = $this->financialPeriods->resolveOpenForPostingDate(
+            (int) $run->company_id,
+            $run->posting_date,
+            expectedPeriodId: (int) $run->financial_period_id,
+            lockForUpdate: $lockForUpdate,
+        );
+
+        app(FixedAssetAccessService::class)->assertPeriod($reversalPeriod);
+        $run->loadMissing(['journalEntry.lines', 'lines']);
+        $assetIds = $run->lines->pluck('fixed_asset_id')->all();
+        foreach ($run->lines as $line) {
+            app(FixedAssetAccessService::class)->assertBranch((int) $line->branch_id);
+        }
+
+        if (FixedAssetDepreciation::query()
+            ->where('company_id', $run->company_id)
+            ->whereIn('fixed_asset_id', $assetIds)
+            ->where('status', FixedAssetDepreciation::StatusPosted)
+            ->whereDate('period_end', '>', $run->period_end->toDateString())
+            ->exists()
+        ) {
+            throw new DomainException(__('fixed_assets.lifecycle.errors.later_depreciation_exists'));
+        }
+
+        if (FixedAssetDisposal::query()
+            ->where('company_id', $run->company_id)
+            ->whereIn('fixed_asset_id', $assetIds)
+            ->where('status', FixedAssetDisposal::StatusPosted)
+            ->exists()
+        ) {
+            throw new DomainException(__('fixed_assets.lifecycle.errors.depreciation_reversal_after_disposal'));
+        }
+
+        foreach (FixedAsset::query()->whereKey($assetIds)->orderBy('id')->when($lockForUpdate, fn ($query) => $query->lockForUpdate())->get() as $asset) {
+            app(FixedAssetAccessService::class)->assertAsset($asset);
+            if ($asset->costMovements()->where('movement_type', 'addition')->where('status', 'posted')->whereDate('movement_date', '>', $run->period_end)->exists()) {
+                throw new DomainException(__('fixed_assets.cycle.later_movements'));
+            }
+        }
     }
 
     public function reverse(FixedAssetDepreciationRun $run, string $reason): FixedAssetDepreciationRun
@@ -211,40 +284,9 @@ class FixedAssetDepreciationService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($lockedRun->status !== FixedAssetDepreciationRun::StatusPosted) {
-                throw new DomainException(__('fixed_assets.lifecycle.errors.run_not_posted'));
-            }
-
-            $this->financialPeriods->resolveOpenForPostingDate(
-                (int) $lockedRun->company_id,
-                $lockedRun->posting_date,
-                expectedPeriodId: (int) $lockedRun->financial_period_id,
-                lockForUpdate: true,
-            );
-
-            $lockedRun->loadMissing(['journalEntry.lines', 'lines']);
+            $this->assertReversible($lockedRun, true);
             $assetIds = $lockedRun->lines->pluck('fixed_asset_id')->all();
-
-            if (FixedAssetDepreciation::query()
-                ->where('company_id', $lockedRun->company_id)
-                ->whereIn('fixed_asset_id', $assetIds)
-                ->where('status', FixedAssetDepreciation::StatusPosted)
-                ->whereDate('period_end', '>', $lockedRun->period_end->toDateString())
-                ->exists()
-            ) {
-                throw new DomainException(__('fixed_assets.lifecycle.errors.later_depreciation_exists'));
-            }
-
-            if (FixedAssetDisposal::query()
-                ->where('company_id', $lockedRun->company_id)
-                ->whereIn('fixed_asset_id', $assetIds)
-                ->where('status', FixedAssetDisposal::StatusPosted)
-                ->exists()
-            ) {
-                throw new DomainException(__('fixed_assets.lifecycle.errors.depreciation_reversal_after_disposal'));
-            }
-
-            $reversal = $this->journals->createPostedReversalFromSource($lockedRun->journalEntry, [
+            $reversal = $lockedRun->journalEntry ? $this->journals->createPostedReversalFromSource($lockedRun->journalEntry, [
                 'entry_date' => $lockedRun->posting_date,
                 'company_id' => $lockedRun->company_id,
                 'financial_period_id' => $lockedRun->financial_period_id,
@@ -256,22 +298,24 @@ class FixedAssetDepreciationService
                 'source_type' => 'fixed_asset_depreciation_reversal',
                 'source_id' => $lockedRun->getKey(),
                 'source_doc_num' => $lockedRun->doc_num,
-            ]);
+            ]) : null;
 
             FixedAsset::query()->forCompany((int) $lockedRun->company_id)->whereKey($assetIds)->orderBy('id')->lockForUpdate()->get();
             $lockedRun->lines()->update(['status' => FixedAssetDepreciation::StatusReversed, 'reversed_at' => now(), 'reversed_by' => auth()->id()]);
 
             foreach (FixedAsset::query()->forCompany((int) $lockedRun->company_id)->whereKey($assetIds)->with('postedDepreciations')->get() as $asset) {
                 $position = $this->bookValues->position($asset);
+                app(ActivityLogger::class)->log(request(), 'fixed_assets', 'depreciation_reversal', 'success', ['subject' => $asset, 'properties_only' => true, 'properties' => ['run' => $lockedRun->doc_num, 'reason' => $reason, 'journal_entry_id' => $reversal?->getKey()]]);
                 $asset->forceFill([
+                    'updated_by' => auth()->id(),
                     'net_value' => $position['net_book_value'],
-                    'status' => bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive,
+                    'status' => $asset->status === FixedAsset::StatusSuspended ? $asset->status : (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive),
                 ])->save();
             }
 
             $lockedRun->forceFill([
                 'status' => FixedAssetDepreciationRun::StatusReversed,
-                'reversal_journal_entry_id' => $reversal->getKey(),
+                'reversal_journal_entry_id' => $reversal?->getKey(),
                 'reversed_at' => now(),
                 'reversed_by' => auth()->id(),
                 'reversal_reason' => $reason,
@@ -295,8 +339,13 @@ class FixedAssetDepreciationService
             lockForUpdate: $lockForUpdate,
         );
 
+        app(FixedAssetAccessService::class)->assertPeriod($period);
         $periodStart = $postingDate->copy()->startOfMonth()->max($period->from_date->copy());
         $periodEnd = $postingDate->copy()->endOfMonth()->min($period->to_date->copy());
+
+        if (! $postingDate->isSameDay($periodEnd)) {
+            throw new DomainException(__('fixed_assets.cycle.month_end'));
+        }
 
         return [$period, $periodStart, $periodEnd, $postingDate];
     }
@@ -305,7 +354,7 @@ class FixedAssetDepreciationService
      * @param  array<string, mixed>  $filters
      * @return array<string, mixed>
      */
-    private function previewAsset(FixedAsset $asset, FinancialPeriod $period, Carbon $periodStart, Carbon $periodEnd, array $filters): array
+    private function previewAsset(FixedAsset $asset, FinancialPeriod $period, Carbon $periodStart, Carbon $periodEnd, array $filters, array &$mappingStatuses): array
     {
         $excluded = fn (string $reason): array => ['eligible' => false, 'asset' => $asset, 'reason' => $reason];
 
@@ -313,14 +362,15 @@ class FixedAssetDepreciationService
             return $excluded(__('fixed_assets.lifecycle.exclusions.non_depreciable'));
         }
 
+        if ($asset->isDisposed()) {
+            return $excluded(__('fixed_assets.lifecycle.exclusions.disposed'));
+        }
+        if ($asset->status === FixedAsset::StatusDraft) {
+            return $excluded(__('fixed_assets.prerequisites.draft'));
+        }
         if (! in_array($asset->status, [FixedAsset::StatusActive, FixedAsset::StatusFullyDepreciated], true)) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.status'));
         }
-
-        if ($asset->isDisposed() || ($asset->disposed_at && $asset->disposed_at->lte($periodEnd))) {
-            return $excluded(__('fixed_assets.lifecycle.exclusions.disposed'));
-        }
-
         if ($asset->depreciation_start_date === null) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.missing_service_date'));
         }
@@ -329,23 +379,35 @@ class FixedAssetDepreciationService
             return $excluded(__('fixed_assets.lifecycle.exclusions.not_in_service'));
         }
 
+        $position = $this->bookValues->position($asset, $periodEnd);
+        if (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
+            return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
+        }
+        if (! $asset->hasPostedRecognition()) {
+            return $excluded(__($asset->isMasterLocked() ? 'fixed_assets.prerequisites.legacy_required' : 'fixed_assets.cycle.recognition_required'));
+        }
         $asset->loadMissing('postedDepreciations');
-        $coveredThrough = collect([
-            $asset->previous_depreciation_until_date,
-            $asset->postedDepreciations->last()?->period_end,
-        ])->filter()->map(fn ($date): Carbon => Carbon::parse($date)->startOfDay())->max();
+        $nextDate = $this->nextUnpostedDate($asset);
+        $coveredThrough = $nextDate?->copy()->subDay();
+        if ($this->hasHistoricalGap($asset)) {
+            return $excluded(__('fixed_assets.cycle.historical_depreciation_gap', ['period' => $nextDate->format('Y-m')]));
+        }
 
         if ($coveredThrough instanceof Carbon && $coveredThrough->gte($periodEnd)) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.already_posted'));
         }
 
-        $mapping = $this->mapping($asset);
-
-        if (! $mapping instanceof FixedAssetCategoryMapping || ! $this->mappingAccountsPostable($mapping)) {
-            return $excluded(__('fixed_assets.lifecycle.exclusions.account_mapping'));
+        if ($nextDate->lt($periodStart)) {
+            return $excluded(__('fixed_assets.cycle.missing_period', ['period' => $nextDate->format('Y-m')]));
+        }
+        try {
+            $chart = $mappingStatuses['chart'] ??= Account::query()->where('company_id', $asset->company_id)->with('classification')->get()->keyBy('id');
+            $mapping = FixedAssetCategoryMapping::resolveForAsset($asset, FixedAssetCategoryMapping::DepreciationAccounts, $chart);
+        } catch (DomainException $exception) {
+            return $excluded($exception->getMessage());
         }
 
-        $position = $this->bookValues->position($asset);
+        $position = $this->bookValues->position($asset, $periodStart->copy()->max($nextDate));
 
         if (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
@@ -354,9 +416,12 @@ class FixedAssetDepreciationService
         $calculationStart = $coveredThrough instanceof Carbon
             ? $periodStart->copy()->max($coveredThrough->copy()->addDay())
             : $periodStart;
-        $usageUnits = data_get($filters, 'usage_units.'.$asset->doc_num);
+        $usageUnits = ($filters['usage_units'][$asset->doc_num] ?? null);
         $snapshot = $this->calculator->snapshot($asset, $calculationStart, $periodEnd, $position, $usageUnits === null ? null : (string) $usageUnits);
         $effectiveDimensions = $this->accountingDimensionsAsOf($asset, $periodEnd);
+        if (! in_array((int) $effectiveDimensions['effective_branch_id'], app(FixedAssetAccessService::class)->branchIds(), true)) {
+            return $excluded(__('fixed_assets.lifecycle.exclusions.dimension_filter'));
+        }
 
         if ($snapshot === null) {
             if ($asset->depreciation_method === FixedAsset::DepreciationMethodUnitsOfProduction && ! ($filters['_posting'] ?? false)) {
@@ -401,14 +466,56 @@ class FixedAssetDepreciationService
         return ['eligible' => true, 'asset' => $asset, 'mapping' => $mapping, 'financial_period' => $period, ...$snapshot, ...$effectiveDimensions];
     }
 
-    /**
-     * @return array{effective_branch_id: int|null, effective_cost_center_id: int|null, effective_cost_center: CostCenter|null}
-     */
-    private function accountingDimensionsAsOf(FixedAsset $asset, Carbon $periodEnd): array
+    public function nextUnpostedDate(FixedAsset $asset, ?Carbon $through = null): ?Carbon
+    {
+        if (! $asset->is_depreciable || ! $asset->depreciation_start_date) {
+            return null;
+        }
+        $cursor = $asset->depreciation_start_date->copy()->startOfDay();
+        if (! config('fixed_assets.activation_date_inclusive', true)) {
+            $cursor->addDay();
+        }
+        if ($asset->previous_depreciation_until_date) {
+            $cursor = $cursor->max($asset->previous_depreciation_until_date->copy()->addDay());
+        }
+        $rows = $asset->relationLoaded('postedDepreciations') ? $asset->postedDepreciations->filter(fn ($row): bool => ! $through || $row->period_end->lte($through))->sortBy([['period_start', 'asc'], ['id', 'asc']]) : $asset->postedDepreciations()->when($through, fn ($query) => $query->whereDate('period_end', '<=', $through))->reorder()->orderBy('period_start')->orderBy('id')->get();
+        foreach ($rows as $row) {
+            if ($row->period_start->gt($cursor)) {
+                $cursor = $this->nextDepreciableCostDate($asset, $cursor, $row->period_start);
+                if ($row->period_start->gt($cursor)) {
+                    return $cursor;
+                }
+            }
+            $cursor = $cursor->max($row->period_end->copy()->addDay());
+        }
+
+        return $this->nextDepreciableCostDate($asset, $cursor, $through);
+    }
+
+    private function nextDepreciableCostDate(FixedAsset $asset, Carbon $cursor, ?Carbon $through): Carbon
+    {
+        if (bccomp($this->bookValues->position($asset, $cursor)['remaining_depreciable_amount'], '0', 4) > 0) {
+            return $cursor;
+        }
+        $additionDate = $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)->where('status', 'posted')
+            ->whereDate('movement_date', '>', $cursor)->when($through, fn ($query) => $query->whereDate('movement_date', '<=', $through))->min('movement_date');
+
+        return $additionDate ? Carbon::parse($additionDate)->startOfDay() : $cursor;
+    }
+
+    public function hasHistoricalGap(FixedAsset $asset): bool
+    {
+        $next = $this->nextUnpostedDate($asset);
+
+        return $next && ($asset->relationLoaded('postedDepreciations') ? $asset->postedDepreciations->contains(fn ($row): bool => $row->period_end->gte($next)) : $asset->postedDepreciations()->whereDate('period_end', '>=', $next)->exists());
+    }
+
+    /** @return array{effective_branch_id: int|null, effective_cost_center_id: int|null, effective_cost_center: CostCenter|null} */
+    public function accountingDimensionsAsOf(FixedAsset $asset, Carbon $periodEnd): array
     {
         $asset->loadMissing(['movements.sourceCostCenter', 'costCenter']);
         $futureMovement = $asset->movements
-            ->filter(fn (FixedAssetMovement $movement): bool => $movement->status === FixedAssetMovement::StatusPosted && $movement->movement_date->gt($periodEnd))
+            ->filter(fn (FixedAssetMovement $movement): bool => $movement->status === FixedAssetMovement::StatusPosted && $movement->movement_type === FixedAssetMovement::TypeTransfer && $movement->movement_date->gt($periodEnd))
             ->sortBy(fn (FixedAssetMovement $movement): string => $movement->movement_date->format('Ymd').str_pad((string) $movement->getKey(), 20, '0', STR_PAD_LEFT))
             ->first();
 
@@ -425,34 +532,6 @@ class FixedAssetDepreciationService
             'effective_cost_center_id' => $asset->cost_center_id,
             'effective_cost_center' => $asset->costCenter,
         ];
-    }
-
-    private function mapping(FixedAsset $asset): ?FixedAssetCategoryMapping
-    {
-        $categoryId = $asset->asset_group_account_id ?: $asset->account?->parent_id;
-
-        return $categoryId
-            ? FixedAssetCategoryMapping::query()->where('company_id', $asset->company_id)->where('asset_group_account_id', $categoryId)->first()
-            : null;
-    }
-
-    private function mappingAccountsPostable(FixedAssetCategoryMapping $mapping): bool
-    {
-        $accountIds = [
-            $mapping->accumulated_depreciation_account_id,
-            $mapping->depreciation_expense_account_id,
-            $mapping->disposal_gain_account_id,
-            $mapping->disposal_loss_account_id,
-        ];
-
-        return Account::query()
-            ->where('company_id', $mapping->company_id)
-            ->whereKey($accountIds)
-            ->where('is_postable', true)
-            ->where('is_group', false)
-            ->where('status', 'active')
-            ->whereNull('deleted_at')
-            ->count() === count(array_unique($accountIds));
     }
 
     /** @param Builder<FixedAsset> $query */

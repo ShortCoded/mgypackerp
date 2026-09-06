@@ -6,9 +6,11 @@ use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
@@ -23,6 +25,7 @@ use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\QualityInspectionType;
+use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Services\SalesUnitConversionService;
 
@@ -44,7 +47,7 @@ class ProductionCycleService
     {
         return DB::transaction(function () use ($header, $lines): ProductionOrder {
             if ($lines === []) {
-                throw new DomainException('A production order requires at least one finished-product line.');
+                throw new DomainException(__('A production order requires at least one finished-product line.'));
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -74,13 +77,13 @@ class ProductionCycleService
 
                 if ((int) $product->company_id !== (int) $order->company_id
                     || $product->item_classification !== Product::ClassificationFinishedProduct) {
-                    throw new DomainException('Make-to-stock production lines must use a finished product from the operating company.');
+                    throw new DomainException(__('Make-to-stock production lines must use a finished product from the operating company.'));
                 }
 
                 $snapshot = $this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']);
 
                 if (bccomp($snapshot['base_quantity'], '0', 8) <= 0) {
-                    throw new DomainException('Production quantity must be greater than zero.');
+                    throw new DomainException(__('Production quantity must be greater than zero.'));
                 }
 
                 $order->lines()->create([
@@ -111,11 +114,11 @@ class ProductionCycleService
             }
 
             if (! in_array($locked->status, [ProductionOrder::StatusDraft, ProductionOrder::StatusPlanned], true)) {
-                throw new DomainException('Only a draft or planned production order can be released.');
+                throw new DomainException(__('Only a draft or planned production order can be released.'));
             }
 
             if ($locked->lines->isEmpty()) {
-                throw new DomainException('A production order requires at least one line before release.');
+                throw new DomainException(__('A production order requires at least one line before release.'));
             }
 
             foreach ($locked->lines as $line) {
@@ -128,7 +131,7 @@ class ProductionCycleService
                     ->get();
 
                 if ($components->isEmpty()) {
-                    throw new DomainException("Product {$line->description} does not have a bill of materials.");
+                    throw new DomainException(__('Product :product does not have a bill of materials.', ['product' => $line->description]));
                 }
 
                 $snapshotComponents = $components->map(function (ProductComponent $component): array {
@@ -188,11 +191,11 @@ class ProductionCycleService
                 ProductionOrder::StatusInProgress,
                 ProductionOrder::StatusPartiallyCompleted,
             ], true)) {
-                throw new DomainException('Production runs require a released production order.');
+                throw new DomainException(__('Production runs require a released production order.'));
             }
 
             if (! is_array($line->bom_snapshot) || empty($line->bom_snapshot['components'])) {
-                throw new DomainException('The released line does not contain an immutable BOM snapshot.');
+                throw new DomainException(__('The released line does not contain an immutable BOM snapshot.'));
             }
 
             $plannedQuantity = (string) $data['planned_quantity'];
@@ -204,14 +207,14 @@ class ProductionCycleService
             $remaining = bcsub((string) $line->base_quantity, $alreadyPlanned, 8);
 
             if (bccomp($plannedBaseQuantity, '0', 8) <= 0 || bccomp($plannedBaseQuantity, $remaining, 8) > 0) {
-                throw new DomainException('Run quantity must be positive and cannot exceed the unplanned production quantity.');
+                throw new DomainException(__('Run quantity must be positive and cannot exceed the unplanned production quantity.'));
             }
 
             $startsAt = CarbonImmutable::parse($data['planned_start_at']);
             $endsAt = CarbonImmutable::parse($data['planned_end_at']);
 
             if ($endsAt->lessThanOrEqualTo($startsAt)) {
-                throw new DomainException('Run end time must be after its start time.');
+                throw new DomainException(__('Run end time must be after its start time.'));
             }
 
             $machineId = isset($data['production_machine_id']) ? (int) $data['production_machine_id'] : null;
@@ -272,7 +275,7 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with('requirements')->lockForUpdate()->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [ProductionRun::StatusPlanned, ProductionRun::StatusSetup, ProductionRun::StatusReady], true)) {
-                throw new DomainException('Materials can only be reserved before the run starts.');
+                throw new DomainException(__('Materials can only be reserved before the run starts.'));
             }
 
             foreach ($locked->requirements as $requirement) {
@@ -305,7 +308,7 @@ class ProductionCycleService
                 ProductionRun::StatusRunning,
                 ProductionRun::StatusHeld,
             ], true)) {
-                throw new DomainException('This run cannot receive a material issue.');
+                throw new DomainException(__('This run cannot receive a material issue.'));
             }
 
             $movementLines = [];
@@ -322,7 +325,7 @@ class ProductionCycleService
                 }
 
                 if (! $additional && bccomp($quantity, $defaultQuantity, 8) > 0) {
-                    throw new DomainException('A planned material issue cannot exceed the remaining planned requirement.');
+                    throw new DomainException(__('A planned material issue cannot exceed the remaining planned requirement.'));
                 }
 
                 if ($additional) {
@@ -356,7 +359,7 @@ class ProductionCycleService
             }
 
             if ($movementLines === []) {
-                throw new DomainException('No positive material issue quantities were supplied.');
+                throw new DomainException(__('No positive material issue quantities were supplied.'));
             }
 
             $document = $this->movements->createAndPost([
@@ -410,7 +413,7 @@ class ProductionCycleService
                 );
 
                 if (bccomp($quantity, $returnable, 8) > 0) {
-                    throw new DomainException('Material return exceeds the unaccounted issued quantity.');
+                    throw new DomainException(__('Material return exceeds the unaccounted issued quantity.'));
                 }
 
                 $position = $this->materialPosition($requirement, $warehouseLocationId);
@@ -427,7 +430,7 @@ class ProductionCycleService
             }
 
             if ($lines === []) {
-                throw new DomainException('No positive material return quantities were supplied.');
+                throw new DomainException(__('No positive material return quantities were supplied.'));
             }
 
             $document = $this->movements->createAndPost([
@@ -469,11 +472,11 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with('requirements')->lockForUpdate()->findOrFail($run->getKey());
 
             if ($locked->status !== ProductionRun::StatusReady || $locked->setup_status !== 'completed') {
-                throw new DomainException('A run must complete setup before production can start.');
+                throw new DomainException(__('A run must complete setup before production can start.'));
             }
 
             if ($locked->requirements->contains(fn (ProductionMaterialRequirement $requirement): bool => bccomp((string) $requirement->issued_quantity, '0', 8) <= 0)) {
-                throw new DomainException('Every material requirement must have an issue before the run starts.');
+                throw new DomainException(__('Every material requirement must have an issue before the run starts.'));
             }
 
             $locked->update([
@@ -496,7 +499,7 @@ class ProductionCycleService
             $latestInspection = $locked->inspections()->reorder()->latest('sampled_at')->latest('id')->first();
 
             if ($locked->status !== ProductionRun::StatusHeld || $latestInspection?->result !== 'passed') {
-                throw new DomainException('A held run requires a later passed quality inspection before it can resume.');
+                throw new DomainException(__('A held run requires a later passed quality inspection before it can resume.'));
             }
 
             $locked->update(['status' => ProductionRun::StatusRunning, 'updated_by' => auth()->id()]);
@@ -512,7 +515,7 @@ class ProductionCycleService
 
             if (trim($reason) === ''
                 || in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
-                throw new DomainException('An open run and a cancellation reason are required.');
+                throw new DomainException(__('An open run and a cancellation reason are required.'));
             }
 
             if ($locked->requirements->contains(fn (ProductionMaterialRequirement $requirement): bool => bccomp(
@@ -520,11 +523,11 @@ class ProductionCycleService
                 (string) $requirement->returned_quantity,
                 8,
             ) > 0)) {
-                throw new DomainException('All issued materials must be returned before a run can be cancelled.');
+                throw new DomainException(__('All issued materials must be returned before a run can be cancelled.'));
             }
 
             if (bccomp((string) $locked->total_output_base_quantity, '0', 8) > 0) {
-                throw new DomainException('A run with recorded output cannot be cancelled.');
+                throw new DomainException(__('A run with recorded output cannot be cancelled.'));
             }
 
             $this->reservations->releaseRun((int) $locked->getKey(), 'Run cancelled: '.trim($reason));
@@ -545,7 +548,7 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey());
 
             if ($locked->status !== ProductionRun::StatusRunning) {
-                throw new DomainException('Progress can only be recorded against a running production run.');
+                throw new DomainException(__('Progress can only be recorded against a running production run.'));
             }
 
             $values = collect(['good_base_quantity', 'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity'])
@@ -554,7 +557,7 @@ class ProductionCycleService
 
             if (collect($values)->contains(fn (string $value): bool => bccomp($value, '0', 8) < 0)
                 || collect($values)->every(fn (string $value): bool => bccomp($value, '0', 8) === 0)) {
-                throw new DomainException('Progress quantities must be non-negative and at least one must be positive.');
+                throw new DomainException(__('Progress quantities must be non-negative and at least one must be positive.'));
             }
 
             $entryTotal = array_reduce($values, fn (string $carry, string $value): string => bcadd($carry, $value, 8), '0');
@@ -565,7 +568,7 @@ class ProductionCycleService
             );
 
             if (bccomp(bcadd((string) $locked->total_output_base_quantity, $entryTotal, 8), $allowed, 8) > 0) {
-                throw new DomainException('Recorded output exceeds the configured overproduction tolerance.');
+                throw new DomainException(__('Recorded output exceeds the configured overproduction tolerance.'));
             }
 
             $entry = $locked->progressEntries()->create([
@@ -590,7 +593,7 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [ProductionRun::StatusRunning, ProductionRun::StatusHeld], true)) {
-                throw new DomainException('Quality inspections require a running or held production run.');
+                throw new DomainException(__('Quality inspections require a running or held production run.'));
             }
 
             $inspectionTypeId = $data['quality_inspection_type_id'] ?? null;
@@ -600,7 +603,7 @@ class ProductionCycleService
                 ->where('company_id', $locked->company_id)
                 ->where('is_active', true)
                 ->exists()) {
-                throw new DomainException('The selected quality inspection type is not active for the operating company.');
+                throw new DomainException(__('The selected quality inspection type is not active for the operating company.'));
             }
 
             $checkpointIds = collect($data['results'] ?? [])
@@ -619,7 +622,7 @@ class ProductionCycleService
                     ->count();
 
                 if ($inspectionTypeId === null || $validCheckpointCount !== $checkpointIds->count()) {
-                    throw new DomainException('Quality checkpoints must be active and belong to the selected inspection type and operating company.');
+                    throw new DomainException(__('Quality checkpoints must be active and belong to the selected inspection type and operating company.'));
                 }
             }
 
@@ -689,14 +692,14 @@ class ProductionCycleService
             sort($submittedRequirementIds);
 
             if ($requirementIds !== $submittedRequirementIds) {
-                throw new DomainException('Material accounting lines must belong exclusively to this production run.');
+                throw new DomainException(__('Material accounting lines must belong exclusively to this production run.'));
             }
 
             foreach ($locked->requirements as $requirement) {
                 $accounting = $accountingByRequirementId[$requirement->getKey()] ?? null;
 
                 if (! is_array($accounting)) {
-                    throw new DomainException('Every material requirement must be reconciled.');
+                    throw new DomainException(__('Every material requirement must be reconciled.'));
                 }
 
                 $consumed = (string) $accounting['consumed_quantity'];
@@ -714,7 +717,7 @@ class ProductionCycleService
                 if (bccomp($consumed, '0', 8) < 0
                     || bccomp($waste, '0', 8) < 0
                     || bccomp(bcadd($consumed, $waste, 8), $unaccounted, 8) !== 0) {
-                    throw new DomainException('Consumed plus waste must exactly reconcile issued less returned material.');
+                    throw new DomainException(__('Consumed plus waste must exactly reconcile issued less returned material.'));
                 }
 
                 $position = $this->materialPosition($requirement, $warehouseLocationId);
@@ -775,14 +778,26 @@ class ProductionCycleService
         return DB::transaction(function () use ($run, $branchStoreId, $baseQuantity, $warehouseLocationId): InventoryDocument {
             $locked = ProductionRun::query()->with(['order', 'orderLine.product', 'product'])->lockForUpdate()->findOrFail($run->getKey());
 
+            if ($locked->order->sales_order_id) {
+                SalesOrder::query()->lockForUpdate()->findOrFail($locked->order->sales_order_id);
+            }
+            $salesLine = $locked->orderLine->sales_order_line_id
+                ? SalesOrderLine::query()->with('order')->lockForUpdate()->findOrFail($locked->orderLine->sales_order_line_id)
+                : null;
+            if ($salesLine && (! $salesLine->order->isApprovedForFulfillment() || (int) $salesLine->order->branch_store_id !== $branchStoreId)) {
+                throw new DomainException(__('Receive sales production into the source order warehouse while the order is open.'));
+            }
+            BranchStore::query()->lockForUpdate()->findOrFail($branchStoreId);
+            Product::query()->lockForUpdate()->findOrFail($locked->product_id);
+
             if ($locked->status !== ProductionRun::StatusRunning) {
-                throw new DomainException('Finished goods can only be received from a running production run that is not on quality hold.');
+                throw new DomainException(__('Finished goods can only be received from a running production run that is not on quality hold.'));
             }
 
             $remainingGood = bcsub((string) $locked->good_base_quantity, (string) $locked->received_base_quantity, 8);
 
             if (bccomp($baseQuantity, '0', 8) <= 0 || bccomp($baseQuantity, $remainingGood, 8) > 0) {
-                throw new DomainException('Finished-goods receipt exceeds recorded good output.');
+                throw new DomainException(__('Finished-goods receipt exceeds recorded good output.'));
             }
 
             foreach ($locked->requirements as $requirement) {
@@ -794,7 +809,7 @@ class ProductionCycleService
                 $accounted = bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8);
 
                 if (bccomp($issuedLessReturned, $accounted, 8) !== 0) {
-                    throw new DomainException('All issued material must be consumed, returned, or recorded as waste before finished goods are received.');
+                    throw new DomainException(__('All issued material must be consumed, returned, or recorded as waste before finished goods are received.'));
                 }
             }
 
@@ -813,13 +828,13 @@ class ProductionCycleService
                 : null;
 
             if ($finalInspectionRequired && $latestFinalInspection?->result !== 'passed') {
-                throw new DomainException('A final passed quality inspection is required before finished goods become available.');
+                throw new DomainException(__('A final passed quality inspection is required before finished goods become available.'));
             }
 
             $receiptCost = $this->costs->receiptCost($locked, $baseQuantity);
 
             if (bccomp($receiptCost, '0', 8) <= 0) {
-                throw new DomainException('Finished goods cannot be received without a positive reconciled WIP material value.');
+                throw new DomainException(__('Finished goods cannot be received without a positive reconciled WIP material value.'));
             }
 
             $unitCost = bcdiv($receiptCost, $baseQuantity, 8);
@@ -857,10 +872,29 @@ class ProductionCycleService
             $locked->increment('received_base_quantity', $baseQuantity);
             $locked->orderLine()->increment('received_base_quantity', $baseQuantity);
 
-            if ($locked->orderLine->sales_order_line_id) {
-                $transactionQuantity = bcdiv($baseQuantity, (string) $locked->conversion_factor, 8);
-                SalesOrderLine::query()->whereKey($locked->orderLine->sales_order_line_id)->increment('produced_quantity', $transactionQuantity);
-                SalesOrderLine::query()->whereKey($locked->orderLine->sales_order_line_id)->increment('produced_base_quantity', $baseQuantity);
+            if ($salesLine) {
+                $transactionQuantity = bcdiv($baseQuantity, (string) $salesLine->conversion_factor, 8);
+                $salesLine->increment('produced_quantity', $transactionQuantity);
+                $salesLine->increment('produced_base_quantity', $baseQuantity);
+                $remaining = bcsub($salesLine->remainingDeliveryQuantity(), $salesLine->activeReservedQuantity(), 8);
+                $allocateQuantity = bccomp($transactionQuantity, $remaining, 8) > 0 ? $remaining : $transactionQuantity;
+                if (bccomp($allocateQuantity, '0', 8) > 0) {
+                    $allocateBase = bcmul($allocateQuantity, (string) $salesLine->conversion_factor, 8);
+                    InventoryReservation::query()->create([
+                        'company_id' => $document->company_id, 'financial_period_id' => $document->financial_period_id,
+                        'branch_id' => $document->branch_id, 'branch_store_id' => $branchStoreId,
+                        'warehouse_location_id' => $warehouseLocationId, 'batch_lot' => $locked->batch_lot,
+                        'sales_order_id' => $salesLine->sales_order_id, 'sales_order_line_id' => $salesLine->getKey(),
+                        'production_order_id' => $locked->production_order_id, 'production_run_id' => $locked->getKey(),
+                        'customer_id' => $salesLine->order->customer_id, 'product_id' => $salesLine->product_id,
+                        'unit_id' => $locked->product->item_unit_id, 'transaction_unit_id' => $salesLine->unit_id,
+                        'conversion_factor' => $salesLine->conversion_factor, 'transaction_quantity' => $allocateQuantity,
+                        'quantity' => $allocateBase, 'stock_status' => InventoryTransaction::StatusAvailable,
+                        'status' => InventoryReservation::StatusActive, 'created_by' => auth()->id(),
+                    ]);
+                    $salesLine->increment('reserved_quantity', $allocateQuantity);
+                    $salesLine->increment('reserved_base_quantity', $allocateBase);
+                }
             }
 
             return $document;
@@ -873,7 +907,7 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with(['requirements', 'inspections', 'order.lines'])->lockForUpdate()->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [ProductionRun::StatusRunning, ProductionRun::StatusHeld], true)) {
-                throw new DomainException('Only an active production run can be completed.');
+                throw new DomainException(__('Only an active production run can be completed.'));
             }
 
             foreach ($locked->requirements as $requirement) {
@@ -885,19 +919,19 @@ class ProductionCycleService
                 $accounted = bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8);
 
                 if (bccomp($issuedLessReturned, $accounted, 8) !== 0) {
-                    throw new DomainException('All issued material must be consumed, returned, or recorded as waste before completion.');
+                    throw new DomainException(__('All issued material must be consumed, returned, or recorded as waste before completion.'));
                 }
             }
 
             if (bccomp((string) $locked->good_base_quantity, '0', 8) <= 0
                 || bccomp((string) $locked->received_base_quantity, (string) $locked->good_base_quantity, 8) !== 0) {
-                throw new DomainException('All recorded good output must be received into finished-goods stock before completion.');
+                throw new DomainException(__('All recorded good output must be received into finished-goods stock before completion.'));
             }
 
             $latestInspection = $locked->inspections()->reorder()->latest('sampled_at')->latest('id')->first();
 
             if ($locked->status === ProductionRun::StatusHeld || $latestInspection?->result === 'failed') {
-                throw new DomainException('Failed quality inspections must be resolved before run completion.');
+                throw new DomainException(__('Failed quality inspections must be resolved before run completion.'));
             }
 
             $locked->update([
@@ -919,7 +953,7 @@ class ProductionCycleService
             $locked = ProductionOrder::query()->with('runs')->lockForUpdate()->findOrFail($order->getKey());
 
             if (trim($reason) === '' || in_array($locked->status, [ProductionOrder::StatusCompleted, ProductionOrder::StatusCancelled], true)) {
-                throw new DomainException('An open production order and a short-close reason are required.');
+                throw new DomainException(__('An open production order and a short-close reason are required.'));
             }
 
             foreach ($locked->runs->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled]) as $run) {
@@ -945,7 +979,7 @@ class ProductionCycleService
             $locked = ProductionRun::query()->lockForUpdate()->findOrFail($run->getKey());
 
             if (! in_array($locked->status, $fromStatuses, true)) {
-                throw new DomainException('The production run is not in a valid state for this transition.');
+                throw new DomainException(__('The production run is not in a valid state for this transition.'));
             }
 
             $locked->update([...$extra, 'status' => $toStatus, 'updated_by' => auth()->id()]);
@@ -968,7 +1002,7 @@ class ProductionCycleService
             if ((int) $machine->company_id !== (int) $order->company_id
                 || (int) $machine->branch_id !== (int) $order->branch_id
                 || $machine->status !== ProductionMachine::StatusAvailable) {
-                throw new DomainException('The selected production machine is not available in this operating context.');
+                throw new DomainException(__('The selected production machine is not available in this operating context.'));
             }
         }
 
@@ -979,11 +1013,11 @@ class ProductionCycleService
                 || (int) $mold->branch_id !== (int) $order->branch_id
                 || $mold->status !== ProductionMold::StatusAvailable
                 || ! $mold->products()->whereKey($productId)->exists()) {
-                throw new DomainException('The selected mold is not available or is not compatible with the finished product.');
+                throw new DomainException(__('The selected mold is not available or is not compatible with the finished product.'));
             }
 
             if ($machineId !== null && ! $mold->machines()->whereKey($machineId)->exists()) {
-                throw new DomainException('The selected machine and mold are not compatible.');
+                throw new DomainException(__('The selected machine and mold are not compatible.'));
             }
         }
 
@@ -998,7 +1032,7 @@ class ProductionCycleService
             ->when($machineId === null && $moldId !== null, fn ($query) => $query->where('production_mold_id', $moldId));
 
         if (($machineId !== null || $moldId !== null) && $conflictQuery->lockForUpdate()->exists()) {
-            throw new DomainException('The selected machine or mold has an overlapping production run.');
+            throw new DomainException(__('The selected machine or mold has an overlapping production run.'));
         }
     }
 
@@ -1025,9 +1059,11 @@ class ProductionCycleService
     /** @return array<string, mixed> */
     private function movementContext(ProductionRun $run, int $branchStoreId): array
     {
+        $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $run->company_id, now()->toDateString(), lockForUpdate: true);
+
         return [
             'company_id' => $run->company_id,
-            'financial_period_id' => $run->financial_period_id,
+            'financial_period_id' => $period->getKey(),
             'branch_id' => $run->branch_id,
             'branch_store_id' => $branchStoreId,
             'document_date' => now()->toDateString(),
@@ -1049,7 +1085,7 @@ class ProductionCycleService
             ->get();
 
         if ($positions->count() > 1) {
-            throw new DomainException('A material requirement spanning multiple batches or locations must be split before return or accountability.');
+            throw new DomainException(__('A material requirement spanning multiple batches or locations must be split before return or accountability.'));
         }
 
         $position = $positions->first();

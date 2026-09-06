@@ -18,6 +18,7 @@ class FixedAssetDepreciation extends Model
     public const StatusReversed = 'reversed';
 
     protected $fillable = [
+        'accumulated_account_id', 'expense_account_id',
         'depreciation_run_id',
         'fixed_asset_id',
         'company_id',

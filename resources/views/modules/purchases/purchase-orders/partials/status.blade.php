@@ -1,7 +1,8 @@
 @php
-    $status = $record->trashed() ? 'deleted' : ($record->status ?? 'draft');
+    $status = $record->trashed() ? 'deleted' : $record->fulfillmentStatus();
     $class = match ($status) {
-        'approved' => 'success',
+        'approved', 'sent', 'fully_received' => 'success',
+        'partially_received' => 'warning',
         'closed' => 'primary',
         'cancelled', 'deleted' => 'danger',
         default => 'secondary',

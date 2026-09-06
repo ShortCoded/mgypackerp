@@ -34,13 +34,13 @@ class InventoryReservationService
 
             if (bccomp($reserveQuantity, '0', 8) <= 0
                 || (! $allowBeyondRequirement && bccomp($reserveQuantity, $remainingRequirement, 8) > 0)) {
-                throw new DomainException('Production reservation must be positive and cannot exceed the unreserved requirement.');
+                throw new DomainException(__('Production reservation must be positive and cannot exceed the unreserved requirement.'));
             }
 
             $branchStore = BranchStore::query()->lockForUpdate()->findOrFail($branchStoreId);
 
             if ((int) $branchStore->branch_id !== (int) $order->branch_id) {
-                throw new DomainException('Production reservations must use a store in the production branch.');
+                throw new DomainException(__('Production reservations must use a store in the production branch.'));
             }
 
             if ($warehouseLocationId !== null && ! WarehouseLocation::query()
@@ -49,7 +49,7 @@ class InventoryReservationService
                 ->where('is_active', true)
                 ->lockForUpdate()
                 ->exists()) {
-                throw new DomainException('Production reservations require an active location in the selected store.');
+                throw new DomainException(__('Production reservations require an active location in the selected store.'));
             }
             $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
             $stockPosition = $this->availableStockPosition(
@@ -61,7 +61,7 @@ class InventoryReservationService
             );
 
             if ($stockPosition === null) {
-                throw new DomainException('The production reservation exceeds available stock.');
+                throw new DomainException(__('The production reservation exceeds available stock.'));
             }
 
             $reservation = InventoryReservation::query()->create([
@@ -141,7 +141,7 @@ class InventoryReservationService
             $consumed = [];
 
             if (bccomp($remaining, '0', 8) <= 0) {
-                throw new DomainException('A consumed reservation quantity must be positive.');
+                throw new DomainException(__('A consumed reservation quantity must be positive.'));
             }
 
             $reservations = InventoryReservation::query()
@@ -171,7 +171,7 @@ class InventoryReservationService
             }
 
             if (bccomp($remaining, '0', 8) > 0) {
-                throw new DomainException('The material issue exceeds active production reservations.');
+                throw new DomainException(__('The material issue exceeds active production reservations.'));
             }
 
             return $consumed;
@@ -182,11 +182,12 @@ class InventoryReservationService
     {
         DB::transaction(function () use ($productionRunId, $reason): void {
             if (trim($reason) === '') {
-                throw new DomainException('A reservation release reason is required.');
+                throw new DomainException(__('A reservation release reason is required.'));
             }
 
             $reservations = InventoryReservation::query()
                 ->where('production_run_id', $productionRunId)
+                ->whereNotNull('production_material_requirement_id')
                 ->where('status', InventoryReservation::StatusActive)
                 ->lockForUpdate()
                 ->get();

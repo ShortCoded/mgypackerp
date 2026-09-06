@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'purchase_requisitions' => 'Purchase Requests',
+    'supplier_payments' => 'Supplier Payments',
+    'supplier_advances' => 'Supplier Advances',
     'administration' => 'Administration',
     'activity_logs' => 'Activity Log',
     'auth_sessions' => 'Active Sessions',
@@ -20,6 +23,7 @@ return [
     'file_manager' => 'File Manager',
     'finance' => 'Finance',
     'fixed_assets' => 'Fixed Assets',
+    'fixed_asset_movements' => 'Asset Movements',
     'fixed_assets_register' => 'Fixed Assets Register',
     'fixed_asset_accounting_mappings' => 'Accounting Mappings',
     'fixed_asset_depreciation' => 'Fixed Asset Depreciation',
@@ -31,6 +35,7 @@ return [
     'supplier_statement' => 'Supplier Statement',
     'sales' => 'Sales',
     'sales_orders' => 'Sales Orders',
+    'sales_requests' => 'Sales Requests',
     'deliveries' => 'Delivery Notes',
     'sales_invoices' => 'Sales Invoices',
     'customer_collections' => 'Customer Collections',
@@ -171,7 +176,7 @@ return [
     'payroll' => 'Payroll',
     'employee_transactions' => 'Employee Transactions',
     'sales_reports' => 'Sales Reports',
-    'reports_sales_sales_orders' => 'Sales Orders',
+    'reports_sales_sales_orders' => 'Sales Reports',
     'purchase_reports' => 'Purchase Reports',
     'inventory_reports' => 'Inventory Reports',
     'production_reports' => 'Production Reports',

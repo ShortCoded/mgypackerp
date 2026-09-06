@@ -25,6 +25,8 @@ class UnpricedInventoryReceipt extends Model
 
     public const StatusDraft = 'draft';
 
+    public const StatusReversed = 'reversed';
+
     public const StatusApproved = 'approved';
 
     public const StatusClosed = 'closed';
@@ -38,6 +40,7 @@ class UnpricedInventoryReceipt extends Model
     protected $table = 'unpriced_inventory_receipts';
 
     protected $fillable = [
+        'reversed_by', 'reversed_at', 'reversal_reason',
         'doc_number',
         'doc_num',
         'document_date',
@@ -94,6 +97,7 @@ class UnpricedInventoryReceipt extends Model
             'approved_at' => 'datetime',
             'received_at' => 'datetime',
             'posted_at' => 'datetime',
+            'reversed_at' => 'datetime',
             'closed_at' => 'datetime',
             'cancelled_at' => 'datetime',
             'created_at' => 'datetime',
@@ -110,7 +114,7 @@ class UnpricedInventoryReceipt extends Model
 
     public function isLockedForEditing(): bool
     {
-        return $this->isApproved() || $this->isClosed() || $this->isCancelled();
+        return $this->isApproved() || $this->isClosed() || $this->isCancelled() || $this->status === self::StatusReversed;
     }
 
     public function isApproved(): bool

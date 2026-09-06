@@ -10,8 +10,29 @@ return [
         'keywords' => ['inventory', 'warehouses', 'opening stock', 'opening inventory', 'المخازن', 'مخزون أول المدة'],
         'active' => [
             'admin.inventory.*',
+            'admin.purchases.purchase-requisitions.*',
         ],
         'children' => [
+            [
+                'label' => 'purchase_requisitions', 'title' => 'Purchase Requisitions', 'icon' => 'clipboard-list',
+                'route' => 'admin.purchases.purchase-requisitions.index', 'permission' => 'purchases.purchase_requisitions.view',
+                'keywords' => ['purchase request', 'طلبات الشراء'],
+                'actions' => [
+                    'view' => 'purchases.purchase_requisitions.view',
+                    'create' => 'purchases.purchase_requisitions.create',
+                    'edit' => 'purchases.purchase_requisitions.edit',
+                    'delete' => 'purchases.purchase_requisitions.delete',
+                    'view_trashed' => 'purchases.purchase_requisitions.view_trashed',
+                    'restore' => 'purchases.purchase_requisitions.restore',
+                    'submit' => 'purchases.purchase_requisitions.submit',
+                    'cancel' => 'purchases.purchase_requisitions.cancel',
+                    'close' => 'purchases.purchase_requisitions.close',
+                    'print' => 'purchases.purchase_requisitions.print',
+                    'approve' => 'purchases.purchase_requisition_approvals.approve',
+                    'reject' => 'purchases.purchase_requisition_approvals.reject',
+                ],
+                'active' => ['admin.purchases.purchase-requisitions.*'], 'children' => [],
+            ],
             [
                 'label' => 'inventory_accounting',
                 'title' => 'Inventory & Manufacturing Accounting',

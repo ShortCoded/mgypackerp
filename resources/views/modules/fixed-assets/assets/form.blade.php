@@ -9,6 +9,7 @@
     $isView = $mode === 'view';
     $isClone = $mode === 'clone';
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
+    $financialLocked = !$isCreateLike && (bool) $record?->isMasterLocked();
     $title = __("fixed_assets.{$mode}");
     $fixedAssetClass = \Modules\FixedAssets\Models\FixedAsset::class;
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
@@ -124,7 +125,7 @@
 @endpush
 
 @section('content')
-    <form class="js-fixed-asset-form js-crud-form" action="{{ $action }}" method="{{ $method }}" data-primary-focus="asset_name" data-mode="{{ $mode }}" data-main-currency-doc-num="{{ $defaults['main_currency_doc_num'] ?? '' }}" novalidate>
+    <form class="js-fixed-asset-form js-crud-form" action="{{ $action }}" method="{{ $method }}" data-financial-locked="{{ $financialLocked ? 1 : 0 }}" data-primary-focus="asset_name" data-mode="{{ $mode }}" data-main-currency-doc-num="{{ $defaults['main_currency_doc_num'] ?? '' }}" novalidate>
         @csrf
         @if($method !== 'POST')
             @method($method)
@@ -137,16 +138,17 @@
         <div class="mb-3 card fixed-asset-form-card">
             <div class="card-header">
                 <div class="row flex-between-center g-2">
-                    <div class="col"><h5 class="mb-0">{{ $title }}</h5></div>
-                    <div class="col-auto d-flex align-items-center gap-2">
+                    <div class="col-12 col-sm"><h5 class="mb-0">{{ $title }}</h5></div>
+                    <div class="col-12 col-sm-auto d-flex flex-wrap align-items-center gap-2">
                         @if($record && ! $record->trashed())
                             <a class="btn btn-falcon-info btn-sm" href="{{ route('admin.fixed-assets.lifecycle.show', $record) }}"><span class="fas fa-id-card me-1"></span>{{ __('fixed_assets.lifecycle.asset_card') }}</a>
                         @endif
-                        @include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets'])
+                        @include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditMaster() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])
                     </div>
                 </div>
             </div>
             <div class="card-body">
+                @if($financialLocked)<div class="alert alert-info">{{ __('fixed_assets.messages.master_locked') }}</div>@endif
                 <div class="alert d-none js-form-alert"><div class="js-form-alert-message"></div></div>
                 <ul class="nav nav-tabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#fixed-asset-basic-tab" type="button" role="tab">{{ __('fixed_assets.tabs.basic_data') }}</button></li>
@@ -345,10 +347,11 @@
                                     <x-forms.view-field for="status" :value="__('fixed_assets.statuses.'.($record?->status ?? 'active'))" />
                                 @else
                                     <select class="form-select" id="status" name="status" required>
-                                        <option value="draft" @selected($value('status') === 'draft')>{{ __('fixed_assets.statuses.draft') }}</option>
-                                        <option value="active" @selected($value('status', 'active') === 'active')>{{ __('fixed_assets.statuses.active') }}</option>
+                                        @if($record && !in_array($record->status, ['draft', 'active', 'suspended', 'inactive'], true))<option value="{{ $record->status }}" selected>{{ __('fixed_assets.statuses.'.$record->status) }}</option>@endif
+                                        <option value="draft" @selected($value('status', 'draft') === 'draft')>{{ __('fixed_assets.statuses.draft') }}</option>
+                                        @if($record && $record->status !== 'draft')<option value="active" @selected($value('status') === 'active')>{{ __('fixed_assets.statuses.active') }}</option>
                                         <option value="suspended" @selected($value('status') === 'suspended')>{{ __('fixed_assets.statuses.suspended') }}</option>
-                                        <option value="inactive" @selected($value('status') === 'inactive')>{{ __('fixed_assets.statuses.inactive') }}</option>
+                                        <option value="inactive" @selected($value('status') === 'inactive')>{{ __('fixed_assets.statuses.inactive') }}</option>@endif
                                     </select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="status"></div>
@@ -433,7 +436,7 @@
                                 <div class="invalid-feedback" data-error-for="salvage_value"></div>
                             </div>
 
-                            <div class="col-md-4">
+                            <div @class(['col-md-4 js-opening-only', 'd-none' => $entryTypeValue !== $fixedAssetClass::EntryTypeOpeningAsset])>
                                 <label class="form-label" for="previous_depreciation">
                                     {{ __('fixed_assets.attributes.previous_depreciation') }}
                                     <span @class(['text-danger ms-1 js-opening-asset-required-marker', 'd-none' => ! $isDepreciableSelected || $entryTypeValue !== $fixedAssetClass::EntryTypeOpeningAsset])>*</span>
@@ -446,7 +449,7 @@
                                 <div class="invalid-feedback" data-error-for="previous_depreciation"></div>
                             </div>
 
-                            <div class="col-md-4">
+                            <div @class(['col-md-4 js-opening-only', 'd-none' => $entryTypeValue !== $fixedAssetClass::EntryTypeOpeningAsset])>
                                 <label class="form-label" for="previous_depreciation_until_date">
                                     {{ __('fixed_assets.attributes.previous_depreciation_until_date') }}
                                     <span @class(['text-danger ms-1 js-previous-depreciation-date-required-marker', 'd-none' => ! $isDepreciableSelected || ! $hasPreviousDepreciation])>*</span>
@@ -461,14 +464,18 @@
 
                             <div class="col-md-4">
                                 <label class="form-label" for="net_value">{{ __('fixed_assets.attributes.net_value') }}</label>
-                                <input class="text-center form-control js-fixed-asset-net-value" id="net_value" type="text" value="{{ $numbers->format($numericValue('net_value')) }}" dir="ltr" readonly>
+                                <input class="text-center form-control js-fixed-asset-net-value" id="net_value" data-master-locked="{{ $financialLocked ? 1 : 0 }}" type="text" value="{{ $numbers->format($numericValue('net_value')) }}" dir="ltr" readonly>
                             </div>
 
-                            @if($isView)
-                                <div class="col-md-4">
-                                    <x-forms.view-field for="depreciation_start_date" :label="__('fixed_assets.attributes.depreciation_start_date')" :value="$formatDate($record?->depreciation_start_date)" />
-                                </div>
-                            @endif
+                            <div class="col-md-4">
+                                <x-forms.label for="depreciation_start_date" :label="__('fixed_assets.attributes.depreciation_start_date')" />
+                                @if($isView)
+                                    <x-forms.view-field for="depreciation_start_date" :value="$formatDate($record?->depreciation_start_date)" />
+                                @else
+                                    <input class="form-control js-date-picker" name="depreciation_start_date" id="depreciation_start_date" value="{{ $dateValue('depreciation_start_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}">
+                                @endif
+                                <div class="invalid-feedback" data-error-for="depreciation_start_date"></div>
+                            </div>
 
                             <div @class([
                                 'col-md-4 js-fixed-asset-method-field-container',
@@ -499,7 +506,7 @@
                                 @else
                                     <x-forms.numeric-input class="text-center js-fixed-asset-depreciation-rate js-fixed-asset-depreciation-control js-fixed-asset-method-control" id="annual_depreciation_rate" name="annual_depreciation_rate" :value="$annualDepreciationRateValue" :scale="4" min="0.0001" max="100" step="0.0001" :required="$requiresAnnualDepreciationRate" :disabled="! $isDepreciableSelected || ! in_array($depreciationMethodValue, [$fixedAssetClass::DepreciationMethodStraightLine, $fixedAssetClass::DepreciationMethodDecliningBalance], true)" />
                                 @endif
-                                <div class="invalid-feedback" data-error-for="annual_depreciation_rate"></div>
+                                <div class="invalid-feedback" data-error-for="annual_depreciation_rate"></div><small class="text-muted js-straight-line-hint">{{ __('fixed_assets.cycle.life_input') }}</small>
                             </div>
 
                             <div @class([
@@ -587,7 +594,7 @@
                     />
                 @endif
             </div>
-            <div class="card-footer">@include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets'])</div>
+            <div class="card-footer">@include('modules.finance.partials.form-actions', ['resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets', 'canEditRecord' => $record?->canEditMaster() ?? true, 'canDeleteRecord' => $record?->canEditMaster() ?? true])</div>
         </div>
     </form>
 

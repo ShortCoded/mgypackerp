@@ -24,7 +24,7 @@ class SalesUnitConversionService
         $selectedUnitId = (int) ($unitId ?: $product->item_unit_id);
 
         if (! in_array($selectedUnitId, $this->unitOptions->validUnitIds($product), true)) {
-            throw new DomainException('The selected unit is not configured for this product.');
+            throw new DomainException(__('The selected unit is not configured for this product.'));
         }
 
         $selectedUnit = ItemUnit::query()
@@ -34,14 +34,14 @@ class SalesUnitConversionService
         $baseUnit = $product->unit;
 
         if (! $selectedUnit instanceof ItemUnit || ! $baseUnit instanceof ItemUnit) {
-            throw new DomainException('The product requires an active base unit.');
+            throw new DomainException(__('The product requires an active base unit.'));
         }
 
         $factor = $this->conversions->convert('1', $product, $selectedUnit, $product, $baseUnit, 8);
         $baseQuantity = $this->conversions->convert((string) $quantity, $product, $selectedUnit, $product, $baseUnit, 8);
 
         if ($factor === null || $baseQuantity === null || bccomp($factor, '0', 8) <= 0) {
-            throw new DomainException('The selected product unit has no unambiguous conversion to the base unit.');
+            throw new DomainException(__('The selected product unit has no unambiguous conversion to the base unit.'));
         }
 
         return [

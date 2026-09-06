@@ -332,6 +332,8 @@
         </div>
     </form>
 
+    @if($isView) @include('modules.purchases.suppliers.procurement-overview') @endif
+
     @unless($isView)
         <div class="modal fade" id="supplier-inline-modal" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog">

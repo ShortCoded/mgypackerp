@@ -7,7 +7,7 @@
         $relatedDocuments = collect([
             ['label' => __('Production Order'), 'number' => $record->order?->doc_num, 'url' => $record->order ? route('admin.production.work-orders.show', $record->order) : null, 'permission' => 'production.orders.view'],
             ['label' => __('Sales Requirement / Order'), 'number' => $record->order?->salesOrder?->doc_num, 'url' => $record->order?->salesOrder ? route('admin.sales.sales-orders.show', $record->order->salesOrder) : null, 'permission' => 'sales_orders.view'],
-            ...$record->inventoryDocuments->map(fn ($document) => ['label' => str($document->document_type)->replace('_', ' ')->title(), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => $document->status])->all(),
+            ...$record->inventoryDocuments->map(fn ($document) => ['label' => __(str($document->document_type)->replace('_', ' ')->title()->toString()), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => __(str($document->status)->replace('_', ' ')->title()->toString())])->all(),
             ...$record->inspections->map(fn ($inspection) => ['label' => __('QC Sample'), 'number' => $inspection->doc_num, 'url' => null, 'permission' => null, 'meta' => $inspection->result])->all(),
         ]);
     @endphp
@@ -17,7 +17,7 @@
 
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between">
-            <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ str($record->status)->title() }}</span></div>
+            <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</span></div>
             @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
         </div>
         <div class="card-body"><div class="row g-2">

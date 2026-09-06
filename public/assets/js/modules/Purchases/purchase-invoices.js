@@ -301,6 +301,7 @@
         url: $table.data('url'),
           data: function (data) {
             data.trash_filter = trashFilterValue();
+          $('#purchase-document-filters form').serializeArray().forEach(field => {data[field.name] = field.value;});
           }
       },
       columns: tableColumns(),
@@ -310,6 +311,8 @@
         restoreSelectionState(purchaseInvoiceTable);
       }
     }));
+    $('#purchase-document-filters form').on('submit', function(event) {event.preventDefault(); purchaseInvoiceTable.ajax.reload();});
+    $('#purchase-document-filters .js-report-reset').on('click', function() {const form=this.closest('form'); form.reset(); $(form).find('.js-select2-ajax').val(null).trigger('change'); purchaseInvoiceTable.ajax.reload();});
 
     $table.on('change', 'input.js-record-select', function () {
       const docNum = checkboxDocNum(this);
@@ -610,7 +613,7 @@
     const $freight = $form.find('.js-purchase-invoice-freight');
 
     $form.find('.js-purchase-invoice-freight-match').text(
-      $option.val() ? 'Approved: ' + formatAmount(approved) + ' / Previously invoiced: ' + formatAmount(invoiced) + ' / Remaining: ' + formatAmount(remaining) : ''
+      $option.val() ? (messages.approved_quantity || '') + ': ' + formatAmount(approved) + ' / ' + (messages.previously_invoiced || '') + ': ' + formatAmount(invoiced) + ' / ' + (messages.remaining_quantity || '') + ': ' + formatAmount(remaining) : ''
     );
 
     if (fillRemaining && number($freight.val()) === 0) {
@@ -662,7 +665,7 @@
     $row.find('.js-purchase-invoice-discount-value, .js-purchase-invoice-tax-rate').val('0');
     $row.find('select.js-purchase-invoice-product').empty();
     $row.find('select.js-purchase-invoice-unit').empty();
-    $row.find('select[name$="[purchase_order_line_public_id]"], select[name$="[receipt_line_public_id]"]').val('');
+    $row.find('[name$="[purchase_order_line_public_id]"], [name$="[receipt_line_public_id]"]').val('');
     $row.find('select.js-purchase-invoice-discount-type').val('fixed');
     $row.find('.js-purchase-invoice-line-subtotal, .js-purchase-invoice-line-discount, .js-purchase-invoice-line-tax, .js-purchase-invoice-line-total').text('0');
     initRepeaterRow($row);
@@ -804,6 +807,14 @@
 
     $form.on('change input', '.js-purchase-invoice-line-number, .js-purchase-invoice-discount-type, .js-purchase-invoice-header-discount-type, .js-purchase-invoice-header-discount-value, .js-purchase-invoice-freight, .js-purchase-invoice-freight-tax-rate, .js-purchase-invoice-schedule-amount', function () {
       calculateTotals($form);
+    });
+
+    $form.on('click', '[data-load-invoice-source]', function () {
+      const url = new URL(this.dataset.loadInvoiceSource, location.href);
+      const order = $form.find('#purchase_order_doc_num').val();
+      if (order) url.searchParams.set('purchase_order', order);
+      ($form.find('#source_receipts').val() || []).forEach(value => url.searchParams.append('receipts[]',value));
+      location.href = url.href;
     });
 
     $form.on('change', '#purchase_order_doc_num', function () {

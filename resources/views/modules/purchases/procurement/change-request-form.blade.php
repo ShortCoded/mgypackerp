@@ -3,6 +3,7 @@
 @section('content')
 <form method="POST" action="{{ route('admin.purchases.purchase-order-change-requests.store', $record->doc_num) }}">
     @csrf
+        <x-forms.line-item-cards />
     <div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Controlled Change for PO :document', ['document' => $record->doc_num]) }}</h5></div><div class="card-body">
         @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
         <div class="row g-3"><div class="col-md-3"><label class="form-label">{{ __('Request date') }}</label><input class="form-control" type="date" name="request_date" value="{{ now()->toDateString() }}" required></div><div class="col-md-3"><label class="form-label">{{ __('Expected delivery') }}</label><input class="form-control" type="date" name="requested_values[expected_delivery_date]" value="{{ $record->expected_delivery_date?->toDateString() }}"></div><div class="col-md-3"><label class="form-label">{{ __('Payment terms') }}</label><input class="form-control" name="requested_values[payment_terms]" value="{{ $record->payment_terms }}"></div><div class="col-md-3"><label class="form-label">{{ __('Reason') }}</label><input class="form-control" name="reason" required></div><div class="col-12"><label class="form-label">{{ __('Updated notes') }}</label><input class="form-control" name="requested_values[notes]" value="{{ $record->notes }}"></div></div>

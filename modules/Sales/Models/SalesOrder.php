@@ -15,6 +15,7 @@ use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\Models\ProductionOrder;
 
@@ -67,6 +68,11 @@ class SalesOrder extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function salesRequest(): BelongsTo
+    {
+        return $this->belongsTo(SalesRequest::class);
     }
 
     public function resolveRouteBinding($value, $field = null): ?self
@@ -132,9 +138,15 @@ class SalesOrder extends Model
         return $this->belongsTo(QuotationRevision::class);
     }
 
-    public function salesEmployee(): BelongsTo
+    /** Legacy authentication reference retained without inferring an employee mapping. */
+    public function legacySalesUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sales_employee_id');
+    }
+
+    public function salesEmployee(): BelongsTo
+    {
+        return $this->belongsTo(HrEmployee::class, 'business_employee_id')->withTrashed();
     }
 
     public function lines(): HasMany

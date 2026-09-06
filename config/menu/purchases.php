@@ -11,6 +11,23 @@ return [
         'active' => [
             'admin.purchases.*',
         ],
+        'actions' => [
+            'delete_receipt' => 'purchases.goods_receipt_notes.delete',
+            'receipt_trash' => 'purchases.goods_receipt_notes.view_trashed',
+            'restore_receipt' => 'purchases.goods_receipt_notes.restore',
+            'return_trash' => 'purchases.purchase_returns.view_trashed',
+            'restore_return' => 'purchases.purchase_returns.restore',
+            'rfq_trash' => 'purchases.request_for_quotations.view_trashed',
+            'restore_rfq' => 'purchases.request_for_quotations.restore',
+            'quotation_trash' => 'purchases.supplier_quotation_entry.view_trashed',
+            'restore_quotation' => 'purchases.supplier_quotation_entry.restore',
+            'post_receipt' => 'purchases.goods_receipt_notes.post',
+            'reverse_receipt' => 'purchases.goods_receipt_notes.reverse',
+            'edit_return' => 'purchases.purchase_returns.edit',
+            'delete_return' => 'purchases.purchase_returns.delete',
+            'post_return' => 'purchases.purchase_returns.post',
+            'reverse_return' => 'purchases.purchase_returns.reverse',
+        ],
         'children' => [
             [
                 'label' => 'suppliers',
@@ -51,6 +68,9 @@ return [
                     'view_trashed' => 'purchase_orders.view_trashed',
                     'restore' => 'purchase_orders.restore',
                     'approve' => 'purchase_orders.approve',
+                    'submit' => 'purchase_orders.submit',
+                    'reject' => 'purchase_orders.reject',
+                    'send' => 'purchase_orders.send',
                     'close' => 'purchase_orders.close',
                     'cancel' => 'purchase_orders.cancel',
                     'print' => 'purchase_orders.print',

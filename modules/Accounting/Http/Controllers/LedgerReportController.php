@@ -128,6 +128,7 @@ class LedgerReportController extends Controller
         $filters = [
             'company_id' => (int) $context['company_id'],
             'financial_period_id' => (int) $context['financial_period_id'],
+            'all_periods' => $type === 'customer_statement' && $request->boolean('all_periods'),
             'account_id' => (int) $account->getKey(),
             'from_date' => $validated['from_date'],
             'to_date' => $validated['to_date'],
@@ -139,7 +140,7 @@ class LedgerReportController extends Controller
         if ($type === 'customer_statement') {
             $result['subledger_events'] = $this->customerSubledgerEvents(
                 (int) $selected['id'],
-                (int) $context['financial_period_id'],
+                $filters['all_periods'] ? null : (int) $context['financial_period_id'],
                 $validated['from_date'],
                 $validated['to_date'],
             );
@@ -178,11 +179,11 @@ class LedgerReportController extends Controller
     }
 
     /** @return list<array<string, mixed>> */
-    private function customerSubledgerEvents(int $customerId, int $periodId, string $fromDate, string $toDate): array
+    private function customerSubledgerEvents(int $customerId, ?int $periodId, string $fromDate, string $toDate): array
     {
         $invoices = CustomerInvoice::query()
             ->where('customer_id', $customerId)
-            ->where('financial_period_id', $periodId)
+            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
             ->where('posting_status', 'posted')
             ->whereBetween('invoice_date', [$fromDate, $toDate])
             ->get()
@@ -198,7 +199,7 @@ class LedgerReportController extends Controller
             ]);
         $receipts = CustomerReceipt::query()
             ->where('customer_id', $customerId)
-            ->where('financial_period_id', $periodId)
+            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
             ->where('status', CustomerReceipt::StatusApproved)
             ->whereBetween('receipt_date', [$fromDate, $toDate])
             ->get()
@@ -211,7 +212,7 @@ class LedgerReportController extends Controller
         $allocations = CustomerCreditAllocation::query()
             ->with(['creditNote', 'targetInvoice'])
             ->where('customer_id', $customerId)
-            ->where('financial_period_id', $periodId)
+            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
             ->whereBetween('allocation_date', [$fromDate, $toDate])
             ->get()
             ->map(fn (CustomerCreditAllocation $allocation): array => [
@@ -223,7 +224,7 @@ class LedgerReportController extends Controller
         $refunds = CustomerCreditRefund::query()
             ->with('creditNote')
             ->where('customer_id', $customerId)
-            ->where('financial_period_id', $periodId)
+            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
             ->whereBetween('refund_date', [$fromDate, $toDate])
             ->get()
             ->map(fn (CustomerCreditRefund $refund): array => [

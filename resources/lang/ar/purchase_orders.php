@@ -86,6 +86,11 @@ return [
         'payment_terms_supplier_default' => 'تُستخدم شروط المورد الافتراضية عند ترك الحقل فارغًا',
     ],
     'statuses' => [
+        'submitted' => 'قيد الاعتماد',
+        'rejected' => 'مرفوض',
+        'sent' => 'تم الإرسال',
+        'fully_received' => 'مستلم بالكامل',
+        'partially_received' => 'مستلم جزئيًا',
         'draft' => 'مسودة',
         'approved' => 'معتمد',
         'closed' => 'مغلق',

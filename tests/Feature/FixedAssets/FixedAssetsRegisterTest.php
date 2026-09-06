@@ -206,17 +206,18 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
     $authorizedAccounting = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'accounting_costing');
     $authorizedFixedAssets = collect($authorizedAccounting['children'])->firstWhere('label', 'fixed_assets');
     $authorizedReports = collect(app(MenuService::class)->getMenu($fullyAuthorized))->firstWhere('label', 'reports');
-    $assetReports = collect($authorizedReports['children'])->firstWhere('label', 'asset_reports');
+    $assetReports = collect($authorizedReports['children'] ?? [])->firstWhere('label', 'asset_reports');
     $canonicalChildren = collect($authorizedFixedAssets['children'] ?? [])
-        ->flatMap(fn (array $group): array => array_column($group['children'] ?? [$group], 'label'))
+        ->flatMap(fn (array $group): array => empty($group['children']) ? [$group['label']] : array_column($group['children'], 'label'))
         ->all();
 
     expect($canonicalChildren)->toEqualCanonicalizing([
         'fixed_assets_register',
-        'fixed_asset_accounting_mappings',
+        'fixed_asset_movements',
         'fixed_asset_depreciation',
-    ])->not->toContain('fixed_asset_reports', 'asset_inspection', 'asset_documents', 'asset_insurance')
-        ->and(collect($assetReports['children'])->pluck('label')->all())->toBe(['fixed_asset_reports']);
+        'fixed_asset_reports',
+    ])->not->toContain('asset_inspection', 'asset_documents', 'asset_insurance')
+        ->and($assetReports)->toBeNull();
 
     $blocked = fixedAssetsActor(['customers.view']);
     $this->actingAs($blocked);
@@ -307,6 +308,7 @@ test('Fixed Asset form trims numeric values and defaults main currency exchange 
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Numeric Display Asset',
+        'status' => 'draft',
         'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '1000.5000',
         'previous_depreciation' => '100.2500',
@@ -339,7 +341,7 @@ test('Fixed Asset can be created and links a postable account under Fixed Assets
 
     $response->assertOk()
         ->assertJsonPath('success', true)
-        ->assertJsonPath('redirect', route('admin.fixed-assets.assets.create'));
+        ->assertJsonPath('redirect', route('admin.fixed-assets.assets.show', $response->json('data.doc_num')));
 
     $asset = FixedAsset::query()->where('asset_name', $payload['asset_name'])->firstOrFail();
     $account = Account::query()->findOrFail($asset->account_id);
@@ -369,6 +371,7 @@ test('Fixed Asset ignores submitted account id and keeps the linked account inte
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Internal Account Asset',
+        'status' => 'draft',
         'account_id' => $root->getKey(),
     ]))->assertOk();
 
@@ -703,7 +706,7 @@ test('Fixed Asset reporting fields validate and calculate depreciation readiness
 
     $openingAsset = FixedAsset::query()->where('asset_name', 'Opening Depreciation Start Asset')->firstOrFail();
 
-    expect($openingAsset->depreciation_start_date?->toDateString())->toBe(Carbon::parse($previousUntil)->addDay()->toDateString())
+    expect($openingAsset->depreciation_start_date?->toDateString())->toBe($openingAsset->operation_date->toDateString())
         ->and((float) $openingAsset->net_value)->toBe(875.0);
 
     $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
@@ -746,8 +749,8 @@ test('Fixed Asset depreciation methods validate method-specific fields and clear
         'operation_date' => '',
         'depreciation_method' => FixedAsset::DepreciationMethodUnitsOfProduction,
         'salvage_value' => '100',
-        'previous_depreciation' => '50',
-        'previous_depreciation_until_date' => $context['period']->from_date->toDateString(),
+        'previous_depreciation' => '0',
+        'previous_depreciation_until_date' => null,
         'useful_life' => '7',
         'annual_depreciation_rate' => '12',
         'expected_usage_units' => '5000',
@@ -1253,6 +1256,17 @@ test('Fixed Asset categories exclude same-company groups outside the canonical r
         ->orderBy('account_code')
         ->take(5)
         ->get();
+    foreach (['accumulated_depreciation', 'depreciation_expense', 'gain_on_asset_disposal', 'loss_on_asset_disposal'] as $index => $code) {
+        $classification = AccountClassification::query()->where('code', $code)->firstOrFail();
+        $parent = Account::query()->where('company_id', $context['company']->getKey())->where('account_classification_id', $classification->getKey())->where('is_group', true)->first();
+        $postingAccounts[$index] = Account::query()->create([
+            'company_id' => $context['company']->getKey(), 'doc_number' => 98000 + $index, 'doc_num' => 'ACC-9800'.$index,
+            'account_code' => '9800'.$index, 'name' => $code, 'parent_id' => $parent?->getKey(),
+            'account_classification_id' => $classification->getKey(), 'account_type' => $classification->account_type,
+            'statement_type' => $classification->statement_type, 'normal_balance' => $classification->normal_balance,
+            'is_group' => false, 'is_postable' => true, 'status' => 'active',
+        ]);
+    }
 
     $this->from(route('admin.fixed-assets.accounting.index'))
         ->post(route('admin.fixed-assets.accounting.store'), [
@@ -1394,6 +1408,7 @@ test('Fixed Asset image picker stores serves previews and removes archive image 
 
     $response = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetsPayload($context, [
         'asset_name' => 'Asset With Image',
+        'status' => 'draft',
         'image_archive_file_doc_num' => $file->doc_num,
     ]))
         ->assertOk()
@@ -1420,6 +1435,7 @@ test('Fixed Asset image picker stores serves previews and removes archive image 
 
     $this->putJson(route('admin.fixed-assets.assets.update', $asset->doc_num), fixedAssetsPayload($context, [
         'asset_name' => 'Asset With Image',
+        'status' => 'draft',
         'remove_image' => '1',
     ]))
         ->assertOk()
@@ -1508,7 +1524,8 @@ test('Fixed Asset view page does not show a separate linked account field', func
         ->assertSee('View Asset Name')
         ->assertSee(__('fixed_assets.attributes.asset_group_account'))
         ->assertSee(__('fixed_assets.attributes.entry_type'))
-        ->assertSee(__('fixed_assets.attributes.previous_depreciation'))
+        ->assertDontSee(__('fixed_assets.attributes.previous_depreciation'))
+        ->assertSee(__('fixed_assets.reports.columns.accumulated_depreciation'))
         ->assertSee(__('fixed_assets.attributes.depreciation_start_date'))
         ->assertDontSee('linked_account', false)
         ->assertDontSee('Linked Account')

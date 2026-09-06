@@ -1,4 +1,6 @@
-@props(['identity'])
+@props(['identity', 'policy' => 'report', 'company' => null])
+@php($showIdentity = app(\Modules\Core\Services\CompanyPrintIdentityService::class)->shouldShow($policy, $company))
+@if($showIdentity)
 
 @php
     $hasSignatory = $identity['authorized_signatory_name']
@@ -29,4 +31,6 @@
             @endif
         </div>
     </footer>
+@endif
+
 @endif

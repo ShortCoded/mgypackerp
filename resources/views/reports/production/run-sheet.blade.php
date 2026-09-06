@@ -11,7 +11,7 @@
         <tr><th>{{ __('Shift') }}</th><td>{{ $record->shift?->name ?: '—' }}</td><th>{{ __('Batch / lot') }}</th><td dir="ltr">{{ $record->batch_lot ?: '—' }}</td></tr>
         <tr><th>{{ __('Planned start') }}</th><td>{{ $dates->formatDateTime($record->planned_start_at, '') }}</td><th>{{ __('Planned end') }}</th><td>{{ $dates->formatDateTime($record->planned_end_at, '') }}</td></tr>
         <tr><th>{{ __('Actual start') }}</th><td>{{ $dates->formatDateTime($record->actual_start_at, '—') }}</td><th>{{ __('Actual end') }}</th><td>{{ $dates->formatDateTime($record->actual_end_at, '—') }}</td></tr>
-        <tr><th>{{ __('Target') }}</th><td dir="ltr">{{ $numbers->format($record->planned_base_quantity) }}</td><th>{{ __('Status') }}</th><td>{{ str($record->status)->replace('_', ' ')->title() }}</td></tr>
+        <tr><th>{{ __('Target') }}</th><td dir="ltr">{{ $numbers->format($record->planned_base_quantity) }}</td><th>{{ __('Status') }}</th><td>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td></tr>
     </tbody></table>
 
     <h3>{{ __('Material Requirement and Accountability') }}</h3>
@@ -26,7 +26,7 @@
 
     <h3>{{ __('In-Process Quality') }}</h3>
     <table class="report-table"><thead><tr><th>{{ __('Inspection') }}</th><th>{{ __('Sampled at') }}</th><th>{{ __('Result') }}</th><th>{{ __('Defect') }}</th><th>{{ __('Affected quantity') }}</th><th>{{ __('Corrective action / notes') }}</th></tr></thead><tbody>
-        @forelse($record->inspections as $inspection)<tr><td dir="ltr">{{ $inspection->doc_num }}</td><td>{{ $dates->formatDateTime($inspection->sampled_at, '') }}</td><td>{{ str($inspection->result)->title() }}</td><td dir="ltr">{{ $inspection->defect_code }}</td><td>{{ $numbers->format($inspection->affected_base_quantity) }}</td><td>{{ $inspection->corrective_action }} {{ $inspection->notes }}</td></tr>@empty<tr><td colspan="6">{{ __('No quality inspections.') }}</td></tr>@endforelse
+        @forelse($record->inspections as $inspection)<tr><td dir="ltr">{{ $inspection->doc_num }}</td><td>{{ $dates->formatDateTime($inspection->sampled_at, '') }}</td><td>{{ __(str($inspection->result)->replace('_', ' ')->title()->toString()) }}</td><td dir="ltr">{{ $inspection->defect_code }}</td><td>{{ $numbers->format($inspection->affected_base_quantity) }}</td><td>{{ $inspection->corrective_action }} {{ $inspection->notes }}</td></tr>@empty<tr><td colspan="6">{{ __('No quality inspections.') }}</td></tr>@endforelse
     </tbody></table>
 
     <h3>{{ __('Output Accountability') }}</h3>

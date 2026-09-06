@@ -206,6 +206,7 @@ class InventoryReportService
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->whereHas('branchStore', fn ($storeQuery) => $storeQuery->where('branch_id', $branchId)))
             ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
             ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->where('product_id', $productId))
+            ->when($filters['source_doc_num'] ?? null, fn ($query, $number) => $query->where('source_doc_num', $number))
             ->when($filters['transaction_type'] ?? null, fn ($query, $type) => $query->where('transaction_type', $type))
             ->when($filters['transaction_types'] ?? null, fn ($query, $types) => $query->whereIn('transaction_type', $types))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('transaction_date', '>=', $from))

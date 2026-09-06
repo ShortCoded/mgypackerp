@@ -22,6 +22,7 @@ use Modules\Purchases\Http\Requests\StoreSupplierRequest;
 use Modules\Purchases\Http\Requests\UpdateSupplierDocumentNumberSettingsRequest;
 use Modules\Purchases\Http\Requests\UpdateSupplierRequest;
 use Modules\Purchases\Models\Supplier;
+use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 use Modules\Purchases\Services\SupplierService;
 
 class SupplierController extends Controller
@@ -180,6 +181,7 @@ class SupplierController extends Controller
         $record?->loadMissing(['account', 'accountGroup', 'country', 'governorate', 'cityLookup', 'area', 'creditLimits.currency']);
 
         return view('modules.purchases.suppliers.form', [
+            'procurementOverview' => $mode === 'view' && $record ? app(ProcurementCycleReport::class)->supplierOverview($record) : null,
             'mode' => $mode,
             'record' => $record,
             'action' => in_array($mode, ['create', 'clone'], true) ? route('admin.purchases.suppliers.store') : route('admin.purchases.suppliers.update', $record?->doc_num),

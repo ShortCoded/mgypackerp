@@ -4,6 +4,7 @@ namespace Modules\Sales\Services;
 
 use Illuminate\Support\Facades\DB;
 use Modules\Sales\Models\CustomerCommercialAgreement;
+use Modules\Sales\Models\CustomerCreditLimit;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesOrder;
@@ -11,6 +12,22 @@ use Modules\Sales\Models\SalesOrder;
 class CreditControlService
 {
     public function __construct(private readonly SalesAmountService $amounts) {}
+
+    /** @return array<string, mixed> */
+    public function snapshotFor(?CustomerCommercialAgreement $agreement, int $companyId, int $customerId, ?int $currencyId): array
+    {
+        if ($agreement) {
+            return $agreement->snapshot();
+        }
+
+        return [
+            'customer_type' => CustomerCommercialAgreement::TypeCredit,
+            'credit_limit' => (string) (CustomerCreditLimit::query()->where('company_id', $companyId)
+                ->where('customer_id', $customerId)->where('currency_id', $currencyId)->value('credit_limit') ?? '0'),
+            'blocking_enabled' => true,
+            'include_open_orders' => true,
+        ];
+    }
 
     public function agreementFor(SalesOrder $order): ?CustomerCommercialAgreement
     {
@@ -28,7 +45,7 @@ class CreditControlService
     public function evaluate(SalesOrder $order): array
     {
         $agreement = $this->agreementFor($order);
-        $snapshot = $order->agreement_snapshot ?? $agreement?->snapshot() ?? [];
+        $snapshot = $order->agreement_snapshot ?? $this->snapshotFor($agreement, $order->company_id, $order->customer_id, $order->currency_id);
         $creditLimit = (string) ($snapshot['credit_limit'] ?? '0');
         $isCash = ($snapshot['customer_type'] ?? CustomerCommercialAgreement::TypeCredit) === CustomerCommercialAgreement::TypeCash;
         $blockingEnabled = (bool) ($snapshot['blocking_enabled'] ?? true);
@@ -63,6 +80,7 @@ class CreditControlService
         return (string) CustomerInvoice::query()
             ->where('company_id', $order->company_id)
             ->where('customer_id', $order->customer_id)
+            ->where('currency_id', $order->currency_id)
             ->where('posting_status', 'posted')
             ->where('document_type', CustomerInvoice::TypeInvoice)
             ->sum('remaining_amount');
@@ -73,9 +91,10 @@ class CreditControlService
         $orders = SalesOrder::query()
             ->where('company_id', $order->company_id)
             ->where('customer_id', $order->customer_id)
+            ->where('currency_id', $order->currency_id)
             ->whereKeyNot($order->getKey())
             ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit])
-            ->withSum(['invoices as invoiced_amount' => fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice)], 'total_amount')
+            ->withSum(['invoices as invoiced_amount' => fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')], 'total_amount')
             ->get();
 
         return $this->amounts->sum($orders->map(function (SalesOrder $openOrder): string {
@@ -90,7 +109,7 @@ class CreditControlService
         return (string) DB::table('customer_receipts')
             ->where('sales_order_id', $order->getKey())
             ->where('receipt_type', CustomerReceipt::TypeAdvance)
-            ->where('status', CustomerReceipt::StatusApproved)
+            ->where('status', CustomerReceipt::StatusApproved)->whereNotNull('journal_entry_id')
             ->sum('amount');
     }
 }

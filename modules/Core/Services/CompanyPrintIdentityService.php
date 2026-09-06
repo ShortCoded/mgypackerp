@@ -45,6 +45,7 @@ class CompanyPrintIdentityService
         ]);
 
         return [
+            'company_id' => $company->getKey(),
             'name' => (string) $company->name,
             'legal_name' => $this->nullableString($company->legal_name),
             'logo_url' => $this->logoUrl($company->logo),
@@ -62,6 +63,25 @@ class CompanyPrintIdentityService
             'authorized_signatory_signature_url' => $this->archiveImageUrl($company->authorizedSignatorySignatureArchiveFile),
             'authorized_signatory_signature_source' => $this->archiveImageSource($company->authorizedSignatorySignatureArchiveFile),
         ];
+    }
+
+    public function policyForView(string $view): string
+    {
+        return match ($view) {
+            'reports.sales.quotation' => 'quotation',
+            'modules.purchases.procurement.print', 'modules.purchases.purchase-orders.print',
+            'modules.purchases.purchase-invoices.print', 'reports.inventory.document',
+            'reports.inventory.opening-stock', 'reports.inventory.stock-count', 'reports.sales.document',
+            'reports.sales.customer-credit-refund', 'modules.finance.cash-vouchers.print',
+            'modules.finance.cheques.print', 'reports.production.run-sheet' => 'operational',
+            default => 'report',
+        };
+    }
+
+    public function shouldShow(string $policy, ?Company $company = null): bool
+    {
+        return in_array($policy, ['quotation', 'legal', 'report'], true)
+            || (bool) $company?->show_company_identity_on_prints;
     }
 
     private function logoUrl(mixed $path): ?string

@@ -118,7 +118,6 @@ class CustomerCreditService
 
             $numbers = $this->documents->nextForCompany(
                 'customer_credit_refunds', CustomerCreditRefund::class, (int) $credit->company_id,
-                fn ($query) => $query->where('financial_period_id', $data['financial_period_id']),
             );
             $refund = CustomerCreditRefund::query()->create([
                 ...$numbers, 'company_id' => $credit->company_id, 'financial_period_id' => $data['financial_period_id'],

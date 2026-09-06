@@ -1,3 +1,4 @@
+@if($showCompanyIdentity ?? true)
 @php
     $identity = $companyPrintIdentity ?? [];
     $hasAuthorization = ($identity['authorized_signatory_name'] ?? null)
@@ -25,4 +26,6 @@
             </td>
         </tr>
     </table>
+@endif
+
 @endif

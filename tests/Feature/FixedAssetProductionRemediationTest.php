@@ -371,7 +371,7 @@ test('apply refuses a reviewed manifest after financial state drift', function (
             $expectations,
             $review['review_token'],
             $review['production_acknowledgement'],
-        ))->toThrow(DomainException::class, 'journal-line count differs')
+        ))->toThrow(DomainException::class, __('The :role journal-line count differs from the expected value.', ['role' => 'canonical']))
             ->and((int) $pair['asset']->refresh()->account_id)->toBe((int) $pair['new']->getKey())
             ->and($pair['new']->refresh()->trashed())->toBeFalse();
     } finally {

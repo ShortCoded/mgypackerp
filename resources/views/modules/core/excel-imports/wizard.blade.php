@@ -128,7 +128,7 @@
                                 @endforeach
                             </select>
                             <input class="form-control form-control-sm" name="q" value="{{ request('q') }}" placeholder="{{ __('excel_imports.review.search') }}">
-                            <button class="btn btn-falcon-default btn-sm" type="submit">{{ __('common.actions.search') }}</button>
+                            <button class="btn btn-falcon-default btn-sm" type="submit">{{ __('common.search') }}</button>
                         </form>
                         <div class="d-flex flex-wrap gap-2">
                             @if($batch->error_rows > 0)

@@ -22,6 +22,10 @@ return [
         'last' => '<span class="fas fa-angle-double-left"></span>',
     ],
     'aria' => [
+        'orderable' => ': اضغط للترتيب',
+        'orderableReverse' => ': اضغط لعكس الترتيب',
+        'orderableRemove' => ': اضغط لإلغاء الترتيب',
+        'paginate' => ['first' => 'الأولى', 'previous' => 'السابقة', 'next' => 'التالية', 'last' => 'الأخيرة'],
         'sortAscending' => ': تفعيل لترتيب العمود تصاعديًا',
         'sortDescending' => ': تفعيل لترتيب العمود تنازليًا',
     ],

@@ -81,6 +81,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
         $companyId = $this->input('company_id');
 
         return [
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
+            'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'doc_number' => ['nullable', 'integer', 'min:1', $this->uniqueDocumentNumberRule()],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'financial_period_doc_num' => [
@@ -162,7 +164,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->where('is_group', false)
                     ->whereNull('deleted_at')),
             ],
-            'lines.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],

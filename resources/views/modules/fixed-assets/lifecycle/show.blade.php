@@ -1,29 +1,46 @@
 @extends('layouts.app')
-
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $imageUrl = app(\Modules\FixedAssets\Services\FixedAssetImageResolver::class)->url($asset);
-    $operational = in_array($asset->status, [\Modules\FixedAssets\Models\FixedAsset::StatusActive, \Modules\FixedAssets\Models\FixedAsset::StatusSuspended, \Modules\FixedAssets\Models\FixedAsset::StatusFullyDepreciated], true) && ! $asset->isDisposed();
-    $mapping = $asset->categoryMapping;
+    $mapping = $displayMapping;
     $lastDepreciation = $asset->postedDepreciations->last();
+    $recognized = $asset->hasPostedRecognition();
+    $canTransact = $recognized && !$asset->isDisposed() && in_array($asset->status, ['active', 'suspended', 'fully_depreciated'], true);
+    $recognitionLabel = __('fixed_assets.product.'.($asset->entry_type === 'opening_asset' ? 'open' : 'capitalize'));
 @endphp
-
-@section('title', __('fixed_assets.lifecycle.asset_card').' '.$asset->doc_num)
-
+@section('title', $asset->doc_num.' / '.$asset->asset_name)
 @section('content')
-    @if(session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
-    @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
-
-    <div class="card mb-3">
-        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <div><h5 class="mb-1">{{ __('fixed_assets.lifecycle.asset_card') }}</h5><span class="text-700">{{ $asset->doc_num }} / {{ $asset->asset_name }}</span></div>
-            <div class="d-flex gap-2">
-                @can('fixed_assets.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.fixed-assets.prints.asset', $asset) }}"><span class="fas fa-print me-1"></span>{{ __('common.actions.print') }}</a>@endcan
-                @can('fixed_assets.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.edit', $asset) }}">{{ __('common.actions.edit') }}</a>@endcan
-            </div>
-        </div>
-        <div class="card-body">
+<div class="fixed-asset-360" data-workflow="{{ old('_workflow') }}">
+@if(session('success'))<div class="alert alert-success" role="status">{{ session('success') }}</div>@endif
+@if($errors->any())<div class="alert alert-danger" role="alert"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+<div class="card mb-3"><div class="card-body d-flex flex-wrap justify-content-between gap-3 align-items-center">
+    <div><h5 class="mb-2">{{ $asset->doc_num }} / {{ $asset->asset_name }}</h5><span class="badge badge-subtle-{{ $asset->isDisposed() ? 'danger' : ($recognized ? 'success' : 'warning') }}">{{ __('fixed_assets.statuses.'.$asset->status) }}</span> <span class="small text-600">{{ $asset->entryTypeLabel() }}</span></div>
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.assets.index') }}">{{ __('common.actions.back') }}</a>
+        @can('fixed_assets.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.fixed-assets.prints.asset', $asset) }}">{{ __('common.actions.print') }}</a>@endcan
+        @if($canEditMaster)@can('fixed_assets.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.edit', $asset) }}">{{ __('common.actions.edit') }}</a>@endcan
+        @can('fixed_assets.delete')<button class="btn btn-falcon-danger btn-sm js-delete-record" type="button" data-doc-num="{{ $asset->doc_num }}" data-delete-url="{{ route('admin.fixed-assets.assets.destroy', $asset) }}" data-redirect-url="{{ route('admin.fixed-assets.assets.index') }}">{{ __('common.actions.delete') }}</button>@endcan @endif
+    </div>
+</div></div>
+<div class="row g-3 mb-3">@foreach(['acquisition_cost' => 'cost', 'accumulated_depreciation' => 'accumulated_depreciation', 'net_book_value' => 'net_book_value'] as $key => $label)
+<div class="col-12 col-md-4"><div class="card h-100"><div class="card-body"><div class="text-600 fs-10">{{ __('fixed_assets.reports.columns.'.$label) }}</div><div class="fs-7 fw-semibold" dir="ltr">{{ $numbers->format($asset->isDisposed() ? '0' : $position[$key]) }} {{ $asset->currency?->code }}</div></div></div></div>
+@endforeach</div>
+<div class="card mb-3"><div class="card-body"><div class="row g-3">
+@foreach(['branch' => $asset->branch?->name, 'location_address' => trim(implode(' / ', array_filter([$asset->branchHall?->name, $asset->location_address]))), 'cost_center' => $asset->costCenter?->codeNameLabel()] as $label => $value)<div class="col-12 col-sm-6 col-xl-3"><div class="small text-600">{{ __('fixed_assets.attributes.'.$label) }}</div>{{ $value ?: __('common.empty_value') }}</div>@endforeach
+<div class="col-12 col-sm-6 col-xl-3"><div class="small text-600">{{ __('fixed_assets.cycle.current_custodian') }}</div>{{ $custody?->destinationCustodian?->full_name ?: __('common.empty_value') }}</div>
+</div></div></div>
+@if($asset->hasLegacyRecognition())<div class="alert alert-info"><strong>{{ __('fixed_assets.prerequisites.legacy_title') }}</strong><div>{{ __('fixed_assets.prerequisites.legacy_help') }}</div></div>@endif
+@if($canRecognize)<div class="alert alert-info d-flex flex-wrap justify-content-between gap-2 align-items-center"><span>{{ __('fixed_assets.product.next_recognition') }}</span>@can('fixed_assets.activate')<button class="btn btn-success" type="button" data-bs-toggle="modal" data-bs-target="#recognition-modal">{{ $recognitionLabel }}</button>@endcan</div>@endif
+@if($canTransact)<div class="d-flex flex-wrap gap-2 mb-3">
+@can('fixed_assets.depreciation.preview')@if($asset->is_depreciable && $asset->status !== 'suspended' && bccomp($position['remaining_depreciable_amount'], '0', 4) > 0)<a class="btn btn-falcon-primary" href="{{ route('admin.fixed-assets.depreciation.index', ['asset_doc_nums' => [$asset->doc_num]]) }}">{{ __('fixed_assets.cycle.depreciation') }}</a>@endif @endcan
+@foreach(['addition' => 'fixed_assets.improvement.post', 'transfer' => 'fixed_assets.transfer', 'custody' => 'fixed_assets.custody.post', 'disposal' => 'fixed_assets.dispose'] as $workflow => $permission)@can($permission)<button class="btn btn-falcon-{{ $workflow === 'disposal' ? 'danger' : 'primary' }}" type="button" data-bs-toggle="modal" data-bs-target="#{{ $workflow }}-modal">{{ __('fixed_assets.cycle.'.$workflow) }}</button>@endcan @endforeach
+</div>@endif
+<ul class="nav nav-tabs flex-wrap mb-3" role="tablist">
+@foreach(['overview', 'financial', 'depreciation', 'movements', 'documents', 'audit'] as $tab)<li class="nav-item" role="presentation"><button class="nav-link @if($loop->first) active @endif" id="{{ $tab }}-tab" data-bs-toggle="tab" data-bs-target="#asset-{{ $tab }}" type="button" role="tab" aria-controls="asset-{{ $tab }}" aria-selected="{{ $loop->first ? 'true' : 'false' }}">{{ __('fixed_assets.product.tabs.'.$tab) }}</button></li>@endforeach
+</ul>
+<div class="tab-content">
+<section class="tab-pane fade show active" id="asset-overview" role="tabpanel" aria-labelledby="overview-tab"><div class="card mb-3">        <div class="card-body">
             <div class="row g-3">
                 @if($imageUrl)<div class="col-md-2"><img class="img-fluid rounded border" src="{{ $imageUrl }}" alt="{{ $asset->asset_name }}"></div>@endif
                 <div class="col"><div class="row g-3">
@@ -47,6 +64,11 @@
         </div>
     </div>
 
+<div class="card card-body mb-3">{{ $asset->description }}<p class="mb-0">{{ $asset->notes }}</p></div></section>
+<section class="tab-pane fade" id="asset-financial" role="tabpanel" aria-labelledby="financial-tab">
+@foreach($accountingWarnings as $warning)<div class="alert alert-warning">{{ $warning }}</div>@endforeach
+@can('accounts.view')<a class="btn btn-link mb-2" href="{{ route('admin.accounting.accounts.show', $asset->account->doc_num) }}">{{ $asset->account->codeNameLabel() }}</a>@endcan
+<div class="card card-body mb-3">{{ __('fixed_assets.product.original_cost') }}: {{ $numbers->format($position['original_cost']) }} — {{ __('fixed_assets.cycle.addition') }}: {{ $numbers->format($position['additions']) }}</div>
     <div class="card mb-3">
         <div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.accounting_and_depreciation') }}</h6></div>
         <div class="card-body"><div class="row g-3">
@@ -60,8 +82,7 @@
                 __('fixed_assets.attributes.depreciation_start_date') => $dates->formatDate($asset->depreciation_start_date, ''),
                 __('fixed_assets.attributes.useful_life') => $asset->useful_life,
                 __('fixed_assets.attributes.annual_depreciation_rate') => $asset->annual_depreciation_rate,
-                __('fixed_assets.attributes.previous_depreciation') => $asset->previous_depreciation,
-                __('fixed_assets.attributes.previous_depreciation_until_date') => $dates->formatDate($asset->previous_depreciation_until_date, ''),
+                ...($asset->entry_type === 'opening_asset' ? [__('fixed_assets.attributes.previous_depreciation') => $asset->previous_depreciation, __('fixed_assets.attributes.previous_depreciation_until_date') => $dates->formatDate($asset->previous_depreciation_until_date, '')] : []),
                 __('fixed_assets.lifecycle.last_depreciation') => $lastDepreciation?->period_end ? $dates->formatDate($lastDepreciation->period_end, '').' / '.$lastDepreciation->journalEntry?->doc_num : null,
             ] as $label => $value)
                 <div class="col-md-4"><div class="text-600 fs-10">{{ $label }}</div><div class="fw-semibold">{{ $value ?: __('common.empty_value') }}</div></div>
@@ -69,76 +90,34 @@
         </div></div>
     </div>
 
-    <div class="row g-3 mb-3">
-        @foreach([
-            __('fixed_assets.reports.columns.cost') => $position['acquisition_cost'],
-            __('fixed_assets.reports.columns.depreciation_base') => $position['depreciation_base'],
-            __('fixed_assets.reports.columns.accumulated_depreciation') => $position['accumulated_depreciation'],
-            __('fixed_assets.reports.columns.net_book_value') => $position['net_book_value'],
-            __('fixed_assets.reports.columns.residual_value') => $position['residual_value'],
-            __('fixed_assets.reports.columns.remaining_depreciable_amount') => $position['remaining_depreciable_amount'],
-        ] as $label => $value)
-            <div class="col-md-4 col-xl-2"><div class="card h-100"><div class="card-body py-3"><div class="text-600 fs-10">{{ $label }}</div><div class="fs-8 fw-semibold" dir="ltr">{{ $numbers->format($value) }} {{ $asset->currency?->code }}</div></div></div></div>
-        @endforeach
-    </div>
-
-    @if($asset->status === \Modules\FixedAssets\Models\FixedAsset::StatusDraft)
-        @can('fixed_assets.activate')
-            <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.activation') }}</h6></div><div class="card-body">
-                <form method="POST" action="{{ route('admin.fixed-assets.lifecycle.activate', $asset) }}" class="row g-3 align-items-end">@csrf
-                    <div class="col-md-4"><label class="form-label" for="activation_date">{{ __('fixed_assets.lifecycle.activation_date') }}</label><input class="form-control js-date-picker" id="activation_date" name="activation_date" value="{{ old('activation_date', $today) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" required></div>
-                    <div class="col-auto"><button class="btn btn-success" type="submit">{{ __('fixed_assets.lifecycle.activate') }}</button></div>
-                </form>
-            </div></div>
-        @endcan
-    @endif
-
-    @if($operational)
-        <div class="row g-3 mb-3">
-            @can('fixed_assets.transfer')
-                <div class="col-xl-6"><div class="card h-100"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.transfer') }}</h6></div><div class="card-body">
-                    <form method="POST" action="{{ route('admin.fixed-assets.lifecycle.transfer', $asset) }}" class="row g-3">@csrf
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.movement_date') }}</label><input class="form-control js-date-picker" name="movement_date" value="{{ old('movement_date', $today) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" required></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.destination_branch') }}</label><select class="form-select js-select2-ajax" id="destination_branch_doc_num" name="destination_branch_doc_num" data-url="{{ route('admin.fixed-assets.select2.branches') }}" required>@if($asset->branch)<option value="{{ $asset->branch->doc_num }}" selected>{{ $asset->branch->doc_num }} / {{ $asset->branch->name }}</option>@endif</select></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.destination_hall') }}</label><select class="form-select js-select2-ajax" name="destination_branch_hall_uuid" data-url="{{ route('admin.fixed-assets.select2.branch-halls') }}" data-depends-on="#destination_branch_doc_num" data-dependent-param="branch_doc_num" data-allow-clear="true">@if($asset->branchHall)<option value="{{ $asset->branchHall->public_uuid }}" selected>{{ $asset->branchHall->name }}</option>@endif</select></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.destination_cost_center') }}</label><select class="form-select js-select2-ajax" name="destination_cost_center_doc_num" data-url="{{ route('admin.fixed-assets.select2.cost-centers') }}" data-allow-clear="true">@if($asset->costCenter)<option value="{{ $asset->costCenter->doc_num }}" selected>{{ $asset->costCenter->codeNameLabel() }}</option>@endif</select></div>
-                        <div class="col-12"><label class="form-label">{{ __('fixed_assets.attributes.location_address') }}</label><input class="form-control" name="destination_location_address" value="{{ old('destination_location_address', $asset->location_address) }}"></div>
-                        <div class="col-12"><label class="form-label">{{ __('fixed_assets.lifecycle.reason') }}</label><textarea class="form-control" name="reason" required>{{ old('reason') }}</textarea></div>
-                        <div class="col-12"><label class="form-label">{{ __('fixed_assets.attributes.notes') }}</label><textarea class="form-control" name="notes">{{ old('notes') }}</textarea></div>
-                        <div class="col-12"><button class="btn btn-falcon-primary" type="submit">{{ __('fixed_assets.lifecycle.post_transfer') }}</button></div>
-                    </form>
-                </div></div></div>
-            @endcan
-            @can('fixed_assets.dispose')
-                <div class="col-xl-6"><div class="card h-100"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.disposal') }}</h6></div><div class="card-body">
-                    <form method="POST" action="{{ route('admin.fixed-assets.lifecycle.dispose', $asset) }}" class="row g-3">@csrf
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.disposal_date') }}</label><input class="form-control js-date-picker" name="disposal_date" value="{{ old('disposal_date', $today) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" required></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.disposition_type') }}</label><select class="form-select" name="disposition_type" required>@foreach(\Modules\FixedAssets\Models\FixedAssetDisposal::types() as $type)<option value="{{ $type }}">{{ __('fixed_assets.lifecycle.disposition_types.'.$type) }}</option>@endforeach</select></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.proceeds') }}</label><input class="form-control js-number-input" name="proceeds" value="{{ old('proceeds', '0') }}" inputmode="decimal"></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('Settlement path') }}</label><select class="form-select" name="settlement_path"><option value="direct_settlement">{{ __('Direct settlement') }}</option><option value="customer_invoice">{{ __('Customer Sales / Tax Invoice') }}</option></select></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('VAT rate %') }}</label><input class="form-control js-number-input" name="tax_rate" value="{{ old('tax_rate', '0') }}" inputmode="decimal"></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('Invoice due date') }}</label><input class="form-control js-date-picker" name="due_date" value="{{ old('due_date', $today) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}"></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.proceeds_account') }}</label><select class="form-select js-select2-ajax" name="proceeds_account_doc_num" data-url="{{ route('admin.fixed-assets.select2.credit-accounts') }}" data-allow-clear="true"></select></div>
-                        <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.customer') }}</label><select class="form-select js-select2-ajax" name="customer_doc_num" data-url="{{ route('admin.fixed-assets.select2.customers') }}" data-allow-clear="true"></select></div>
-                        <div class="col-12"><label class="form-label">{{ __('fixed_assets.lifecycle.reason') }}</label><textarea class="form-control" name="reason" required>{{ old('reason') }}</textarea></div>
-                        <div class="col-12"><label class="form-label">{{ __('fixed_assets.attributes.notes') }}</label><textarea class="form-control" name="notes">{{ old('notes') }}</textarea></div>
-                        <div class="col-12"><button class="btn btn-danger" type="submit">{{ __('fixed_assets.lifecycle.post_disposal') }}</button></div>
-                    </form>
-                </div></div></div>
-            @endcan
-        </div>
-    @endif
-
-    <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.depreciation_schedule') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.period') }}</th><th>{{ __('fixed_assets.reports.columns.opening_net_book_value') }}</th><th>{{ __('fixed_assets.reports.columns.period_depreciation') }}</th><th>{{ __('fixed_assets.reports.columns.accumulated_depreciation') }}</th><th>{{ __('fixed_assets.reports.columns.closing_net_book_value') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th></tr></thead><tbody>@forelse($schedule['rows'] as $row)<tr><td>{{ $dates->formatDate($row['period_start'], '') }} - {{ $dates->formatDate($row['period_end'], '') }}</td><td dir="ltr">{{ $numbers->format($row['opening_net_book_value']) }}</td><td dir="ltr">{{ $numbers->format($row['period_depreciation']) }}</td><td dir="ltr">{{ $numbers->format($row['accumulated_depreciation']) }}</td><td dir="ltr">{{ $numbers->format($row['closing_net_book_value']) }}</td><td><span class="badge badge-subtle-{{ $row['status'] === 'posted' ? 'success' : 'info' }}">{{ __('fixed_assets.lifecycle.statuses.'.$row['status']) }}</span></td></tr>@empty<tr><td colspan="6" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
+</section><section class="tab-pane fade" id="asset-depreciation" role="tabpanel" aria-labelledby="depreciation-tab">    <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.depreciation_schedule') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.period') }}</th><th>{{ __('fixed_assets.reports.columns.opening_net_book_value') }}</th><th>{{ __('fixed_assets.reports.columns.period_depreciation') }}</th><th>{{ __('fixed_assets.reports.columns.accumulated_depreciation') }}</th><th>{{ __('fixed_assets.reports.columns.closing_net_book_value') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th></tr></thead><tbody>@forelse($schedule['rows'] as $row)<tr><td>{{ $dates->formatDate($row['period_start'], '') }} - {{ $dates->formatDate($row['period_end'], '') }}</td><td dir="ltr">{{ $numbers->format($row['opening_net_book_value']) }}</td><td dir="ltr">{{ $numbers->format($row['period_depreciation']) }}</td><td dir="ltr">{{ $numbers->format($row['accumulated_depreciation']) }}</td><td dir="ltr">{{ $numbers->format($row['closing_net_book_value']) }}</td><td><span class="badge badge-subtle-{{ $row['status'] === 'posted' ? 'success' : 'info' }}">{{ __('fixed_assets.lifecycle.statuses.'.$row['status']) }}</span></td></tr>@empty<tr><td colspan="6" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
 
     <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.depreciation_history') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.period') }}</th><th>{{ __('fixed_assets.reports.columns.period_depreciation') }}</th><th>{{ __('fixed_assets.reports.columns.accumulated_after') }}</th><th>{{ __('fixed_assets.reports.columns.net_book_value') }}</th><th>{{ __('fixed_assets.attributes.cost_center') }}</th><th>{{ __('fixed_assets.reports.columns.journal_entry') }}</th><th>{{ __('fixed_assets.reports.columns.posted_by_date') }}</th></tr></thead><tbody>@forelse($asset->postedDepreciations as $depreciation)<tr><td>{{ $dates->formatDate($depreciation->period_start, '') }} - {{ $dates->formatDate($depreciation->period_end, '') }}</td><td dir="ltr">{{ $numbers->format($depreciation->period_depreciation) }}</td><td dir="ltr">{{ $numbers->format($depreciation->accumulated_after) }}</td><td dir="ltr">{{ $numbers->format($depreciation->closing_net_book_value) }}</td><td>{{ $depreciation->costCenter?->codeNameLabel() }}</td><td>{{ $depreciation->journalEntry?->doc_num }}</td><td>{{ trim(implode(' / ', array_filter([$depreciation->postedBy?->name, $dates->formatDateTime($depreciation->posted_at, '')]))) }}</td></tr>@empty<tr><td colspan="7" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
 
-    <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.movement_history') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.document') }}</th><th>{{ __('fixed_assets.reports.columns.date') }}</th><th>{{ __('fixed_assets.reports.columns.source') }}</th><th>{{ __('fixed_assets.reports.columns.destination') }}</th><th>{{ __('fixed_assets.lifecycle.reason') }}</th><th></th></tr></thead><tbody>@forelse($asset->movements as $movement)<tr><td>{{ $movement->doc_num }}</td><td>{{ $dates->formatDate($movement->movement_date, '') }}</td><td>{{ trim(implode(' / ', array_filter([$movement->sourceBranch?->name, $movement->sourceBranchHall?->name, $movement->source_location_address, $movement->sourceCostCenter?->codeNameLabel()]))) }}</td><td>{{ trim(implode(' / ', array_filter([$movement->destinationBranch?->name, $movement->destinationBranchHall?->name, $movement->destination_location_address, $movement->destinationCostCenter?->codeNameLabel()]))) }}</td><td>{{ $movement->reason }}</td><td>@can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.movement', $movement) }}">{{ __('common.actions.print') }}</a>@endcan</td></tr>@empty<tr><td colspan="6" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
-
-    <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.disposal_history') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.document') }}</th><th>{{ __('fixed_assets.reports.columns.date') }}</th><th>{{ __('fixed_assets.lifecycle.disposition_type') }}</th><th>{{ __('fixed_assets.reports.columns.net_book_value') }}</th><th>{{ __('fixed_assets.lifecycle.proceeds') }}</th><th>{{ __('fixed_assets.lifecycle.gain_loss') }}</th><th>{{ __('Customer Invoice') }}</th><th>{{ __('Accounting lineage') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th><th></th></tr></thead><tbody>@forelse($asset->disposals as $disposal)<tr><td>{{ $disposal->doc_num }}</td><td>{{ $dates->formatDate($disposal->disposal_date, '') }}</td><td>{{ __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type) }}</td><td dir="ltr">{{ $numbers->format($disposal->net_book_value) }}</td><td dir="ltr">{{ $numbers->format($disposal->proceeds) }}</td><td dir="ltr">{{ $numbers->format($disposal->gain_amount) }} / {{ $numbers->format($disposal->loss_amount) }}</td><td>{{ $disposal->customerInvoice?->doc_num ?? '—' }}</td><td><small>{{ __('Derecognition') }}: {{ $disposal->journalEntry?->doc_num ?? '—' }}<br>{{ __('Gain / loss') }}: {{ $disposal->gainLossJournalEntry?->doc_num ?? '—' }}@if($disposal->reversalJournalEntry || $disposal->gainLossReversalJournalEntry)<br>{{ __('Reversals') }}: {{ trim(implode(' / ', array_filter([$disposal->reversalJournalEntry?->doc_num, $disposal->gainLossReversalJournalEntry?->doc_num]))) }}@endif</small></td><td>{{ __('fixed_assets.lifecycle.statuses.'.$disposal->status) }}</td><td>@can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.disposal', $disposal) }}">{{ __('common.actions.print') }}</a>@endcan @if($disposal->status === \Modules\FixedAssets\Models\FixedAssetDisposal::StatusPosted) @can('fixed_assets.disposal.reverse')<form method="POST" action="{{ route('admin.fixed-assets.disposal.reverse', $disposal) }}" class="mt-2">@csrf<input class="form-control form-control-sm mb-1" name="reason" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}" required><button class="btn btn-falcon-danger btn-sm" type="submit">{{ __('fixed_assets.lifecycle.reverse') }}</button></form>@endcan @endif</td></tr>@empty<tr><td colspan="10" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
+</section><section class="tab-pane fade" id="asset-movements" role="tabpanel" aria-labelledby="movements-tab">
+@include('modules.fixed-assets.lifecycle.ledger')
+    <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.disposal_history') }}</h6></div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.document') }}</th><th>{{ __('fixed_assets.reports.columns.date') }}</th><th>{{ __('fixed_assets.lifecycle.disposition_type') }}</th><th>{{ __('fixed_assets.reports.columns.net_book_value') }}</th><th>{{ __('fixed_assets.lifecycle.proceeds') }}</th><th>{{ __('fixed_assets.lifecycle.gain_loss') }}</th><th>{{ __('Customer Invoice') }}</th><th>{{ __('Accounting lineage') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th><th></th></tr></thead><tbody>@forelse($asset->disposals as $disposal)<tr id="disposal-{{ $disposal->doc_num }}"><td>{{ $disposal->doc_num }}</td><td>{{ $dates->formatDate($disposal->disposal_date, '') }}</td><td>{{ __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type) }}</td><td dir="ltr">{{ $numbers->format($disposal->net_book_value) }}</td><td dir="ltr">{{ $numbers->format($disposal->proceeds) }}</td><td dir="ltr">{{ $numbers->format($disposal->gain_amount) }} / {{ $numbers->format($disposal->loss_amount) }}</td><td>{{ $disposal->customerInvoice?->doc_num ?? '—' }}</td><td><small>{{ __('Derecognition') }}: {{ $disposal->journalEntry?->doc_num ?? '—' }}<br>{{ __('Gain / loss') }}: {{ $disposal->gainLossJournalEntry?->doc_num ?? '—' }}@if($disposal->reversalJournalEntry || $disposal->gainLossReversalJournalEntry)<br>{{ __('Reversals') }}: {{ trim(implode(' / ', array_filter([$disposal->reversalJournalEntry?->doc_num, $disposal->gainLossReversalJournalEntry?->doc_num]))) }}@endif</small></td><td>{{ __('fixed_assets.lifecycle.statuses.'.$disposal->status) }}</td><td>@can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.disposal', $disposal) }}">{{ __('common.actions.print') }}</a>@endcan @if(app(\Modules\FixedAssets\Services\FixedAssetLifecycleService::class)->canReverseDisposal($disposal)) @can('fixed_assets.disposal.reverse')<form method="POST" action="{{ route('admin.fixed-assets.disposal.reverse', $disposal) }}" class="mt-2">@csrf<input class="form-control form-control-sm mb-1" name="reason" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}" required><button class="btn btn-falcon-danger btn-sm" type="submit">{{ __('fixed_assets.lifecycle.reverse') }}</button></form>@endcan @endif</td></tr>@empty<tr><td colspan="10" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
+</section><section class="tab-pane fade" id="asset-documents" role="tabpanel" aria-labelledby="documents-tab"><div class="card mb-3"><div class="card-header"><h6>{{ __('fixed_assets.cycle.journal_entry') }}</h6></div><div class="card-body">@foreach($journals as $journal)<div>@can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $journal) }}">{{ $journal->doc_num }}</a>@else {{ $journal->doc_num }} @endcan — {{ $journal->description }}</div>@endforeach</div></div>
+<div class="card mb-3" id="documents"><div class="card-header"><h6>{{ __('fixed_assets.cycle.documents') }}</h6></div><div class="card-body">@forelse($documents as $usage)@if($usage->file)<div>@can('file_manager.download')<a href="{{ route('admin.file-manager.files.download', $usage->file) }}">{{ $usage->file->original_name }}</a>@else {{ $usage->file->original_name }} @endcan</div>@endif @empty {{ __('common.empty_value') }} @endforelse
+@can('fixed_assets.edit')@can('file_manager.view')
+<form class="mt-3" method="POST" action="{{ route('admin.fixed-assets.movements.document', $asset) }}">@csrf
+<select class="form-select mb-2" name="movement_doc_num"><option value="">{{ $asset->doc_num }}</option>@foreach($asset->movements as $documentMovement)<option value="{{ $documentMovement->doc_num }}">{{ $documentMovement->doc_num }} / {{ __('fixed_assets.cycle.'.$documentMovement->movement_type) }}</option>@endforeach</select>
+<input type="hidden" id="asset-document-file" name="archive_file_doc_num" required>
+<button type="button" class="btn btn-falcon-primary btn-sm" data-file-picker data-picker-accept="document" data-picker-max="1" data-picker-target-input="#asset-document-file" data-picker-collection="fixed_asset_documents" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}">{{ __('fixed_assets.cycle.documents') }}</button>
+<button class="btn btn-success btn-sm">{{ __('common.actions.save') }}</button>
+</form><x-file-picker-modal />
+@endcan @endcan
+</div></div>
+</section><section class="tab-pane fade" id="asset-audit" role="tabpanel" aria-labelledby="audit-tab"><div class="card mb-3"><div class="card-header"><h6>{{ __('fixed_assets.cycle.audit') }}</h6></div><div class="card-body table-responsive"><table class="table table-sm"><tbody>@forelse($activities as $activity)<tr><td>{{ $dates->formatDateTime($activity->created_at, '') }}</td><td>{{ $activity->description }}</td><td>{{ $activity->causer?->name }}</td></tr>@empty<tr><td>{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
+</section></div>
+@include('modules.fixed-assets.lifecycle.workflow-forms')
+</div>
 @endsection
-
 @push('scripts')
-    <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+<script>window.fixedAssetsMessages = @json(__('fixed_assets.js'));</script>
+<script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
+<script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+<script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+<script src="{{ asset('assets/js/modules/Core/file-picker.js') }}"></script>
+<script src="{{ asset('assets/js/modules/FixedAssets/fixed-asset-cycle.js') }}"></script>
 @endpush

@@ -203,7 +203,7 @@ test('label comparison treats each bilingual pair atomically and never overwrite
         ->assertFailed();
 
     expect(fn () => $registry->synchronize())
-        ->toThrow(DomainException::class, 'Account classification conflicts must be resolved before synchronization.');
+        ->toThrow(DomainException::class, __('Account classification conflicts must be resolved before synchronization.'));
 
     expect(AccountClassification::withTrashed()->orderBy('id')->get()->toArray())->toBe($before)
         ->and(AccountClassification::query()->count())->toBe(24);

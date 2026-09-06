@@ -65,6 +65,7 @@ class FixedAssetsSelect2Service
         }
 
         $query = FixedAsset::query()
+            ->whereIn('branch_id', app(FixedAssetAccessService::class)->branchIds())
             ->where('company_id', $companyId)
             ->select(['doc_num', 'doc_number', 'asset_name', 'serial_number', 'status'])
             ->orderBy('doc_number');
@@ -133,6 +134,7 @@ class FixedAssetsSelect2Service
         }
 
         $query = Branch::query()
+            ->whereIn('id', app(FixedAssetAccessService::class)->branchIds())
             ->where('company_id', $companyId)
             ->where('status', 'active')
             ->select(['doc_num', 'doc_number', 'name'])

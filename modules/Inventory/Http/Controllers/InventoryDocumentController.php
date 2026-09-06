@@ -105,7 +105,7 @@ class InventoryDocumentController extends Controller
         ]);
 
         return $this->pdf->stream('reports.inventory.document', [
-            'title' => str($record->document_type)->replace('_', ' ')->title().' — '.$record->doc_num,
+            'title' => __(str($record->document_type)->replace('_', ' ')->title()->toString()).' — '.$record->doc_num,
             'record' => $record,
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
         ], str('inventory-'.$record->document_type.'-'.$record->doc_num)->slug().'.pdf');

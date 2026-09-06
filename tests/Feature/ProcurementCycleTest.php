@@ -1,22 +1,20 @@
 <?php
 
-use App\Models\User;
-use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Models\JournalEntryLine;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
-use Modules\Core\Database\Seeders\CurrencySeeder;
-use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
-use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -29,11 +27,8 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryReportService;
-use Modules\Production\Models\ProductionOrder;
-use Modules\Production\Models\ProductionOrderLine;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
 use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -49,163 +44,10 @@ use Modules\Purchases\Services\PurchaseInvoiceMatchingService;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 use Modules\Purchases\Services\PurchaseOrderService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
-use Modules\Sales\Models\Customer;
-use Modules\Sales\Models\SalesOrder;
-use Modules\Sales\Models\SalesOrderLine;
+use Spatie\Permission\Models\Permission;
+use Symfony\Component\Process\Process;
 
-/** @return array<string, mixed> */
-function procurementFixture(): array
-{
-    test()->seed(DefaultOperatingContextSeeder::class);
-    test()->seed(CurrencySeeder::class);
-    test()->seed(DefaultChartOfAccountsSeeder::class);
-
-    $user = User::factory()->create();
-    auth()->login($user);
-    request()->setUserResolver(fn (): User => $user);
-    if (! request()->hasSession()) {
-        request()->setLaravelSession(app('session.store'));
-    }
-
-    $company = Company::query()->where('status', 'active')->firstOrFail();
-    $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
-    $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
-    $currency = Currency::query()->where('company_id', $company->getKey())->orderByDesc('is_main')->firstOrFail();
-    $store = BranchStore::query()->create(['branch_id' => $branch->getKey(), 'name' => 'Raw Materials', 'position' => 1]);
-    $unit = ItemUnit::query()->create(['company_id' => $company->getKey(), 'doc_number' => 9101, 'doc_num' => 'Unit-PROC', 'name' => 'Kilogram', 'status' => 'active']);
-    $raw = Product::query()->create(['company_id' => $company->getKey(), 'doc_number' => 9101, 'doc_num' => 'Product-RESIN', 'name' => 'Polymer Resin', 'item_classification' => Product::ClassificationRawMaterial, 'item_unit_id' => $unit->getKey(), 'status' => 'active']);
-    $service = Product::query()->create(['company_id' => $company->getKey(), 'doc_number' => 9102, 'doc_num' => 'Product-SERVICE-PROC', 'name' => 'Machine Calibration', 'item_classification' => Product::ClassificationService, 'item_unit_id' => $unit->getKey(), 'status' => 'active']);
-    $finished = Product::query()->create(['company_id' => $company->getKey(), 'doc_number' => 9103, 'doc_num' => 'Product-FINISHED-PROC', 'name' => 'Finished Container', 'item_classification' => Product::ClassificationFinishedProduct, 'item_unit_id' => $unit->getKey(), 'status' => 'active']);
-    $firstSupplier = Supplier::query()->create(['doc_number' => 9101, 'doc_num' => 'Supplier-PROC-1', 'company_id' => $company->getKey(), 'name' => 'Resin Supplier One', 'status' => 'active']);
-    $secondSupplier = Supplier::query()->create(['doc_number' => 9102, 'doc_num' => 'Supplier-PROC-2', 'company_id' => $company->getKey(), 'name' => 'Resin Supplier Two', 'status' => 'active']);
-
-    $accountId = fn (string $code): int => (int) Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $code)
-        ->valueOrFail('id');
-    InventoryAccountingMapping::query()->create([
-        'company_id' => $company->getKey(),
-        'raw_material_inventory_account_id' => $accountId('1131'),
-        'packaging_inventory_account_id' => $accountId('1134'),
-        'semi_finished_inventory_account_id' => $accountId('1132'),
-        'finished_goods_inventory_account_id' => $accountId('1133'),
-        'wip_account_id' => $accountId('1132'),
-        'production_waste_account_id' => $accountId('551'),
-        'warehouse_damage_loss_account_id' => $accountId('551'),
-        'inventory_adjustment_gain_account_id' => $accountId('432'),
-        'inventory_adjustment_loss_account_id' => $accountId('551'),
-        'quarantine_inventory_account_id' => $accountId('1134'),
-        'rework_inventory_account_id' => $accountId('1132'),
-        'grni_account_id' => $accountId('212'),
-        'purchase_price_variance_account_id' => $accountId('551'),
-        'created_by' => $user->getKey(),
-    ]);
-
-    $context = [
-        OperatingContextService::CompanyIdKey => $company->getKey(),
-        OperatingContextService::CompanyDocNumKey => $company->doc_num,
-        OperatingContextService::BranchIdKey => $branch->getKey(),
-        OperatingContextService::BranchDocNumKey => $branch->doc_num,
-        OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
-        OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
-    ];
-    session($context);
-    test()->withSession($context);
-
-    return compact('user', 'company', 'branch', 'period', 'currency', 'store', 'unit', 'raw', 'service', 'finished', 'firstSupplier', 'secondSupplier');
-}
-
-/** @param array<string, mixed> $fixture */
-function procurementProductionSource(array $fixture): ProductionOrderLine
-{
-    $customer = Customer::query()->create(['doc_number' => 9101, 'doc_num' => 'Customer-PROC', 'company_id' => $fixture['company']->getKey(), 'name' => 'Production Customer', 'status' => 'active']);
-    $salesOrder = SalesOrder::query()->create([
-        'doc_number' => 9101, 'doc_num' => 'SO-PROC', 'company_id' => $fixture['company']->getKey(),
-        'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
-        'branch_store_id' => $fixture['store']->getKey(), 'customer_id' => $customer->getKey(),
-        'currency_id' => $fixture['currency']->getKey(), 'order_date' => now()->toDateString(),
-        'expected_delivery_date' => now()->addWeek()->toDateString(), 'status' => SalesOrder::StatusApproved,
-    ]);
-    $salesLine = SalesOrderLine::query()->create([
-        'sales_order_id' => $salesOrder->getKey(), 'line_number' => 1, 'product_id' => $fixture['finished']->getKey(),
-        'unit_id' => $fixture['unit']->getKey(), 'description' => 'Finished production demand', 'quantity' => 10,
-    ]);
-    $productionOrder = ProductionOrder::query()->create([
-        'doc_number' => 9101, 'doc_num' => 'PROD-PROC', 'company_id' => $fixture['company']->getKey(),
-        'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
-        'sales_order_id' => $salesOrder->getKey(), 'customer_id' => $customer->getKey(),
-        'production_order_date' => now()->toDateString(), 'expected_delivery_date' => now()->addWeek()->toDateString(),
-        'status' => ProductionOrder::StatusReleased,
-    ]);
-
-    return ProductionOrderLine::query()->create([
-        'production_order_id' => $productionOrder->getKey(), 'sales_order_line_id' => $salesLine->getKey(),
-        'line_number' => 1, 'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
-        'description' => 'Finished production demand', 'quantity' => 10,
-    ]);
-}
-
-/** @param array<string, mixed> $fixture */
-function procurementManualRequisition(array $fixture, float $quantity = 10): PurchaseRequisition
-{
-    return app(ProcurementSourcingService::class)->createRequisition([
-        'request_date' => now()->toDateString(), 'required_by_date' => now()->addWeek()->toDateString(),
-        'branch_store_uuid' => $fixture['store']->public_uuid, 'priority' => 'high',
-        'lines' => [[
-            'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
-            'requested_quantity' => $quantity, 'source_type' => 'manual',
-        ]],
-    ]);
-}
-
-function procurementPostingAccount(Company $company, string $parentCode, string $accountCode, string $name): Account
-{
-    $parent = Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $parentCode)
-        ->firstOrFail();
-
-    return Account::query()->create([
-        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()),
-        'company_id' => $company->getKey(),
-        'account_code' => $accountCode,
-        'name' => $name,
-        'name_en' => $name,
-        'parent_id' => $parent->getKey(),
-        'level' => ((int) $parent->level) + 1,
-        'account_classification_id' => $parent->account_classification_id,
-        'account_type' => $parent->account_type,
-        'statement_type' => $parent->statement_type,
-        'normal_balance' => $parent->normal_balance,
-        'is_group' => false,
-        'is_postable' => true,
-        'is_system' => false,
-        'status' => 'active',
-    ]);
-}
-
-function procurementDocumentAttachment(Company $company): ArchiveFile
-{
-    $path = 'tests/procurement/supplier-quotation.pdf';
-    Storage::disk('public')->put($path, 'procurement-document');
-
-    return ArchiveFile::query()->create([
-        'doc_number' => 9401,
-        'doc_num' => 'File-PROC-1',
-        'attachable_type' => (new Company)->getMorphClass(),
-        'attachable_id' => $company->getKey(),
-        'module' => 'purchases',
-        'record_type' => 'procurement_attachment',
-        'hidden_from_picker' => false,
-        'original_name' => 'supplier-quotation.pdf',
-        'stored_name' => 'supplier-quotation.pdf',
-        'disk' => 'public',
-        'path' => $path,
-        'mime_type' => 'application/pdf',
-        'extension' => 'pdf',
-        'size_bytes' => 20,
-    ]);
-}
+require_once __DIR__.'/../ProcurementSupport.php';
 
 test('unapproved requisitions cannot open the request for quotation creation screen', function () {
     $fixture = procurementFixture();
@@ -280,8 +122,9 @@ test('purchasable classifications and production demand lineage are explicit', f
         Product::ClassificationSemiFinished,
         Product::ClassificationPackaging,
         Product::ClassificationOther,
+        Product::ClassificationService,
     ])->and($fixture['raw']->isPurchasable())->toBeTrue()
-        ->and($fixture['service']->isPurchasable())->toBeFalse()
+        ->and($fixture['service']->isPurchasable())->toBeTrue()
         ->and($fixture['finished']->isPurchasable())->toBeFalse();
 
     $requisition = app(ProcurementSourcingService::class)->createRequisition([
@@ -300,7 +143,7 @@ test('purchasable classifications and production demand lineage are explicit', f
             'branch_store_uuid' => $fixture['store']->public_uuid,
             'priority' => 'normal',
             'lines' => [[
-                'product_doc_num' => $fixture['service']->doc_num,
+                'product_doc_num' => $fixture['finished']->doc_num,
                 'unit_doc_num' => $fixture['unit']->doc_num,
                 'requested_quantity' => 1,
                 'source_type' => 'work_order',
@@ -319,7 +162,7 @@ test('purchasable classifications and production demand lineage are explicit', f
                 'source_doc_num' => $productionLine->order->doc_num,
                 'source_line_reference' => $productionLine->public_id,
             ]],
-        ]))->toThrow(DomainException::class, 'already has an active purchase requirement');
+        ]))->toThrow(DomainException::class, __('This operational demand and item already has an active purchase requirement.'));
 });
 
 test('split sourcing, receiving, quality, matching, and returns preserve line capacity', function () {
@@ -340,7 +183,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     expect(fn () => $sourcing->createRequestForQuotation($requisition, [
         'issue_date' => now()->toDateString(), 'supplier_doc_nums' => [$fixture['firstSupplier']->doc_num],
         'lines' => [['requisition_line_public_id' => $requirementLine->public_id, 'quantity' => 11]],
-    ]))->toThrow(DomainException::class, 'RFQ quantity exceeds');
+    ]))->toThrow(DomainException::class, __('RFQ quantity exceeds the remaining approved requirement.'));
 
     $rfq = $sourcing->createRequestForQuotation($requisition->fresh(), [
         'issue_date' => now()->toDateString(),
@@ -372,7 +215,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     $orders = $sourcing->approveSelection($selection);
 
     expect($orders)->toHaveCount(2)
-        ->and($requisition->fresh()->status)->toBe('fully_converted')
+        ->and($requisition->fresh()->status)->toBe('approved')
         ->and($orders->sum(fn (PurchaseOrder $order): float => (float) $order->total_ordered_quantity))->toBe(10.0)
         ->and($orders->every(fn (PurchaseOrder $order): bool => $order->exchange_rate === '1.250000'))->toBeTrue()
         ->and($quotations->first()->attachmentUsages()->where('archive_file_id', $attachment->getKey())->exists())->toBeTrue();
@@ -405,7 +248,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and(fn () => $receiving->receive($firstOrder->fresh(), [
             'document_date' => now()->toDateString(),
             'lines' => [['purchase_order_line_public_id' => $orderLine->public_id, 'delivered_quantity' => 1]],
-        ]))->toThrow(DomainException::class, 'Delivered quantity exceeds');
+        ]))->toThrow(DomainException::class, __('Delivered quantity exceeds the remaining purchase order quantity.'));
 
     $receiptLine = $receipt->lines->first();
     $inspection = $receiving->inspect($receipt, [
@@ -481,11 +324,11 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     ]);
     $excessLine->forceFill(['discount_amount' => 0, 'tax_rate' => 0])->save();
     expect(fn () => app(PurchaseInvoiceMatchingService::class)->matchForPosting($excessInvoice))
-        ->toThrow(DomainException::class, 'tax differs');
+        ->toThrow(DomainException::class, __('Invoice tax differs from the approved purchase order terms.'));
     $excessLine->forceFill(['discount_amount' => 0.2, 'tax_rate' => 10])->save();
     $excessInvoice->unsetRelation('lines');
     expect(fn () => app(PurchaseInvoiceMatchingService::class)->matchForPosting($excessInvoice))
-        ->toThrow(DomainException::class, 'Invoice quantity exceeds quality-accepted');
+        ->toThrow(DomainException::class, __('Invoice quantity exceeds quality-accepted receipt quantity.'));
 
     $return = $settlement->createPurchaseReturn([
         'purchase_order_doc_num' => $firstOrder->doc_num, 'return_date' => now()->toDateString(),
@@ -508,7 +351,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
             'purchase_order_doc_num' => $firstOrder->doc_num, 'return_date' => now()->toDateString(),
             'reason_code' => 'latent_defect',
             'lines' => [['receipt_line_public_id' => $receiptLine->public_id, 'quantity' => 4, 'from_quarantine' => false]],
-        ]))->toThrow(DomainException::class, 'Return quantity exceeds');
+        ]))->toThrow(DomainException::class, __('Return quantity exceeds the material received and still returnable.'));
 
     $return = $settlement->reversePurchaseReturn($return, 'Return entered against the wrong batch.');
     $restoredBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
@@ -838,7 +681,7 @@ test('the ten thousand kilogram split award closes supplier B and reconciles qua
         ->and((float) $supplierAInvoice->lines()->sum('quantity') + (float) $supplierBInvoice->lines()->sum('quantity'))->toBe(9900.0)
         ->and((float) $postInvoiceReturn->total_quantity)->toBe(500.0)
         ->and((float) $finalBalance->on_hand)->toBe(9400.0)
-        ->and((float) $finalBalance->inventory_value)->toBe(20722.45)
+        ->and((float) $finalBalance->inventory_value)->toBe(20714.0)
         ->and((float) $finalBalance->unvalued_receipt_quantity)->toBe(0.0)
         ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_receipt')->count())->toBe(2)
         ->and($supplierAInvoice->fresh()->total_amount)->toBe('13270.7400')
@@ -992,7 +835,7 @@ test('supplier installments, partial payments, advances, and cancellation accoun
             ...$paymentPayload,
             'amount' => 7,
             'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => 7]],
-        ]))->toThrow(DomainException::class, 'outstanding amount');
+        ]))->toThrow(DomainException::class, __('Payment allocation exceeds the supplier invoice outstanding amount.'));
 
     $advance = $settlement->createSupplierPayment([
         ...$paymentPayload,
@@ -1431,7 +1274,29 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
         ->toMatchArray(['subledger' => '0.0000', 'gl' => '0.0000', 'difference' => '0.0000', 'status' => 'reconciled']);
 
     expect(fn () => $createMatchedInvoice(9853, 1, 10))
-        ->toThrow(DomainException::class, 'quality-accepted receipt quantity');
+        ->toThrow(DomainException::class, __('Invoice quantity exceeds quality-accepted receipt quantity.'));
+
+    foreach ([$firstInvoice, $secondInvoice] as $billedInvoice) {
+        $settlement = app(ProcurementSettlementService::class);
+        $billedReturn = $settlement->createPurchaseReturn([
+            'purchase_order_doc_num' => $order->doc_num,
+            'purchase_invoice_doc_num' => $billedInvoice->doc_num,
+            'return_date' => now()->toDateString(), 'reason_code' => 'price_variance_return',
+            'lines' => [['receipt_line_public_id' => $receiptLine->public_id, 'quantity' => 10]],
+        ]);
+        $billedReturn = $settlement->approvePurchaseReturn($billedReturn);
+        $movement = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$billedReturn->lines->sole()->getKey())->firstOrFail();
+        $entry = $billedReturn->journalEntry()->with('lines.account')->firstOrFail();
+        expect((float) $movement->total_cost)->toBe(100.0)
+            ->and((float) $entry->lines->where('account.account_code', '1131')->sum('credit_amount'))->toBe(100.0)
+            ->and((float) $entry->lines->sum('debit_amount'))->toBe((float) $entry->lines->sum('credit_amount'));
+        $varianceLines = $entry->lines->where('account.account_code', '551');
+        expect((float) $varianceLines->sum('credit_amount') - (float) $varianceLines->sum('debit_amount'))
+            ->toBe($billedInvoice->is($firstInvoice) ? 20.0 : -10.0);
+        $settlement->reversePurchaseReturn($billedReturn, 'Restore the source receipt at its original cost');
+        $reversal = InventoryTransaction::query()->where('reversal_of_id', $movement->getKey())->firstOrFail();
+        expect($reversal->unit_cost)->toBe($movement->unit_cost)->and($reversal->total_cost)->toBe($movement->total_cost);
+    }
 
     $returnOrder = $purchaseOrders->create([
         'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
@@ -1497,6 +1362,20 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
         $journal = JournalEntry::query()->with('lines')->findOrFail($journalEntryId);
         expect((float) $journal->lines->sum('debit_amount'))->toBe((float) $journal->lines->sum('credit_amount'));
     }
+    expect($returnOrder->fresh()->fulfillmentStatus())->toBe('partially_received')
+        ->and($returnOrder->lines->sole()->quantityProgress()['returned'])->toBe(2.0)
+        ->and($returnOrder->lines->sole()->quantityProgress()['remaining'])->toBe(2.0);
+    $replacement = $receiving->receive($returnOrder, [
+        'document_date' => now()->toDateString(),
+        'lines' => [['purchase_order_line_public_id' => $returnOrder->lines->sole()->public_id, 'delivered_quantity' => 2]],
+    ]);
+    expect($returnOrder->fresh()->fulfillmentStatus())->toBe('fully_received');
+    expect(fn () => $settlement->reversePurchaseReturn($return, 'Would exceed the source order'))
+        ->toThrow(DomainException::class);
+    $receiving->reverseReceipt($replacement, 'Undo replacement first');
+    $settlement->reversePurchaseReturn($return, 'Restore original receipt');
+    expect($returnOrder->fresh()->fulfillmentStatus())->toBe('fully_received');
+
 });
 
 test('purchase order stores span active company branches while remaining company scoped', function (): void {
@@ -1664,7 +1543,7 @@ test('purchase order stores span active company branches while remaining company
             ...$payload['lines'][0],
             'product_doc_num' => $fixture['service']->doc_num,
         ]],
-    ])->assertUnprocessable()->assertJsonValidationErrors(['lines.0.product_doc_num']);
+    ])->assertUnprocessable()->assertJsonValidationErrors(['lines.0.cost_center_doc_num']);
 
     expect(fn () => app(PurchaseOrderService::class)->create([
         ...$payload,
@@ -1719,6 +1598,10 @@ test('procurement reports filter, print, and export without leaking confidential
     $confidentialExport = new ProcurementCycleReportExport($report, $rows, false);
 
     expect(ProcurementCycleReport::types())->toBe([
+        'supplier_statement', 'purchase_ledger',
+        'purchase_requests', 'pending_purchase_requests', 'open_purchase_orders', 'partially_received_orders',
+        'supplier_deliveries', 'purchase_receipts', 'purchase_invoices', 'received_vs_invoiced',
+        'purchases_by_category', 'purchases_by_warehouse', 'price_history', 'receipt_quality_status',
         'open_requirements',
         'requested_vs_ordered',
         'rfq_quotation_status',
@@ -1740,19 +1623,20 @@ test('procurement reports filter, print, and export without leaking confidential
         'production_analysis',
     ])->and($rows)->toHaveCount(1)
         ->and($rows->first()['document'])->toBe($invoice->doc_num)
-        ->and($rows->first()['outstanding'])->toBe('125.0000')
+        ->and((float) $rows->first()['outstanding'])->toBe(125.0)
         ->and($confidentialExport->headings())->not->toContain('Amount')
         ->and($confidentialExport->map($rows->first()))->not->toContain(125);
 
     $query = ['report_type' => ProcurementCycleReport::SupplierPayables];
+    $this->get(route('admin.purchases.procurement-cycle-report.index', $query))->assertForbidden();
+    $fixture['user']->givePermissionTo('purchases.prices.view');
     $this->actingAs($fixture['user'])
         ->get(route('admin.purchases.procurement-cycle-report.index', $query))
         ->assertOk()
         ->assertSee($invoice->doc_num)
         ->assertSee('name="production_order_doc_num"', false)
         ->assertSee('name="work_order_reference"', false)
-        ->assertDontSee(route('admin.purchases.procurement-cycle-report.export.excel', $query), false)
-        ->assertDontSee(__('Amount'));
+        ->assertDontSee(route('admin.purchases.procurement-cycle-report.export.excel', $query), false);
 
     $this->get(route('admin.purchases.procurement-cycle-report.print', $query))->assertForbidden();
     $this->get(route('admin.purchases.procurement-cycle-report.export.excel', $query))->assertForbidden();
@@ -1771,4 +1655,534 @@ test('procurement reports filter, print, and export without leaking confidential
     app()->setLocale('ar');
     expect(__('procurement.reports.types.open_requirements'))->toBe('احتياجات الشراء المفتوحة')
         ->and(__('procurement.documents.types.goods-receipt-inspection'))->toBe('فحص الجودة الوارد');
+});
+
+test('warehouse purchase requests retain approval audit and enforce split order capacity', function (): void {
+    $fixture = procurementFixture();
+    $sourcing = app(ProcurementSourcingService::class);
+    $orders = app(PurchaseOrderService::class);
+    $request = procurementManualRequisition($fixture, 10000);
+    $line = $request->lines->first();
+    $payload = [
+        'request_date' => now()->toDateString(), 'required_by_date' => now()->addWeek()->toDateString(),
+        'branch_store_uuid' => $fixture['store']->public_uuid, 'priority' => 'high',
+        'lead_time_days' => 7, 'suggested_supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'department' => 'Warehouse', 'lines' => [[
+            'public_id' => $line->public_id, 'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num, 'requested_quantity' => 10000, 'source_type' => 'manual',
+        ]],
+    ];
+    $request = $sourcing->updateRequisition($request, $payload);
+    $updatedAt = $request->updated_at->toDateTimeString();
+    $this->travel(1)->minutes();
+    $request = $sourcing->updateRequisition($request, $payload);
+    expect($request->updated_at->toDateTimeString())->toBe($updatedAt)
+        ->and($request->lines()->first()->public_id)->toBe($line->public_id)
+        ->and($request->suggested_supplier_id)->toBe($fixture['firstSupplier']->getKey());
+    $orderPayload = [
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(),
+        'exchange_rate' => 1, 'lines' => [[
+            'purchase_requisition_line_id' => $line->getKey(), 'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num, 'ordered_quantity' => 4000, 'unit_price' => 2,
+        ]],
+    ];
+    expect(fn () => $orders->create($orderPayload))->toThrow(DomainException::class);
+    $request = $sourcing->submitRequisition($request);
+    $submittedAt = $request->submitted_at->toDateTimeString();
+    $this->travel(1)->minutes();
+    expect($sourcing->submitRequisition($request)->submitted_at->toDateTimeString())->toBe($submittedAt);
+    $request = $sourcing->approveRequisition($request);
+    expect($request->submitted_by)->toBe($fixture['user']->getKey())
+        ->and($request->approved_by)->toBe($fixture['user']->getKey());
+    $first = $orders->approve($orders->create($orderPayload)['record']);
+    $line->refresh();
+    expect($line->remainingToOrder())->toBe(6000.0);
+    $orderPayload['supplier_doc_num'] = $fixture['secondSupplier']->doc_num;
+    $orderPayload['lines'][0]['ordered_quantity'] = 6001;
+    expect(fn () => $orders->create($orderPayload))->toThrow(DomainException::class);
+    $orderPayload['lines'][0]['ordered_quantity'] = 6000;
+    $second = $orders->approve($orders->create($orderPayload)['record']);
+    expect($request->fresh()->status)->toBe(PurchaseRequisition::StatusFullyConverted)
+        ->and($line->orderedQuantity())->toBe(10000.0);
+    expect(fn () => $sourcing->finishRequisition($request, PurchaseRequisition::StatusCancelled, 'Cancelled'))
+        ->toThrow(DomainException::class);
+    $orders->cancel($second, 'Supplier unavailable');
+    expect($line->remainingToOrder())->toBe(6000.0)
+        ->and($request->fresh()->status)->toBe(PurchaseRequisition::StatusPartiallyConverted)
+        ->and(InventoryTransaction::query()->count())->toBe(0)
+        ->and(JournalEntry::query()->count())->toBe(0);
+    $rejected = $sourcing->submitRequisition(procurementManualRequisition($fixture));
+    $rejected = $sourcing->rejectRequisition($rejected, 'Not required');
+    expect($rejected->status)->toBe(PurchaseRequisition::StatusRejected)
+        ->and($rejected->rejected_by)->toBe($fixture['user']->getKey())
+        ->and($rejected->rejection_reason)->toBe('Not required');
+    expect(fn () => $sourcing->approveRequisition($rejected))->toThrow(DomainException::class);
+    $this->travelBack();
+});
+
+test('goods receipt drafts post once and reverse quantities and grni without trusting cached order totals', function (): void {
+    $fixture = procurementFixture();
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $order = $orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(), 'exchange_rate' => 1,
+        'lines' => [['product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'ordered_quantity' => 10000, 'unit_price' => 2]],
+    ])['record'];
+    $order = $orders->approve($order);
+    $line = $order->lines->first();
+    $payload = ['document_date' => now()->toDateString(), 'supplier_delivery_note' => 'DELIVERY-1',
+        'lines' => [['purchase_order_line_public_id' => $line->public_id, 'delivered_quantity' => 4000]],
+    ];
+    $receipt = $receiving->createReceipt($order, $payload);
+    expect($receipt->status)->toBe('draft')->and($receipt->posting_status)->toBe('unposted')
+        ->and(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0)
+        ->and($line->receivedQuantity())->toBe(0.0);
+    $receipt = $receiving->postReceipt($receipt);
+    if ($receipt->qc_status === 'pending_inspection') {
+        $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id, 'accepted_quantity' => 4000, 'rejected_quantity' => 0]]]);
+    }
+    $receiving->postReceipt($receipt->fresh());
+    expect($line->receivedQuantity())->toBe(4000.0)
+        ->and((float) $order->fresh()->total_remaining_quantity)->toBe(6000.0)
+        ->and(InventoryTransaction::query()->count())->toBe(1)
+        ->and(JournalEntry::query()->count())->toBe(1);
+    $line->forceFill(['received_quantity' => 0, 'remaining_quantity' => 10000])->save();
+    $payload['lines'][0]['delivered_quantity'] = 6001;
+    expect(fn () => $receiving->receive($order, $payload))->toThrow(DomainException::class);
+    $payload['lines'][0]['delivered_quantity'] = 6000;
+    $second = $receiving->receive($order, $payload);
+    if ($second->qc_status === 'pending_inspection') {
+        $receiving->inspect($second, ['lines' => [['receipt_line_public_id' => $second->lines->first()->public_id, 'accepted_quantity' => 6000, 'rejected_quantity' => 0]]]);
+    }
+    expect($line->receivedQuantity())->toBe(10000.0)->and((float) $order->fresh()->total_remaining_quantity)->toBe(0.0);
+    $receiving->reverseReceipt($second->fresh(), 'Incorrect delivery');
+    $receiving->reverseReceipt($second->fresh(), 'Repeated reversal');
+    expect($line->receivedQuantity())->toBe(4000.0)
+        ->and((float) $order->fresh()->total_remaining_quantity)->toBe(6000.0)
+        ->and((float) InventoryTransaction::query()->selectRaw('sum(quantity_in - quantity_out) as balance')->value('balance'))->toBe(4000.0)
+        ->and(InventoryTransaction::query()->where('is_reversal', true)->count())->toBe(1)
+        ->and(JournalEntry::query()->count())->toBe(3);
+});
+
+test('warehouse procurement acceptance completes ten thousand units through receipts invoice payments return and reversal', function (): void {
+    $fixture = procurementFixture();
+    $this->seed(PermissionSeeder::class);
+    $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111091', 'Acceptance Supplier');
+    $cashAccount = procurementPostingAccount($fixture['company'], '1111', '1111091', 'Acceptance Cash');
+    $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->getKey()])->save();
+    $cashbox = Cashbox::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
+        'account_id' => $cashAccount->getKey(), 'name' => 'Acceptance cashbox', 'status' => 'active',
+    ]);
+    CashboxCurrency::query()->create(['cashbox_id' => $cashbox->getKey(), 'currency_id' => $fixture['currency']->getKey(), 'is_default' => true, 'status' => 'active']);
+    $sourcing = app(ProcurementSourcingService::class);
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $invoices = app(PurchaseInvoiceService::class);
+    $settlement = app(ProcurementSettlementService::class);
+    $request = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 10000)));
+    $order = $orders->approve($orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(), 'exchange_rate' => 1,
+        'lines' => [['purchase_requisition_line_id' => $request->lines->first()->getKey(),
+            'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 10000, 'unit_price' => 2]],
+    ])['record']);
+    expect(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0);
+    $orderLine = $order->lines->first();
+    $receipts = collect();
+    foreach ([4000, 6000] as $quantity) {
+        $receipt = $receiving->createReceipt($order, ['document_date' => now()->toDateString(),
+            'lines' => [['purchase_order_line_public_id' => $orderLine->public_id, 'delivered_quantity' => $quantity]],
+        ]);
+        $receipt = $receiving->postReceipt($receipt);
+        if ($receipt->qc_status === 'pending_inspection') {
+            $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
+                'accepted_quantity' => $quantity, 'rejected_quantity' => 0]]]);
+        }
+        $receiving->postReceipt($receipt->fresh());
+        $receipts->push($receipt->fresh()->load('lines'));
+        expect($order->fresh()->fulfillmentStatus())->toBe($quantity === 4000 ? 'partially_received' : 'fully_received')
+            ->and((float) $orderLine->quantityProgress()['remaining'])->toBe($quantity === 4000 ? 6000.0 : 0.0);
+    }
+    $invoicePayload = [
+        'purchase_order_doc_num' => $order->doc_num, 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1, 'invoice_date' => now()->toDateString(),
+        'supplier_invoice_number' => 'SUPPLIER-ACCEPTANCE-1', 'payment_type' => 'credit',
+        'lines' => $receipts->map(fn ($receipt) => [
+            'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'purchase_order_line_public_id' => $orderLine->public_id, 'receipt_line_public_id' => $receipt->lines->first()->public_id,
+            'quantity' => $receipt->lines->first()->accepted_quantity, 'unit_price' => 2,
+        ])->all(),
+    ];
+    $this->get(route('admin.purchases.purchase-invoices.create', ['purchase_order' => $order->doc_num]))->assertOk()
+        ->assertSee($receipts->first()->lines->first()->public_id)->assertSee($receipts->last()->lines->first()->public_id);
+    $invoice = $invoices->approve($invoices->create($invoicePayload)['record']);
+    $invoices->approve($invoice->fresh());
+    expect((float) $invoice->total_amount)->toBe(20000.0)
+        ->and(InventoryTransaction::query()->count())->toBe(2)
+        ->and($orderLine->quantityProgress()['invoiced'])->toBe(10000.0);
+    expect(fn () => $receiving->reverseReceipt($receipts->first(), 'Blocked by invoice'))->toThrow(DomainException::class);
+    $payments = collect();
+    foreach ([8000, 12000] as $amount) {
+        $payment = $settlement->createSupplierPayment([
+            'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'payment_date' => now()->toDateString(),
+            'cashbox_doc_num' => $cashbox->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+            'amount' => $amount, 'reason' => 'Acceptance settlement',
+            'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => $amount]],
+        ]);
+        $payments->push($settlement->approveSupplierPayment($payment));
+        $settlement->approveSupplierPayment($payment->fresh());
+        expect($invoice->fresh()->payment_status)->toBe($amount === 8000 ? PurchaseInvoice::PaymentStatusPartiallyPaid : PurchaseInvoice::PaymentStatusPaid);
+    }
+    expect((float) $invoice->fresh()->remaining_amount)->toBe(0.0);
+    expect(fn () => $invoices->reverse($invoice, 'Payments must be reversed first'))->toThrow(DomainException::class);
+    $return = $settlement->createPurchaseReturn([
+        'purchase_order_doc_num' => $order->doc_num, 'purchase_invoice_doc_num' => $invoice->doc_num,
+        'return_date' => now()->toDateString(), 'reason_code' => 'latent_defect',
+        'lines' => [['receipt_line_public_id' => $receipts->first()->lines->first()->public_id, 'quantity' => 500, 'from_quarantine' => false]],
+    ]);
+    $return = $settlement->approvePurchaseReturn($return);
+    $settlement->approvePurchaseReturn($return);
+    expect((float) InventoryTransaction::query()->sum('quantity_in') - (float) InventoryTransaction::query()->sum('quantity_out'))->toBe(9500.0)
+        ->and($orderLine->quantityProgress()['returned'])->toBe(500.0);
+    $return = $settlement->reversePurchaseReturn($return, 'Accepted after reinspection');
+    $settlement->reversePurchaseReturn($return, 'Repeated reversal');
+    expect((float) InventoryTransaction::query()->sum('quantity_in') - (float) InventoryTransaction::query()->sum('quantity_out'))->toBe(10000.0)
+        ->and($orderLine->quantityProgress()['net_received'])->toBe(10000.0)
+        ->and($invoice->fresh()->payment_status)->toBe(PurchaseInvoice::PaymentStatusPaid);
+    $ledgerBalance = fn (int $accountId): float => (float) JournalEntryLine::query()
+        ->where('account_id', $accountId)->whereHas('journalEntry', fn ($query) => $query->where('status', 'posted'))
+        ->selectRaw('COALESCE(SUM(debit_amount - credit_amount), 0) AS balance')->value('balance');
+    expect($ledgerBalance($supplierAccount->getKey()))->toBe(0.0)
+        ->and($ledgerBalance((int) Account::query()->where('account_code', '212')->value('id')))->toBe(0.0)
+        ->and($ledgerBalance((int) Account::query()->where('account_code', '1131')->value('id')))->toBe(20000.0);
+    foreach (JournalEntry::query()->with('lines')->get() as $journal) {
+        expect(round((float) $journal->lines->sum('debit_amount') - (float) $journal->lines->sum('credit_amount'), 4))->toBe(0.0);
+    }
+    $expectedDocs = [$request->doc_num, $order->doc_num, ...$receipts->pluck('doc_num')->all(), $invoice->doc_num,
+        ...$payments->pluck('doc_num')->all(), $return->doc_num];
+    foreach ([$request, $order, ...$receipts, $invoice, ...$payments, $return] as $document) {
+        $chain = app(ProcurementCycleReport::class)->documentChain($document);
+        foreach ($expectedDocs as $number) {
+            expect($chain->pluck('doc_num')->all())->toContain($number);
+        }
+    }
+    $printRoutes = [
+        route('admin.purchases.procurement.print', ['purchase-requisition', $request->doc_num]),
+        route('admin.purchases.purchase-orders.print', $order->doc_num),
+        route('admin.purchases.procurement.print', ['goods-receipt', $receipts->first()->doc_num]),
+        route('admin.purchases.purchase-invoices.print', $invoice->doc_num),
+        route('admin.purchases.procurement.print', ['purchase-return', $return->doc_num]),
+    ];
+    Storage::disk('public')->put('tests/procurement/identity.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAKAAAAAyCAIAAABUA0cyAAAACXBIWXMAAA7EAAAOxAGVKw4bAAABR0lEQVR4nO3bUY6CMBgA4XWz91hvocfYPSnX4BgcxYcmTfNTaolFzTjfk8GChBGoJJ5+L39f4vp+9Q7oWAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBob76Rm0zFN1+fn6H8aUS6rrpgF3N1gOqC6sbrBnfz5NV+CkcbDyoV/mqXGUl3lKA0KzsOVyYV6luhvrdxUMuETnHuHsXMfrKRHWap/xYcuNj/5Yjwbe2+O4g16e8dbNdlyiq/fF56ve1PNr6wZj7sEv8W778552BG64e48caGvypaoxv4PTDKucHm8Z9VXonHzpwAcd6wY9PfrnwzbuMeYSvSXNevbOzsJaXocfcfLPZ2w+i4YzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAx3A4Npkgj1aQnLAAAAAElFTkSuQmCC'));
+    $fixture['company']->forceFill(['legal_name' => 'FACTORY PRINT IDENTITY', 'email' => 'factory-identity@example.test', 'logo' => 'tests/procurement/identity.png'])->save();
+    foreach ([false, true] as $showIdentity) {
+        $fixture['company']->forceFill(['show_company_identity_on_prints' => $showIdentity])->save();
+        foreach ($printRoutes as $index => $url) {
+            $pdf = $this->get($url)->assertOk()->assertHeader('content-type', 'application/pdf')->getContent();
+            expect(str_starts_with($pdf, '%PDF-'))->toBeTrue();
+            $path = tempnam(sys_get_temp_dir(), 'procurement-print-');
+            file_put_contents($path, $pdf);
+            try {
+                $process = new Process(['pdftotext', '-layout', $path, '-']);
+                $process->mustRun();
+                if ($index === 3) {
+                    expect($process->getOutput())->toContain($receipts->first()->doc_num)->toContain($receipts->last()->doc_num);
+                }
+
+                if ($showIdentity) {
+                    expect($process->getOutput())->toContain('FACTORY PRINT IDENTITY')->toContain('factory-identity@example.test')
+                        ->and(substr_count($pdf, '/Subtype /Image'))->toBeGreaterThan(0);
+                } else {
+                    expect($process->getOutput())->not->toContain('FACTORY PRINT IDENTITY')->not->toContain('factory-identity@example.test')
+                        ->and(substr_count($pdf, '/Subtype /Image'))->toBe(0);
+                }
+            } finally {
+                unlink($path);
+            }
+            if ($directory = getenv('PROCUREMENT_PRINT_SAMPLES')) {
+                file_put_contents($directory.'/procurement-'.($index + 1).'-'.($showIdentity ? 'on' : 'off').'.pdf', $pdf);
+            }
+        }
+    }
+    $reports = app(ProcurementCycleReport::class);
+    foreach ([ProcurementCycleReport::PurchaseRequests, ProcurementCycleReport::RequestedVsOrdered, ProcurementCycleReport::PurchaseReceipts,
+        ProcurementCycleReport::ReceivedVsInvoiced, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::PurchasesBySupplier,
+        ProcurementCycleReport::PurchasesByProduct, ProcurementCycleReport::PurchasesByCategory, ProcurementCycleReport::PurchasesByWarehouse, ProcurementCycleReport::PriceHistory] as $reportType) {
+        $rows = $reports->rows($reportType, ['branch_id' => $fixture['branch']->getKey()], $fixture['company']->getKey(), $fixture['period']->getKey());
+        expect($rows)->not->toBeEmpty();
+        $this->get(route('admin.purchases.procurement-cycle-report.index', ['report_type' => $reportType]))->assertOk();
+        expect($reports->rows($reportType, ['date_from' => now()->addDay()->toDateString()], $fixture['company']->getKey(), $fixture['period']->getKey()))->toBeEmpty();
+    }
+    expect($reports->rows(ProcurementCycleReport::OpenPurchaseOrders, [], $fixture['company']->getKey(), $fixture['period']->getKey()))->toBeEmpty();
+
+    $fixture['company']->forceFill(['show_company_identity_on_prints' => false])->save();
+    $legalCopy = $this->get(route('admin.purchases.purchase-invoices.print', [$invoice->doc_num, 'copy' => 'legal']))
+        ->assertOk()->assertHeader('content-type', 'application/pdf')->getContent();
+    $path = tempnam(sys_get_temp_dir(), 'procurement-legal-print-');
+    file_put_contents($path, $legalCopy);
+    try {
+        $process = new Process(['pdftotext', '-layout', $path, '-']);
+        $process->mustRun();
+        expect($process->getOutput())->toContain('FACTORY PRINT IDENTITY')->toContain('factory-identity@example.test');
+    } finally {
+        unlink($path);
+    }
+
+});
+
+test('alternate purchase units keep stock lineage and draft edits preserve identifiers and audit', function (): void {
+    $fixture = procurementFixture();
+    $this->seed(PermissionSeeder::class);
+    $fixture['user']->givePermissionTo(['purchases.goods_receipt_notes.view', 'purchases.goods_receipt_notes.edit', 'purchases.purchase_returns.view', 'purchases.purchase_returns.edit']);
+    $ton = ItemUnit::query()->create(['company_id' => $fixture['company']->getKey(), 'doc_number' => 9901, 'doc_num' => 'UNIT-TON', 'name' => 'Ton', 'status' => 'active']);
+    $fixture['raw']->forceFill(['equivalent_unit_id' => $ton->getKey(), 'equivalent_value' => '0.001', 'tracks_expiry' => true])->save();
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $settlement = app(ProcurementSettlementService::class);
+    $order = $orders->approve($orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(), 'exchange_rate' => 1,
+        'lines' => [['product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $ton->doc_num, 'ordered_quantity' => 10, 'unit_price' => 2000]],
+    ])['record']);
+    $fixture['raw']->forceFill(['equivalent_value' => '0.01'])->save();
+    $payload = ['document_date' => now()->toDateString(), 'supplier_delivery_note' => 'TON-DELIVERY',
+        'lines' => [['purchase_order_line_public_id' => $order->lines->first()->public_id, 'delivered_quantity' => 4,
+            'supplier_lot_number' => 'LOT-TON', 'manufacture_date' => now()->toDateString(), 'expiry_date' => now()->addYear()->toDateString()]],
+    ];
+    $draft = $receiving->createReceipt($order, $payload);
+    $lineId = $draft->lines->first()->public_id;
+    $this->get(route('admin.purchases.goods-receipt-notes.edit', $draft->doc_num))->assertOk()->assertSee('TON-DELIVERY');
+    $this->post(route('admin.purchases.goods-receipt-notes.post', $draft->doc_num))->assertForbidden();
+    $payload['lines'][0]['delivered_quantity'] = 3;
+    $draft = $receiving->updateReceipt($draft, $payload);
+    $this->travel(1)->minutes();
+    $updatedAt = $draft->updated_at->toDateTimeString();
+    $lineUpdatedAt = $draft->lines->first()->updated_at->toDateTimeString();
+    $draft = $receiving->updateReceipt($draft, $payload);
+    expect($draft->updated_at->toDateTimeString())->toBe($updatedAt)->and($draft->lines->first()->public_id)->toBe($lineId)
+        ->and($draft->lines->first()->updated_at->toDateTimeString())->toBe($lineUpdatedAt);
+    $payload['lines'][0]['delivered_quantity'] = 4;
+    $receipt = $receiving->postReceipt($receiving->updateReceipt($draft, $payload));
+    $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $lineId, 'accepted_quantity' => 4, 'rejected_quantity' => 0]]]);
+    $receipt = $receipt->fresh()->load('lines');
+    $movement = InventoryTransaction::query()->where('source_id', $receipt->getKey())->where('transaction_type', 'purchase_receipt')->sole();
+    expect($movement->quantity_in)->toBe('4000.00000000')->and($movement->unit_id)->toBe($fixture['unit']->getKey())
+        ->and((float) $movement->unit_cost)->toBe(2.0)->and((float) $movement->total_cost)->toBe(8000.0);
+    expect(fn () => $receiving->updateReceipt($receipt, $payload))->toThrow(DomainException::class);
+    expect(fn () => $receiving->deleteReceipt($receipt))->toThrow(DomainException::class);
+    $returnPayload = ['purchase_order_doc_num' => $order->doc_num, 'return_date' => now()->toDateString(), 'reason_code' => 'damaged',
+        'lines' => [['receipt_line_public_id' => $lineId, 'quantity' => 0.2, 'from_quarantine' => false]],
+    ];
+    $return = $settlement->createPurchaseReturn($returnPayload);
+    $returnLineId = $return->lines->first()->public_id;
+    $returnPayload['lines'][0]['quantity'] = 0.5;
+    $return = $settlement->updatePurchaseReturn($return, $returnPayload);
+    $returnUpdated = $return->updated_at->toDateTimeString();
+    $this->travel(1)->minutes();
+    $return = $settlement->updatePurchaseReturn($return, $returnPayload);
+    expect($return->updated_at->toDateTimeString())->toBe($returnUpdated)->and($return->lines->first()->public_id)->toBe($returnLineId);
+    $this->get(route('admin.purchases.purchase-returns.edit', $return))->assertOk()->assertSee($lineId);
+    $return = $settlement->approvePurchaseReturn($return);
+    expect((float) InventoryTransaction::query()->sum('quantity_out'))->toBe(500.0);
+    expect(fn () => $settlement->deletePurchaseReturn($return))->toThrow(DomainException::class);
+    $settlement->reversePurchaseReturn($return, 'Return withdrawn');
+    $reversal = InventoryTransaction::query()->where('transaction_type', 'purchase_return_reversal')->sole();
+    expect($reversal->batch_lot)->toBe('LOT-TON')->and($reversal->expiry_date?->toDateString())->toBe($movement->expiry_date?->toDateString());
+    $receiving->reverseReceipt($receipt, 'All dependent returns reversed');
+    expect((float) InventoryTransaction::query()->sum('quantity_in') - (float) InventoryTransaction::query()->sum('quantity_out'))->toBe(0.0)
+        ->and(app(ProcurementCycleReport::class)->grniReconciliation($fixture['company']->getKey(), $fixture['period']->getKey())['difference'])->toBe('0.0000');
+    expect(fn () => $receiving->inspect($receipt->fresh(), ['lines' => []]))->toThrow(DomainException::class);
+    $this->travelBack();
+});
+
+test('supplier invoice preserves receipt precision and rejects duplicate supplier references', function (): void {
+    $fixture = procurementFixture();
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $invoices = app(PurchaseInvoiceService::class);
+    $order = $orders->approve($orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1,
+        'document_date' => now()->toDateString(), 'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Precision regression',
+        'lines' => [['product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => '0.12345678', 'unit_price' => 100]],
+    ])['record']);
+    $orderLine = $order->lines->sole();
+    $receipt = $receiving->receive($order, ['document_date' => now()->toDateString(),
+        'lines' => [['purchase_order_line_public_id' => $orderLine->public_id, 'delivered_quantity' => '0.12345678']]]);
+    $receiptLine = $receipt->lines->sole();
+    $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receiptLine->public_id,
+        'accepted_quantity' => '0.12345678', 'rejected_quantity' => 0]]]);
+    $payload = [
+        'purchase_order_doc_num' => $order->doc_num, 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(), 'supplier_invoice_number' => 'PRECISION-INV-1',
+        'lines' => [['product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'purchase_order_line_public_id' => $orderLine->public_id, 'receipt_line_public_id' => $receiptLine->public_id,
+            'quantity' => '0.12345678', 'unit_price' => 100]],
+    ];
+    $invoice = $invoices->create($payload)['record'];
+    expect($invoice->lines->sole()->quantity)->toBe('0.12345678')
+        ->and(app(PurchaseInvoiceMatchingService::class)->remainingForReceipt($receiptLine))->toBe(0.0);
+    expect(fn () => $invoices->create($payload))->toThrow(DomainException::class);
+    expect(PurchaseInvoice::query()->count())->toBe(1);
+});
+
+test('one purchase order combines approved requests and retains every source line', function (): void {
+    $fixture = procurementFixture();
+    $sourcing = app(ProcurementSourcingService::class);
+    $orders = app(PurchaseOrderService::class);
+    $requests = collect([10, 20])->map(fn ($quantity) => $sourcing->approveRequisition(
+        $sourcing->submitRequisition(procurementManualRequisition($fixture, $quantity))));
+    foreach (['purchase_orders.create', 'purchases.prices.view', 'purchases.purchase_requisitions.view'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $this->actingAs($fixture['user'])->get(route('admin.purchases.purchase-orders.create', [
+        'purchase_requisition_doc_nums' => $requests->pluck('doc_num')->all(),
+    ]))->assertOk()->assertSee($requests[0]->doc_num)->assertSee($requests[1]->doc_num);
+    $order = $orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1,
+        'document_date' => now()->toDateString(),
+        'lines' => $requests->map(fn ($request) => [
+            'purchase_requisition_line_id' => $request->lines->sole()->getKey(),
+            'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => $request->lines->sole()->approved_quantity, 'unit_price' => 2,
+        ])->all(),
+    ])['record'];
+    expect($order->lines->pluck('purchase_requisition_line_id')->all())->toBe($requests->map(fn ($request) => $request->lines->sole()->getKey())->all())
+        ->and($requests->first()->lines->sole()->quantityProgress()['ordered'])->toBe(0.0);
+    expect(fn () => $sourcing->finishRequisition($requests->first(), PurchaseRequisition::StatusClosed))->toThrow(DomainException::class);
+    $orders->approve($order);
+    expect($requests->map(fn ($request) => $request->fresh()->status)->unique()->all())->toBe([PurchaseRequisition::StatusFullyConverted])
+        ->and(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0);
+});
+
+test('procurement workflow and shared print labels have Arabic translations without fallback', function (): void {
+    $paths = [
+        'modules/Purchases/Services/ProcurementReceivingService.php',
+        'modules/Purchases/Services/ProcurementSourcingService.php',
+        'modules/Purchases/Services/ProcurementSettlementService.php',
+        'modules/Purchases/Services/PurchaseInvoiceService.php',
+        'modules/Purchases/Services/PurchaseOrderService.php',
+        'modules/Purchases/Services/Reports/ProcurementCycleReport.php',
+        'resources/views/modules/purchases/suppliers/procurement-overview.blade.php',
+        'resources/views/modules/purchases/procurement/attachments.blade.php',
+        'resources/views/components/forms/line-item-cards.blade.php',
+        'app/Http/Middleware/IdempotentDocumentSubmission.php',
+        'modules/Core/Services/Reports/ReportPdfService.php',
+        'resources/views/modules/purchases/procurement/document-cycle.blade.php',
+        'resources/views/modules/purchases/procurement/line-progress.blade.php',
+        'resources/views/modules/purchases/procurement/print.blade.php',
+        'resources/views/reports/partials/document-signatures.blade.php',
+        'resources/views/reports/sales/quotation.blade.php',
+    ];
+    $missing = [];
+    foreach ($paths as $path) {
+        preg_match_all('/__\(\s*[\'"]([^\'"\n]+)[\'"]\s*[,\)]/', file_get_contents(base_path($path)), $matches);
+        foreach (array_unique($matches[1]) as $key) {
+            if (! str_contains($key, '$') && ! Lang::hasForLocale($key, 'ar')) {
+                $missing[] = $key;
+            }
+        }
+    }
+    expect(array_values(array_unique($missing)))->toBe([]);
+});
+
+test('procurement crosses closed source periods while each child posts in its own open period', function (): void {
+    $this->travelTo(Carbon::parse('2026-08-29 12:00:00'));
+    $fixture = procurementFixture();
+    $this->seed(PermissionSeeder::class);
+    $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    $august = $fixture['period'];
+    $august->forceFill(['from_date' => '2026-08-01', 'to_date' => '2026-08-31'])->save();
+    $periods = collect([9, 10, 11])->mapWithKeys(fn (int $month): array => [$month => FinancialPeriod::query()->create([
+        'company_id' => $fixture['company']->id, 'doc_number' => 9200 + $month, 'doc_num' => 'Period-PROC-'.$month,
+        'name' => 'Procurement '.$month, 'from_date' => sprintf('2026-%02d-01', $month),
+        'to_date' => Carbon::create(2026, $month, 1)->endOfMonth()->toDateString(), 'is_closed' => false,
+    ])]);
+    $usePeriod = function (FinancialPeriod $period, string $date): void {
+        $this->travelTo(Carbon::parse($date.' 12:00:00'));
+        $values = [OperatingContextService::FinancialPeriodIdKey => $period->id, OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num];
+        session($values);
+        $this->withSession($values);
+    };
+    $sourcing = app(ProcurementSourcingService::class);
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $invoices = app(PurchaseInvoiceService::class);
+    $settlement = app(ProcurementSettlementService::class);
+    $requisition = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 10000)));
+    $august->forceFill(['is_closed' => true])->save();
+    $usePeriod($periods[9], '2026-09-01');
+    $order = $orders->approve($orders->create([
+        'document_date' => '2026-09-01', 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1, 'branch_store_uuid' => $fixture['store']->public_uuid,
+        'lines' => [['purchase_requisition_line_id' => $requisition->lines->first()->id,
+            'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 10000, 'unit_price' => 2]],
+    ])['record']);
+    $receipts = collect();
+    foreach ([[9, 4000, '2026-09-03'], [10, 6000, '2026-10-03']] as [$month, $quantity, $date]) {
+        $usePeriod($periods[$month], $date);
+        $receipt = $receiving->postReceipt($receiving->createReceipt($order, ['document_date' => $date,
+            'lines' => [['purchase_order_line_public_id' => $order->lines->first()->public_id, 'delivered_quantity' => $quantity]],
+        ]));
+        $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
+            'accepted_quantity' => $quantity, 'rejected_quantity' => 0]]]);
+        $receipts->push($receipt->fresh()->load('lines'));
+        if ($month === 9) {
+            $periods[9]->forceFill(['is_closed' => true])->save();
+        }
+    }
+    $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111088', 'Cross-period Supplier');
+    $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->id])->save();
+    $invoiceData = ['invoice_date' => '2026-10-10', 'purchase_order_doc_num' => $order->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'supplier_invoice_number' => 'CROSS-PERIOD-1',
+        'currency_doc_num' => $fixture['currency']->doc_num, 'payment_type' => 'credit',
+        'lines' => $receipts->map(fn ($receipt): array => ['product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num, 'purchase_order_line_public_id' => $order->lines->first()->public_id,
+            'receipt_line_public_id' => $receipt->lines->first()->public_id, 'quantity' => $receipt->lines->first()->accepted_quantity, 'unit_price' => 2])->all()];
+    $invoice = $invoices->approve($invoices->create($invoiceData)['record']);
+    expect($invoice->financial_period_id)->toBe($periods[10]->id)
+        ->and($order->fresh()->fulfillmentStatus())->toBe('fully_received')
+        ->and((float) InventoryTransaction::sum('quantity_in'))->toBe(10000.0);
+    $this->get(route('admin.purchases.purchase-orders.show', $order->doc_num))->assertOk();
+    $this->get(route('admin.purchases.goods-receipt-notes.show', $receipts->first()->doc_num))->assertOk();
+    expect(app(ProcurementCycleReport::class)->grniReconciliation($fixture['company']->id, $periods[10]->id)['difference'])->toBe('0.0000');
+    $periods[10]->forceFill(['is_closed' => true])->save();
+    $usePeriod($periods[11], '2026-11-01');
+    expect(fn () => $invoices->create([...$invoiceData, 'invoice_date' => '2026-11-01']))->toThrow(DomainException::class);
+    expect(fn () => $receiving->reverseReceipt($receipts->first(), 'Historical receipt'))->toThrow(DomainException::class);
+    $cashAccount = procurementPostingAccount($fixture['company'], '1111', '1111088', 'Cross-period Cash');
+    $cashbox = Cashbox::query()->create([...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->id),
+        'company_id' => $fixture['company']->id, 'branch_id' => $fixture['branch']->id, 'account_id' => $cashAccount->id, 'name' => 'Cross-period cash', 'status' => 'active']);
+    CashboxCurrency::query()->create(['cashbox_id' => $cashbox->id, 'currency_id' => $fixture['currency']->id, 'is_default' => true, 'status' => 'active']);
+    foreach ([8000, 12000] as $amount) {
+        $settlement->approveSupplierPayment($settlement->createSupplierPayment(['payment_date' => '2026-11-01',
+            'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+            'cashbox_doc_num' => $cashbox->doc_num, 'amount' => $amount,
+            'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => $amount]]]));
+    }
+    expect($invoice->fresh()->payment_status)->toBe(PurchaseInvoice::PaymentStatusPaid);
+    $historicalLedger = app(ProcurementCycleReport::class)->rows(ProcurementCycleReport::PurchaseLedger, ['branch_id' => $fixture['branch']->id], $fixture['company']->id, $periods[10]->id);
+    expect((float) $historicalLedger->sole()['paid'])->toBe(0.0)->and((float) $historicalLedger->sole()['outstanding'])->toBe(20000.0);
+    $statement = app(ProcurementCycleReport::class)->supplierStatement($fixture['company']->id, $periods[11]->id, ['supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'branch_id' => $fixture['branch']->id]);
+    expect((float) $statement->first()['balance'])->toBe(20000.0)->and((float) $statement->last()['balance'])->toBe(0.0);
+    $chain = app(ProcurementCycleReport::class)->documentChain($invoice)->pluck('doc_num');
+    foreach ([$requisition, $order, ...$receipts] as $source) {
+        expect($chain)->toContain($source->doc_num);
+    }
+    expect((float) JournalEntryLine::sum('debit_amount'))->toBe((float) JournalEntryLine::sum('credit_amount'));
+    $this->travelBack();
 });

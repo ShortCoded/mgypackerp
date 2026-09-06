@@ -4,7 +4,7 @@
     $showPrices = $commercial && auth()->user()?->can('purchases.prices.view');
     $document = $record->doc_num ?? $record->cashVoucher?->doc_num;
     $status = $record->status ?? $record->cashVoucher?->status ?? '—';
-    $title = str($type)->replace('_', ' ')->title().' '.$document;
+    $title = __(str($type)->replace('_', ' ')->title()->toString()).' '.$document;
     $printType = str($type)->replace('_', '-')->toString();
     $printPermission = match ($type) {
         'purchase_requisition' => 'purchases.purchase_requisitions.print',
@@ -89,7 +89,7 @@
         <div class="card-header d-flex flex-wrap align-items-start justify-content-between gap-2">
             <div>
                 <h5 class="mb-1">{{ $title }}</h5>
-                <span class="badge badge-subtle-secondary">{{ str((string) $status)->replace('_', ' ')->title() }}</span>
+                <span class="badge badge-subtle-secondary">{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</span>
             </div>
             <div class="d-flex flex-wrap gap-2">
                 @if($printPermission && auth()->user()?->can($printPermission))
@@ -99,19 +99,44 @@
                 @endif
 
                 @if($type === 'purchase_requisition' && $record->status === 'draft')
-                    @can('purchases.purchase_requisitions.edit')
+                    @can('purchases.purchase_requisitions.delete')<form method="POST" action="{{ route('admin.purchases.purchase-requisitions.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
+                    @can('purchases.purchase_requisitions.edit')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-requisitions.edit', $record->doc_num) }}">{{ __('Edit') }}</a>@endcan
+                    @can('purchases.purchase_requisitions.submit')
                     <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.submit', $record->doc_num) }}">@csrf<button class="btn btn-falcon-primary btn-sm">{{ __('Submit for approval') }}</button></form>
                     @endcan
                 @endif
                 @if($type === 'purchase_requisition' && $record->status === 'pending_approval')
                     @can('purchases.purchase_requisition_approvals.approve')
-                    <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve') }}</button></form>
+                    <form id="purchase-request-approval" method="POST" action="{{ route('admin.purchases.purchase-requisitions.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve') }}</button></form>
                     @endcan
                 @endif
                 @if($type === 'purchase_requisition' && in_array($record->status, ['approved', 'partially_converted'], true))
+                    @can('purchase_orders.create')
+                    @can('purchases.prices.view')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-orders.create', ['purchase_requisition_doc_nums' => [$record->doc_num]]) }}">{{ __('Create Purchase Order') }}</a>
+                    @endcan
+                    @endcan
                     @can('purchases.request_for_quotations.create')
                     <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.request-for-quotations.create', $record->doc_num) }}">{{ __('Create RFQ') }}</a>
                     @endcan
+                @endif
+
+                @if($type === 'purchase_requisition')
+                    @if($record->status === 'pending_approval')
+                        @can('purchases.purchase_requisition_approvals.reject')
+                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
+                        @endcan
+                    @endif
+                    @if(!in_array($record->status, ['cancelled', 'closed']))
+                        @can('purchases.purchase_requisitions.cancel')
+                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
+                        @endcan
+                    @endif
+                    @if(in_array($record->status, ['approved', 'partially_converted', 'fully_converted']))
+                        @can('purchases.purchase_requisitions.close')
+                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.close', $record->doc_num) }}">@csrf<button class="btn btn-falcon-default btn-sm">{{ __('Close') }}</button></form>
+                        @endcan
+                    @endif
                 @endif
 
                 @if($type === 'request_for_quotation' && $record->status === 'draft')
@@ -154,7 +179,33 @@
                     @endcan
                     @endcan
                 @endif
-                @if($type === 'goods_receipt' && $record->qc_status === 'pending_inspection')
+                @if($type === 'goods_receipt' && $record->posting_status === 'posted')
+                    @can('purchase_invoices.create')
+                    @can('purchases.prices.view')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $record->purchaseOrder->doc_num, 'receipts' => [$record->doc_num]]) }}">{{ __('Create supplier invoice') }}</a>
+                    @endcan
+                    @endcan
+                    @can('purchases.purchase_returns.create')
+                    <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.create', ['purchase_order' => $record->purchaseOrder->doc_num, 'receipt' => $record->doc_num]) }}">{{ __('Create purchase return') }}</a>
+                    @endcan
+                @endif
+                @if($type === 'goods_receipt' && $record->status === 'draft')
+                    @can('purchases.goods_receipt_notes.edit')
+                    <a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.edit', $record->doc_num) }}">{{ __('Edit draft') }}</a>
+                    @endcan
+                    @can('purchases.goods_receipt_notes.delete')
+                    <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.destroy', $record->doc_num) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>
+                    @endcan
+                    @can('purchases.goods_receipt_notes.post')
+                    <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.post', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Post receipt') }}</button></form>
+                    @endcan
+                @endif
+                @if($type === 'goods_receipt' && in_array($record->posting_status, ['posted', 'partially_posted']))
+                    @can('purchases.goods_receipt_notes.reverse')
+                    <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.reverse', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reverse receipt') }}</button></form>
+                    @endcan
+                @endif
+                @if($type === 'goods_receipt' && $record->approved && $record->qc_status === 'pending_inspection')
                     @can('purchases.goods_receipt_inspection.create')
                     <a class="btn btn-warning btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Inspect receipt') }}</a>
                     @endcan
@@ -167,12 +218,14 @@
                     @endcan
                 @endif
                 @if($type === 'purchase_return' && $record->status === 'draft')
-                    @can('purchases.purchase_returns.approve')
+                    @can('purchases.purchase_returns.edit')<a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.purchase-returns.edit', $record) }}">{{ __('Edit draft') }}</a>@endcan
+                    @can('purchases.purchase_returns.delete')<form method="POST" action="{{ route('admin.purchases.purchase-returns.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
+                    @can('purchases.purchase_returns.post')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve and post return') }}</button></form>
                     @endcan
                 @endif
                 @if($type === 'purchase_return' && $record->status === \Modules\Purchases\Models\PurchaseReturn::StatusPosted)
-                    @can('purchases.purchase_returns.approve')
+                    @can('purchases.purchase_returns.reverse')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.reverse', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
                         <input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required>
@@ -204,7 +257,7 @@
             @endif
             <div class="row g-3">
                 <div class="col-md-3"><div class="text-600 fs-10">{{ __('Document') }}</div><div class="fw-semibold" dir="ltr">{{ $document }}</div></div>
-                <div class="col-md-3"><div class="text-600 fs-10">{{ __('Status') }}</div><div>{{ str((string) $status)->replace('_', ' ')->title() }}</div></div>
+                <div class="col-md-3"><div class="text-600 fs-10">{{ __('Status') }}</div><div>{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</div></div>
                 @if($record->supplier ?? $record->cashVoucher ?? null)
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Supplier') }}</div><div>{{ $record->supplier?->name ?? '—' }}</div></div>
                 @endif
@@ -212,11 +265,11 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Purchase Order') }}</div><div dir="ltr">{{ $record->purchaseOrder?->doc_num }}</div></div>
                 @endif
                 @if($type === 'goods_receipt')
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ str($record->qc_status)->replace('_', ' ')->title() }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Posting status') }}</div><div>{{ str($record->posting_status)->replace('_', ' ')->title() }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ __(str($record->qc_status)->replace('_', ' ')->title()->toString()) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Posting status') }}</div><div>{{ __(str($record->posting_status)->replace('_', ' ')->title()->toString()) }}</div></div>
                 @endif
                 @if($type === 'supplier_payment')
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ str($record->payment_method)->title() }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __(str($record->payment_method)->replace('_', ' ')->title()->toString()) }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment date') }}</div><div dir="ltr">{{ $record->payment_date?->format('Y-m-d') ?: '—' }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Amount') }}</div><div class="fw-semibold" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($record->amount) }}</div></div>
                     @if($record->bankAccount)
@@ -224,10 +277,13 @@
                     @endif
                     @if($record->cheque)
                         <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque') }}</div><div dir="ltr">{{ $record->cheque->doc_num }} / {{ $record->cheque->cheque_number }}</div></div>
-                        <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque status') }}</div><div>{{ str($record->cheque->status)->title() }}</div></div>
+                        <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque status') }}</div><div>{{ __(str($record->cheque->status)->replace('_', ' ')->title()->toString()) }}</div></div>
                     @endif
                 @endif
                 @if($type === 'purchase_requisition')
+                    @foreach([__('Company') => $record->company?->name, __('Branch') => $record->branch?->name, __('Warehouse') => $record->branchStore?->name, __('procurement.ui.requester_employee') => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name, __('Submitted By') => $record->submittedBy?->name, __('Submitted At') => $record->submitted_at?->format('Y-m-d H:i'), __('Approved By') => $record->approvedBy?->name, __('Approved At') => $record->approved_at?->format('Y-m-d H:i'), __('Rejected By') => $record->rejectedBy?->name, __('Rejected At') => $record->rejected_at?->format('Y-m-d H:i'), __('Rejection reason') => $record->rejection_reason, __('Notes') => $record->notes] as $label => $value)
+                        @if(filled($value))<div class="col-md-3"><div class="text-600 fs-10">{{ $label }}</div><div>{{ $value }}</div></div>@endif
+                    @endforeach
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Department') }}</div><div>{{ $record->department ?: '—' }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Required by') }}</div><div>{{ $record->required_by_date?->format('Y-m-d') ?: '—' }}</div></div>
                 @endif
@@ -237,6 +293,8 @@
             </div>
         </div>
     </div>
+
+    @include('modules.purchases.procurement.document-cycle', ['record' => $record])
 
     @if($lineage->contains(fn (array $item): bool => (bool) auth()->user()?->can($item['permission'])))
         <div class="card mb-3">
@@ -271,6 +329,7 @@
                     <table class="table table-sm align-middle mb-0 procurement-lines-table">
                         <thead class="bg-100"><tr>
                             <th>#</th><th>{{ __('Item / Invoice') }}</th><th>{{ __('Source') }}</th><th class="text-end">{{ __('Quantity') }}</th>
+                            @if($type === 'purchase_requisition')<th>{{ __('Approved Quantity') }}</th><th>{{ __('Ordered Quantity') }}</th><th>{{ __('Remaining to order') }}</th>@endif
                             @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th>@endif
                             @if($showPrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
                             <th>{{ __('Disposition / Notes') }}</th>
@@ -290,6 +349,11 @@
                                     <td>{{ $item }}</td>
                                     <td dir="ltr">{{ $source }}</td>
                                     <td class="text-end" dir="ltr">{{ is_numeric($quantity) ? app(\Modules\Core\Services\NumericFormatService::class)->format($quantity) : $quantity }}</td>
+                                    @if($type === 'purchase_requisition')
+                                        <td>@if($record->status === 'pending_approval' && auth()->user()?->can('purchases.purchase_requisition_approvals.approve'))
+                                        <input class="form-control form-control-sm" type="number" form="purchase-request-approval" name="approved_quantities[{{ $line->public_id }}]" min="0" max="{{ $line->requested_quantity }}" step="0.00000001" value="{{ old('approved_quantities.'.$line->public_id, $line->requested_quantity) }}">
+                                        @else{{ $line->approved_quantity }}@endif</td><td>{{ $line->orderedQuantity() }}</td><td>{{ $line->remainingToOrder() }}</td>
+                                    @endif
                                     @if($type === 'goods_receipt_inspection')
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->accepted_quantity) }}</td>
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->rejected_quantity) }}</td>
@@ -308,6 +372,7 @@
         </div>
     @endif
 
+    @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => true])
     @can('file_manager.view')
     @if(($record->attachmentUsages ?? collect())->isNotEmpty())
         <div class="card mt-3">

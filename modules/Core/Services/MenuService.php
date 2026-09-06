@@ -546,6 +546,10 @@ class MenuService
             (string) ($second['key'] ?? ''),
         ]);
 
+        $order = array_flip(config('menu_sections.leaf_order.'.($section['label'] ?? ''), []));
+        if ($order !== []) {
+            usort($section['children'], fn (array $first, array $second): int => ($order[$first['label'] ?? ''] ?? 999) <=> ($order[$second['label'] ?? ''] ?? 999));
+        }
         $section['children'] = [...$section['children'], ...$subgroups];
         unset($section['subgroups']);
 
@@ -677,6 +681,7 @@ class MenuService
         $item['actions'] = $item['actions'] ?? [];
         $item['children'] = is_array($children) ? array_map(fn (array $child): array => $this->normalizeItem($child), $children) : [];
         $item['text'] = $this->labelFor($item);
+        $item['title'] = $item['text'];
         $item['active'] = false;
         $item['open'] = false;
 

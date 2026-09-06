@@ -40,6 +40,7 @@ class Company extends Model
         'authorized_signatory_signature_archive_file_id',
         'status',
         'is_main',
+        'show_company_identity_on_prints',
         'notes',
         'legal_form',
         'commercial_register_number',
@@ -88,6 +89,7 @@ class Company extends Model
     protected $attributes = [
         'status' => 'active',
         'is_main' => false,
+        'show_company_identity_on_prints' => false,
         'country' => 'Egypt',
     ];
 
@@ -114,6 +116,7 @@ class Company extends Model
     {
         return [
             'is_main' => 'boolean',
+            'show_company_identity_on_prints' => 'boolean',
             'commercial_register_date' => 'date',
             'commercial_register_expiry_date' => 'date',
             'created_at' => 'datetime',

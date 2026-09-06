@@ -59,5 +59,4 @@ return [
     'costing_reports' => 'reports_costing_product_cost',
     'maintenance_domain_reports' => 'reports_maintenance_maintenance_requests',
     'human_resources_reports' => 'hr_hr_history',
-    'fixed_assets_reports' => 'fixed_assets_asset_history',
 ];

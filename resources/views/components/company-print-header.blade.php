@@ -1,4 +1,6 @@
-@props(['identity'])
+@props(['identity', 'policy' => 'report', 'company' => null])
+@php($showIdentity = app(\Modules\Core\Services\CompanyPrintIdentityService::class)->shouldShow($policy, $company))
+@if($showIdentity)
 
 <header {{ $attributes->class(['erp-document-company-header']) }}>
     <div class="d-flex align-items-start justify-content-between gap-3">
@@ -42,3 +44,5 @@
         </div>
     @endif
 </header>
+
+@endif

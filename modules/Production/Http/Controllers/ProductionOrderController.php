@@ -49,7 +49,7 @@ class ProductionOrderController extends Controller
             'relatedDocuments' => collect([
                 ['label' => __('Sales Requirement / Order'), 'number' => $record->salesOrder?->doc_num, 'url' => $record->salesOrder ? route('admin.sales.sales-orders.show', $record->salesOrder) : null, 'permission' => 'sales_orders.view'],
                 ...$record->runs->map(fn ($run) => ['label' => __('Production Run'), 'number' => $run->run_number, 'url' => route('admin.production.runs.show', $run), 'permission' => 'production.runs.view', 'meta' => $run->status])->all(),
-                ...$record->runs->flatMap->inventoryDocuments->map(fn ($document) => ['label' => str($document->document_type)->replace('_', ' ')->title(), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => $document->status])->all(),
+                ...$record->runs->flatMap->inventoryDocuments->map(fn ($document) => ['label' => __(str($document->document_type)->replace('_', ' ')->title()->toString()), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => $document->status])->all(),
             ]),
         ]);
     }

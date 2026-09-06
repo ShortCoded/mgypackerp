@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\ArchiveFileUsage;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
@@ -20,6 +21,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Finance\Models\OpeningBalance;
 
 class FixedAsset extends Model
 {
@@ -121,6 +123,7 @@ class FixedAsset extends Model
     protected function casts(): array
     {
         return [
+            'legacy_recognition' => 'array',
             'asset_date' => 'date',
             'purchase_date' => 'date',
             'acquisition_date' => 'date',
@@ -352,13 +355,69 @@ class FixedAsset extends Model
         return in_array($this->status, self::dispositionStatuses(), true) || $this->disposed_at !== null;
     }
 
+    public function costMovements(): HasMany
+    {
+        return $this->hasMany(FixedAssetMovement::class)->whereIn('movement_type', FixedAssetMovement::costTypes())->orderBy('movement_date')->orderBy('id');
+    }
+
+    public function hasLegacyRecognition(): bool
+    {
+        return is_array($this->legacy_recognition)
+            && (int) data_get($this->legacy_recognition, 'asset_id') === (int) $this->getKey()
+            && (int) data_get($this->legacy_recognition, 'company_id') === (int) $this->company_id;
+    }
+
+    public function hasPostedRecognition(): bool
+    {
+        if ($this->hasLegacyRecognition()) {
+            return true;
+        }
+        if ($this->relationLoaded('costMovements')) {
+            return $this->costMovements->contains(fn (FixedAssetMovement $movement): bool => in_array($movement->movement_type, [FixedAssetMovement::TypeCapitalization, FixedAssetMovement::TypeOpening], true)
+                && $movement->status === FixedAssetMovement::StatusPosted && $movement->journalEntry?->is_posted && $movement->journalEntry->reversed_entry_id === null);
+        }
+
+        return $this->costMovements()->whereIn('movement_type', [FixedAssetMovement::TypeCapitalization, FixedAssetMovement::TypeOpening])->where('status', FixedAssetMovement::StatusPosted)->whereHas('journalEntry', fn ($query) => $query->where('is_posted', true)->whereNull('reversed_entry_id'))->exists();
+    }
+
+    public function isOperational(): bool
+    {
+        return in_array($this->status, [self::StatusActive, self::StatusFullyDepreciated], true) && ! $this->isDisposed();
+    }
+
+    public function canEditMaster(): bool
+    {
+        return ! $this->trashed() && $this->status === self::StatusDraft && ! $this->isMasterLocked();
+    }
+
+    public function isLockedForEditing(): bool
+    {
+        return ! $this->canEditMaster();
+    }
+
     public function isMasterLocked(): bool
     {
-        return $this->locked_at !== null
+        return $this->hasLegacyRecognition()
+            || $this->locked_at !== null
             || $this->capitalized_at !== null
             || $this->postedDepreciations()->exists()
-            || $this->movements()->exists()
-            || $this->disposals()->exists();
+            || $this->movements()->where('status', 'posted')->exists()
+            || $this->disposals()->exists()
+            || $this->hasUnlinkedFinancialHistory();
+    }
+
+    private function hasUnlinkedFinancialHistory(): bool
+    {
+        if (! $this->exists || ! $this->account_id) {
+            return false;
+        }
+        $reversed = $this->costMovements()->where('status', 'reversed')->get(['journal_entry_id', 'reversal_journal_entry_id']);
+        $excluded = $reversed->pluck('journal_entry_id')->merge($reversed->pluck('reversal_journal_entry_id'))->filter()->all();
+
+        return JournalEntry::query()->where('company_id', $this->company_id)->where('is_posted', true)->whereNotIn('id', $excluded)
+            ->whereHas('lines', fn ($query) => $query->where('account_id', $this->account_id))->exists()
+            || OpeningBalance::query()->where('company_id', $this->company_id)->where('is_cancelled', false)
+                ->whereHas('lines', fn ($query) => $query->where('account_id', $this->account_id))->exists();
     }
 
     public function scopeForCompany(Builder $query, int $companyId): Builder

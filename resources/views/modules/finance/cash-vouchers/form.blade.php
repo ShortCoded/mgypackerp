@@ -36,6 +36,7 @@
 @section('title', $title)
 
 @section('content')
+@if($record?->exists) @include('modules.purchases.procurement.document-cycle', ['record' => $record]) @endif
 <form class="js-finance-form js-crud-form js-cash-voucher-form"
     action="{{ $action }}"
     method="{{ $method }}"

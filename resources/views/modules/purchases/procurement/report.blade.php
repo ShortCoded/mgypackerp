@@ -61,7 +61,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-supplier">{{ __('Supplier') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-supplier" name="supplier_doc_num">
+                <select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-supplier" name="supplier_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($suppliers as $supplier)
                         <option value="{{ $supplier->doc_num }}" @selected(($filters['supplier_doc_num'] ?? '') === $supplier->doc_num)>{{ $supplier->doc_num }} / {{ $supplier->name }}</option>
@@ -70,7 +70,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-product">{{ __('Item') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-product" name="product_doc_num">
+                <select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.products') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-product" name="product_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($products as $product)
                         <option value="{{ $product->doc_num }}" @selected(($filters['product_doc_num'] ?? '') === $product->doc_num)>{{ $product->doc_num }} / {{ $product->name }}</option>
@@ -95,6 +95,22 @@
                     @endforeach
                 </select>
             </div>
+            <div class="col-6 col-md-4 col-xl-2 report-filter-field">
+                <label class="form-label" for="procurement-detail">{{ __('Detail level') }}</label>
+                <select class="{{ $selectClass }}" id="procurement-detail" name="detail_level"><option value="summary">{{ __('Summary') }}</option><option value="lines" @selected(($filters['detail_level'] ?? '') === 'lines')>{{ __('Item lines') }}</option></select>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2 report-filter-field">
+                <label class="form-label" for="procurement-currency">{{ __('Currency') }}</label>
+                <select class="{{ $selectClass }}" id="procurement-currency" name="currency_doc_num"><option value="">{{ __('All') }}</option>@foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? '') === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>@endforeach</select>
+            </div>
+            @if($reportType === \Modules\Purchases\Services\Reports\ProcurementCycleReport::SupplierStatement)
+            <div class="col-12 col-md-4 report-filter-field">
+                <label class="form-label" for="procurement-document-type">{{ __('Document type') }}</label>
+                <select class="{{ $selectClass }}" id="procurement-document-type" name="document_type"><option value="">{{ __('All') }}</option>
+                    @foreach(['purchase_invoice' => 'Purchase Invoice', 'purchase_return' => 'Purchase Return', 'supplier_payment' => 'Supplier Payment', 'supplier_cheque_issue' => 'Cheque issue', 'supplier_cheque_clearing' => 'Cheque clearing', 'cash_voucher' => 'Cash Payment Voucher', 'cheque' => 'Cheque', 'opening_balance' => 'Opening balance', 'manual' => 'Journal Entry'] as $type => $label)<option value="{{ $type }}" @selected(($filters['document_type'] ?? '') === $type)>{{ __($label) }}</option>@endforeach
+                </select>
+            </div>
+            @endif
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-status">{{ __('Status') }}</label>
                 <input class="{{ $fieldClass }}" id="procurement-status" name="status" value="{{ $filters['status'] ?? '' }}">
@@ -145,6 +161,7 @@
             </div>
         </x-admin.report.filter-panel>
 
+        @if(filled($filters['document_type'] ?? null))<p class="text-600">{{ __('Balances include all posted supplier movements; the document filter limits the displayed movements.') }}</p>@endif
         <div class="row g-2 mb-3">
             @foreach($metrics as $key => $value)
                 <div class="col-6 col-md-4 col-xl">
@@ -165,7 +182,7 @@
                 </table></div>
             </div>
             @if($grniReconciliation)
-                <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('GRNI Subledger to General Ledger Reconciliation') }}</h6></div><div class="card-body"><div class="row g-2"><div class="col-md-3"><strong>{{ __('Account') }}</strong><div>{{ $grniReconciliation['account'] ?? __('Not configured') }}</div></div><div class="col-md-3"><strong>{{ __('Subledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['subledger']) }}</div></div><div class="col-md-3"><strong>{{ __('General Ledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['gl']) }}</div></div><div class="col-md-3"><strong>{{ __('Difference') }}</strong><div class="text-{{ $grniReconciliation['status'] === 'reconciled' ? 'success' : 'danger' }}" dir="ltr">{{ $numbers->format($grniReconciliation['difference']) }} — {{ __($grniReconciliation['status']) }}</div></div></div></div></div>
+                <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('GRNI Subledger to General Ledger Reconciliation') }}</h6></div><div class="card-body"><div class="row g-2"><div class="col-md-3"><strong>{{ __('Account') }}</strong><div>{{ $grniReconciliation['account'] ?? __('Not configured') }}</div></div><div class="col-md-3"><strong>{{ __('Subledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['subledger']) }}</div></div><div class="col-md-3"><strong>{{ __('General Ledger') }}</strong><div dir="ltr">{{ $numbers->format($grniReconciliation['gl']) }}</div></div><div class="col-md-3"><strong>{{ __('Difference') }}</strong><div class="text-{{ $grniReconciliation['status'] === 'reconciled' ? 'success' : 'danger' }}" dir="ltr">{{ $numbers->format($grniReconciliation['difference']) }} — {{ __(str($grniReconciliation['status'])->replace('_', ' ')->title()->toString()) }}</div></div></div></div></div>
             @endif
         @endif
 
@@ -176,7 +193,10 @@
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive procurement-lines-scroll">
-                    <table class="table table-sm table-hover align-middle mb-0 procurement-lines-table">
+                    @if(app(\Modules\Purchases\Services\Reports\ProcurementCycleReport::class)->columns($reportType, $showPrices, $filters['detail_level'] ?? 'summary'))
+@include('modules.purchases.procurement.report-columns')
+@else
+<table class="table table-sm table-hover align-middle mb-0 procurement-lines-table">
                         <thead class="bg-100"><tr>
                             <th>{{ __('Date') }}</th><th>{{ __('Document') }}</th><th>{{ __('Status') }}</th><th>{{ __('Supplier') }}</th>
                             <th>{{ __('Item') }}</th><th>{{ __('Purchase requisition') }}</th><th>{{ __('Purchase order') }}</th>
@@ -187,7 +207,7 @@
                         <tbody>
                             @forelse($rows as $row)
                                 <tr>
-                                    <td dir="ltr">{{ $row['date'] ?: '—' }}</td><td dir="ltr">{{ $row['document'] ?: '—' }}</td>
+                                    <td dir="ltr">{{ $row['date'] ?: '—' }}</td><td dir="ltr">@if(filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission']))<a href="{{ $row['document_url'] }}">{{ $row['document'] }}</a>@else{{ $row['document'] ?: '—' }}@endif</td>
                                     <td>{{ $row['status'] ? __('procurement.statuses.'.$row['status']) : '—' }}</td><td>{{ $row['supplier'] ?: '—' }}</td>
                                     <td>{{ $row['product'] ?: '—' }}</td><td dir="ltr">{{ $row['requisition'] ?: '—' }}</td><td dir="ltr">{{ $row['purchase_order'] ?: '—' }}</td>
                                     <td>{{ collect([$row['branch'], $row['warehouse']])->filter()->join(' / ') ?: '—' }}</td><td>{{ $row['qc_status'] ? __('procurement.statuses.'.$row['qc_status']) : '—' }}</td>
@@ -202,6 +222,7 @@
                             @endforelse
                         </tbody>
                     </table>
+@endif
                 </div>
             </div>
         </div>

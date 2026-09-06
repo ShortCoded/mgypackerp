@@ -118,6 +118,10 @@ class UnpricedInventoryReceiptService
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
+            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+                throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
+            }
+
             if ($locked->trashed()) {
                 throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.deleted_not_approvable'));
             }
@@ -166,6 +170,10 @@ class UnpricedInventoryReceiptService
             /** @var UnpricedInventoryReceipt $locked */
             $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($record->getKey());
 
+            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+                throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
+            }
+
             if ($locked->trashed()) {
                 throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.deleted_not_closeable'));
             }
@@ -201,6 +209,10 @@ class UnpricedInventoryReceiptService
 
             /** @var UnpricedInventoryReceipt $locked */
             $locked = UnpricedInventoryReceipt::query()->with('lines')->lockForUpdate()->findOrFail($record->getKey());
+
+            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+                throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
+            }
 
             if ($locked->trashed()) {
                 throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.deleted_not_cancelable'));
@@ -498,6 +510,9 @@ class UnpricedInventoryReceiptService
 
     private function assertEditable(UnpricedInventoryReceipt $record): void
     {
+        if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
+            throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
+        }
         if ($record->isApproved()) {
             throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.approved_edit_forbidden'));
         }
@@ -513,6 +528,9 @@ class UnpricedInventoryReceiptService
 
     private function assertDeletable(UnpricedInventoryReceipt $record): void
     {
+        if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
+            throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
+        }
         if ($record->isApproved()) {
             throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.approved_delete_forbidden'));
         }

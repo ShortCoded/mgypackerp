@@ -3,6 +3,7 @@
 @section('content')
 <form method="POST" action="{{ route('admin.purchases.goods-receipt-inspection.store', $record->doc_num) }}">
     @csrf
+        <x-forms.line-item-cards />
     <div class="alert alert-info">{{ __('Quality disposition is quantity-based and contains no supplier price information.') }}</div>
     <div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Inspect Receipt :document', ['document' => $record->doc_num]) }}</h5></div><div class="card-body">
         @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
@@ -17,7 +18,7 @@
         <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Inspection evidence') }}</h6></div><div class="card-body">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                 <span class="text-600">{{ __('Attach inspection reports, certificates, or supporting evidence from the company archive.') }}</span>
-                <button type="button" class="btn btn-falcon-primary btn-sm js-procurement-attachment-picker" data-file-picker data-picker-accept="document" data-picker-max="1" data-picker-title="{{ __('Choose attachment') }}" data-picker-collection="goods_receipt_inspection_attachments" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}" data-picker-allow-create-folder="{{ auth()->user()?->can('file_manager.folders.create') ? 'true' : 'false' }}">
+                <button type="button" class="btn btn-falcon-primary btn-sm js-procurement-attachment-picker" data-remove-label="{{ __('Remove attachment') }}" data-file-picker data-picker-accept="document" data-picker-max="1" data-picker-title="{{ __('Choose attachment') }}" data-picker-collection="goods_receipt_inspection_attachments" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}" data-picker-allow-create-folder="{{ auth()->user()?->can('file_manager.folders.create') ? 'true' : 'false' }}">
                     <span class="fas fa-paperclip me-1"></span>{{ __('Choose attachment') }}
                 </button>
             </div>
@@ -35,3 +36,7 @@
     @endcan
     <script src="{{ asset('assets/js/modules/Purchases/procurement-cycle.js') }}"></script>
 @endpush
+
+@pushOnce('scripts', 'procurement-attachments')
+<script src="{{ asset('assets/js/modules/Purchases/procurement-attachments.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/procurement-attachments.js')) }}"></script>
+@endPushOnce

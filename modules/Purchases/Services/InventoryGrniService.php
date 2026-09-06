@@ -69,7 +69,7 @@ class InventoryGrniService
             ],
         ]);
 
-        $movement->forceFill(['unit_cost' => $baseUnitValue, 'total_cost' => $baseValue])->save();
+        $movement->forceFill(['unit_cost' => bcdiv($baseValue, (string) $movement->quantity_in, 8), 'total_cost' => $baseValue])->save();
         $receiptLine->forceFill([
             'provisional_unit_value' => $baseUnitValue,
             'provisional_total_value' => $baseValue,

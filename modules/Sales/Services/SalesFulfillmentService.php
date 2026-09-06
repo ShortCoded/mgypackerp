@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
@@ -23,23 +24,26 @@ class SalesFulfillmentService
         private readonly InventoryAvailabilityService $availability,
         private readonly InventoryDocumentPostingService $posting,
         private readonly SalesAccountingService $accounting,
+        private readonly FinancialPeriodService $periods,
     ) {}
 
     public function reserve(SalesOrderLine $line, string $quantity): InventoryReservation
     {
         return DB::transaction(function () use ($line, $quantity): InventoryReservation {
-            $locked = SalesOrderLine::query()->with('order')->lockForUpdate()->findOrFail($line->getKey());
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($line->sales_order_id);
+            $locked = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->getKey());
+            $locked->setRelation('order', $order);
             if (! $locked->order->isApprovedForFulfillment() || $locked->isService()) {
-                throw new DomainException('This line is not eligible for stock reservation.');
+                throw new DomainException(__('This line is not eligible for stock reservation.'));
             }
-            $this->amounts->assertPositive($quantity, 'Reservation quantity must be greater than zero.');
-            $remaining = $this->amounts->subtract($locked->quantity, $locked->reserved_quantity, 8);
-            $this->amounts->assertNotGreaterThan($quantity, $remaining, 'Reservation exceeds the remaining order quantity.');
+            $this->amounts->assertPositive($quantity, __('Reservation quantity must be greater than zero.'));
+            $remaining = $this->amounts->subtract($locked->remainingDeliveryQuantity(), $locked->activeReservedQuantity(), 8);
+            $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Reservation exceeds the remaining order quantity.'));
             BranchStore::query()->lockForUpdate()->findOrFail($locked->order->branch_store_id);
             $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
             $baseQuantity = bcmul($quantity, (string) $locked->conversion_factor, 8);
             $available = $this->availability->forProduct((int) $locked->order->company_id, (int) $locked->order->branch_store_id, (int) $locked->product_id)['available'];
-            $this->amounts->assertNotGreaterThan($baseQuantity, $available, 'Reservation exceeds currently available stock.');
+            $this->amounts->assertNotGreaterThan($baseQuantity, $available, __('Reservation exceeds currently available stock.'));
 
             $reservations = collect($this->allocateStockPositions(
                 (int) $locked->order->company_id,
@@ -67,12 +71,13 @@ class SalesFulfillmentService
     public function releaseReservation(InventoryReservation $reservation, string $reason): InventoryReservation
     {
         return DB::transaction(function () use ($reservation, $reason): InventoryReservation {
+            SalesOrder::query()->lockForUpdate()->findOrFail($reservation->sales_order_id);
             $locked = InventoryReservation::query()->lockForUpdate()->findOrFail($reservation->getKey());
             if ($locked->status !== InventoryReservation::StatusActive) {
-                throw new DomainException('Only an active reservation can be released.');
+                throw new DomainException(__('Only an active reservation can be released.'));
             }
             if (trim($reason) === '') {
-                throw new DomainException('A reservation release reason is required.');
+                throw new DomainException(__('A reservation release reason is required.'));
             }
 
             $line = SalesOrderLine::query()->lockForUpdate()->findOrFail($locked->sales_order_line_id);
@@ -96,20 +101,25 @@ class SalesFulfillmentService
     public function deliver(SalesOrder $order, array $lines, array $logistics = []): InventoryDocument
     {
         return DB::transaction(function () use ($order, $lines, $logistics): InventoryDocument {
+            if ($lines === [] || count(array_unique(array_column($lines, 'sales_order_line_id'))) !== count($lines)) {
+                throw new DomainException(__('Select each delivery order line once and enter its total quantity.'));
+            }
             $lockedOrder = SalesOrder::query()->lockForUpdate()->findOrFail($order->getKey());
             if (! $lockedOrder->isApprovedForFulfillment()) {
-                throw new DomainException('Only an approved sales order can be delivered.');
+                throw new DomainException(__('Only an approved sales order can be delivered.'));
             }
             if (! $lockedOrder->branch_store_id) {
-                throw new DomainException('A finished-goods store is required for delivery.');
+                throw new DomainException(__('A finished-goods store is required for delivery.'));
             }
 
+            $documentDate = $logistics['document_date'] ?? now()->toDateString();
+            $period = $this->periods->resolveOpenForPostingDate((int) $lockedOrder->company_id, $documentDate, lockForUpdate: true);
             BranchStore::query()->lockForUpdate()->findOrFail($lockedOrder->branch_store_id);
-            $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $lockedOrder->company_id, fn ($query) => $query->where('financial_period_id', $lockedOrder->financial_period_id));
+            $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $lockedOrder->company_id);
             $document = InventoryDocument::query()->create([
-                ...$numbers, 'company_id' => $lockedOrder->company_id, 'financial_period_id' => $lockedOrder->financial_period_id,
+                ...$numbers, 'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
                 'branch_id' => $lockedOrder->branch_id, 'branch_store_id' => $lockedOrder->branch_store_id,
-                'document_type' => InventoryDocument::TypeSalesDelivery, 'document_date' => $logistics['document_date'] ?? now()->toDateString(),
+                'document_type' => InventoryDocument::TypeSalesDelivery, 'document_date' => $documentDate,
                 'purpose' => 'Sales delivery', 'source_document_type' => SalesOrder::class,
                 'source_document_id' => $lockedOrder->getKey(), 'source_doc_num' => $lockedOrder->doc_num,
                 'customer_id' => $lockedOrder->customer_id, 'status' => InventoryDocument::StatusDraft,
@@ -122,19 +132,19 @@ class SalesFulfillmentService
             foreach ($lines as $input) {
                 $line = SalesOrderLine::query()->lockForUpdate()->where('sales_order_id', $lockedOrder->getKey())->findOrFail($input['sales_order_line_id']);
                 if ($line->isService()) {
-                    throw new DomainException('Services do not generate warehouse deliveries.');
+                    throw new DomainException(__('Services do not generate warehouse deliveries.'));
                 }
                 $quantity = (string) $input['quantity'];
                 $baseQuantity = bcmul($quantity, (string) $line->conversion_factor, 8);
-                $this->amounts->assertPositive($quantity, 'Delivery quantity must be greater than zero.');
-                $this->amounts->assertNotGreaterThan($quantity, $line->remainingDeliveryQuantity(), 'Delivery exceeds the remaining approved quantity.');
+                $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
+                $this->amounts->assertNotGreaterThan($quantity, $line->remainingDeliveryQuantity(), __('Delivery exceeds the remaining approved quantity.'));
                 $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
                 $stock = $this->availability->forProduct((int) $lockedOrder->company_id, (int) $lockedOrder->branch_store_id, (int) $line->product_id, (int) $line->getKey());
-                $this->amounts->assertNotGreaterThan($baseQuantity, $stock['available'], 'Delivery exceeds available or reserved stock.');
+                $this->amounts->assertNotGreaterThan($baseQuantity, $stock['available'], __('Delivery exceeds available or reserved stock.'));
 
                 foreach ($this->deliveryStockAllocations($line, $baseQuantity) as $allocation) {
                     $document->lines()->create([
-                        'company_id' => $lockedOrder->company_id, 'financial_period_id' => $lockedOrder->financial_period_id,
+                        'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
                         'line_number' => ++$documentLineNumber, 'product_id' => $line->product_id, 'unit_id' => $product->item_unit_id,
                         'transaction_unit_id' => $line->unit_id, 'conversion_factor' => $line->conversion_factor,
                         'transaction_quantity' => bcdiv($allocation['quantity'], (string) $line->conversion_factor, 8),
@@ -233,7 +243,7 @@ class SalesFulfillmentService
         }
 
         if (bccomp($remaining, '0', 8) > 0) {
-            throw new DomainException('The requested stock cannot be allocated across available warehouse locations and batches.');
+            throw new DomainException(__('The requested stock cannot be allocated across available warehouse locations and batches.'));
         }
 
         return $allocations;
@@ -313,7 +323,7 @@ class SalesFulfillmentService
         }
 
         if (bccomp($remaining, '0', 8) > 0) {
-            throw new DomainException('The delivery cannot be allocated across the reserved and available stock positions.');
+            throw new DomainException(__('The delivery cannot be allocated across the reserved and available stock positions.'));
         }
 
         return collect($allocations)

@@ -40,7 +40,7 @@ class PurchaseInvoiceCalculationService
 
             $calculatedLines[] = [
                 ...$line,
-                'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
+                'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 8) ?? '0.00000000',
                 'unit_price' => $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000',
                 'discount_value' => $this->numbers->normalizeToScale($line['discount_value'] ?? 0, 4) ?? '0.0000',
                 'discount_amount' => $this->decimal($lineDiscount),

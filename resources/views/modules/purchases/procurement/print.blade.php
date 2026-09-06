@@ -5,7 +5,7 @@
         $dates = app(\Modules\Core\Services\DateFormatService::class);
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
         $document = $record->doc_num ?? $record->cashVoucher?->doc_num;
-        $documentTitle = __('procurement.documents.types.'.$type);
+        $documentTitle = $type === 'goods-receipt' ? app(\Modules\Core\Services\Reports\ReportPdfService::class)->stockDocumentTitle($record) : __('procurement.documents.types.'.$type);
         $documentStatus = (string) ($record->status ?? $record->qc_status ?? $record->cashVoucher?->status ?? '');
         $documentStatusLabel = $documentStatus !== '' ? __('procurement.statuses.'.$documentStatus) : '';
         $lines = match ($type) {
@@ -14,6 +14,13 @@
             'supplier-payment' => $record->allocations,
             default => $record->lines ?? collect(),
         };
+        $isRequest = $type === 'purchase-requisition';
+        $isReceipt = $type === 'goods-receipt';
+        $isReturn = $type === 'purchase-return';
+        $showReceiptReference = $isReturn && $lines->pluck('receipt_line_id')->map(fn ($id) => $lines->firstWhere('receipt_line_id', $id)?->receiptLine?->receipt_id)->unique()->count() > 1;
+        $showRejected = $isReceipt && $lines->contains(fn ($line) => (float) $line->rejected_quantity > 0 || $line->product?->requiresIncomingInspection());
+        $isItemDocument = $type !== 'supplier-payment';
+        $showUnitOrDueDate = $isItemDocument || $lines->contains(fn ($line) => filled($line->paymentSchedule?->due_date));
         $originalChangeValues = $record->original_values ?? [];
         $requestedChangeValues = $record->requested_values ?? [];
         if ($type === 'purchase-order-change-request' && ! $showPrices) {
@@ -34,6 +41,13 @@
 
     <table class="document-meta-table">
         <tbody>
+            <tr><td><strong>{{ __('Date') }}</strong></td><td>{{ $dates->formatDate($record->request_date ?? $record->document_date ?? $record->return_date ?? $record->payment_date ?? $record->quotation_date ?? $record->selection_date ?? $record->issue_date, '—') }}</td></tr>
+            @if($record->branch ?? null)<tr><td><strong>{{ __('Branch') }}</strong></td><td>{{ $record->branch->name }}</td></tr>@endif
+            @if($record->branchStore ?? null)<tr><td><strong>{{ __('Warehouse') }}</strong></td><td>{{ $record->branchStore->name }}</td></tr>@endif
+            @if($isRequest && $record->requesterEmployee)
+                <tr><td><strong>{{ __('procurement.ui.requester_employee') }}</strong></td><td>{{ $record->requesterEmployee->full_name ?: $record->requesterEmployee->name }}</td></tr>
+            @endif
+            @if($isReturn)<tr><td><strong>{{ __('Return reason') }}</strong></td><td>{{ __(str($record->reason_code)->replace('_', ' ')->title()->toString()) }}</td></tr>@endif
             @if($record->supplier ?? null)
                 <tr><td><strong>{{ __('procurement.fields.supplier') }}</strong></td><td>{{ $record->supplier?->doc_num }} / {{ $record->supplier?->name }}</td></tr>
             @endif
@@ -47,7 +61,7 @@
                 <tr><td><strong>{{ __('procurement.fields.goods_receipt') }}</strong></td><td dir="ltr">{{ $record->receipt?->doc_num }}</td></tr>
             @endif
             @if($type === 'goods-receipt')
-                <tr><td><strong>{{ __('procurement.fields.supplier_delivery_note') }}</strong></td><td>{{ $record->supplier_delivery_note ?: '—' }}</td></tr>
+                @if(filled($record->supplier_delivery_note))<tr><td><strong>{{ __('procurement.fields.supplier_delivery_note') }}</strong></td><td>{{ $record->supplier_delivery_note }}</td></tr>@endif
                 <tr><td><strong>{{ __('procurement.fields.qc_status') }}</strong></td><td>{{ __('procurement.statuses.'.$record->qc_status) }}</td></tr>
             @endif
             @if($type === 'supplier-payment')
@@ -67,29 +81,58 @@
 
     @if($lines->count())
         <table class="report-table procurement-document-table">
-            <thead><tr><th>#</th><th>{{ __('procurement.fields.item_invoice') }}</th><th>{{ __('procurement.fields.source_unit') }}</th><th class="text-end">{{ __('procurement.fields.quantity') }}</th>@if($type === 'goods-receipt-inspection')<th class="text-end">{{ __('procurement.fields.accepted') }}</th><th class="text-end">{{ __('procurement.fields.rejected') }}</th>@endif @if($showPrices)<th class="text-end">{{ __('procurement.fields.unit_price') }}</th><th class="text-end">{{ __('procurement.fields.total') }}</th>@endif <th>{{ __('procurement.fields.notes_result') }}</th></tr></thead>
+            <thead><tr>
+                <th>#</th>@if($isItemDocument)<th>{{ __('Item Code') }}</th>@endif<th>{{ $isItemDocument ? __('Item Name') : __('Invoice') }}</th>@if($showUnitOrDueDate)<th>{{ $isItemDocument ? __('Unit') : __('Due date') }}</th>@endif
+                @if($showReceiptReference)<th>{{ __('Goods Receipt') }}</th>@endif
+                @if($isReceipt)<th>{{ __('Ordered') }}</th><th>{{ __('Previously received') }}</th>@endif
+                @if($isReturn)<th>{{ __('Received') }}</th><th>{{ __('Previously returned') }}</th>@endif
+                <th>{{ $isReceipt ? __('Received now') : ($isItemDocument ? __('Quantity') : __('Paid amount')) }}</th>
+                @if($isReceipt || $type === 'goods-receipt-inspection')<th>{{ __('Accepted') }}</th>@endif
+                @if($showRejected || $type === 'goods-receipt-inspection')<th>{{ __('Rejected') }}</th>@endif
+                @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<th>{{ __('Unit price') }}</th><th>{{ __('Total') }}</th>@endif
+                <th>{{ __('Notes') }}</th>
+            </tr></thead>
             <tbody>
                 @foreach($lines as $index => $line)
                     @php
-                        $item = $line->product?->name ?? $line->purchaseOrderLine?->product?->name ?? $line->purchaseInvoice?->doc_num ?? '—';
-                        $source = $line->unit?->name ?? $line->quotation?->supplier?->name ?? $line->paymentSchedule?->due_date?->format('Y-m-d') ?? '—';
-                        $quantity = $line->requested_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->scheduled_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
-                        if ($type === 'supplier-payment' && ! $showPrices) { $quantity = '—'; }
+                        $product = $line->product ?? $line->purchaseOrderLine?->product;
+                        $quantity = $line->requested_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->scheduled_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
+                        $previouslyReceived = $isReceipt ? \Modules\Inventory\Models\UnpricedInventoryReceiptLine::query()->where('purchase_order_line_id', $line->purchase_order_line_id)->where('receipt_id', '<', $record->getKey())->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))->sum('delivered_quantity') : 0;
                     @endphp
-                    <tr><td>{{ $index + 1 }}</td><td>{{ $item }}</td><td>{{ $source }}</td><td class="text-end" dir="ltr">{{ is_numeric($quantity) ? $numbers->format($quantity) : $quantity }}</td>@if($type === 'goods-receipt-inspection')<td class="text-end" dir="ltr">{{ $numbers->format($line->accepted_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->rejected_quantity) }}</td>@endif @if($showPrices)<td class="text-end" dir="ltr">{{ isset($line->unit_price) ? $numbers->format($line->unit_price) : '—' }}</td><td class="text-end" dir="ltr">{{ isset($line->line_total) ? $numbers->format($line->line_total) : (isset($line->amount) ? $numbers->format($line->amount) : '—') }}</td>@endif <td>{{ $line->result ?? $line->disposition ?? $line->reason ?? $line->notes ?? '—' }}</td></tr>
+                    <tr>
+                        <td>{{ $index + 1 }}</td>
+                        @if($isItemDocument)<td dir="ltr">{{ $product?->doc_num }}</td>@endif
+                        <td>@if($isItemDocument)@include('reports.partials.item-details', ['line' => $line, 'product' => $product, 'showItemCode' => false])@else{{ $line->purchaseInvoice?->doc_num ?? '—' }}@endif@if(filled($line->specification))<div class="document-item-details">{{ $line->specification }}</div>@endif</td>
+                        @if($showUnitOrDueDate)<td>{{ $line->unit?->name ?? $line->paymentSchedule?->due_date?->format('Y-m-d') ?? '—' }}</td>@endif
+                        @if($showReceiptReference)<td dir="ltr">{{ $line->receiptLine?->receipt?->doc_num }}</td>@endif
+                        @if($isReceipt)<td dir="ltr">{{ $numbers->format($line->purchaseOrderLine?->ordered_quantity) }}</td><td dir="ltr">{{ $numbers->format($previouslyReceived) }}</td>@endif
+                        @if($isReturn)
+                        <td dir="ltr">{{ $numbers->format($line->receiptLine?->accepted_quantity) }}</td>
+                        <td dir="ltr">{{ $numbers->format(\Modules\Purchases\Models\PurchaseReturnLine::query()->where('receipt_line_id', $line->receipt_line_id)->where('purchase_return_id', '<', $record->getKey())->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted'))->sum('quantity')) }}</td>
+                        @endif
+                        <td dir="ltr">{{ $numbers->format($quantity) }}</td>
+                        @if($isReceipt || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->accepted_quantity) }}</td>@endif
+                        @if($showRejected || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->rejected_quantity) }}</td>@endif
+                        @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<td dir="ltr">{{ isset($line->unit_price) ? $numbers->format($line->unit_price) : '—' }}</td><td dir="ltr">{{ $numbers->format($line->line_total ?? $line->amount ?? 0) }}</td>@endif
+                        <td>{{ $line->notes ?? $line->reason ?? $line->result ?? $line->disposition }}</td>
+                    </tr>
                 @endforeach
             </tbody>
-            @if($showPrices && isset($record->total_amount))
-                <tfoot><tr><th colspan="{{ $type === 'goods-receipt-inspection' ? 6 : 4 }}">{{ __('procurement.fields.total') }}</th><th class="text-end" dir="ltr">{{ $numbers->format($record->total_amount) }}</th><th></th></tr></tfoot>
-            @endif
         </table>
+        @if($showPrices && isset($record->total_amount))<table class="document-totals-table"><tr><th>{{ __('Grand total') }}</th><td dir="ltr">{{ $numbers->format($record->total_amount) }}</td></tr></table>@endif
     @endif
+    @if(filled($record->notes))<div class="document-notes"><strong>{{ __('Notes') }}</strong><br>{{ $record->notes }}</div>@endif
 
     @if($type === 'purchase-order-change-request')
         <table class="document-meta-table"><tr><td><strong>{{ __('procurement.fields.original_values') }}</strong><pre>{{ json_encode($originalChangeValues, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre></td><td><strong>{{ __('procurement.fields.approved_requested_values') }}</strong><pre>{{ json_encode($requestedChangeValues, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre></td></tr></table>
     @endif
 
+    @if($showPrices && in_array($type, ['purchase-return', 'supplier-payment'])) @include('reports.partials.amount-in-words') @endif
+    @if($isRequest)
+        @include('reports.partials.document-signatures', ['signatureNames' => [__('procurement.ui.requester_employee') => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name, __('Warehouse keeper') => null, __('Approved By') => $record->approvedBy?->name]])
+    @else
+        @include('reports.partials.document-signatures')
+    @endif
     @include('reports.partials.company-authorization')
 
-    <style>.procurement-document-table th, .procurement-document-table td { font-size: 7.8px; overflow-wrap: break-word; }</style>
 @endsection

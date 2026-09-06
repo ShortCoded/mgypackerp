@@ -21,7 +21,7 @@ class StoreFixedAssetDisposalRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['proceeds', 'tax_rate']);
+        $this->normalizeNumericInput(['proceeds', 'tax_rate', 'disposal_expenses']);
         $this->merge([
             'disposal_date' => app(DateFormatService::class)->normalizeForStorage($this->nullableTrim('disposal_date')),
             'disposition_type' => $this->nullableTrim('disposition_type'),
@@ -46,6 +46,8 @@ class StoreFixedAssetDisposalRequest extends FormRequest
             'reason' => ['required', 'string'],
             'customer_doc_num' => ['nullable', 'string', Rule::exists('customers', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'proceeds_account_doc_num' => ['nullable', 'string', Rule::exists('accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('is_postable', true)->where('is_group', false)->where('status', 'active')->whereNull('deleted_at'))],
+            'disposal_expenses' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'expenses_account_doc_num' => ['nullable', 'string', Rule::requiredIf(fn (): bool => is_numeric($this->input('disposal_expenses')) && (float) $this->input('disposal_expenses') > 0), Rule::exists('accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('is_postable', true)->where('is_group', false)->where('status', 'active')->whereNull('deleted_at'))],
             'proceeds' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
             'settlement_path' => ['required', Rule::in([FixedAssetDisposal::SettlementDirect, FixedAssetDisposal::SettlementCustomerInvoice])],
             'tax_rate' => ['required', 'numeric', 'min:0', 'max:100'],
@@ -57,6 +59,9 @@ class StoreFixedAssetDisposalRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
+            if ($validator->errors()->isNotEmpty()) {
+                return;
+            }
             $proceeds = $this->input('proceeds', '0');
 
             if ($this->input('settlement_path') === FixedAssetDisposal::SettlementDirect && bccomp((string) $proceeds, '0', 4) > 0 && ! $this->filled('proceeds_account_doc_num')) {

@@ -46,5 +46,8 @@
         <table class="report-table"><thead><tr><th>#</th><th>{{ __('Clearing date') }}</th><th>{{ __('Status') }}</th><th>{{ __('Clearing Journal') }}</th><th>{{ __('Reversal Journal') }}</th><th>{{ __('Reason') }}</th></tr></thead><tbody>@foreach($record->clearingEvents as $event)<tr><td>{{ $event->sequence }}</td><td>{{ $dates->formatDate($event->clearing_date, '—') }}</td><td>{{ str($event->status)->replace('_', ' ')->title() }}</td><td>{{ $event->clearingJournalEntry?->doc_num }}</td><td>{{ $event->reversalJournalEntry?->doc_num }}</td><td>{{ $event->reversal_reason }}</td></tr>@endforeach</tbody></table>
     @endif
 
+    @include('reports.partials.payment-sources')
+    @include('reports.partials.amount-in-words')
+    @include('reports.partials.document-signatures', ['signatureType' => 'payment'])
     @include('reports.partials.company-authorization')
 @endsection

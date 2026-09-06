@@ -217,6 +217,7 @@
     data-primary-focus="invoice_date"
     novalidate>
     @csrf
+        <x-forms.line-item-cards />
     @if($method !== 'POST')
         @method($method)
     @endif
@@ -249,23 +250,18 @@
             @endif
 
             @if($mode === 'view')
-                <div class="border rounded p-2 mb-3">
-                    <h6 class="mb-2">{{ __('Document lineage') }}</h6>
-                    <div class="d-flex flex-wrap gap-2">
-                        @can('purchase_orders.view')
-                            @if($record->purchaseOrder)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-orders.show', $record->purchaseOrder->doc_num) }}">{{ __('Purchase Order') }}: <span dir="ltr">{{ $record->purchaseOrder->doc_num }}</span></a>@endif
-                        @endcan
-                        @can('purchases.goods_receipt_notes.view')
-                            @foreach($record->lines->pluck('receiptLine.receipt')->filter()->unique('id') as $receipt)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.show', $receipt->doc_num) }}">{{ __('GRN') }}: <span dir="ltr">{{ $receipt->doc_num }}</span></a>@endforeach
-                        @endcan
-                        @can('supplier_payments.view')
-                            @foreach($record->paymentAllocations->pluck('paymentContext')->filter()->unique('id') as $payment)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-payments.show', $payment->doc_num) }}">{{ __('Supplier Payment') }}: <span dir="ltr">{{ $payment->doc_num }}</span></a>@endforeach
-                        @endcan
-                        @can('purchases.purchase_returns.view')
-                            @foreach($record->purchaseReturns as $return)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.show', $return->doc_num) }}">{{ __('Purchase Return') }}: <span dir="ltr">{{ $return->doc_num }}</span></a>@endforeach
-                        @endcan
-                    </div>
-                </div>
+                @can('purchase_invoices.print')<a class="btn btn-falcon-default btn-sm mb-2" target="_blank" href="{{ route('admin.purchases.purchase-invoices.print', [$record->doc_num, 'copy' => 'legal']) }}">{{ __('Legal copy') }}</a>@endcan
+                @include('modules.purchases.procurement.document-cycle', ['record' => $record])
+            @php $matchingNotes = json_decode($record->matching_notes ?? '', true) ?: []; @endphp
+            @if(!empty($matchingNotes['line_variances']))
+            <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('Quantity variance') }}</th><th>{{ __('Unit price variance') }}</th></tr></thead><tbody>
+            @foreach($matchingNotes['line_variances'] as $variance)
+                @php $matchedLine = $record->lines->firstWhere('public_id', $variance['line']); @endphp
+                <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td></tr>
+            @endforeach
+            </tbody></table></div></div>
+            @endif
+
             @endif
 
             <ul class="nav nav-tabs" id="purchase-invoice-form-tabs" role="tablist">
@@ -353,7 +349,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
                             @else
-                                <select class="form-select" id="purchase_order_doc_num" name="purchase_order_doc_num">
+                                <select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders') }}" data-placeholder="{{ __('Select') }}">
                                     <option value="">{{ __('Authorized direct procurement only') }}</option>
                                     @foreach($procurementPurchaseOrders as $purchaseOrder)
                                         <option value="{{ $purchaseOrder->doc_num }}"
@@ -364,6 +360,10 @@
                                 </select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
+                            @if($mode === 'create')
+                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }}</label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-placeholder="{{ __('Select') }}"></select>
+                            <button class="btn btn-falcon-primary btn-sm mt-2" type="button" data-load-invoice-source="{{ route('admin.purchases.purchase-invoices.create') }}">{{ __('procurement.ui.load_received_lines') }}</button>
+                            @endif
                         </div>
 
                         @if(! $isReadonly && auth()->user()?->can('purchases.direct_procurement.override'))
@@ -558,7 +558,6 @@
                                     <th>{{ __('Accepted receipt line') }}</th>
                                     <th class="purchase-invoice-product-cell">{{ __('purchase_invoices.attributes.product') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit') }}</th>
-                                    <th>{{ __('cost_centers.singular') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.quantity') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit_price') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.line_discount_type') }}</th>
@@ -577,19 +576,19 @@
                             <tbody>
                                 @forelse($lineRows as $index => $line)
                                     <tr class="js-purchase-invoice-line" data-index="{{ $index }}">
-                                        <td>
-                                            @if($isReadonly)
-                                                <div class="form-control-plaintext" dir="ltr">{{ $line['purchase_order_line_public_id'] ?? '—' }}</div>
-                                            @else
-                                                <select class="form-select" name="lines[{{ $index }}][purchase_order_line_public_id]"><option value="">{{ __('Select') }}</option>@foreach($procurementPurchaseOrders->flatMap->lines as $purchaseOrderLine)<option value="{{ $purchaseOrderLine->public_id }}" @selected(($line['purchase_order_line_public_id'] ?? null) === $purchaseOrderLine->public_id)>{{ $purchaseOrderLine->purchaseOrder?->doc_num }} / {{ $purchaseOrderLine->product?->name }} / {{ $purchaseOrderLine->remaining_quantity }}</option>@endforeach</select>
-                                            @endif
+                                        @php
+                                            $sourceOrderLine = $procurementPurchaseOrders->flatMap->lines->firstWhere('public_id', $line['purchase_order_line_public_id'] ?? '');
+                                            $sourceReceiptLine = $eligibleReceiptLines->firstWhere('public_id', $line['receipt_line_public_id'] ?? '');
+                                        @endphp
+                                        <td @if(!$sourceOrderLine) hidden @endif class="line-card-info">
+                                            @if($sourceOrderLine)<a href="{{ route('admin.purchases.purchase-orders.show', $sourceOrderLine->purchaseOrder->doc_num) }}">{{ $sourceOrderLine->purchaseOrder->doc_num }}</a>@endif
+                                            <input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line['purchase_order_line_public_id'] ?? '' }}">
                                         </td>
-                                        <td>
-                                            @if($isReadonly)
-                                                <div class="form-control-plaintext" dir="ltr">{{ $line['receipt_line_public_id'] ?? '—' }}</div>
-                                            @else
-                                                <select class="form-select" name="lines[{{ $index }}][receipt_line_public_id]"><option value="">{{ __('Service / no receipt') }}</option>@foreach($eligibleReceiptLines as $receiptLine)<option value="{{ $receiptLine->public_id }}" @selected(($line['receipt_line_public_id'] ?? null) === $receiptLine->public_id)>{{ $receiptLine->receipt?->doc_num }} / {{ $receiptLine->product?->name }} / {{ $receiptLine->accepted_quantity }}</option>@endforeach</select>
+                                        <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info">
+                                            @if($sourceReceiptLine)<a href="{{ route('admin.purchases.goods-receipt-notes.show', $sourceReceiptLine->receipt->doc_num) }}">{{ $sourceReceiptLine->receipt->doc_num }}</a>
+                                                <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->inventory_posted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceipt($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
                                             @endif
+                                            <input type="hidden" name="lines[{{ $index }}][receipt_line_public_id]" value="{{ $line['receipt_line_public_id'] ?? '' }}">
                                         </td>
                                         <td>
                                             @if($isReadonly)
@@ -608,7 +607,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['unit_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select js-purchase-invoice-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_invoices.placeholders.unit') }}" required>
+                                                <select class="form-select js-select2-local js-purchase-invoice-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_invoices.placeholders.unit') }}" required>
                                                     @foreach(($line['unit_options'] ?? []) as $option)
                                                         <option value="{{ $option['id'] }}" @selected(($line['unit_doc_num'] ?? null) === $option['id'])>{{ $option['text'] }}</option>
                                                     @endforeach
@@ -621,21 +620,9 @@
                                         </td>
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext">{{ $line['cost_center_label'] ?? '—' }}</div>
-                                            @else
-                                                <select class="form-select js-select2-ajax" name="lines[{{ $index }}][cost_center_doc_num]" data-url="{{ route('admin.accounting.select2.cost-centers', ['postable' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.search') }}" data-allow-clear="true">
-                                                    @if(! empty($line['cost_center_doc_num']))
-                                                        <option value="{{ $line['cost_center_doc_num'] }}" selected>{{ $line['cost_center_label'] ?? $line['cost_center_doc_num'] }}</option>
-                                                    @endif
-                                                </select>
-                                                <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.cost_center_doc_num"></div>
-                                            @endif
-                                        </td>
-                                        <td>
-                                            @if($isReadonly)
                                                 <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                             @else
-                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="8" min="0.00000001" step="0.00000001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                             @endif
                                         </td>
@@ -958,5 +945,5 @@
         window.purchaseInvoiceMessages = @json(__('purchase_invoices.js'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-invoices.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Purchases/purchase-invoices.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-invoices.js')) }}"></script>
 @endpush

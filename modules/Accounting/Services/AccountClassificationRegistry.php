@@ -24,7 +24,7 @@ class AccountClassificationRegistry
 
         return array_map(function (array $definition) use ($canonicalLabels): array {
             [$name, $nameEn] = $canonicalLabels[$definition['code']]
-                ?? throw new DomainException("Canonical labels are missing for [{$definition['code']}].");
+                ?? throw new DomainException(__('Canonical labels are missing for [:code].', ['code' => $definition['code']]));
 
             return [
                 ...$definition,
@@ -91,7 +91,7 @@ class AccountClassificationRegistry
                 || $plan['structural_conflict_codes'] !== []
                 || $plan['label_conflict_codes'] !== []
             ) {
-                throw new DomainException('Account classification conflicts must be resolved before synchronization.');
+                throw new DomainException(__('Account classification conflicts must be resolved before synchronization.'));
             }
 
             $recordsByCode = $this->preferredRecordsByCode($records);
@@ -127,7 +127,7 @@ class AccountClassificationRegistry
                     ]);
 
                 if ($updated !== 1) {
-                    throw new DomainException("Labels for [{$definition['code']}] changed during synchronization.");
+                    throw new DomainException(__('Labels for [:code] changed during synchronization.', ['code' => $definition['code']]));
                 }
             }
 
@@ -272,7 +272,7 @@ class AccountClassificationRegistry
     private function previousSystemLabelPairs(string $code): array
     {
         $definition = collect($this->previousDefinitions())->firstWhere('code', $code)
-            ?? throw new DomainException("Previous system labels are missing for [{$code}].");
+            ?? throw new DomainException(__('Previous system labels are missing for [:code].', ['code' => $code]));
 
         $labels = [[
             'name' => $definition['name'],

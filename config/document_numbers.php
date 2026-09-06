@@ -492,6 +492,9 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'sales_requests' => [
+        'prefix' => 'SR-', 'padding' => 5, 'column' => 'doc_num', 'number_column' => 'doc_number', 'scope' => 'company',
+    ],
     'inventory_documents' => [
         'prefix' => 'INV-MOV-',
         'padding' => 5,

@@ -26,7 +26,7 @@
 
     <div class="card erp-document-print quotation-print" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}">
         <div class="card-body">
-            <x-company-print-header :identity="$companyPrintIdentity" />
+            <x-company-print-header :identity="$companyPrintIdentity" policy="quotation" />
 
             <div class="d-flex justify-content-between align-items-start mb-4">
                 <div>
@@ -42,7 +42,7 @@
 
             <div class="row g-3 mb-4">
                 <div class="col-4"><strong>{{ __('quotations.attributes.customer') }}</strong><div>{{ $record->customer?->doc_num }} / {{ $record->customer?->name }}</div></div>
-                <div class="col-4"><strong>{{ __('quotations.attributes.branch') }}</strong><div>{{ $record->branch?->doc_num }} / {{ $record->branch?->name }}</div></div>
+                <div class="col-4"><strong>{{ __('quotations.columns.branch') }}</strong><div>{{ $record->branch?->doc_num }} / {{ $record->branch?->name }}</div></div>
                 <div class="col-4"><strong>{{ __('quotations.attributes.sales_person') }}</strong><div>{{ $record->salesPerson?->doc_num }} / {{ $record->salesPerson?->name }}</div></div>
                 <div class="col-4"><strong>{{ __('quotations.attributes.customer_reference') }}</strong><div>{{ $record->customer_reference ?: __('common.empty_value') }}</div></div>
                 <div class="col-4"><strong>{{ __('quotations.attributes.currency') }}</strong><div>{{ $record->currency?->code }} · {{ __('quotations.attributes.exchange_rate') }}: <span dir="ltr">{{ $numbers->format($record->exchange_rate) }}</span></div></div>
@@ -98,7 +98,7 @@
                 @endforeach
             </div>
 
-            <x-company-print-authorization :identity="$companyPrintIdentity" />
+            <x-company-print-authorization :identity="$companyPrintIdentity" policy="quotation" />
         </div>
     </div>
 @endsection

@@ -36,6 +36,7 @@ return [
                 ],
                 'children' => [],
             ],
+            ['label' => 'sales_requests', 'title' => 'Sales Requests', 'icon' => 'file-alt', 'route' => 'admin.sales.customer-requests.index', 'permission' => 'sales_requests.view', 'active' => ['admin.sales.customer-requests.*'], 'children' => []],
             [
                 'label' => 'quotations',
                 'title' => 'Quotations',
@@ -103,16 +104,6 @@ return [
                 'children' => [],
             ],
             [
-                'label' => 'customer_collections',
-                'title' => 'Customer Collections',
-                'icon' => 'hand-holding-usd',
-                'route' => 'admin.sales.customer-receipts.index',
-                'permission' => 'customer_receipts.view',
-                'keywords' => ['customer collections', 'receipts', 'تحصيلات العملاء', 'متحصلات'],
-                'active' => ['admin.sales.customer-receipts.*'],
-                'children' => [],
-            ],
-            [
                 'label' => 'sales_returns',
                 'title' => 'Sales Returns',
                 'icon' => 'undo-alt',
@@ -122,6 +113,8 @@ return [
                 'active' => ['admin.sales.sales-returns.*'],
                 'children' => [],
             ],
+            ['label' => 'customer_collections', 'title' => 'Customer Collections', 'icon' => 'hand-holding-usd', 'route' => 'admin.sales.customer-receipts.index', 'permission' => 'customer_receipts.view', 'children' => []],
+            ['label' => 'customer_statement', 'title' => 'Customer Statement', 'icon' => 'file-invoice', 'route' => 'admin.accounting.reports.customer-statement', 'permission' => 'reports.customer_statement.view', 'children' => []],
             [
                 'label' => 'reports_sales_sales_orders',
                 'title' => 'Sales Orders',

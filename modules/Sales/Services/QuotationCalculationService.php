@@ -23,7 +23,7 @@ class QuotationCalculationService
         $taxTotal = '0.0000';
 
         foreach ($lines as $line) {
-            $quantity = $this->decimal($line['quantity'] ?? 0);
+            $quantity = $this->numbers->normalizeToScale($line['quantity'] ?? 0, 8) ?? '0.00000000';
             $unitPrice = $this->decimal($line['unit_price'] ?? 0);
             $lineSubtotal = $this->amounts->multiply($quantity, $unitPrice);
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
@@ -38,7 +38,7 @@ class QuotationCalculationService
 
             $calculatedLines[] = [
                 ...$line,
-                'quantity' => $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0.0000',
+                'quantity' => $quantity,
                 'unit_price' => $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000',
                 'discount_value' => $this->numbers->normalizeToScale($line['discount_value'] ?? 0, 4) ?? '0.0000',
                 'discount_amount' => $lineDiscount,

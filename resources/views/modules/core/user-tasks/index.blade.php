@@ -55,7 +55,7 @@
             <div class="card-body py-2">
                 <div class="row align-items-center g-2">
                     <div class="col-auto">
-                        <label class="form-label mb-0" for="user_tasks_trash_filter">{{ __('common.filters.status') }}</label>
+                        <label class="form-label mb-0" for="user_tasks_trash_filter">{{ __('common.trash.filter_label') }}</label>
                     </div>
                     <div class="col-auto">
                         <select class="form-select form-select-sm" id="user_tasks_trash_filter" name="trash_filter">

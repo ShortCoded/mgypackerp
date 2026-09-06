@@ -46,13 +46,13 @@ class InventoryLayerService
         $this->createLayer($transaction, (string) $transaction->quantity_in);
     }
 
-    public function allocateIssue(InventoryTransaction $transaction): void
+    public function allocateIssue(InventoryTransaction $transaction, ?int $receiptTransactionId = null): void
     {
         $this->bootstrapPositionLayers($transaction);
-        $this->allocateIssueFromLayers($transaction);
+        $this->allocateIssueFromLayers($transaction, $receiptTransactionId);
     }
 
-    private function allocateIssueFromLayers(InventoryTransaction $transaction): void
+    private function allocateIssueFromLayers(InventoryTransaction $transaction, ?int $receiptTransactionId = null): void
     {
         if (bccomp((string) $transaction->quantity_out, '0', 8) <= 0
             || InventoryLayerAllocation::query()->where('issue_transaction_id', $transaction->getKey())->exists()) {
@@ -61,6 +61,7 @@ class InventoryLayerService
 
         $product = Product::query()->findOrFail($transaction->product_id);
         $query = InventoryReceiptLayer::query()
+            ->when($receiptTransactionId !== null, fn ($query) => $query->whereIn('receipt_transaction_id', $this->receiptLineageTransactionIds($receiptTransactionId)))
             ->where('company_id', $transaction->company_id)
             ->where('branch_store_id', $transaction->branch_store_id)
             ->where('product_id', $transaction->product_id)
@@ -69,7 +70,7 @@ class InventoryLayerService
             ->when($transaction->warehouse_location_id !== null, fn ($builder) => $builder->where('warehouse_location_id', $transaction->warehouse_location_id))
             ->when($transaction->batch_lot !== null, fn ($builder) => $builder->where('batch_lot', $transaction->batch_lot));
 
-        if ($product->tracks_expiry) {
+        if ($product->tracks_expiry && ! $transaction->is_reversal) {
             $query->whereNotNull('expiry_date')
                 ->whereDate('expiry_date', '>=', $transaction->transaction_date)
                 ->orderBy('expiry_date');
@@ -110,6 +111,24 @@ class InventoryLayerService
         }
     }
 
+    /** @return array<int, int> */
+    private function receiptLineageTransactionIds(int $receiptTransactionId): array
+    {
+        $ids = [$receiptTransactionId];
+        $frontier = $ids;
+        while ($frontier !== []) {
+            $issueIds = InventoryLayerAllocation::query()
+                ->whereHas('layer', fn ($query) => $query->whereIn('receipt_transaction_id', $frontier))
+                ->pluck('issue_transaction_id');
+            $reversedIds = InventoryTransaction::query()->whereIn('reversal_of_id', $issueIds)
+                ->where('is_reversal', true)->where('quantity_in', '>', 0)->pluck('id')->all();
+            $frontier = array_values(array_diff($reversedIds, $ids));
+            $ids = array_merge($ids, $frontier);
+        }
+
+        return $ids;
+    }
+
     private function bootstrapPositionLayers(InventoryTransaction $issue): void
     {
         $historicalTransactions = InventoryTransaction::query()
@@ -139,7 +158,7 @@ class InventoryLayerService
 
             if (bccomp((string) $transaction->quantity_out, '0', 8) > 0
                 && ! InventoryLayerAllocation::query()->where('issue_transaction_id', $transaction->getKey())->exists()) {
-                $this->allocateIssueFromLayers($transaction);
+                $this->allocateIssueFromLayers($transaction, $receiptTransactionId);
             }
         }
     }

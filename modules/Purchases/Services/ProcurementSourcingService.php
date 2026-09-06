@@ -6,16 +6,19 @@ use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Purchases\Models\PurchaseOrder;
-use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\PurchaseRequisitionLine;
 use Modules\Purchases\Models\RequestForQuotation;
@@ -41,50 +44,16 @@ class ProcurementSourcingService
     {
         return DB::transaction(function () use ($data): PurchaseRequisition {
             $context = $this->context();
-            $store = $this->store($context['branch_id'], $data['branch_store_uuid'] ?? null, true);
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['request_date'], $context['financial_period_id'], lockForUpdate: true);
             $requisition = PurchaseRequisition::query()->create([
                 ...$this->number('purchase_requisitions', PurchaseRequisition::class, $context),
                 ...$context,
-                'branch_store_id' => $store?->getKey(),
-                'request_date' => $data['request_date'],
-                'required_by_date' => $data['required_by_date'] ?? null,
-                'department' => $data['department'] ?? null,
-                'priority' => $data['priority'] ?? 'normal',
+                ...$this->requisitionValues($data, $context),
                 'status' => PurchaseRequisition::StatusDraft,
-                'notes' => $data['notes'] ?? null,
-                'requested_by' => auth()->id(),
                 'created_by' => auth()->id(),
             ]);
 
-            foreach (array_values($data['lines']) as $index => $input) {
-                $product = $this->product($context['company_id'], $input['product_doc_num']);
-                $unit = $this->unitOptions->unitForProduct($product, $input['unit_doc_num'] ?? null, $context['company_id']);
-                $productionSource = $this->productionSource($input, $context);
-                $this->assertDemandSourceIsAvailable($product, $input, $context);
-
-                if ($unit === null) {
-                    throw new DomainException(__('The selected unit is not available for this item.'));
-                }
-
-                $requisition->lines()->create([
-                    'company_id' => $context['company_id'],
-                    'financial_period_id' => $context['financial_period_id'],
-                    'line_number' => $index + 1,
-                    'product_id' => $product->getKey(),
-                    'unit_id' => $unit->getKey(),
-                    'requested_quantity' => $this->quantity($input['requested_quantity']),
-                    'approved_quantity' => 0,
-                    'required_date' => $input['required_date'] ?? $data['required_by_date'] ?? null,
-                    'source_type' => $input['source_type'] ?? 'manual',
-                    'source_doc_num' => $input['source_doc_num'] ?? null,
-                    'source_line_reference' => $input['source_line_reference'] ?? null,
-                    'production_order_id' => $productionSource['production_order_id'],
-                    'production_order_line_id' => $productionSource['production_order_line_id'],
-                    'specification' => $input['specification'] ?? null,
-                    'notes' => $input['notes'] ?? null,
-                    'created_by' => auth()->id(),
-                ]);
-            }
+            $this->syncRequisitionLines($requisition, $data, $context);
 
             $requisition = $requisition->refresh()->load(['lines.product', 'lines.unit', 'branch', 'branchStore']);
             $this->audit->record($requisition, 'purchase_requisition.created', ['line_count' => $requisition->lines->count()]);
@@ -93,12 +62,206 @@ class ProcurementSourcingService
         }, 3);
     }
 
+    public function updateRequisition(PurchaseRequisition $requisition, array $data): PurchaseRequisition
+    {
+        return DB::transaction(function () use ($requisition, $data): PurchaseRequisition {
+            $locked = $this->lockRequisition($requisition);
+            $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
+            $context = $this->context();
+            $locked->fill($this->requisitionValues($data, $context, $locked));
+            $changed = $this->syncRequisitionLines($locked, $data, $context);
+            if ($locked->isDirty() || $changed) {
+                $locked->forceFill(['updated_by' => auth()->id()])->save();
+                $this->audit->record($locked, 'purchase_requisition.updated');
+            }
+
+            return $locked->refresh();
+        }, 3);
+    }
+
+    public function rejectRequisition(PurchaseRequisition $requisition, string $reason): PurchaseRequisition
+    {
+        return DB::transaction(function () use ($requisition, $reason): PurchaseRequisition {
+            $locked = $this->lockRequisition($requisition);
+            if ($locked->status === PurchaseRequisition::StatusRejected) {
+                return $locked;
+            }
+            $this->requireStatus($locked->status, [PurchaseRequisition::StatusSubmitted]);
+            if (blank($reason)) {
+                throw new DomainException(__('A rejection reason is required.'));
+            }
+            $locked->forceFill(['status' => PurchaseRequisition::StatusRejected, 'rejected_by' => auth()->id(),
+                'rejected_at' => now(), 'rejection_reason' => trim($reason), 'updated_by' => auth()->id()])->save();
+            $this->audit->record($locked, 'purchase_requisition.rejected', ['reason' => trim($reason)]);
+
+            return $locked;
+        }, 3);
+    }
+
+    public function finishRequisition(PurchaseRequisition $requisition, string $status, ?string $reason = null): PurchaseRequisition
+    {
+        return DB::transaction(function () use ($requisition, $status, $reason): PurchaseRequisition {
+            $locked = $this->lockRequisition($requisition, true);
+            $this->requireStatus($status, [PurchaseRequisition::StatusCancelled, PurchaseRequisition::StatusClosed]);
+            if ($locked->status === $status) {
+                return $locked;
+            }
+            $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft, PurchaseRequisition::StatusSubmitted,
+                PurchaseRequisition::StatusRejected, PurchaseRequisition::StatusApproved,
+                PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted]);
+            if ($status === PurchaseRequisition::StatusCancelled) {
+                if (blank($reason)) {
+                    throw new DomainException(__('Cancellation reason is required.'));
+                }
+                if ($locked->lines->contains(fn (PurchaseRequisitionLine $line): bool => $line->orderedQuantity(true) > 0)
+                    || $locked->requestsForQuotation()->whereNotIn('status', ['cancelled', 'rejected'])->exists()) {
+                    throw new DomainException(__('Cancel the dependent sourcing documents and purchase orders first.'));
+                }
+                $values = ['cancelled_by' => auth()->id(), 'cancelled_at' => now(), 'cancel_reason' => trim($reason)];
+            } else {
+                $this->requireStatus($locked->status, [PurchaseRequisition::StatusApproved,
+                    PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted]);
+                if ($locked->lines->contains(fn (PurchaseRequisitionLine $line): bool => $line->orderedQuantity(true) > $line->orderedQuantity())) {
+                    throw new DomainException(__('Cancel or approve dependent draft purchase orders before closing the request.'));
+                }
+                $values = ['closed_by' => auth()->id(), 'closed_at' => now()];
+            }
+            $locked->forceFill([...$values, 'status' => $status, 'updated_by' => auth()->id()])->save();
+            $this->audit->record($locked, 'purchase_requisition.'.$status);
+
+            return $locked;
+        }, 3);
+    }
+
+    public function deleteRequisition(PurchaseRequisition $requisition): void
+    {
+        DB::transaction(function () use ($requisition): void {
+            $locked = $this->lockRequisition($requisition);
+            $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
+            $locked->forceFill(['deleted_by' => auth()->id()])->save();
+            $locked->delete();
+            $this->audit->record($locked, 'purchase_requisition.deleted');
+        }, 3);
+    }
+
+    public function requisitionStore(array $context, ?string $storeUuid = null): ?BranchStore
+    {
+        $branch = Branch::query()->where('company_id', $context['company_id'])->find($context['branch_id']);
+        if (! $branch || ! in_array($branch->type, [Branch::TypeFactory, Branch::TypeWarehouse], true)) {
+            throw new DomainException(__('procurement.ui.inventory_context_required'));
+        }
+        $query = $branch->stores()->purchasingEligible();
+        if (filled($storeUuid)) {
+            return $query->where('public_uuid', $storeUuid)->firstOrFail();
+        }
+        $stores = $query->limit(2)->get();
+
+        return $stores->count() === 1 ? $stores->first() : null;
+    }
+
+    private function requesterEmployeeId(mixed $employeeId, array $context): ?int
+    {
+        if (blank($employeeId)) {
+            return null;
+        }
+        $employee = HrEmployee::query()->where('company_id', $context['company_id'])->find($employeeId);
+        if (! $employee) {
+            throw new DomainException(__('procurement.ui.employee_unavailable'));
+        }
+
+        return $employee->getKey();
+    }
+
+    private function requisitionValues(array $data, array $context, ?PurchaseRequisition $existing = null): array
+    {
+        return [
+            'branch_store_id' => $this->requisitionStore($context, $data['branch_store_uuid'] ?? $existing?->branchStore?->public_uuid)?->getKey(),
+            ...array_key_exists('requester_employee_id', $data) ? ['requester_employee_id' => $this->requesterEmployeeId($data['requester_employee_id'], $context)] : [],
+            'request_date' => $data['request_date'], 'required_by_date' => $data['required_by_date'] ?? null,
+            'department' => $data['department'] ?? $existing?->department, 'priority' => $data['priority'] ?? $existing?->priority ?? 'normal',
+            'notes' => $data['notes'] ?? null, 'lead_time_days' => $data['lead_time_days'] ?? $existing?->lead_time_days,
+            'suggested_supplier_id' => filled($data['suggested_supplier_doc_num'] ?? null)
+                ? $this->supplier($context['company_id'], $data['suggested_supplier_doc_num'])->getKey() : $existing?->suggested_supplier_id,
+        ];
+    }
+
+    private function syncRequisitionLines(PurchaseRequisition $requisition, array $data, array $context): bool
+    {
+        if (empty($data['lines'])) {
+            throw new DomainException(__('A purchase request requires at least one line.'));
+        }
+        $existing = $requisition->lines()->get()->keyBy('public_id');
+        $kept = [];
+        $changed = false;
+        foreach (array_values($data['lines']) as $index => $input) {
+            if ((float) $input['requested_quantity'] <= 0) {
+                throw new DomainException(__('Requested quantity must be positive.'));
+            }
+            $product = $this->product($context['company_id'], $input['product_doc_num']);
+            $unit = $this->unitOptions->unitForProduct($product, $input['unit_doc_num'] ?? null, $context['company_id']);
+            $productionSource = $this->productionSource($input, $context);
+            $this->assertDemandSourceIsAvailable($product, $input, $context, $existing->get($input['public_id'] ?? '')?->getKey());
+
+            if ($unit === null) {
+                throw new DomainException(__('The selected unit is not available for this item.'));
+            }
+
+            $values = [
+                'company_id' => $context['company_id'],
+                'financial_period_id' => $context['financial_period_id'],
+                'line_number' => $index + 1,
+                'product_id' => $product->getKey(),
+                'unit_id' => $unit->getKey(),
+                'requested_quantity' => $this->quantity($input['requested_quantity']),
+                'approved_quantity' => 0,
+                'required_date' => $input['required_date'] ?? $data['required_by_date'] ?? null,
+                'source_type' => $input['source_type'] ?? 'manual',
+                'source_doc_num' => $input['source_doc_num'] ?? null,
+                'source_line_reference' => $input['source_line_reference'] ?? null,
+                'production_order_id' => $productionSource['production_order_id'],
+                'production_order_line_id' => $productionSource['production_order_line_id'],
+                'specification' => $input['specification'] ?? null,
+                'notes' => $input['notes'] ?? null,
+            ];
+            $line = filled($input['public_id'] ?? null) ? $existing->get($input['public_id']) : null;
+            if (filled($input['public_id'] ?? null) && ! $line instanceof PurchaseRequisitionLine) {
+                throw new DomainException(__('The selected purchase request line is invalid.'));
+            }
+            if ($line instanceof PurchaseRequisitionLine) {
+                $line->fill($values);
+                if ($line->isDirty()) {
+                    $line->forceFill(['updated_by' => auth()->id()])->save();
+                    $changed = true;
+                }
+            } else {
+                $line = $requisition->lines()->create([...$values, 'created_by' => auth()->id()]);
+                $changed = true;
+            }
+            $kept[] = $line->getKey();
+        }
+
+        foreach ($existing as $line) {
+            if (! in_array($line->getKey(), $kept, true)) {
+                $line->delete();
+                $changed = true;
+            }
+        }
+
+        return $changed;
+    }
+
     public function submitRequisition(PurchaseRequisition $requisition): PurchaseRequisition
     {
         return DB::transaction(function () use ($requisition): PurchaseRequisition {
             $locked = $this->lockRequisition($requisition);
+            if ($locked->status === PurchaseRequisition::StatusSubmitted) {
+                return $locked;
+            }
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
-            $locked->forceFill(['status' => 'pending_approval', 'updated_by' => auth()->id()])->save();
+            if (! $locked->lines()->exists()) {
+                throw new DomainException(__('A purchase request requires at least one line.'));
+            }
+            $locked->forceFill(['status' => PurchaseRequisition::StatusSubmitted, 'submitted_by' => auth()->id(), 'submitted_at' => now(), 'updated_by' => auth()->id()])->save();
             $this->audit->record($locked, 'purchase_requisition.submitted');
 
             return $locked->refresh();
@@ -109,7 +272,10 @@ class ProcurementSourcingService
     {
         return DB::transaction(function () use ($approvedQuantities, $requisition): PurchaseRequisition {
             $locked = $this->lockRequisition($requisition, true);
-            $this->requireStatus($locked->status, ['pending_approval']);
+            if (in_array($locked->status, [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)) {
+                return $locked;
+            }
+            $this->requireStatus($locked->status, [PurchaseRequisition::StatusSubmitted]);
 
             foreach ($locked->lines as $line) {
                 $approved = $approvedQuantities[$line->public_id] ?? $line->requested_quantity;
@@ -140,17 +306,36 @@ class ProcurementSourcingService
 
     public function createRequestForQuotation(PurchaseRequisition $requisition, array $data): RequestForQuotation
     {
-        return DB::transaction(function () use ($data, $requisition): RequestForQuotation {
+        return $this->saveRequestForQuotation($requisition, $data);
+    }
+
+    public function updateRequestForQuotation(RequestForQuotation $draft, array $data): RequestForQuotation
+    {
+        return $this->saveRequestForQuotation($draft->requisition, $data, $draft);
+    }
+
+    private function saveRequestForQuotation(PurchaseRequisition $requisition, array $data, ?RequestForQuotation $draft = null): RequestForQuotation
+    {
+        return DB::transaction(function () use ($data, $requisition, $draft): RequestForQuotation {
             $context = $this->context();
-            $locked = $this->lockRequisition($requisition, true);
-            $this->assertContext($locked, $context);
+            if ($draft) {
+                $draft = RequestForQuotation::query()->lockForUpdate()->findOrFail($draft->getKey());
+                $this->assertContext($draft, $context);
+                $this->requireStatus($draft->status, ['draft']);
+            }
+            $changed = ! $draft;
+            $keptLineIds = [];
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['issue_date'], $context['financial_period_id'], lockForUpdate: true);
+            $locked = $this->lockRequisition($requisition, true, true);
+            $this->assertContext($locked, $context, true);
             $this->requireStatus($locked->status, [
                 PurchaseRequisition::StatusApproved,
                 PurchaseRequisition::StatusPartiallyConverted,
             ]);
 
-            $rfq = RequestForQuotation::query()->create([
-                ...$this->number('request_for_quotations', RequestForQuotation::class, $context),
+            $rfq = $draft ?? new RequestForQuotation;
+            $rfq->fill([
+                ...($draft ? [] : $this->number('request_for_quotations', RequestForQuotation::class, $context)),
                 ...$context,
                 'purchase_requisition_id' => $locked->getKey(),
                 'issue_date' => $data['issue_date'],
@@ -158,8 +343,13 @@ class ProcurementSourcingService
                 'required_delivery_date' => $data['required_delivery_date'] ?? null,
                 'status' => 'draft',
                 'commercial_notes' => $data['commercial_notes'] ?? null,
-                'created_by' => auth()->id(),
+                'created_by' => $draft?->created_by ?? auth()->id(),
             ]);
+
+            if ($rfq->isDirty()) {
+                $rfq->save();
+                $changed = true;
+            }
 
             foreach (array_values($data['lines']) as $index => $input) {
                 $line = $locked->lines->firstWhere('public_id', $input['requisition_line_public_id'] ?? null);
@@ -170,6 +360,7 @@ class ProcurementSourcingService
 
                 $alreadyRequested = (float) RequestForQuotationLine::query()
                     ->where('purchase_requisition_line_id', $line->getKey())
+                    ->where('request_for_quotation_id', '<>', $rfq->getKey())
                     ->whereHas('requestForQuotation', fn ($query) => $query->whereNotIn('status', ['cancelled', 'rejected']))
                     ->sum('quantity');
                 $quantity = (float) $input['quantity'];
@@ -178,7 +369,8 @@ class ProcurementSourcingService
                     throw new DomainException(__('RFQ quantity exceeds the remaining approved requirement.'));
                 }
 
-                $rfq->lines()->create([
+                $savedLine = $rfq->lines()->firstOrNew(['purchase_requisition_line_id' => $line->getKey()]);
+                $savedLine->fill([
                     'purchase_requisition_line_id' => $line->getKey(),
                     'line_number' => $index + 1,
                     'product_id' => $line->product_id,
@@ -187,15 +379,31 @@ class ProcurementSourcingService
                     'specification' => $line->specification,
                     'notes' => $input['notes'] ?? null,
                 ]);
+                if ($savedLine->isDirty()) {
+                    $savedLine->save();
+                    $changed = true;
+                }
+                $keptLineIds[] = $savedLine->getKey();
             }
 
             $supplierIds = collect($data['supplier_doc_nums'])->map(function (string $docNum) use ($context): int {
                 return $this->supplier($context['company_id'], $docNum)->getKey();
             })->unique()->values()->all();
-            $rfq->suppliers()->sync($supplierIds);
+            $existingSupplierIds = $rfq->suppliers()->pluck('suppliers.id')->sort()->values()->all();
+            sort($supplierIds);
+            if ($existingSupplierIds !== $supplierIds) {
+                $rfq->suppliers()->sync($supplierIds);
+                $changed = true;
+            }
 
+            $changed = $rfq->lines()->whereNotIn('id', $keptLineIds)->delete() > 0 || $changed;
+            if ($draft && $changed) {
+                $rfq->forceFill(['updated_by' => auth()->id()])->save();
+            }
             $rfq = $rfq->refresh()->load(['requisition', 'lines.product', 'lines.unit', 'suppliers']);
-            $this->audit->record($rfq, 'request_for_quotation.created', ['line_count' => $rfq->lines->count(), 'supplier_count' => $rfq->suppliers->count()]);
+            if ($changed) {
+                $this->audit->record($rfq, $draft ? 'request_for_quotation.updated' : 'request_for_quotation.created', ['line_count' => $rfq->lines->count(), 'supplier_count' => $rfq->suppliers->count()]);
+            }
 
             return $rfq;
         }, 3);
@@ -226,10 +434,28 @@ class ProcurementSourcingService
 
     public function createSupplierQuotation(RequestForQuotation $rfq, array $data): SupplierQuotation
     {
-        return DB::transaction(function () use ($data, $rfq): SupplierQuotation {
+        return $this->saveSupplierQuotation($rfq, $data);
+    }
+
+    public function updateSupplierQuotation(SupplierQuotation $draft, array $data): SupplierQuotation
+    {
+        return $this->saveSupplierQuotation($draft->requestForQuotation, $data, $draft);
+    }
+
+    private function saveSupplierQuotation(RequestForQuotation $rfq, array $data, ?SupplierQuotation $draft = null): SupplierQuotation
+    {
+        return DB::transaction(function () use ($data, $rfq, $draft): SupplierQuotation {
             $context = $this->context();
+            if ($draft) {
+                $draft = SupplierQuotation::query()->lockForUpdate()->findOrFail($draft->getKey());
+                $this->assertContext($draft, $context);
+                $this->requireStatus($draft->status, ['draft']);
+            }
+            $changed = ! $draft;
+            $keptLineIds = [];
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['quotation_date'], $context['financial_period_id'], lockForUpdate: true);
             $locked = RequestForQuotation::query()->with(['lines', 'suppliers'])->lockForUpdate()->findOrFail($rfq->getKey());
-            $this->assertContext($locked, $context);
+            $this->assertContext($locked, $context, true);
             $this->requireStatus($locked->status, ['issued']);
             $supplier = $this->supplier($context['company_id'], $data['supplier_doc_num']);
 
@@ -237,12 +463,13 @@ class ProcurementSourcingService
                 throw new DomainException(__('The supplier was not invited to this RFQ.'));
             }
 
-            if ($locked->quotations()->where('supplier_id', $supplier->getKey())->whereNotIn('status', ['cancelled', 'rejected'])->exists()) {
+            if ($locked->quotations()->when($draft, fn ($query) => $query->whereKeyNot($draft->getKey()))->where('supplier_id', $supplier->getKey())->whereNotIn('status', ['cancelled', 'rejected'])->exists()) {
                 throw new DomainException(__('An active quotation for this supplier and RFQ already exists.'));
             }
 
-            $quotation = SupplierQuotation::query()->create([
-                ...$this->number('supplier_quotations', SupplierQuotation::class, $context),
+            $quotation = $draft ?? new SupplierQuotation;
+            $quotation->fill([
+                ...($draft ? [] : $this->number('supplier_quotations', SupplierQuotation::class, $context)),
                 ...$context,
                 'request_for_quotation_id' => $locked->getKey(),
                 'supplier_id' => $supplier->getKey(),
@@ -256,8 +483,13 @@ class ProcurementSourcingService
                 'freight_amount' => $this->amount($data['freight_amount'] ?? 0),
                 'status' => 'draft',
                 'commercial_notes' => $data['commercial_notes'] ?? null,
-                'created_by' => auth()->id(),
+                'created_by' => $draft?->created_by ?? auth()->id(),
             ]);
+
+            if ($quotation->isDirty()) {
+                $quotation->save();
+                $changed = true;
+            }
 
             $subtotal = 0.0;
             $discount = 0.0;
@@ -283,7 +515,8 @@ class ProcurementSourcingService
                     throw new DomainException(__('Supplier quotation line values are invalid.'));
                 }
 
-                $quotation->lines()->create([
+                $savedLine = $quotation->lines()->firstOrNew(['request_for_quotation_line_id' => $rfqLine->getKey()]);
+                $savedLine->fill([
                     'request_for_quotation_line_id' => $rfqLine->getKey(),
                     'line_number' => $index + 1,
                     'product_id' => $rfqLine->product_id,
@@ -297,6 +530,11 @@ class ProcurementSourcingService
                     'delivery_date' => $input['delivery_date'] ?? null,
                     'notes' => $input['notes'] ?? null,
                 ]);
+                if ($savedLine->isDirty()) {
+                    $savedLine->save();
+                    $changed = true;
+                }
+                $keptLineIds[] = $savedLine->getKey();
 
                 $subtotal += $lineSubtotal;
                 $discount += $lineDiscount;
@@ -309,7 +547,11 @@ class ProcurementSourcingService
                 'discount_amount' => $this->amount($discount),
                 'tax_amount' => $this->amount($tax),
                 'total_amount' => $this->amount($subtotal - $discount + $tax + $freight),
-            ])->save();
+            ]);
+            if ($quotation->isDirty()) {
+                $quotation->save();
+                $changed = true;
+            }
             $this->attachments->attach(
                 $quotation,
                 $data['attachment_file_doc_nums'] ?? [],
@@ -317,8 +559,14 @@ class ProcurementSourcingService
                 $context['company_id'],
             );
 
+            $changed = $quotation->lines()->whereNotIn('id', $keptLineIds)->delete() > 0 || $changed;
+            if ($draft && $changed) {
+                $quotation->forceFill(['updated_by' => auth()->id()])->save();
+            }
             $quotation = $quotation->refresh()->load(['supplier', 'currency', 'lines.product', 'requestForQuotation', 'attachmentUsages.file']);
-            $this->audit->record($quotation, 'supplier_quotation.created', ['line_count' => $quotation->lines->count()]);
+            if ($changed) {
+                $this->audit->record($quotation, $draft ? 'supplier_quotation.updated' : 'supplier_quotation.created', ['line_count' => $quotation->lines->count()]);
+            }
 
             return $quotation;
         }, 3);
@@ -348,8 +596,9 @@ class ProcurementSourcingService
     {
         return DB::transaction(function () use ($data, $rfq): SupplierSelection {
             $context = $this->context();
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['selection_date'], $context['financial_period_id'], lockForUpdate: true);
             $locked = RequestForQuotation::query()->with('lines.requisitionLine')->lockForUpdate()->findOrFail($rfq->getKey());
-            $this->assertContext($locked, $context);
+            $this->assertContext($locked, $context, true);
             $this->requireStatus($locked->status, ['issued']);
 
             $selection = SupplierSelection::query()->create([
@@ -495,9 +744,23 @@ class ProcurementSourcingService
     /**
      * @return Collection<int, SupplierQuotationLine>
      */
+    public function deleteSourcingDraft(RequestForQuotation|SupplierQuotation $record): void
+    {
+        DB::transaction(function () use ($record): void {
+            $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertContext($locked, $this->context());
+            $this->requireStatus($locked->status, ['draft']);
+            if ($locked instanceof RequestForQuotation && $locked->quotations()->exists()) {
+                throw new DomainException(__('The document has downstream dependencies.'));
+            }
+            $this->audit->record($locked, 'sourcing_draft.deleted');
+            $locked->delete();
+        }, 3);
+    }
+
     public function comparison(RequestForQuotation $rfq): Collection
     {
-        $this->assertContext($rfq, $this->context());
+        $this->assertContext($rfq, $this->context(), true);
 
         return SupplierQuotationLine::query()
             ->with(['quotation.supplier', 'quotation.currency', 'rfqLine.product', 'rfqLine.unit'])
@@ -525,25 +788,20 @@ class ProcurementSourcingService
 
     private function refreshRequisitionConversionStatus(PurchaseRequisition $requisition): void
     {
-        $approved = (float) $requisition->lines()->sum('approved_quantity');
-        $ordered = (float) PurchaseOrderLine::query()
-            ->whereIn('purchase_requisition_line_id', $requisition->lines()->pluck('id'))
-            ->whereHas('purchaseOrder', fn ($query) => $query->whereNotIn('status', [PurchaseOrder::StatusCancelled]))
-            ->sum('ordered_quantity');
-        $status = $ordered >= $approved - 0.00000001
-            ? PurchaseRequisition::StatusFullyConverted
-            : PurchaseRequisition::StatusPartiallyConverted;
-        $requisition->forceFill(['status' => $status, 'updated_by' => auth()->id()])->save();
+        $requisition->refreshOrderingStatus();
     }
 
-    private function lockRequisition(PurchaseRequisition $requisition, bool $withLines = false): PurchaseRequisition
+    private function lockRequisition(PurchaseRequisition $requisition, bool $withLines = false, bool $source = false): PurchaseRequisition
     {
         $query = PurchaseRequisition::query()->lockForUpdate();
         if ($withLines) {
             $query->with('lines');
         }
         $locked = $query->findOrFail($requisition->getKey());
-        $this->assertContext($locked, $this->context());
+        $this->assertContext($locked, $this->context(), $source);
+        if (! $source && $locked->financialPeriod?->is_closed) {
+            throw new DomainException(__('journal_entries.messages.period_closed'));
+        }
 
         return $locked;
     }
@@ -645,7 +903,7 @@ class ProcurementSourcingService
      * @param  array<string, mixed>  $input
      * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
      */
-    private function assertDemandSourceIsAvailable(Product $product, array $input, array $context): void
+    private function assertDemandSourceIsAvailable(Product $product, array $input, array $context, ?int $exceptLineId = null): void
     {
         $sourceType = (string) ($input['source_type'] ?? 'manual');
         if ($sourceType === 'manual') {
@@ -653,6 +911,7 @@ class ProcurementSourcingService
         }
 
         $duplicateExists = PurchaseRequisitionLine::query()
+            ->when($exceptLineId !== null, fn ($query) => $query->whereKeyNot($exceptLineId))
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
             ->where('product_id', $product->getKey())
@@ -667,10 +926,13 @@ class ProcurementSourcingService
         }
     }
 
-    private function assertContext(object $record, array $context): void
+    private function assertContext(object $record, array $context, bool $source = false): void
     {
+        if (! $source && FinancialPeriod::query()->whereKey($record->financial_period_id)->value('is_closed')) {
+            throw new DomainException(__('journal_entries.messages.period_closed'));
+        }
         if ((int) $record->company_id !== $context['company_id']
-            || (int) $record->financial_period_id !== $context['financial_period_id']
+            || (! $source && (int) $record->financial_period_id !== $context['financial_period_id'])
             || ($record->branch_id !== null && (int) $record->branch_id !== $context['branch_id'])) {
             throw new DomainException(__('The document is outside the active operating context.'));
         }
@@ -706,7 +968,6 @@ class ProcurementSourcingService
             $key,
             $model,
             $context['company_id'],
-            fn ($query) => $query->where('financial_period_id', $context['financial_period_id']),
         );
     }
 

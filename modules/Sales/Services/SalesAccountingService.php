@@ -4,6 +4,7 @@ namespace Modules\Sales\Services;
 
 use DomainException;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
@@ -29,7 +30,7 @@ class SalesAccountingService
     {
         $invoice->loadMissing(['customer', 'lines']);
         if (! $invoice->customer?->account_id) {
-            throw new DomainException('The customer must have a posting account before invoicing.');
+            throw new DomainException(__('The customer must have a posting account before invoicing.'));
         }
         $goods = $this->amounts->sum($invoice->lines->where('is_service', false)->map(fn ($line): string => $this->amounts->subtract($line->line_total, $line->tax_amount)));
         $services = $this->amounts->sum($invoice->lines->where('is_service', true)->map(fn ($line): string => $this->amounts->subtract($line->line_total, $line->tax_amount)));
@@ -63,7 +64,7 @@ class SalesAccountingService
         $journal = $invoice->journalEntry;
 
         if (! $journal instanceof JournalEntry || $journal->reversed_entry_id !== null) {
-            throw new DomainException('The posted invoice journal cannot be reversed safely.');
+            throw new DomainException(__('The posted invoice journal cannot be reversed safely.'));
         }
 
         return $this->journals->createPostedReversalFromSource($journal, $this->header(
@@ -77,14 +78,14 @@ class SalesAccountingService
     {
         $receipt->loadMissing('customer');
         if (! $receipt->customer?->account_id) {
-            throw new DomainException('The customer must have a posting account before collection.');
+            throw new DomainException(__('The customer must have a posting account before collection.'));
         }
         $cashAccountId = $receipt->cashbox_id ? Cashbox::query()->findOrFail($receipt->cashbox_id)->account_id : BankAccount::query()->findOrFail($receipt->bank_account_id)->account_id;
         if (! $cashAccountId) {
-            throw new DomainException('The selected cash or bank account is not mapped to the chart of accounts.');
+            throw new DomainException(__('The selected cash or bank account is not mapped to the chart of accounts.'));
         }
 
-        return $this->journals->createPostedFromSource($this->header($receipt, 'customer_receipt', 'Customer receipt '.$receipt->doc_num), [
+        return $this->journals->createPostedFromSource($this->header($receipt, $receipt->reversal_journal_entry_id ? 'customer_receipt_clearing' : 'customer_receipt', 'Customer receipt '.$receipt->doc_num), [
             ['account_id' => (int) $cashAccountId, 'debit_amount' => $receipt->amount, 'credit_amount' => 0, 'description' => 'Cash / bank receipt', 'bank_account_id' => $receipt->bank_account_id],
             ['account_id' => (int) $receipt->customer->account_id, 'debit_amount' => 0, 'credit_amount' => $receipt->amount, 'description' => 'Customer receivable settlement', 'customer_id' => $receipt->customer_id],
         ]);
@@ -92,23 +93,33 @@ class SalesAccountingService
 
     public function postDeliveryCost(InventoryDocument $delivery): JournalEntry
     {
-        $delivery->loadMissing('lines');
+        $delivery->loadMissing('lines.product');
         $cost = $this->amounts->sum($delivery->lines->pluck('total_cost'), 4);
         if ($this->amounts->compare($cost, '0') <= 0) {
-            throw new DomainException('A delivery cannot post COGS without an inventory cost.');
+            throw new DomainException(__('A delivery cannot post COGS without an inventory cost.'));
         }
 
-        return $this->journals->createPostedFromSource($this->header($delivery, 'sales_delivery_cogs', 'Cost of sales '.$delivery->doc_num), [
-            ['account_id' => $this->account($delivery->company_id, 'cost_of_goods_sold')->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Cost of goods sold'],
-            ['account_id' => $this->account($delivery->company_id, 'inventory')->getKey(), 'debit_amount' => 0, 'credit_amount' => $cost, 'description' => 'Finished goods inventory issue'],
-        ]);
+        $mapping = $this->inventoryMappings->requireForCompany((int) $delivery->company_id);
+        $credits = [];
+        foreach ($delivery->lines as $line) {
+            $account = $this->inventoryMappings->inventoryAccount($mapping, $line->product, __('Sales Delivery'));
+            $credits[$account->id] = $this->amounts->add($credits[$account->id] ?? '0', $line->total_cost);
+        }
+        $lines = [['account_id' => $this->account($delivery->company_id, 'cost_of_goods_sold')->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Cost of goods sold']];
+        foreach ($credits as $accountId => $amount) {
+            if ($this->amounts->compare($amount, '0') > 0) {
+                $lines[] = ['account_id' => $accountId, 'debit_amount' => 0, 'credit_amount' => $amount, 'description' => 'Inventory issue by product classification'];
+            }
+        }
+
+        return $this->journals->createPostedFromSource($this->header($delivery, 'sales_delivery_cogs', 'Cost of sales '.$delivery->doc_num), $lines);
     }
 
     public function postCreditNote(CustomerInvoice $creditNote): JournalEntry
     {
         $creditNote->loadMissing(['customer', 'lines']);
         if (! $creditNote->customer?->account_id) {
-            throw new DomainException('The customer must have a posting account before crediting.');
+            throw new DomainException(__('The customer must have a posting account before crediting.'));
         }
         $net = $this->amounts->subtract($creditNote->total_amount, $creditNote->tax_amount);
         $lines = [
@@ -202,8 +213,15 @@ class SalesAccountingService
         $account = Account::query()->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
             ->where('accounts.company_id', $companyId)->where('accounts.status', 'active')->where('accounts.is_postable', true)
             ->where('account_classifications.code', $classification)->orderBy('accounts.account_code')->select('accounts.*')->first();
+        if (! $account instanceof Account && $classification === 'cost_of_goods_sold') {
+            $account = Account::query()->forCompany($companyId)
+                ->where('account_code', '511')->where('status', 'active')
+                ->where('is_postable', true)->where('is_group', false)
+                ->whereHas('classification', fn ($query) => $query->where('code', AccountClassification::Expenses))
+                ->first();
+        }
         if (! $account instanceof Account) {
-            throw new DomainException("No active postable account is mapped for {$classification}.");
+            throw new DomainException(__('No active postable account is mapped for :classification.', ['classification' => $classification]));
         }
 
         return $account;
@@ -234,7 +252,7 @@ class SalesAccountingService
             ->orderByDesc('is_main')
             ->value('id');
         if (! $currencyId) {
-            throw new DomainException('The company requires an active accounting currency.');
+            throw new DomainException(__('The company requires an active accounting currency.'));
         }
 
         return [

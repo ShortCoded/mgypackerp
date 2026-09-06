@@ -3,6 +3,7 @@
 @section('content')
 <form method="POST" action="{{ route('admin.purchases.supplier-selection.store', $record->doc_num) }}">
     @csrf
+        <x-forms.line-item-cards />
     <div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Supplier Selection for :document', ['document' => $record->doc_num]) }}</h5></div><div class="card-body">
         @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
         <div class="row g-3"><div class="col-md-3"><label class="form-label">{{ __('Selection date') }}</label><input class="form-control" type="date" name="selection_date" value="{{ now()->toDateString() }}" required></div><div class="col-md-9"><label class="form-label">{{ __('Decision reason') }}</label><input class="form-control" name="selection_reason" placeholder="{{ __('Cheapest is highlighted, but the authorized decision remains yours.') }}"></div></div>

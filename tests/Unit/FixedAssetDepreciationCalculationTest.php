@@ -200,3 +200,24 @@ test('daily depreciation policy has explicit activation disposal leap year openi
         ->and($calculator->calculateForPeriod($openingBoundary, Carbon::parse('2026-06-01'), Carbon::parse('2026-07-31')))->toBe(3100.0)
         ->and($calculator->calculateForPeriod($residualCap, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')))->toBe(1.0);
 });
+
+test('monthly posted snapshots match annual method amounts instead of compounding monthly by accident', function (string $method, float $expected): void {
+    $calculator = new FixedAssetDepreciationCalculator;
+    $asset = depreciationCalculationAsset(['depreciation_method' => $method, 'annual_depreciation_rate' => '20', 'expected_usage_units' => '48000']);
+    $position = ['acquisition_cost' => '120000.0000', 'base_acquisition_cost' => '120000.0000', 'residual_value' => '20000.0000', 'base_residual_value' => '20000.0000', 'depreciation_base' => '100000.0000', 'base_depreciation_base' => '100000.0000', 'accumulated_depreciation' => '0.0000', 'base_accumulated_depreciation' => '0.0000', 'net_book_value' => '120000.0000', 'base_net_book_value' => '120000.0000', 'remaining_depreciable_amount' => '100000.0000', 'base_remaining_depreciable_amount' => '100000.0000'];
+    $total = '0.0000';
+    for ($month = 1; $month <= 12; $month++) {
+        $from = Carbon::create(2026, $month, 1);
+        $row = $calculator->snapshot($asset, $from, $from->copy()->endOfMonth(), $position, '400');
+        expect($row)->not->toBeNull();
+        $total = bcadd($total, $row['period_depreciation'], 4);
+        $position = [...$row, 'accumulated_depreciation' => $row['accumulated_after'], 'base_accumulated_depreciation' => $row['base_accumulated_after'], 'net_book_value' => $row['closing_net_book_value'], 'base_net_book_value' => $row['base_closing_net_book_value'], 'remaining_depreciable_amount' => bcsub($row['closing_net_book_value'], '20000', 4), 'base_remaining_depreciable_amount' => bcsub($row['base_closing_net_book_value'], '20000', 4)];
+    }
+    expect((float) $total)->toEqualWithDelta($expected, 0.01);
+})->with([
+    [FixedAsset::DepreciationMethodStraightLine, 20000],
+    [FixedAsset::DepreciationMethodDecliningBalance, 24000],
+    [FixedAsset::DepreciationMethodDoubleDecliningBalance, 48000],
+    [FixedAsset::DepreciationMethodSumOfYearsDigits, 100000 * 5 / 15],
+    [FixedAsset::DepreciationMethodUnitsOfProduction, 10000],
+]);

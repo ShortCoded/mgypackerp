@@ -22,6 +22,7 @@
 @section('title', $title)
 
 @section('content')
+    @include('modules.purchases.procurement.partials.document-filters', ['filterStatuses' => ['draft', 'submitted', 'approved', 'closed', 'cancelled']])
     @can('purchase_orders.document_number_settings.update')
         <div class="card mb-3">
             <div class="card-header py-2">
@@ -138,5 +139,5 @@
         window.dataTableTranslations = @json(__('datatables'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-orders.js') }}"></script>
+    <script src="{{ asset('assets/js/modules/Purchases/purchase-orders.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-orders.js')) }}"></script>
 @endpush

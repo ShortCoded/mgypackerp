@@ -344,7 +344,7 @@ test('quotation grouped numeric input persists canonically and displays grouped 
         ->firstOrFail();
     $line = $quotation->currentRevision->lines->sole();
 
-    expect((string) $line->quantity)->toBe('1250.5000')
+    expect((string) $line->quantity)->toBe('1250.50000000')
         ->and((string) $line->unit_price)->toBe('2.5000')
         ->and((string) $quotation->currentRevision->total)->toBe('3126.2500');
 
@@ -582,6 +582,9 @@ test('25-line quotation remains complete across English and Arabic mPDF pages', 
             ->and(quotationPdfPageCount($response->getContent()))->toBeGreaterThan(1);
 
         $text = quotationPdfText($response->getContent());
+        if ($directory = getenv('PROCUREMENT_PRINT_SAMPLES')) {
+            file_put_contents($directory.'/quotation-multipage-'.$locale.'.pdf', $response->getContent());
+        }
         foreach (range(1, 25) as $lineNumber) {
             expect($text)->toContain(sprintf('QUOTE-STRESS-%02d', $lineNumber));
         }
@@ -748,4 +751,24 @@ test('quotation exchange rate keeps maximum accepted precision before persistenc
         ->assertJsonPath('success', true);
 
     expect($capturedExchangeRate)->toBe('999999999999.999999');
+});
+
+test('quotation always prints full company identity even when operational identity is disabled', function (): void {
+    ['quotation' => $quotation, 'company' => $company, 'actor' => $actor] = createQuotationThroughHttp(['quotations.print']);
+    $company->forceFill(['show_company_identity_on_prints' => false])->save();
+    $identity = $quotation->print_identity_snapshot ?? [];
+    $quotation->forceFill(['print_identity_snapshot' => [
+        ...$identity, 'company_id' => $company->getKey(), 'name' => 'QUOTATION IDENTITY REQUIRED', 'legal_name' => 'QUOTATION IDENTITY REQUIRED',
+        'address' => 'Factory Road 42', 'email' => 'factory@example.test',
+        'logo_source' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAAAyCAIAAABUA0cyAAAACXBIWXMAAA7EAAAOxAGVKw4bAAABR0lEQVR4nO3bUY6CMBgA4XWz91hvocfYPSnX4BgcxYcmTfNTaolFzTjfk8GChBGoJJ5+L39f4vp+9Q7oWAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBob76Rm0zFN1+fn6H8aUS6rrpgF3N1gOqC6sbrBnfz5NV+CkcbDyoV/mqXGUl3lKA0KzsOVyYV6luhvrdxUMuETnHuHsXMfrKRHWap/xYcuNj/5Yjwbe2+O4g16e8dbNdlyiq/fF56ve1PNr6wZj7sEv8W778552BG64e48caGvypaoxv4PTDKucHm8Z9VXonHzpwAcd6wY9PfrnwzbuMeYSvSXNevbOzsJaXocfcfLPZ2w+i4YzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAx3A4Npkgj1aQnLAAAAAElFTkSuQmCC',
+    ]])->save();
+    foreach (['ar', 'en'] as $locale) {
+        $pdf = $this->actingAs($actor)->withSession(['locale' => $locale])->get(route('admin.sales.quotations.print', $quotation))
+            ->assertOk()->assertHeader('content-type', 'application/pdf')->getContent();
+        expect(quotationPdfText($pdf))->toContain('QUOTATION IDENTITY REQUIRED')->toContain('factory@example.test')
+            ->and(substr_count($pdf, '/Subtype /Image'))->toBeGreaterThan(0);
+        if ($directory = getenv('PROCUREMENT_PRINT_SAMPLES')) {
+            file_put_contents($directory.'/quotation-identity-'.$locale.'.pdf', $pdf);
+        }
+    }
 });

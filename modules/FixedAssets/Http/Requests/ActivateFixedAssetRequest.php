@@ -19,6 +19,6 @@ class ActivateFixedAssetRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['activation_date' => ['required', 'date']];
+        return ['activation_date' => ['required', 'date'], 'existing_journal_doc_num' => ['nullable', 'string', 'max:255']];
     }
 }

@@ -86,6 +86,11 @@ return [
         'payment_terms_supplier_default' => 'Defaults from the supplier when blank',
     ],
     'statuses' => [
+        'submitted' => 'Submitted',
+        'rejected' => 'Rejected',
+        'sent' => 'Sent',
+        'fully_received' => 'Fully Received',
+        'partially_received' => 'Partially Received',
         'draft' => 'Draft',
         'approved' => 'Approved',
         'closed' => 'Closed',

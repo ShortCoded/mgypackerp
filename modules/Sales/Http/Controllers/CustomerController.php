@@ -14,6 +14,7 @@ use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\CustomersDataTable;
 use Modules\Sales\Http\Requests\BulkDeleteCustomersRequest;
@@ -22,6 +23,7 @@ use Modules\Sales\Http\Requests\StoreCustomerRequest;
 use Modules\Sales\Http\Requests\UpdateCustomerDocumentNumberSettingsRequest;
 use Modules\Sales\Http\Requests\UpdateCustomerRequest;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Services\CustomerSalesOverviewService;
 use Modules\Sales\Services\CustomerService;
 
 class CustomerController extends Controller
@@ -54,7 +56,7 @@ class CustomerController extends Controller
     {
         abort_if($customer->trashed() && ! $request->user()?->can('customers.view_trashed'), 404);
 
-        return $this->form('view', $customer);
+        return $this->form('view', $customer)->with('salesOverview', app(CustomerSalesOverviewService::class)->forCustomer($customer, (int) app(OperatingContextService::class)->snapshot($request)['branch_id']));
     }
 
     public function edit(Customer $customer): View

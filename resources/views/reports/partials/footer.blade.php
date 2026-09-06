@@ -10,17 +10,17 @@
                 {{ __('reports.page') }} {PAGENO}/{nbpg}
             </td>
             <td class="report-footer-company" style="width:40%;text-align:center;vertical-align:top;">
-                <strong>{{ __('reports.company') }}:</strong> {{ $companyName }}
+                @if($showCompanyIdentity ?? true)<strong>{{ __('reports.company') }}:</strong> {{ $companyName }}@endif
             </td>
             <td class="report-footer-info" style="width:30%;text-align:left;vertical-align:top;">
-                <strong>{{ __('reports.generated_by') }}:</strong> {{ $generatedByName }}
+                @unless($customerFacing ?? false)<strong>{{ __('reports.generated_by') }}:</strong> {{ $generatedByName }}@endunless
             </td>
         @else
             <td class="report-footer-info" style="width:30%;text-align:left;vertical-align:top;">
-                <strong>{{ __('reports.generated_by') }}:</strong> {{ $generatedByName }}
+                @unless($customerFacing ?? false)<strong>{{ __('reports.generated_by') }}:</strong> {{ $generatedByName }}@endunless
             </td>
             <td class="report-footer-company" style="width:40%;text-align:center;vertical-align:top;">
-                <strong>{{ __('reports.company') }}:</strong> {{ $companyName }}
+                @if($showCompanyIdentity ?? true)<strong>{{ __('reports.company') }}:</strong> {{ $companyName }}@endif
             </td>
             <td class="report-page-number" style="width:30%;text-align:right;vertical-align:top;">
                 {{ __('reports.page') }} {PAGENO}/{nbpg}

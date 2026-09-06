@@ -12,12 +12,18 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Inventory\Models\UnpricedInventoryReceipt;
+use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Models\PurchaseRequisitionLine;
 use Modules\Purchases\Models\Supplier;
 
 class PurchaseOrderService
@@ -36,6 +42,7 @@ class PurchaseOrderService
     {
         return DB::transaction(function () use ($data): array {
             $context = $this->currentContext();
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['document_date'], $context['financial_period_id'], lockForUpdate: true);
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context);
             $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? 0);
             $record = PurchaseOrder::query()->create([
@@ -46,6 +53,7 @@ class PurchaseOrderService
             ]);
 
             $this->syncLines($record, $calculation['lines'], $context);
+            app(ProcurementAttachmentService::class)->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
             $this->audit->clearCreationUpdateAudit($record);
 
             return ['record' => $this->load($record->refresh())];
@@ -81,8 +89,16 @@ class PurchaseOrderService
                 $values = [...$values, ...$this->document($data, $context)];
             }
 
-            $this->audit->saveUpdate($locked, $values);
-            $this->syncLines($locked->refresh(), $calculation['lines'], $context);
+            $locked->forceFill($values);
+            $headerChanged = $locked->isDirty();
+            if ($headerChanged) {
+                $this->audit->saveUpdate($locked);
+            }
+            $linesChanged = $this->syncLines($locked->refresh(), $calculation['lines'], $context);
+            $attachmentsChanged = app(ProcurementAttachmentService::class)->attach($locked, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
+            if (! $headerChanged && ($linesChanged || $attachmentsChanged)) {
+                $this->audit->touchUpdateAudit($locked);
+            }
 
             return [
                 'record' => $this->load($locked->refresh()),
@@ -90,6 +106,43 @@ class PurchaseOrderService
                 'old_doc_num' => $oldDocNum,
             ];
         });
+    }
+
+    public function submit(PurchaseOrder $record): PurchaseOrder
+    {
+        return DB::transaction(function () use ($record): PurchaseOrder {
+            $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->id);
+            $this->assertInCurrentContext($locked, $this->currentContext());
+            if ($locked->status === PurchaseOrder::StatusSubmitted) {
+                return $locked;
+            }
+            $this->assertEditable($locked);
+            if (! $locked->lines()->exists()) {
+                throw new DomainException(__('purchase_orders.messages.no_lines_approve'));
+            }
+            $locked->forceFill(['status' => PurchaseOrder::StatusSubmitted, 'submitted_by' => auth()->id(), 'submitted_at' => now(), 'updated_by' => auth()->id()])->save();
+            app(ProcurementAuditService::class)->record($locked, 'purchase_order.submitted');
+
+            return $locked;
+        }, 3);
+    }
+
+    public function reject(PurchaseOrder $record, string $reason): PurchaseOrder
+    {
+        return DB::transaction(function () use ($record, $reason): PurchaseOrder {
+            $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->id);
+            $this->assertInCurrentContext($locked, $this->currentContext());
+            if ($locked->status === PurchaseOrder::StatusRejected) {
+                return $locked;
+            }
+            if ($locked->status !== PurchaseOrder::StatusSubmitted || blank($reason)) {
+                throw new DomainException(__('Only a submitted purchase order can be rejected with a reason.'));
+            }
+            $locked->forceFill(['status' => PurchaseOrder::StatusRejected, 'rejected_by' => auth()->id(), 'rejected_at' => now(), 'rejection_reason' => trim($reason), 'updated_by' => auth()->id()])->save();
+            app(ProcurementAuditService::class)->record($locked, 'purchase_order.rejected');
+
+            return $locked;
+        }, 3);
     }
 
     public function approve(PurchaseOrder $record): PurchaseOrder
@@ -108,7 +161,10 @@ class PurchaseOrderService
                 throw new DomainException(__('purchase_orders.messages.deleted_not_approvable'));
             }
 
-            if (! $locked->isDraft()) {
+            if ($locked->isApproved()) {
+                return $this->load($locked);
+            }
+            if (! in_array($locked->status, [PurchaseOrder::StatusDraft, PurchaseOrder::StatusSubmitted], true)) {
                 throw new DomainException(__('purchase_orders.messages.document_not_approvable'));
             }
 
@@ -129,8 +185,26 @@ class PurchaseOrderService
                 'updated_by' => auth()->id(),
             ])->save();
 
+            $this->refreshSourceRequests($locked);
+
             return $this->load($locked->refresh());
         });
+    }
+
+    public function markSent(PurchaseOrder $record): PurchaseOrder
+    {
+        return DB::transaction(function () use ($record): PurchaseOrder {
+            $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
+            if (! $locked->isApproved()) {
+                throw new DomainException(__('Only an approved purchase order can be marked as sent.'));
+            }
+            if (! $locked->sent_at) {
+                $this->audit->saveUpdate($locked, ['sent_at' => now(), 'sent_by' => auth()->id()]);
+            }
+
+            return $this->load($locked);
+        }, 3);
     }
 
     public function close(PurchaseOrder $record): PurchaseOrder
@@ -157,6 +231,8 @@ class PurchaseOrderService
                 'updated_by' => auth()->id(),
             ])->save();
 
+            $this->refreshSourceRequests($locked);
+
             return $this->load($locked->refresh());
         });
     }
@@ -179,10 +255,11 @@ class PurchaseOrderService
             }
 
             if ($locked->isCancelled()) {
-                throw new DomainException(__('purchase_orders.messages.already_cancelled'));
+                return $this->load($locked);
             }
 
-            if ($locked->hasReceipts()) {
+            if (PurchaseInvoice::query()->where('purchase_order_id', $locked->getKey())->whereNotIn('status', ['cancelled', 'reversed'])->exists()
+                || UnpricedInventoryReceipt::query()->where('purchase_order_id', $locked->getKey())->whereNotIn('status', ['cancelled', 'reversed'])->exists()) {
                 throw new DomainException(__('purchase_orders.messages.received_cancel_forbidden'));
             }
 
@@ -193,6 +270,8 @@ class PurchaseOrderService
                 'cancel_reason' => trim($reason),
                 'updated_by' => auth()->id(),
             ])->save();
+
+            $this->refreshSourceRequests($locked);
 
             return $this->load($locked->refresh());
         });
@@ -207,12 +286,14 @@ class PurchaseOrderService
             $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $context);
             $this->assertDeletable($locked);
+            $sourceIds = $locked->lines()->pluck('purchase_requisition_line_id')->filter()->all();
             $this->audit->softDelete($locked);
 
             $locked->refresh()->lines()->get()->each(function (PurchaseOrderLine $line): void {
                 $line->forceFill(['deleted_by' => auth()->id()])->save();
                 $line->delete();
             });
+            $this->refreshSourceRequests($locked, $sourceIds);
         });
     }
 
@@ -399,9 +480,22 @@ class PurchaseOrderService
      * @param  list<array<string, mixed>>  $lines
      * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
      */
-    private function syncLines(PurchaseOrder $record, array $lines, array $context): void
+    private function syncLines(PurchaseOrder $record, array $lines, array $context): bool
     {
+        $changed = false;
         $existing = $record->lines()->get()->keyBy('public_id');
+        $previousSourceIds = $existing->pluck('purchase_requisition_line_id')->filter()->all();
+        $lines = collect($lines)->map(function (array $line) use ($existing): array {
+            $previous = $existing->get($line['public_id'] ?? '');
+            foreach (['purchase_requisition_line_id', 'request_for_quotation_line_id', 'supplier_quotation_line_id', 'supplier_selection_line_id'] as $key) {
+                if ($previous instanceof PurchaseOrderLine && $previous->{$key} !== null) {
+                    $line[$key] = $previous->{$key};
+                }
+            }
+
+            return $line;
+        })->all();
+        $this->assertRequisitionLines($record, $lines, $context);
         $kept = [];
 
         foreach (array_values($lines) as $index => $line) {
@@ -434,7 +528,7 @@ class PurchaseOrderService
                 'request_for_quotation_line_id' => $line['request_for_quotation_line_id'] ?? null,
                 'supplier_quotation_line_id' => $line['supplier_quotation_line_id'] ?? null,
                 'supplier_selection_line_id' => $line['supplier_selection_line_id'] ?? null,
-                'cost_center_id' => $this->lineCostCenterId($line, $context['company_id']),
+                'cost_center_id' => ! array_key_exists('cost_center_doc_num', $line) && $existingLine ? $existingLine->cost_center_id : $this->lineCostCenterId($line, $context['company_id']),
                 'ordered_quantity' => $line['ordered_quantity'],
                 'received_quantity' => $line['received_quantity'],
                 'remaining_quantity' => $line['remaining_quantity'],
@@ -456,12 +550,17 @@ class PurchaseOrderService
             ];
 
             if ($existingLine instanceof PurchaseOrderLine) {
-                $existingLine->forceFill([...$values, 'updated_by' => auth()->id()])->save();
+                $existingLine->forceFill($values);
+                if ($existingLine->isDirty()) {
+                    $changed = true;
+                    $existingLine->forceFill(['updated_by' => auth()->id()])->save();
+                }
                 $kept[] = $existingLine->getKey();
 
                 continue;
             }
 
+            $changed = true;
             $created = $record->lines()->create([...$values, 'created_by' => auth()->id()]);
             $kept[] = $created->getKey();
         }
@@ -469,7 +568,8 @@ class PurchaseOrderService
         $record->lines()
             ->when($kept !== [], fn ($query) => $query->whereNotIn('id', $kept))
             ->get()
-            ->each(function (PurchaseOrderLine $line): void {
+            ->each(function (PurchaseOrderLine $line) use (&$changed): void {
+                $changed = true;
                 if ((float) $line->received_quantity > 0) {
                     throw new DomainException(__('purchase_orders.messages.received_line_remove_forbidden'));
                 }
@@ -477,6 +577,50 @@ class PurchaseOrderService
                 $line->forceFill(['deleted_by' => auth()->id()])->save();
                 $line->delete();
             });
+        $this->refreshSourceRequests($record, $previousSourceIds);
+
+        return $changed;
+    }
+
+    private function assertRequisitionLines(PurchaseOrder $order, array $lines, array $context): void
+    {
+        $sourceLines = collect($lines)->filter(fn (array $line): bool => filled($line['purchase_requisition_line_id'] ?? null));
+        foreach ($sourceLines->groupBy('purchase_requisition_line_id')->sortKeys() as $id => $inputs) {
+            $source = PurchaseRequisitionLine::query()->with('requisition')->lockForUpdate()->find($id);
+            if (! $source instanceof PurchaseRequisitionLine) {
+                throw new DomainException(__('The selected purchase request line is invalid.'));
+            }
+            $request = PurchaseRequisition::query()->lockForUpdate()->findOrFail($source->purchase_requisition_id);
+            if ((int) $request->company_id !== $context['company_id']
+                || (int) $request->branch_id !== $context['branch_id']
+                || ($request->branch_store_id !== null && (int) $request->branch_store_id !== (int) $order->branch_store_id)
+                || ! in_array($request->status, [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)) {
+                throw new DomainException(__('Purchase orders require approved purchase request lines in the same operating context and warehouse.'));
+            }
+            foreach ($inputs as $input) {
+                $product = $this->product($context['company_id'], $input['product_doc_num'] ?? null);
+                $unit = $product ? $this->unitOptions->unitForProduct($product, $input['unit_doc_num'] ?? null, $context['company_id']) : null;
+                if ($product?->getKey() !== $source->product_id || $unit?->getKey() !== $source->unit_id) {
+                    throw new DomainException(__('Purchase order item and unit must match the approved purchase request line.'));
+                }
+            }
+            $otherOrders = (float) $source->purchaseOrderLines()->where('purchase_order_id', '<>', $order->getKey())
+                ->whereHas('purchaseOrder', fn ($query) => $query->whereNotIn('status', [PurchaseOrder::StatusCancelled, 'rejected']))->sum('ordered_quantity');
+            if ($otherOrders + $inputs->sum(fn (array $input): float => (float) $input['ordered_quantity']) > (float) $source->approved_quantity + 0.00000001) {
+                throw new DomainException(__('Ordered quantities exceed the approved purchase request quantity.'));
+            }
+        }
+        if ($order->purchase_requisition_id !== null && $sourceLines->count() !== count($lines)) {
+            throw new DomainException(__('Every sourced purchase order line must retain its purchase request reference.'));
+        }
+    }
+
+    private function refreshSourceRequests(PurchaseOrder $order, array $previousSourceIds = []): void
+    {
+        $ids = array_merge($previousSourceIds, $order->lines()->pluck('purchase_requisition_line_id')->filter()->all());
+        $requestIds = PurchaseRequisitionLine::query()->whereIn('id', $ids)->pluck('purchase_requisition_id');
+        PurchaseRequisition::query()->whereIn('id', $requestIds)->orderBy('id')->lockForUpdate()->get()
+            ->each(fn (PurchaseRequisition $request) => $request->refreshOrderingStatus());
     }
 
     private function supplier(int $companyId, ?string $docNum): Supplier
@@ -584,6 +728,7 @@ class PurchaseOrderService
                 'products.status',
                 'products.item_unit_id',
                 'products.equivalent_unit_id',
+                'products.equivalent_value',
                 'item_units.doc_num as unit_doc_num',
                 'item_units.name as unit_name',
                 'equivalent_units.doc_num as equivalent_unit_doc_num',
@@ -622,7 +767,15 @@ class PurchaseOrderService
      */
     private function productSnapshot(Product $product, ItemUnit $unit): array
     {
+        $factor = app(ProductComponentUnitConversionService::class)
+            ->convert('1', $product, $unit, $product, $product->unit, 8);
+        if ($factor === null || bccomp($factor, '0', 8) <= 0) {
+            throw new DomainException(__('The selected purchase unit has no valid conversion to the stock unit.'));
+        }
+
         return [
+            'stock_conversion_factor' => $factor,
+            'stock_unit_id' => (string) $product->item_unit_id,
             'doc_num' => (string) $product->doc_num,
             'name' => (string) $product->name,
             'barcode' => $this->nullableText($product->barcode),
@@ -683,6 +836,9 @@ class PurchaseOrderService
      */
     private function assertInCurrentContext(PurchaseOrder $record, array $context): void
     {
+        if (FinancialPeriod::query()->whereKey($record->financial_period_id)->value('is_closed')) {
+            throw new DomainException(__('journal_entries.messages.period_closed'));
+        }
         if (
             (int) $record->company_id !== $context['company_id']
             || (int) $record->financial_period_id !== $context['financial_period_id']

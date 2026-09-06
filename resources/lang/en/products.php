@@ -172,6 +172,7 @@ return [
         'count_value' => 'Count',
         'unit' => 'Unit',
         'calculation_method' => 'Calculation Method',
+        'input_source' => 'Component Input Source',
         'calculation' => 'Calculation',
         'direct' => 'Direct Weight',
         'percentage' => 'Percentage of Component',

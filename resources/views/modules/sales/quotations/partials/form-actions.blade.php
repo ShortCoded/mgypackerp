@@ -20,27 +20,7 @@
     @endif
 
     @if ($isView && $record)
-        @if (! $isTrashed)
-            @if ($canEdit && $canEditRecord)
-                <a class="btn btn-primary btn-sm" href="{{ route('admin.sales.quotations.edit', $record->doc_num) }}">
-                    <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}
-                </a>
-            @endif
-            @if ($canClone)
-                <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.quotations.clone', $record->doc_num) }}">
-                    <span class="fas fa-copy me-1"></span>{{ __('common.actions.clone_record') }}
-                </a>
-            @endif
-            @if ($canDelete && $canDeleteRecord)
-                <button type="button" class="btn btn-falcon-default text-danger btn-sm js-delete-record" data-doc-num="{{ $record->doc_num }}" data-delete-url="{{ route('admin.sales.quotations.destroy', $record->doc_num) }}" data-redirect-url="{{ route('admin.sales.quotations.index') }}">
-                    <span class="fas fa-trash-alt me-1"></span>{{ __('common.actions.delete') }}
-                </button>
-            @endif
-        @elseif ($canRestore)
-            <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $record->doc_num }}" data-restore-url="{{ route('admin.sales.quotations.restore', $record->doc_num) }}">
-                <span class="fas fa-undo me-1"></span>{{ __('common.actions.restore') }}
-            </button>
-        @endif
+        @include('modules.sales.quotations.partials.actions')
     @endif
 
     @unless ($isView)

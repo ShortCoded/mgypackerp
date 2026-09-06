@@ -14,6 +14,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
@@ -30,6 +31,8 @@ use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\Supplier;
+use Modules\Purchases\Models\SupplierPaymentAllocation;
+use Modules\Purchases\Models\SupplierPaymentContext;
 
 class PurchaseInvoiceService
 {
@@ -50,6 +53,7 @@ class PurchaseInvoiceService
     {
         return DB::transaction(function () use ($data): array {
             $context = $this->context($data);
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['invoice_date'], $context['financial_period_id'], lockForUpdate: true);
             $calculation = $this->calculator->calculate(
                 $data['lines'] ?? [],
                 $data['header_discount_type'] ?? null,
@@ -65,6 +69,7 @@ class PurchaseInvoiceService
             ]);
 
             $this->syncLines($record, $calculation['lines'], $context);
+            app(ProcurementAttachmentService::class)->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
             $this->syncPaymentSchedules($record->refresh(), $this->schedulesForSync($data, $calculation), $context);
             $record->refreshPaymentTotals();
             $this->audit->clearCreationUpdateAudit($record);
@@ -77,6 +82,7 @@ class PurchaseInvoiceService
     {
         return DB::transaction(function () use ($record, $data): array {
             $record = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertOperatingContext($record);
             $this->assertEditable($record);
 
             $context = $this->context($data, $record);
@@ -90,7 +96,7 @@ class PurchaseInvoiceService
                 $data['freight_tax_rate'] ?? 0,
             );
             $values = [
-                ...$this->values($data, $context),
+                ...$this->values($data, $context, $record),
                 ...$calculation['invoice'],
             ];
 
@@ -98,16 +104,24 @@ class PurchaseInvoiceService
                 $values = [...$values, ...$this->document($data, $context)];
             }
 
-            $this->audit->saveUpdate($record, $values);
+            $record->forceFill($values);
+            $headerChanged = $record->isDirty();
+            if ($headerChanged) {
+                $this->audit->saveUpdate($record);
+            }
             $record = $record->refresh();
-
-            $this->syncLines($record, $calculation['lines'], $context);
-            $this->syncPaymentSchedules($record->refresh(), $this->schedulesForSync($data, $calculation), $context);
+            $linesChanged = $this->syncLines($record, $calculation['lines'], $context);
+            $attachmentsChanged = app(ProcurementAttachmentService::class)->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
+            $schedulesChanged = $this->syncPaymentSchedules($record->refresh(), $this->schedulesForSync($data, $calculation, $record), $context);
+            $changed = $headerChanged || $linesChanged || $schedulesChanged || $attachmentsChanged;
+            if (! $headerChanged && $changed) {
+                $this->audit->touchUpdateAudit($record);
+            }
             $record->refreshPaymentTotals();
 
             return [
                 'record' => $this->load($record->refresh()),
-                'changed' => true,
+                'changed' => $changed,
                 'old_doc_number' => $oldDocNumber,
                 'old_doc_num' => $oldDocNum,
             ];
@@ -123,6 +137,10 @@ class PurchaseInvoiceService
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
+            $this->assertOperatingContext($locked);
+            if ($locked->isApproved()) {
+                return $this->load($locked);
+            }
             $this->assertApprovable($locked);
             $this->matching->matchForPosting($locked);
             $journalEntry = $this->journalEntries->createPostedFromSource(
@@ -150,6 +168,10 @@ class PurchaseInvoiceService
         return DB::transaction(function () use ($record): PurchaseInvoice {
             /** @var PurchaseInvoice $locked */
             $locked = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertOperatingContext($locked);
+            if ($locked->status === PurchaseInvoice::StatusClosed) {
+                return $this->load($locked);
+            }
 
             if (! $locked->isApproved()) {
                 throw new DomainException(__('purchase_invoices.messages.close_requires_approved'));
@@ -172,6 +194,7 @@ class PurchaseInvoiceService
             /** @var PurchaseInvoice $locked */
             $locked = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
 
+            $this->assertOperatingContext($locked);
             if ($locked->isClosed()) {
                 throw new DomainException(__('purchase_invoices.messages.closed_not_cancellable'));
             }
@@ -201,17 +224,22 @@ class PurchaseInvoiceService
         return DB::transaction(function () use ($record, $reason): PurchaseInvoice {
             $context = $this->operatingContext->snapshot(request());
             $locked = PurchaseInvoice::query()
-                ->with(['journalEntry.lines', 'paymentAllocations.paymentContext', 'purchaseReturns'])
+                ->with(['journalEntry.lines', 'paymentAllocations.paymentContext', 'paymentSchedules.cashVoucher', 'purchaseReturns'])
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
+            $this->assertOperatingContext($locked);
+            if ($locked->reversal_journal_entry_id !== null) {
+                return $this->load($locked);
+            }
             if (! in_array($locked->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
                 || $locked->reversal_journal_entry_id !== null
                 || ! $locked->journalEntry) {
                 throw new DomainException(__('Only an unreversed posted purchase invoice can be reversed.'));
             }
 
-            if ($locked->paymentAllocations->contains(fn ($allocation): bool => $allocation->paymentContext?->isApproved())) {
+            if ($locked->paymentAllocations->contains(fn ($allocation): bool => $allocation->paymentContext?->isApproved())
+                || $locked->paymentSchedules->contains(fn ($schedule): bool => (bool) $schedule->cashVoucher?->isApproved())) {
                 throw new DomainException(__('Reverse or cancel approved Supplier payments before reversing this invoice.'));
             }
 
@@ -259,6 +287,8 @@ class PurchaseInvoiceService
     public function delete(PurchaseInvoice $record): void
     {
         DB::transaction(function () use ($record): void {
+            $record = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertOperatingContext($record);
             $this->assertDeletable($record);
             $this->audit->softDelete($record);
 
@@ -304,6 +334,8 @@ class PurchaseInvoiceService
     public function restore(PurchaseInvoice $record): PurchaseInvoice
     {
         return DB::transaction(function () use ($record): PurchaseInvoice {
+            $record = PurchaseInvoice::withTrashed()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertOperatingContext($record);
             if (! $record->trashed()) {
                 throw new DomainException(__('purchase_invoices.messages.restore_not_allowed'));
             }
@@ -407,13 +439,27 @@ class PurchaseInvoiceService
      * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      * @return array<string, mixed>
      */
-    private function values(array $data, array $context): array
+    private function values(array $data, array $context, ?PurchaseInvoice $record = null): array
     {
         $supplier = $this->supplier($context['company_id'], $data['supplier_doc_num'] ?? null);
         $currency = $this->currency($context['company_id'], $data['currency_doc_num'] ?? null);
         $cashbox = $this->cashbox($context['company_id'], $data['cashbox_doc_num'] ?? null);
         $bankAccount = $this->bankAccount($context['company_id'], $data['bank_account_doc_num'] ?? null);
         $purchaseOrder = $this->purchaseOrder($context['company_id'], $data['purchase_order_doc_num'] ?? null);
+        if ($purchaseOrder && ((int) $purchaseOrder->branch_id !== (int) $context['branch_id']
+            || (int) $purchaseOrder->supplier_id !== (int) $supplier?->getKey())) {
+            throw new DomainException(__('Purchase order, supplier, and invoice context do not match.'));
+        }
+        $supplierNumber = trim((string) ($data['supplier_invoice_number'] ?? ''));
+        if ($supplier && $supplierNumber !== '') {
+            Supplier::query()->lockForUpdate()->findOrFail($supplier->getKey());
+            $duplicate = PurchaseInvoice::query()->where('company_id', $context['company_id'])
+                ->where('supplier_id', $supplier->getKey())->whereRaw('LOWER(TRIM(supplier_invoice_number)) = ?', [mb_strtolower($supplierNumber)])
+                ->whereNotIn('status', [PurchaseInvoice::StatusCancelled])->when($record, fn ($query) => $query->whereKeyNot($record->getKey()))->exists();
+            if ($duplicate) {
+                throw new DomainException(__('This supplier invoice reference is already recorded for this supplier and company.'));
+            }
+        }
 
         return [
             'company_id' => $context['company_id'],
@@ -427,7 +473,7 @@ class PurchaseInvoiceService
             'direct_procurement_override' => (bool) ($data['direct_procurement_override'] ?? false),
             'direct_procurement_reason' => $data['direct_procurement_reason'] ?? null,
             'invoice_date' => $data['invoice_date'],
-            'supplier_invoice_number' => $data['supplier_invoice_number'] ?? null,
+            'supplier_invoice_number' => $supplierNumber ?: null,
             'supplier_invoice_date' => $data['supplier_invoice_date'] ?? null,
             'currency_id' => $currency?->getKey(),
             'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
@@ -455,8 +501,9 @@ class PurchaseInvoiceService
      * @param  list<array<string, mixed>>  $lines
      * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      */
-    private function syncLines(PurchaseInvoice $record, array $lines, array $context): void
+    private function syncLines(PurchaseInvoice $record, array $lines, array $context): bool
     {
+        $changed = false;
         $existing = $record->lines()->get()->keyBy('public_id');
         $kept = [];
 
@@ -492,7 +539,7 @@ class PurchaseInvoiceService
                 'unit_id' => $unit?->getKey(),
                 'purchase_order_line_id' => $purchaseOrderLine?->getKey(),
                 'receipt_line_id' => $receiptLine?->getKey(),
-                'cost_center_id' => $this->lineCostCenterId($line, $purchaseOrderLine, $context['company_id']),
+                'cost_center_id' => ! array_key_exists('cost_center_doc_num', $line) && $existingLine ? $existingLine->cost_center_id : $this->lineCostCenterId($line, $purchaseOrderLine, $context['company_id']),
                 'matched_quantity' => 0,
                 'quantity' => $line['quantity'],
                 'unit_price' => $line['unit_price'],
@@ -509,12 +556,17 @@ class PurchaseInvoiceService
             ];
 
             if ($existingLine instanceof PurchaseInvoiceLine) {
-                $existingLine->forceFill([...$values, 'updated_by' => auth()->id()])->save();
+                $existingLine->forceFill($values);
+                if ($existingLine->isDirty()) {
+                    $changed = true;
+                    $existingLine->forceFill(['updated_by' => auth()->id()])->save();
+                }
                 $kept[] = $existingLine->getKey();
 
                 continue;
             }
 
+            $changed = true;
             $created = $record->lines()->create([...$values, 'created_by' => auth()->id()]);
             $kept[] = $created->getKey();
         }
@@ -522,18 +574,22 @@ class PurchaseInvoiceService
         $record->lines()
             ->when($kept !== [], fn ($query) => $query->whereNotIn('id', $kept))
             ->get()
-            ->each(function (PurchaseInvoiceLine $line): void {
+            ->each(function (PurchaseInvoiceLine $line) use (&$changed): void {
+                $changed = true;
                 $line->forceFill(['deleted_by' => auth()->id()])->save();
                 $line->delete();
             });
+
+        return $changed;
     }
 
     /**
      * @param  list<array<string, mixed>>  $schedules
      * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
      */
-    private function syncPaymentSchedules(PurchaseInvoice $record, array $schedules, array $context): void
+    private function syncPaymentSchedules(PurchaseInvoice $record, array $schedules, array $context): bool
     {
+        $changed = false;
         $existing = $record->paymentSchedules()->with('cashVoucher')->get()->keyBy('public_id');
         $kept = [];
 
@@ -553,15 +609,20 @@ class PurchaseInvoiceService
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
                 'payment_date' => $row['payment_date'] ?? null,
-                'status' => PurchaseInvoicePaymentSchedule::StatusScheduled,
+                'status' => $existingSchedule?->status ?? PurchaseInvoicePaymentSchedule::StatusScheduled,
                 'notes' => $row['notes'] ?? null,
             ];
 
             if ($existingSchedule instanceof PurchaseInvoicePaymentSchedule) {
                 $this->assertLinkedVoucherCanChange($existingSchedule, $values);
-                $existingSchedule->forceFill([...$values, 'updated_by' => auth()->id()])->save();
+                $existingSchedule->forceFill($values);
+                if ($existingSchedule->isDirty()) {
+                    $changed = true;
+                    $existingSchedule->forceFill(['updated_by' => auth()->id()])->save();
+                }
                 $schedule = $existingSchedule->refresh();
             } else {
+                $changed = true;
                 $schedule = $record->paymentSchedules()->create([...$values, 'created_by' => auth()->id()]);
             }
 
@@ -573,12 +634,15 @@ class PurchaseInvoiceService
             ->with('cashVoucher')
             ->when($kept !== [], fn ($query) => $query->whereNotIn('id', $kept))
             ->get()
-            ->each(function (PurchaseInvoicePaymentSchedule $schedule): void {
+            ->each(function (PurchaseInvoicePaymentSchedule $schedule) use (&$changed): void {
+                $changed = true;
                 $this->assertLinkedVoucherCanChange($schedule, []);
                 $this->deleteDraftLinkedVoucher($schedule);
                 $schedule->forceFill(['deleted_by' => auth()->id()])->save();
                 $schedule->delete();
             });
+
+        return $changed;
     }
 
     /**
@@ -586,7 +650,7 @@ class PurchaseInvoiceService
      * @param  array{invoice: array<string, string|null>, lines: list<array<string, mixed>>}  $calculation
      * @return list<array<string, mixed>>
      */
-    private function schedulesForSync(array $data, array $calculation): array
+    private function schedulesForSync(array $data, array $calculation, ?PurchaseInvoice $record = null): array
     {
         $schedules = $data['payment_schedules'] ?? [];
 
@@ -594,9 +658,12 @@ class PurchaseInvoiceService
             return $schedules;
         }
 
+        $existingSchedules = $record?->paymentSchedules()->get();
+        $publicId = $existingSchedules?->count() === 1 ? $existingSchedules->first()->public_id : null;
+
         if (($data['payment_type'] ?? null) === PurchaseInvoice::PaymentTypeCash) {
             return [[
-                'public_id' => null,
+                'public_id' => $publicId,
                 'due_date' => $data['invoice_date'],
                 'amount' => $calculation['invoice']['total_amount'],
                 'payment_source_type' => PurchaseInvoice::SourceCashbox,
@@ -616,7 +683,7 @@ class PurchaseInvoiceService
         }
 
         return [[
-            'public_id' => null,
+            'public_id' => $publicId,
             'due_date' => Carbon::parse($data['invoice_date'])->addDays((int) $paymentTermsDays)->toDateString(),
             'amount' => $calculation['invoice']['total_amount'],
             'payment_source_type' => PurchaseInvoice::SourceScheduled,
@@ -636,7 +703,10 @@ class PurchaseInvoiceService
             $schedule->forceFill([
                 'cash_voucher_id' => $schedule->cashVoucher?->isApproved() ? $schedule->cash_voucher_id : null,
                 'status' => PurchaseInvoicePaymentSchedule::StatusScheduled,
-            ])->save();
+            ]);
+            if ($schedule->isDirty()) {
+                $schedule->save();
+            }
 
             return;
         }
@@ -679,7 +749,10 @@ class PurchaseInvoiceService
             'status' => $voucher->isApproved()
                 ? PurchaseInvoicePaymentSchedule::StatusPaid
                 : PurchaseInvoicePaymentSchedule::StatusVoucherDraft,
-        ])->save();
+        ]);
+        if ($schedule->isDirty()) {
+            $schedule->save();
+        }
 
         $paymentContext = SupplierPaymentContext::query()->firstOrNew([
             'cash_voucher_id' => $voucher->getKey(),
@@ -703,16 +776,19 @@ class PurchaseInvoiceService
             'allocated_amount' => $schedule->amount,
             'reason' => $voucher->reason,
             'notes' => $voucher->description,
-        ])->save();
-        SupplierPaymentAllocation::query()->updateOrCreate([
+        ]);
+        if ($paymentContext->isDirty() || ! $paymentContext->exists) {
+            $paymentContext->save();
+        }
+        $allocation = SupplierPaymentAllocation::query()->firstOrNew([
             'supplier_payment_context_id' => $paymentContext->getKey(),
             'purchase_invoice_id' => $record->getKey(),
             'payment_schedule_id' => $schedule->getKey(),
-        ], [
-            'amount' => $schedule->amount,
-            'allocated_by' => auth()->id(),
-            'allocated_at' => now(),
         ]);
+        $allocation->amount = $schedule->amount;
+        if ($allocation->isDirty() || ! $allocation->exists) {
+            $allocation->forceFill(['allocated_by' => auth()->id(), 'allocated_at' => now()])->save();
+        }
     }
 
     private function deleteDraftLinkedVoucher(PurchaseInvoicePaymentSchedule $schedule): void
@@ -732,7 +808,6 @@ class PurchaseInvoiceService
             'supplier_payments',
             SupplierPaymentContext::class,
             (int) $record->company_id,
-            fn ($query) => $query->where('financial_period_id', $record->financial_period_id),
         );
     }
 
@@ -997,6 +1072,19 @@ class PurchaseInvoiceService
         }
 
         return $account;
+    }
+
+    private function assertOperatingContext(PurchaseInvoice $record): void
+    {
+        if ($record->financialPeriod?->is_closed) {
+            throw new DomainException(__('purchase_invoices.messages.period_closed'));
+        }
+
+        $context = $this->operatingContext->snapshot(request());
+        if ((int) $record->company_id !== (int) $context['company_id'] || (int) $record->branch_id !== (int) $context['branch_id']
+            || (int) $record->financial_period_id !== (int) $context['financial_period_id']) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
     }
 
     private function assertEditable(PurchaseInvoice $record): void

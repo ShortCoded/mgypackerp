@@ -768,7 +768,7 @@ test('duplicates with history in more than one account are blocked and never mod
         $context['company'],
         $asset->doc_num,
         [],
-    ))->toThrow(DomainException::class, 'blocked and cannot be applied automatically');
+    ))->toThrow(DomainException::class, __('The reviewed case is blocked and cannot be applied automatically: :reason', ['reason' => '']));
 
     expect($asset->refresh()->getAttributes())->toBe($beforeAsset)
         ->and(Account::query()->whereIn('id', [$firstAccount->getKey(), $secondAccount->getKey()])->oldest('id')->get()->map->getAttributes()->all())->toBe($beforeAccounts)

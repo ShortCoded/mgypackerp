@@ -79,7 +79,7 @@ class InventoryReportController extends Controller
             $context['company_id'],
             $context['financial_period_id'],
             $context['branch_id'],
-            $request->only(['branch_store_id', 'warehouse_location_id', 'product_id', 'classification', 'stock_status', 'batch_lot', 'transaction_type', 'from', 'to', 'as_of', 'expiry_within_days']),
+            $request->only(['source_doc_num', 'branch_store_id', 'warehouse_location_id', 'product_id', 'classification', 'stock_status', 'batch_lot', 'transaction_type', 'from', 'to', 'as_of', 'expiry_within_days']),
         );
         $report['glReconciliation'] = null;
         $report['glReconciliationUnavailableReason'] = null;

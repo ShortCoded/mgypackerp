@@ -353,6 +353,7 @@
         </div>
         @include('modules.business-partners.partials.location-inline-modal', ['modalId' => 'customer-location-inline-modal'])
     @endunless
+    @if($isView && isset($salesOverview)) @include('modules.sales.customers.sales-overview') @endif
 @endsection
 
 @push('scripts')

@@ -249,6 +249,9 @@ return [
         'supplier_payable' => 'Supplier payable for purchase invoice',
     ],
     'js' => [
+        'approved_quantity' => 'Approved',
+        'previously_invoiced' => 'Previously invoiced',
+        'remaining_quantity' => 'Remaining',
         'validation_failed' => 'Please review the highlighted fields.',
         'unexpected_error' => 'Something went wrong. Please try again.',
         'saved' => 'Saved successfully.',

@@ -50,6 +50,18 @@ class SalesOrderLine extends Model
         return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
     }
 
+    public function activeReservedQuantity(): string
+    {
+        $reservations = $this->relationLoaded('reservations')
+            ? $this->reservations
+            : $this->reservations()->where('status', InventoryReservation::StatusActive)->get();
+
+        $baseQuantity = $reservations->where('status', InventoryReservation::StatusActive)
+            ->reduce(fn (string $total, InventoryReservation $reservation): string => bcadd($total, $reservation->remaining_quantity, 8), '0.00000000');
+
+        return bcdiv($baseQuantity, (string) $this->conversion_factor, 8);
+    }
+
     public function remainingInvoiceQuantity(): string
     {
         $eligible = $this->isService() ? (string) $this->quantity : (string) $this->delivered_quantity;

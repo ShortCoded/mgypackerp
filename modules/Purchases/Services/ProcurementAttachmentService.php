@@ -3,24 +3,36 @@
 namespace Modules\Purchases\Services;
 
 use DomainException;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Models\ArchiveFile;
+use Modules\Core\Models\ArchiveFileUsage;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\FilePickerService;
-use Modules\Purchases\Models\GoodsReceiptInspection;
-use Modules\Purchases\Models\SupplierQuotation;
 
 class ProcurementAttachmentService
 {
     public function __construct(private readonly FilePickerService $filePicker) {}
 
+    public const OperationalCollection = 'procurement_documents';
+
+    public function documents(Model $record): Collection
+    {
+        return ArchiveFileUsage::query()->whereMorphedTo('usable', $record)
+            ->where('collection', self::OperationalCollection)
+            ->whereHas('file', fn ($query) => $query->where('attachable_type', (new Company)->getMorphClass())->where('attachable_id', $record->company_id))
+            ->with('file')->orderBy('sort_order')->get();
+    }
+
     /** @param list<string> $fileDocNums */
     public function attach(
-        SupplierQuotation|GoodsReceiptInspection $record,
+        Model $record,
         array $fileDocNums,
         string $collection,
         int $companyId,
-    ): void {
-        $existingIds = $record->archiveFileUsages()
+    ): bool {
+        $changed = false;
+        $existingIds = ArchiveFileUsage::query()->whereMorphedTo('usable', $record)
             ->where('collection', $collection)
             ->pluck('archive_file_id')
             ->map(fn (mixed $id): int => (int) $id)
@@ -35,7 +47,9 @@ class ProcurementAttachmentService
                 continue;
             }
 
-            $record->archiveFileUsages()->create([
+            $changed = true;
+            ArchiveFileUsage::query()->create([
+                'usable_type' => $record->getMorphClass(), 'usable_id' => $record->getKey(),
                 'archive_file_id' => $file->getKey(),
                 'company_attachable_type' => (new Company)->getMorphClass(),
                 'company_attachable_id' => $companyId,
@@ -46,5 +60,7 @@ class ProcurementAttachmentService
             ]);
             $existingIds[] = (int) $file->getKey();
         }
+
+        return $changed;
     }
 }

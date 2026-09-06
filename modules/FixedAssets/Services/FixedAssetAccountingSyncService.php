@@ -55,6 +55,9 @@ class FixedAssetAccountingSyncService
             return;
         }
 
+        if ($fixedAsset->isMasterLocked()) {
+            throw new DomainException(__('fixed_assets.messages.delete_blocked_lifecycle'));
+        }
         $this->audit->softDelete($fixedAsset);
     }
 
@@ -79,13 +82,16 @@ class FixedAssetAccountingSyncService
         }
 
         $values = [];
+        if ($fixedAsset->isMasterLocked() && ((int) $this->accounts->linkedAccountGroup(BusinessPartnerAccountService::FixedAsset, $account)?->getKey() !== (int) $fixedAsset->asset_group_account_id || $account->is_group || ! $account->is_postable || $account->wasChanged('status'))) {
+            throw new DomainException(__('fixed_assets.cycle.master_account_locked'));
+        }
         $accountName = trim((string) $account->name);
 
         if ($accountName !== '' && trim((string) $fixedAsset->asset_name) !== $accountName) {
             $values['asset_name'] = $accountName;
         }
 
-        if (in_array($account->status, ['active', 'inactive'], true) && $fixedAsset->status !== $account->status) {
+        if (! $fixedAsset->isMasterLocked() && in_array($account->status, ['active', 'inactive'], true) && $fixedAsset->status !== $account->status) {
             $values['status'] = $account->status;
         }
 

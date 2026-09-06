@@ -58,6 +58,7 @@ class UpdateCompanyRequest extends FormRequest
             ],
             'remove_favicon' => ['nullable', 'boolean'],
             'status' => ['required', 'string', Rule::in(['active', 'inactive'])],
+            'show_company_identity_on_prints' => ['sometimes', 'boolean'],
             'notes' => ['nullable', 'string'],
             'commercial_register_number' => ['nullable', 'string', 'max:100', Rule::unique('companies', 'commercial_register_number')->ignore($company?->id)->withoutTrashed()],
             'commercial_register_office' => ['nullable', 'string', 'max:255'],
@@ -206,6 +207,10 @@ class UpdateCompanyRequest extends FormRequest
             unset($data['is_main']);
         } elseif (array_key_exists('is_main', $data)) {
             $data['is_main'] = $this->boolean('is_main');
+        }
+
+        if (array_key_exists('show_company_identity_on_prints', $data)) {
+            $data['show_company_identity_on_prints'] = $this->boolean('show_company_identity_on_prints');
         }
 
         if (array_key_exists('remove_logo', $data)) {

@@ -15,6 +15,7 @@ use Modules\Finance\Models\Cheque;
 use Modules\Finance\Models\ChequeClearingEvent;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierPaymentPostingService;
+use Modules\Sales\Services\CustomerReceiptSettlementService;
 
 class ChequeService
 {
@@ -301,6 +302,7 @@ class ChequeService
                 'updated_by' => auth()->id(),
             ])->save();
             $this->synchronizeSupplierPayment($locked, $status);
+            app(CustomerReceiptSettlementService::class)->synchronizeCheque($locked);
 
             return $locked->refresh()->load(['bankAccount.currency', 'currency', 'lines.account']);
         });

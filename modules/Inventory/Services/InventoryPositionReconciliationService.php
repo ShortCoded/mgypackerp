@@ -34,7 +34,7 @@ class InventoryPositionReconciliationService
             $product = Product::query()->lockForUpdate()->findOrFail($productId);
             if ((int) $period->company_id !== $companyId || $period->is_closed
                 || (int) $store->branch_id !== $branchId || (int) $product->company_id !== $companyId) {
-                throw new DomainException('Inventory position reconciliation requires an open, related operating context.');
+                throw new DomainException(__('Inventory position reconciliation requires an open, related operating context.'));
             }
 
             InventoryTransaction::query()
@@ -113,7 +113,7 @@ class InventoryPositionReconciliationService
             if (bccomp($remaining, '0', 8) > 0
                 || bccomp($quantityBefore, $this->totalQuantity($companyId, $branchStoreId, $productId), 8) !== 0
                 || bccomp($this->nullBatchQuantity($companyId, $branchStoreId, $productId), '0', 8) < 0) {
-                throw new DomainException('Inventory position reconciliation did not preserve and balance the stock ledger.');
+                throw new DomainException(__('Inventory position reconciliation did not preserve and balance the stock ledger.'));
             }
 
             return $createdTransactions;

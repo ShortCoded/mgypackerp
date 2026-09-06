@@ -2,10 +2,10 @@
     $isView = $mode === 'view';
     $canList = auth()->user()?->can($resource.'.view');
     $canView = auth()->user()?->can($resource.'.view');
-    $canEdit = auth()->user()?->can($resource.'.edit');
+    $canEdit = $canEdit ?? auth()->user()?->can($resource.'.edit');
     $canEditRecord = $canEditRecord ?? true;
     $canDeleteRecord = $canDeleteRecord ?? true;
-    $canClone = auth()->user()?->can($resource.'.clone');
+    $canClone = $canClone ?? auth()->user()?->can($resource.'.clone');
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
     $isTrashed = $record?->trashed() ?? false;
     $canRestore = $isView && $isTrashed && auth()->user()?->can($resource.'.restore') && $record?->doc_num !== null;

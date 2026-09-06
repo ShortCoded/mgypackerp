@@ -31,6 +31,7 @@ class CompanyService
         'authorized_signatory_title',
         'status',
         'is_main',
+        'show_company_identity_on_prints',
         'notes',
         'commercial_register_number',
         'commercial_register_office',
@@ -356,7 +357,7 @@ class CompanyService
             $values[$field] = match ($field) {
                 'name' => $this->normalizeString((string) $data[$field]),
                 'status' => (string) $data[$field],
-                'is_main' => (bool) $data[$field],
+                'is_main', 'show_company_identity_on_prints' => (bool) $data[$field],
                 'commercial_register_date', 'commercial_register_expiry_date' => $this->normalizeNullableString($data[$field] ?? null),
                 'email' => $this->normalizeEmail($data[$field] ?? null),
                 default => $this->normalizeNullableString($data[$field] ?? null),
@@ -490,7 +491,7 @@ class CompanyService
                 continue;
             }
 
-            if ($field === 'is_main') {
+            if (in_array($field, ['is_main', 'show_company_identity_on_prints'], true)) {
                 if ((bool) $current !== (bool) $value) {
                     $changes[$field] = [
                         'old' => (bool) $current,

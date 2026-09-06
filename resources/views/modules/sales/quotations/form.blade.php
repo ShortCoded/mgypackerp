@@ -76,13 +76,15 @@
 @endpush
 
 @section('content')
-    <form class="js-quotation-form"
+@if($record?->sales_person_id && !$record?->business_employee_id)<div class="alert alert-subtle-warning">{{ __('sales_ui.employee_unresolved') }}</div>@endif
+    <form data-sales-ui class="js-quotation-form"
         action="{{ $action }}"
         method="{{ $method }}"
         data-mode="{{ $mode }}"
         data-primary-focus="quotation_date"
         novalidate>
         @csrf
+        <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
         @if ($method !== 'POST')
             @method($method)
         @endif
@@ -100,7 +102,7 @@
                     <div class="col-auto">
                         @include('modules.sales.quotations.partials.form-actions', [
                             'canEditRecord' => ! ($isRevisionLocked ?? false),
-                            'canDeleteRecord' => true,
+                            'canDeleteRecord' => $record?->canDeleteDraft() ?? false,
                         ])
                     </div>
                 </div>
@@ -113,64 +115,26 @@
                 @if (! $isCreateLike && ($isRevisionLocked ?? false) && ! $isTrashed)
                     <div class="alert alert-subtle-warning d-flex flex-wrap gap-2 align-items-center justify-content-between">
                         <span>{{ __('quotations.messages.revision_not_draft') }}</span>
-                        @can('quotations.revisions.create')
+                        @if($record->canIssueRevision()) @can('quotations.revisions.create')
                             <button class="btn btn-falcon-warning btn-sm js-create-quotation-revision" type="button" data-url="{{ route('admin.sales.quotations.revisions.create', $record->doc_num) }}">
                                 <span class="fas fa-code-branch me-1"></span>{{ __('quotations.actions.create_revision') }}
                             </button>
-                        @endcan
+                        @endcan @endif
                     </div>
                 @endif
 
-                @if ($isView && $record && ! $isTrashed)
-                    <div class="mb-3 d-flex flex-wrap gap-2">
-                        @if ($record->status === Quotation::StatusDraft)
-                            @can('quotations.mark_sent')
-                                <button class="btn btn-falcon-info btn-sm js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.mark-sent', $record->doc_num) }}">
-                                    <span class="fas fa-paper-plane me-1"></span>{{ __('quotations.actions.mark_sent') }}
-                                </button>
-                            @endcan
-                        @endif
-                        @if (in_array($record->status, [Quotation::StatusSent, Quotation::StatusUnderReview], true))
-                            @can('quotations.accept')
-                                <button class="btn btn-falcon-success btn-sm js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.accept', $record->doc_num) }}">
-                                    <span class="fas fa-check me-1"></span>{{ __('quotations.actions.accept') }}
-                                </button>
-                            @endcan
-                            @can('quotations.reject')
-                                <button class="btn btn-falcon-danger btn-sm js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.reject', $record->doc_num) }}">
-                                    <span class="fas fa-times me-1"></span>{{ __('quotations.actions.reject') }}
-                                </button>
-                            @endcan
-                        @endif
-                        @if ($record->status === Quotation::StatusAccepted)
-                            @can('sales_orders.create')
-                                <button class="btn btn-success btn-sm js-quotation-convert-action" type="button" data-url="{{ route('admin.sales.quotations.convert', $record) }}">
-                                    <span class="fas fa-file-signature me-1"></span>{{ __('quotations.actions.create_sales_order') }}
-                                </button>
-                            @endcan
-                        @endif
-                        @if ($record->status === Quotation::StatusConverted && $record->salesOrders->isNotEmpty())
-                            @can('sales_orders.view')
-                                <a class="btn btn-falcon-success btn-sm" href="{{ route('admin.sales.sales-orders.show', $record->salesOrders->first()) }}">
-                                    <span class="fas fa-external-link-alt me-1"></span>{{ $record->salesOrders->first()->doc_num }}
-                                </a>
-                            @endcan
-                        @endif
-                        @if (! in_array($record->status, [Quotation::StatusCancelled, Quotation::StatusConverted], true))
-                            @can('quotations.cancel')
-                                <button class="btn btn-falcon-default text-danger btn-sm js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.cancel', $record->doc_num) }}">
-                                    <span class="fas fa-ban me-1"></span>{{ __('quotations.actions.cancel') }}
-                                </button>
-                            @endcan
-                        @endif
-                        @can('quotations.print')
-                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.quotations.print', $record) }}" target="_blank">
-                                <span class="fas fa-print me-1"></span>{{ __('quotations.actions.print') }}
-                            </a>
-                        @endcan
+                @if($isView && $record)
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4"><h5 dir="ltr">{{ $record->doc_num }} · R{{ str_pad((string) $revision->revision_number, 2, '0', STR_PAD_LEFT) }}</h5><div>{{ $record->customer?->name }}</div></div>
+                        <div class="col-md-4">@include('modules.sales.quotations.partials.status', ['status' => $record->status])<div>{{ __('quotations.attributes.total') }}: {{ app(\Modules\Core\Services\NumericFormatService::class)->format($revision->total) }} {{ $record->currency?->code }}</div></div>
+                        <div class="col-md-4">{{ __('quotations.attributes.valid_until') }}: {{ app(\Modules\Core\Services\DateFormatService::class)->formatDate($record->valid_until, '') }}
+                        @if($record->sent_at)<div>{{ __('sales_ui.mark_sent') }}: {{ app(\Modules\Core\Services\DateFormatService::class)->formatDate($record->sent_at, '') }} · {{ $record->sentBy?->name }}</div>@endif</div>
                     </div>
                 @endif
 
+                @if($isView && $record->salesOrders->isNotEmpty())
+                    <div class="mb-3"><h6>{{ __('Document Chain') }}</h6>@can('sales_orders.view')@foreach($record->salesOrders as $order)<a class="btn btn-falcon-default btn-sm me-2" href="{{ route('admin.sales.sales-orders.show', $order) }}">{{ $order->doc_num }}</a>@endforeach @endcan</div>
+                @endif
                 <ul class="nav nav-tabs" id="quotation-form-tabs" role="tablist">
                     @foreach (['basic', 'lines', 'payments', 'execution', 'terms', 'attachments', 'revisions'] as $tab)
                         <li class="nav-item" role="presentation">
@@ -205,7 +169,7 @@
                                     <x-forms.view-field for="status" :label="__('quotations.attributes.status')" :value="__('quotations.statuses.'.($record?->status ?? 'draft'))" />
                                 </div>
                                 <div class="col-md-3 col-xl-2">
-                                    <x-forms.view-field for="revision" :label="__('quotations.attributes.current_revision')" :value="$record?->currentRevision?->revision_code" dir="ltr" />
+                                    <x-forms.view-field for="revision" :label="__('quotations.attributes.current_revision')" :value="$record?->currentRevision ? 'R'.str_pad((string) $record->currentRevision->revision_number, 2, '0', STR_PAD_LEFT) : null" dir="ltr" />
                                 </div>
                             @endif
 
@@ -286,7 +250,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="sales_person_doc_num" :value="$salesPersonOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="sales_person_doc_num" name="sales_person_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('quotations.placeholders.sales_person') }}" data-allow-clear="true">
+                                    <select class="form-select js-select2-ajax" id="sales_person_doc_num" name="sales_person_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-placeholder="{{ __('quotations.placeholders.sales_person') }}" data-allow-clear="true">
                                         @if ($salesPersonOption)
                                             <option value="{{ $salesPersonOption['id'] }}" selected>{{ $salesPersonOption['text'] }}</option>
                                         @endif
@@ -415,8 +379,8 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['unit_label'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <select class="form-select js-select2-ajax js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-url="{{ route('admin.select2.item-units') }}" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true">
-                                                        @if (! empty($line['unit_doc_num']))
+                                                    <select class="form-select js-select2-local js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true"><option value=""></option>@foreach($line['units'] ?? [] as $unitOption)<option value="{{ $unitOption['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $unitOption['id'])>{{ $unitOption['text'] }}</option>@endforeach
+                                                        @if (! empty($line['unit_doc_num']) && !collect($line['units'] ?? [])->contains('id', $line['unit_doc_num']))
                                                             <option value="{{ $line['unit_doc_num'] }}" selected>{{ $line['unit_label'] ?? $line['unit_doc_num'] }}</option>
                                                         @endif
                                                     </select>
@@ -427,7 +391,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                                 @else
-                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0" step="0.0001" />
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="8" min="0" step="0.00000001" />
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                                 @endif
                                             </td>
@@ -461,7 +425,7 @@
                                                 @endif
                                             </td>
                                             <td class="text-center">
-                                                <span class="js-quotation-line-total" dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</span>
+                                                <span class="js-quotation-line-total" data-line-card-total dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</span>
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
@@ -494,9 +458,9 @@
                                                 @endif
                                             </td>
                                             @unless ($isReadonly)
-                                                <td class="text-center">
-                                                    <button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button"><span class="fas fa-copy"></span></button>
-                                                    <button class="btn btn-link text-danger p-0 js-quotation-remove-line" type="button"><span class="fas fa-trash-alt"></span></button>
+                                                <td class="text-center line-card-actions">
+                                                    <button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}" title="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>
+                                                    <button class="btn btn-link text-danger p-0 js-quotation-remove-line" type="button" aria-label="{{ __('Remove line') }}" title="{{ __('Remove line') }}"><span class="fas fa-trash-alt"></span></button>
                                                 </td>
                                             @endunless
                                         </tr>
@@ -738,7 +702,7 @@
                                         @foreach ($record->revisions as $history)
                                             <tr>
                                                 <td dir="ltr">{{ $history->revision_number }}</td>
-                                                <td dir="ltr" class="fw-semibold">{{ $history->revision_code }}</td>
+                                                <td dir="ltr" class="fw-semibold">R{{ str_pad((string) $history->revision_number, 2, '0', STR_PAD_LEFT) }}</td>
                                                 <td dir="ltr">{{ $plainDate($history->revision_date) }}</td>
                                                 <td>@include('modules.sales.quotations.partials.status', ['status' => $history->status])</td>
                                                 <td dir="ltr">{{ $numbers->format($history->total) }}</td>
@@ -776,13 +740,26 @@
                 </div>
             </div>
             <div class="card-footer">
-                @include('modules.sales.quotations.partials.form-actions', [
+                @unless($isView) @include('modules.sales.quotations.partials.form-actions', [
                     'canEditRecord' => ! ($isRevisionLocked ?? false),
-                    'canDeleteRecord' => true,
-                ])
+                    'canDeleteRecord' => $record?->canDeleteDraft() ?? false,
+                ]) @endunless
             </div>
         </div>
     </form>
+    @if($isView && $record?->status === 'accepted')
+        @can('sales_orders.create')
+            <form id="quotation-conversion" data-sales-ui class="js-sales-cycle-action card my-3" action="{{ route('admin.sales.quotations.convert', $record) }}" method="POST">
+                @csrf <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
+                <div class="card-header">{{ __('Convert selected quantities') }}</div>
+                <div class="card-body"><div class="alert alert-danger d-none js-sales-form-alert"></div>
+                @foreach($currentRevision->lines as $index => $line)
+                    <div class="row g-2 mb-3"><div class="col-md-8">{{ $line->product?->name }} · {{ __('Original quantity') }} {{ $line->quantity }} {{ $line->unit?->name }}</div><div class="col-md-4"><input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line->public_uuid }}"><input class="form-control" name="lines[{{ $index }}][quantity]" inputmode="decimal" value="0" aria-label="{{ __('Convert now') }}"></div></div>
+                @endforeach
+                <button class="btn btn-primary" type="submit">{{ __('Create Sales Order') }}</button></div>
+            </form>
+        @endcan
+    @endif
 
     @unless ($isReadonly)
         <template id="quotation-line-template">
@@ -809,6 +786,7 @@
 @endsection
 
 @push('scripts')
+
     <script>
         window.quotationMessages = @json(__('quotations.js'));
     </script>
@@ -822,5 +800,6 @@
             @endcan
         @endcan
     @endunless
-    <script src="{{ asset('assets/js/modules/Sales/quotations.js') }}"></script>
+    @include('modules.sales.cycle.partials.scripts')
+    <script src="{{ $asset->url('assets/js/modules/Sales/quotations.js') }}"></script>
 @endpush

@@ -22,11 +22,11 @@ test('sales navigation exposes only canonical operational screens and no child s
 
     expect($menuRoutes)->toBe([
         'admin.sales.customers.index',
+        'admin.sales.customer-requests.index',
         'admin.sales.quotations.index',
         'admin.sales.sales-orders.index',
         'admin.sales.delivery-notes.index',
         'admin.sales.sales-invoices.index',
-        'admin.sales.customer-receipts.index',
         'admin.sales.sales-returns.index',
         'admin.reports.sales.sales-orders.index',
     ]);

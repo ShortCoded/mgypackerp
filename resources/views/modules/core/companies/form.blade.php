@@ -19,6 +19,7 @@
     $fieldValue = fn (string $field, mixed $default = '') => old($field, $isClone && in_array($field, ['doc_number', 'doc_num', 'logo', 'favicon'], true) ? $default : ($company?->{$field} ?? $default));
     $dateValue = fn (string $field) => old($field, $company?->{$field} ? $dateFormatService->formatDate($company->{$field}, '') : '');
     $statusValue = old('status', $company?->status ?? 'active');
+    $showPrintIdentity = (bool) old('show_company_identity_on_prints', $mode === 'clone' ? false : ($company?->show_company_identity_on_prints ?? false));
     $isMainValue = (bool) old('is_main', $company?->is_main ?? false);
     $logoPath = $company && ! $isClone && $company->logo ? Storage::disk('public')->url($company->logo) : null;
     $faviconPath = $company && ! $isClone && $company->favicon ? Storage::disk('public')->url($company->favicon) : null;
@@ -45,6 +46,7 @@
     $nameColumnClass = $showsDocumentNumberColumn ? 'col-md-6 col-xl-7' : 'col-md-8 col-xl-9';
     $statusColumnClass = $showsDocumentNumberColumn ? 'col-md-3 col-xl-3' : 'col-md-4 col-xl-3';
     $originalCompanyData = [
+        'show_company_identity_on_prints' => $showPrintIdentity ? '1' : '0',
         'name' => $companyName,
         'doc_number' => $canControlDocumentNumber ? (($isEdit || $isView) ? $company?->doc_number : '') : null,
         'legal_name' => $fieldValue('legal_name'),
@@ -240,6 +242,15 @@
             <div class="card-body">
                 <h6 class="mb-3 text-700">{{ __('companies.sections.signature_authorization') }}</h6>
                 <div class="row g-3">
+                    <div class="col-12">
+                        @if($isView)
+                            <span>{{ __('Show company identity on operational prints') }}: {{ $showPrintIdentity ? __('Yes') : __('No') }}</span>
+                        @else
+                            <input type="hidden" name="show_company_identity_on_prints" value="0">
+                            <div class="form-check"><input class="form-check-input" type="checkbox" id="show-company-print-identity" name="show_company_identity_on_prints" value="1" @checked($showPrintIdentity)><label class="form-check-label" for="show-company-print-identity">{{ __('Show company identity on operational prints') }}</label></div>
+                        @endif
+                        <div class="form-text">{{ __('Quotations and legal copies always show company identity.') }}</div>
+                    </div>
                     <div class="col-md-6">
                         <label class="form-label" for="company-authorized-signatory-name">{{ __('companies.fields.authorized_signatory_name') }}</label>
                         @if ($isView)

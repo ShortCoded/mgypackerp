@@ -18,7 +18,8 @@ class FixedAssetScheduleService
      */
     public function schedule(FixedAsset $asset, int $maximumPeriods = 600): array
     {
-        $asset->loadMissing('postedDepreciations');
+        $asset = clone $asset;
+        $asset->loadMissing(['postedDepreciations', 'costMovements.journalEntry', 'disposals']);
         $rows = $asset->postedDepreciations->map(fn (FixedAssetDepreciation $row): array => [
             'period_start' => $row->period_start,
             'period_end' => $row->period_end,
@@ -31,6 +32,8 @@ class FixedAssetScheduleService
         ])->all();
         $position = $this->bookValues->position($asset);
         $projectionAvailable = (bool) $asset->is_depreciable
+            && $asset->hasPostedRecognition()
+            && ! app(FixedAssetDepreciationService::class)->hasHistoricalGap($asset)
             && $asset->depreciation_start_date !== null
             && $asset->depreciation_method !== FixedAsset::DepreciationMethodUnitsOfProduction
             && ! $asset->isDisposed()
@@ -41,14 +44,18 @@ class FixedAssetScheduleService
             return ['rows' => $rows, 'projection_available' => false];
         }
 
-        $lastPosted = $asset->postedDepreciations->last()?->period_end;
-        $cursor = $lastPosted
-            ? $lastPosted->copy()->addDay()->startOfMonth()
-            : Carbon::parse($asset->depreciation_start_date)->startOfMonth();
+        $lastPosted = $asset->postedDepreciations->last()?->period_end ?: $asset->previous_depreciation_until_date;
+        $nextDate = $lastPosted ? $lastPosted->copy()->addDay() : Carbon::parse($asset->depreciation_start_date);
+        $cursor = $nextDate->copy()->startOfMonth();
+
+        $position = $this->bookValues->position($asset, $nextDate);
 
         for ($period = 0; $period < $maximumPeriods && bccomp($position['remaining_depreciable_amount'], '0', 4) > 0; $period++) {
-            $periodStart = $cursor->copy()->max(Carbon::parse($asset->depreciation_start_date));
+            $periodStart = $cursor->copy()->max($nextDate)->max(Carbon::parse($asset->depreciation_start_date));
             $periodEnd = $cursor->copy()->endOfMonth();
+            $costPosition = $this->bookValues->position($asset, $periodStart);
+            $position['acquisition_cost'] = $costPosition['acquisition_cost'];
+            $position['base_acquisition_cost'] = $costPosition['base_acquisition_cost'];
             $snapshot = $this->calculator->snapshot($asset, $periodStart, $periodEnd, $position);
 
             if ($snapshot === null) {
@@ -66,13 +73,13 @@ class FixedAssetScheduleService
                 'journal_entry_id' => null,
             ];
             $position = [
-                ...$position,
+                ...$snapshot,
                 'accumulated_depreciation' => $snapshot['accumulated_after'],
                 'base_accumulated_depreciation' => $snapshot['base_accumulated_after'],
                 'net_book_value' => $snapshot['closing_net_book_value'],
                 'base_net_book_value' => $snapshot['base_closing_net_book_value'],
-                'remaining_depreciable_amount' => bcsub($position['remaining_depreciable_amount'], $snapshot['period_depreciation'], 4),
-                'base_remaining_depreciable_amount' => bcsub($position['base_remaining_depreciable_amount'], $snapshot['base_period_depreciation'], 4),
+                'remaining_depreciable_amount' => bcsub($snapshot['closing_net_book_value'], $snapshot['residual_value'], 4),
+                'base_remaining_depreciable_amount' => bcsub($snapshot['base_closing_net_book_value'], $snapshot['base_residual_value'], 4),
             ];
             $cursor->addMonthNoOverflow()->startOfMonth();
         }

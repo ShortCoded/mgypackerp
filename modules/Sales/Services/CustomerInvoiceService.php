@@ -5,12 +5,16 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Models\SalesReturnLine;
 
 class CustomerInvoiceService
 {
@@ -22,62 +26,67 @@ class CustomerInvoiceService
     ) {}
 
     /** @param list<array{sales_order_line_id: int, quantity: string|int|float, delivery_line_id?: int|null}> $lines @param list<array{due_date: string, amount: string|int|float, notes?: string|null}> $schedules */
-    public function createFromOrder(SalesOrder $order, array $lines, array $schedules, ?InventoryDocument $delivery = null): CustomerInvoice
+    public function createFromOrder(SalesOrder $order, array $lines, array $schedules, ?InventoryDocument $delivery = null, ?string $invoiceDate = null): CustomerInvoice
     {
-        return DB::transaction(function () use ($order, $lines, $schedules, $delivery): CustomerInvoice {
+        return DB::transaction(function () use ($order, $lines, $schedules, $delivery, $invoiceDate): CustomerInvoice {
+            $invoiceDate ??= now()->toDateString();
             $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($order->getKey());
+            $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $salesOrder->company_id, $invoiceDate, lockForUpdate: true);
             if (! in_array($salesOrder->status, [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled], true)) {
-                throw new DomainException('The sales order is not eligible for invoicing.');
+                throw new DomainException(__('The sales order is not eligible for invoicing.'));
             }
             if ($delivery && ($delivery->document_type !== InventoryDocument::TypeSalesDelivery || $delivery->status !== InventoryDocument::StatusPosted || $delivery->source_document_id !== $salesOrder->getKey())) {
-                throw new DomainException('The selected delivery does not belong to this order or is not posted.');
+                throw new DomainException(__('The selected delivery does not belong to this order or is not posted.'));
             }
 
             $prepared = [];
+            $allocatedAmounts = [];
+            $quantitiesByOrderLine = [];
+            $quantitiesByDeliveryLine = [];
             foreach ($lines as $input) {
                 $orderLine = SalesOrderLine::query()->lockForUpdate()->where('sales_order_id', $salesOrder->getKey())->findOrFail($input['sales_order_line_id']);
                 $quantity = (string) $input['quantity'];
-                $this->amounts->assertPositive($quantity, 'Invoice quantity must be greater than zero.');
-                $this->amounts->assertNotGreaterThan($quantity, $orderLine->remainingInvoiceQuantity(), 'Invoice quantity exceeds the delivered or ordered quantity available.');
+                $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
+                $quantitiesByOrderLine[$orderLine->getKey()] = bcadd($quantitiesByOrderLine[$orderLine->getKey()] ?? '0', $quantity, 8);
+                $this->amounts->assertNotGreaterThan($quantitiesByOrderLine[$orderLine->getKey()], $orderLine->remainingInvoiceQuantity(), __('Invoice quantity exceeds the delivered or ordered quantity available.'));
                 $deliveryLine = null;
                 if (! $orderLine->isService()) {
                     if (empty($input['delivery_line_id'])) {
-                        throw new DomainException('Physical invoice lines require an explicit delivery line.');
+                        throw new DomainException(__('Physical invoice lines require an explicit delivery line.'));
                     }
                     $deliveryLine = InventoryDocumentLine::query()->with('document')->lockForUpdate()->where('source_line_type', SalesOrderLine::class)->where('source_line_id', $orderLine->getKey())->findOrFail($input['delivery_line_id']);
                     if ($deliveryLine->document->document_type !== InventoryDocument::TypeSalesDelivery || $deliveryLine->document->status !== InventoryDocument::StatusPosted || $deliveryLine->document->source_document_id !== $salesOrder->getKey()) {
-                        throw new DomainException('The selected delivery line does not belong to a posted delivery for this order.');
+                        throw new DomainException(__('The selected delivery line does not belong to a posted delivery for this order.'));
                     }
-                    $alreadyInvoiced = (string) DB::table('customer_invoice_lines')->where('delivery_line_id', $deliveryLine->getKey())->sum('quantity');
-                    $this->amounts->assertNotGreaterThan($quantity, $this->amounts->subtract($deliveryLine->transaction_quantity, $alreadyInvoiced, 8), 'Invoice quantity exceeds the selected delivery line.');
+                    $alreadyInvoiced = (string) CustomerInvoiceLine::query()->where('delivery_line_id', $deliveryLine->getKey())->whereHas('invoice', fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice))->sum('quantity');
+                    $unbilledReturns = (string) SalesReturnLine::query()->where('delivery_line_id', $deliveryLine->getKey())->whereNull('customer_invoice_line_id')->whereHas('salesReturn', fn ($query) => $query->where('status', '<>', SalesReturn::StatusCancelled))->sum('quantity');
+                    $alreadyInvoiced = bcadd($alreadyInvoiced, $unbilledReturns, 8);
+                    $quantitiesByDeliveryLine[$deliveryLine->getKey()] = bcadd($quantitiesByDeliveryLine[$deliveryLine->getKey()] ?? '0', $quantity, 8);
+                    $this->amounts->assertNotGreaterThan($quantitiesByDeliveryLine[$deliveryLine->getKey()], $this->amounts->subtract($deliveryLine->transaction_quantity, $alreadyInvoiced, 8), __('Invoice quantity exceeds the selected delivery line.'));
                 }
-                $ratio = bcdiv($quantity, (string) $orderLine->quantity, 12);
-                $discount = $this->amounts->multiply($orderLine->discount_amount, $ratio);
-                $tax = $this->amounts->multiply($orderLine->tax_amount, $ratio);
-                $gross = $this->amounts->multiply($quantity, $orderLine->unit_price);
+                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts);
                 $prepared[] = [
                     'order_line' => $orderLine, 'delivery_line' => $deliveryLine, 'quantity' => $quantity,
-                    'discount' => $discount, 'tax' => $tax,
+                    'discount' => $discount, 'tax' => $tax, 'gross' => $gross,
                     'line_total' => $this->amounts->add($this->amounts->subtract($gross, $discount), $tax),
                 ];
             }
             $total = $this->amounts->sum(array_column($prepared, 'line_total'));
             $scheduleTotal = $this->amounts->sum(array_column($schedules, 'amount'));
             if ($schedules === [] || $this->amounts->compare($scheduleTotal, $total) !== 0) {
-                throw new DomainException('Invoice payment schedules must exist and equal the invoice total.');
+                throw new DomainException(__('Invoice payment schedules must exist and equal the invoice total.'));
             }
 
-            $numbers = $this->documents->nextForCompany('customer_invoices', CustomerInvoice::class, (int) $salesOrder->company_id, fn ($query) => $query->where('financial_period_id', $salesOrder->financial_period_id));
-            $invoiceDate = now()->toDateString();
+            $numbers = $this->documents->nextForCompany('customer_invoices', CustomerInvoice::class, (int) $salesOrder->company_id);
             $invoice = CustomerInvoice::query()->create([
-                ...$numbers, 'company_id' => $salesOrder->company_id, 'financial_period_id' => $salesOrder->financial_period_id,
+                ...$numbers, 'company_id' => $salesOrder->company_id, 'financial_period_id' => $period->getKey(),
                 'branch_id' => $salesOrder->branch_id, 'customer_id' => $salesOrder->customer_id,
                 'sales_order_id' => $salesOrder->getKey(), 'delivery_document_id' => $delivery?->getKey(),
                 'invoice_date' => $invoiceDate, 'due_date' => collect($schedules)->max('due_date'),
                 'currency_id' => $salesOrder->currency_id, 'exchange_rate' => $salesOrder->exchange_rate,
-                'subtotal_amount' => $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->multiply($row['quantity'], $row['order_line']->unit_price), $prepared)),
+                'subtotal_amount' => $this->amounts->sum(array_column($prepared, 'gross')),
                 'discount_amount' => $this->amounts->sum(array_column($prepared, 'discount')),
-                'taxable_amount' => $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->subtract($this->amounts->multiply($row['quantity'], $row['order_line']->unit_price), $row['discount']), $prepared)),
+                'taxable_amount' => $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->subtract($row['gross'], $row['discount']), $prepared)),
                 'tax_amount' => $this->amounts->sum(array_column($prepared, 'tax')), 'total_amount' => $total,
                 'remaining_amount' => $total, 'document_type' => CustomerInvoice::TypeInvoice,
                 'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted',
@@ -124,10 +133,10 @@ class CustomerInvoiceService
                 return $locked;
             }
             if (! $locked->isEditable()) {
-                throw new DomainException('The invoice is locked and cannot be posted.');
+                throw new DomainException(__('The invoice is locked and cannot be posted.'));
             }
             if ($this->amounts->compare($this->amounts->sum($locked->paymentSchedules->pluck('amount')), $locked->total_amount) !== 0) {
-                throw new DomainException('Invoice schedules no longer reconcile to the invoice total.');
+                throw new DomainException(__('Invoice schedules no longer reconcile to the invoice total.'));
             }
             $journal = $this->accounting->postInvoice($locked);
             $locked->update(['status' => CustomerInvoice::StatusPosted, 'posting_status' => 'posted', 'is_closed' => true, 'journal_entry_id' => $journal->getKey(), 'issued_by' => auth()->id(), 'issued_at' => now(), 'updated_by' => auth()->id()]);
@@ -145,10 +154,9 @@ class CustomerInvoiceService
             $net = $this->amounts->round((string) $data['net_amount']);
             $tax = $this->amounts->round((string) ($data['tax_amount'] ?? 0));
             $total = $this->amounts->add($net, $tax);
-            $this->amounts->assertPositive($net, 'A non-stock source Invoice requires a positive net amount.');
+            $this->amounts->assertPositive($net, __('A non-stock source Invoice requires a positive net amount.'));
             $numbers = $this->documents->nextForCompany(
                 'customer_invoices', CustomerInvoice::class, (int) $data['company_id'],
-                fn ($query) => $query->where('financial_period_id', $data['financial_period_id']),
             );
             $invoice = CustomerInvoice::query()->create([
                 ...$numbers, 'company_id' => $data['company_id'], 'financial_period_id' => $data['financial_period_id'],
@@ -188,24 +196,27 @@ class CustomerInvoiceService
         return DB::transaction(function () use ($invoice, $lines, $schedules): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
             if ($locked->document_type !== CustomerInvoice::TypeInvoice || ! $locked->isEditable()) {
-                throw new DomainException('Only a draft or safely reopened invoice may be amended.');
+                throw new DomainException(__('Only a draft or safely reopened invoice may be amended.'));
             }
 
             $inputByPublicId = collect($lines)->keyBy('invoice_line_public_id');
             if ($inputByPublicId->count() !== $locked->lines->count()) {
-                throw new DomainException('Every existing invoice line must be included in the correction.');
+                throw new DomainException(__('Every existing invoice line must be included in the correction.'));
             }
 
             $prepared = [];
+            $allocatedAmounts = [];
+            $correctedByDelivery = [];
+            $correctedByOrder = [];
             foreach ($locked->lines as $invoiceLine) {
                 $input = $inputByPublicId->get($invoiceLine->public_id);
                 if (! is_array($input)) {
-                    throw new DomainException('The invoice correction contains an unknown or missing line.');
+                    throw new DomainException(__('The invoice correction contains an unknown or missing line.'));
                 }
 
                 $orderLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($invoiceLine->sales_order_line_id);
                 $quantity = (string) $input['quantity'];
-                $this->amounts->assertPositive($quantity, 'Invoice quantity must be greater than zero.');
+                $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
 
                 if ($invoiceLine->delivery_line_id) {
                     $deliveryLine = InventoryDocumentLine::query()->lockForUpdate()->findOrFail($invoiceLine->delivery_line_id);
@@ -213,19 +224,20 @@ class CustomerInvoiceService
                         ->where('delivery_line_id', $deliveryLine->getKey())
                         ->where('customer_invoice_id', '<>', $locked->getKey())
                         ->sum('quantity');
-                    $this->amounts->assertNotGreaterThan($quantity, $this->amounts->subtract($deliveryLine->transaction_quantity, $otherInvoiced, 8), 'Corrected quantity exceeds its source delivery line.');
+                    $unbilledReturns = (string) SalesReturnLine::query()->where('delivery_line_id', $deliveryLine->id)->whereNull('customer_invoice_line_id')->whereHas('salesReturn', fn ($query) => $query->where('status', '<>', SalesReturn::StatusCancelled))->sum('quantity');
+                    $otherInvoiced = bcadd($otherInvoiced, $unbilledReturns, 8);
+                    $correctedByDelivery[$deliveryLine->id] = bcadd($correctedByDelivery[$deliveryLine->id] ?? '0', $quantity, 8);
+                    $this->amounts->assertNotGreaterThan($correctedByDelivery[$deliveryLine->id], $this->amounts->subtract($deliveryLine->transaction_quantity, $otherInvoiced, 8), __('Corrected quantity exceeds its source delivery line.'));
                 } else {
                     $otherInvoiced = (string) DB::table('customer_invoice_lines')
                         ->where('sales_order_line_id', $orderLine->getKey())
                         ->where('customer_invoice_id', '<>', $locked->getKey())
                         ->sum('quantity');
-                    $this->amounts->assertNotGreaterThan($quantity, $this->amounts->subtract($orderLine->quantity, $otherInvoiced, 8), 'Corrected service quantity exceeds the order quantity.');
+                    $correctedByOrder[$orderLine->id] = bcadd($correctedByOrder[$orderLine->id] ?? '0', $quantity, 8);
+                    $this->amounts->assertNotGreaterThan($correctedByOrder[$orderLine->id], $this->amounts->subtract($orderLine->quantity, $otherInvoiced, 8), __('Corrected service quantity exceeds the order quantity.'));
                 }
 
-                $ratio = bcdiv($quantity, (string) $orderLine->quantity, 12);
-                $discount = $this->amounts->multiply($orderLine->discount_amount, $ratio);
-                $tax = $this->amounts->multiply($orderLine->tax_amount, $ratio);
-                $gross = $this->amounts->multiply($quantity, $orderLine->unit_price);
+                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts, $locked->id);
                 $baseQuantity = bcmul($quantity, (string) $orderLine->conversion_factor, 8);
                 $prepared[] = compact('invoiceLine', 'orderLine', 'quantity', 'baseQuantity', 'discount', 'tax', 'gross');
             }
@@ -235,7 +247,7 @@ class CustomerInvoiceService
             $tax = $this->amounts->sum(array_column($prepared, 'tax'));
             $total = $this->amounts->add($this->amounts->subtract($subtotal, $discount), $tax);
             if ($this->amounts->compare($this->amounts->sum(array_column($schedules, 'amount')), $total) !== 0) {
-                throw new DomainException('Corrected payment schedules must equal the corrected invoice total.');
+                throw new DomainException(__('Corrected payment schedules must equal the corrected invoice total.'));
             }
 
             foreach ($prepared as $row) {
@@ -271,13 +283,13 @@ class CustomerInvoiceService
         return DB::transaction(function () use ($invoice, $reason): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['returns', 'creditNotes'])->lockForUpdate()->findOrFail($invoice->getKey());
             if ($locked->posting_status !== 'posted' || $this->amounts->compare($locked->paid_amount, '0') > 0 || $this->amounts->compare($locked->credited_amount, '0') > 0) {
-                throw new DomainException('Only an unsettled posted invoice may be reopened.');
+                throw new DomainException(__('Only an unsettled posted invoice may be reopened.'));
             }
-            if ($locked->returns->where('status', '<>', 'cancelled')->isNotEmpty() || $locked->creditNotes->isNotEmpty()) {
-                throw new DomainException('An invoice with a return or credit note cannot be reopened.');
+            if ($locked->returns->where('status', '<>', 'cancelled')->isNotEmpty() || $locked->creditNotes->isNotEmpty() || $locked->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists()) {
+                throw new DomainException(__('An invoice with a return or credit note cannot be reopened.'));
             }
             if ($locked->electronic_invoice_uuid !== null || ! in_array($locked->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)) {
-                throw new DomainException('A submitted electronic invoice must be corrected through the tax-authority amendment workflow.');
+                throw new DomainException(__('A submitted electronic invoice must be corrected through the tax-authority amendment workflow.'));
             }
             $revision = ((int) $locked->posting_revision) + 1;
             $reversal = $this->accounting->reverseInvoice($locked, $reason, $revision);
@@ -292,5 +304,34 @@ class CustomerInvoiceService
 
             return $locked->refresh();
         });
+    }
+
+    /**
+     * @param  array<int, array{quantity: string, discount: string, tax: string, gross: string}>  $allocated
+     * @return array{discount: string, tax: string, gross: string}
+     */
+    private function proratedAmounts(SalesOrderLine $line, string $quantity, array &$allocated, ?int $exceptInvoiceId = null): array
+    {
+        if (! isset($allocated[$line->id])) {
+            $prior = CustomerInvoiceLine::query()->where('sales_order_line_id', $line->id)
+                ->when($exceptInvoiceId, fn ($query) => $query->where('customer_invoice_id', '<>', $exceptInvoiceId))
+                ->whereHas('invoice', fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice))->get();
+            $allocated[$line->id] = ['quantity' => $prior->reduce(fn ($sum, $row) => bcadd($sum, $row->quantity, 8), '0'),
+                'discount' => $this->amounts->sum($prior->pluck('discount_amount')), 'tax' => $this->amounts->sum($prior->pluck('tax_amount')),
+                'gross' => $prior->reduce(fn ($sum, $row) => bcadd($sum, bcsub(bcadd($row->line_total, $row->discount_amount, 4), $row->tax_amount, 4), 4), '0')];
+        }
+        $state = &$allocated[$line->id];
+        $newQuantity = bcadd($state['quantity'], $quantity, 8);
+        $final = bccomp($newQuantity, $line->quantity, 8) === 0;
+        $ratio = bcdiv($quantity, $line->quantity, 16);
+        $totals = ['discount' => $line->discount_amount, 'tax' => $line->tax_amount, 'gross' => $this->amounts->multiply($line->quantity, $line->unit_price)];
+        $result = [];
+        foreach ($totals as $key => $total) {
+            $result[$key] = $final ? bcsub($total, $state[$key], 4) : ($key === 'gross' ? $this->amounts->multiply($quantity, $line->unit_price) : $this->amounts->multiply($total, $ratio));
+            $state[$key] = bcadd($state[$key], $result[$key], 4);
+        }
+        $state['quantity'] = $newQuantity;
+
+        return $result;
     }
 }

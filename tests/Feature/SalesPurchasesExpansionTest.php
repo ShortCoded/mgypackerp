@@ -182,8 +182,8 @@ test('Menu shows sales and purchases while HR stays hidden without HR permission
     $sales = collect($menu)->firstWhere('label', 'sales');
     $purchases = collect($menu)->firstWhere('label', 'purchases');
 
-    expect(collect($sales['children'])->pluck('label')->all())->toContain('customers')
-        ->and(collect($purchases['children'])->pluck('label')->all())->toContain('suppliers')
+    expect(collect($sales['children'])->flatMap(fn ($item) => [$item['label'], ...collect($item['children'] ?? [])->pluck('label')->all()])->all())->toContain('customers')
+        ->and(collect($purchases['children'])->flatMap(fn ($item) => [$item['label'], ...collect($item['children'] ?? [])->pluck('label')->all()])->all())->toContain('suppliers')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.employees.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.departments.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.countries.view');
@@ -215,7 +215,7 @@ test('Customer and Supplier tables are company scoped and account linked', funct
         ->and(Schema::hasColumns('supplier_credit_limits', ['company_id', 'supplier_id', 'currency_id', 'credit_limit']))->toBeTrue();
 });
 
-test('Customer and Supplier forms remove payment terms and scalar credit limit fields', function (): void {
+test('Customer and Supplier forms use currency credit limits and supplier payment terms', function (): void {
     salesPurchasesContext();
     $actor = salesPurchasesActor(['customers.create', 'suppliers.create']);
     $customerScript = file_get_contents(public_path('assets/js/modules/Sales/customers.js'));
@@ -230,7 +230,7 @@ test('Customer and Supplier forms remove payment terms and scalar credit limit f
         ->assertSee(__('business_partners.actions.duplicate_credit_limit_shortcut'), false)
         ->assertSee(__('business_partners.actions.delete_credit_limit_shortcut'), false)
         ->assertSee('business-partner-credit-limits-table', false)
-        ->assertSee('text-center" name="credit_limits[__INDEX__][credit_limit]"', false)
+        ->assertSee('name="credit_limits[__INDEX__][credit_limit]"', false)
         ->assertSee('select2NoResults', false)
         ->assertSee('select2Searching', false)
         ->assertDontSee('payment_terms_days', false)
@@ -248,10 +248,10 @@ test('Customer and Supplier forms remove payment terms and scalar credit limit f
         ->assertSee(__('business_partners.actions.duplicate_credit_limit_shortcut'), false)
         ->assertSee(__('business_partners.actions.delete_credit_limit_shortcut'), false)
         ->assertSee('business-partner-credit-limits-table', false)
-        ->assertSee('text-center" name="credit_limits[__INDEX__][credit_limit]"', false)
+        ->assertSee('name="credit_limits[__INDEX__][credit_limit]"', false)
         ->assertSee('select2NoResults', false)
         ->assertSee('select2Searching', false)
-        ->assertDontSee('payment_terms_days', false)
+        ->assertSee('name="payment_terms_days"', false)
         ->assertDontSee('name="credit_limit"', false)
         ->assertDontSee('common.actions.actions', false)
         ->assertDontSee('data-parent-required-message=', false)

@@ -40,7 +40,7 @@ class FixedAssetRootAccountAuditService
             if ($driver === 'pgsql') {
                 $connection->statement('SET TRANSACTION READ ONLY');
             } elseif (! in_array($driver, ['mysql', 'sqlite'], true)) {
-                throw new DomainException("The {$driver} driver has no configured read-only audit guard.");
+                throw new DomainException(__('The :driver driver has no configured read-only audit guard.', ['driver' => $driver]));
             }
 
             $result = $this->audit($company);

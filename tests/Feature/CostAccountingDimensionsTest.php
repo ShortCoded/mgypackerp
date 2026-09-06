@@ -203,7 +203,7 @@ test('payroll preview and posting resolve department defaults before exact split
 
     expect($missingDefaultPreview['lines'])->toBe([])
         ->and($missingDefaultPreview['errors'])->toHaveCount(1)
-        ->and($missingDefaultPreview['errors'][0])->toContain('Employee department has no active posting cost center default for the payroll company.');
+        ->and($missingDefaultPreview['errors'][0])->toContain(__('Employee department has no active posting cost center default for the payroll company.'));
 
     HrDepartmentCostCenterDefault::query()->create([
         'company_id' => $company->getKey(),
@@ -225,7 +225,7 @@ test('payroll preview and posting resolve department defaults before exact split
     expect(fn () => $service->syncAllocations($payslipItemId, [
         ['cost_center_doc_num' => $directCenter->doc_num, 'percentage' => '110.0000', 'allocation_type' => 'direct'],
         ['cost_center_doc_num' => $supportCenter->doc_num, 'percentage' => '-10.0000', 'allocation_type' => 'indirect'],
-    ]))->toThrow(DomainException::class, 'Each payroll allocation percentage must be greater than zero and at most 100%.');
+    ]))->toThrow(DomainException::class, __('Each payroll allocation percentage must be greater than zero and at most 100%.'));
 
     $service->syncAllocations($payslipItemId, [
         ['cost_center_doc_num' => $directCenter->doc_num, 'percentage' => '60.0000', 'allocation_type' => 'direct'],

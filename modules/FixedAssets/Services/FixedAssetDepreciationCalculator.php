@@ -4,6 +4,7 @@ namespace Modules\FixedAssets\Services;
 
 use Illuminate\Support\Carbon;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Models\FixedAssetMovement;
 
 class FixedAssetDepreciationCalculator
 {
@@ -106,6 +107,80 @@ class FixedAssetDepreciationCalculator
      */
     public function snapshot(FixedAsset $asset, Carbon $from, Carbon $to, array $position, ?string $usageUnits = null): ?array
     {
+        $additions = $asset->relationLoaded('costMovements') ? $asset->costMovements->filter(fn ($row): bool => $row->movement_type === FixedAssetMovement::TypeAddition && $row->status === 'posted' && $row->movement_date->lte($to))
+            : ($asset->exists ? $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)->where('status', 'posted')->whereDate('movement_date', '<=', $to)->get() : collect());
+
+        $initial = $position;
+        $total = '0.0000';
+        $baseTotal = '0.0000';
+        $consumedUsage = '0.0000';
+        $first = null;
+        $last = null;
+        $anniversaries = collect();
+        if ($asset->depreciation_start_date && $asset->depreciation_method !== FixedAsset::DepreciationMethodUnitsOfProduction) {
+            foreach (collect([$asset->depreciation_start_date])->concat($additions->pluck('movement_date')) as $anchor) {
+                $anniversary = $anchor->copy();
+                while ($anniversary->lte($to)) {
+                    if ($anniversary->gt($from)) {
+                        $anniversaries->push($anniversary->copy());
+                    }
+                    $anniversary->addDays($this->dayBasis());
+                }
+            }
+        }
+        $boundaries = collect([$from->copy()])->concat($anniversaries)->concat($additions->pluck('movement_date')->filter(fn (Carbon $date): bool => $date->gt($from) && $date->lte($to)))->push($to->copy()->addDay())->unique(fn (Carbon $date): string => $date->toDateString())->sort()->values();
+        foreach ($boundaries as $index => $start) {
+            if (! isset($boundaries[$index + 1])) {
+                break;
+            }
+            $end = $boundaries[$index + 1]->copy()->subDay();
+            $effective = $additions->last(fn (FixedAssetMovement $row): bool => $row->movement_date->lte($start));
+            $effectiveAsset = clone $asset;
+            foreach ($additions->filter(fn (FixedAssetMovement $row): bool => $row->movement_date->isSameDay($start) && $row->movement_date->gt($from)) as $addition) {
+                $position['acquisition_cost'] = bcadd($position['acquisition_cost'], (string) $addition->amount, 4);
+                $position['base_acquisition_cost'] = bcadd($position['base_acquisition_cost'], (string) $addition->base_amount, 4);
+            }
+            if ($effective) {
+                $position['residual_value'] = (string) data_get($effective->snapshot, 'plan.residual_value', $position['residual_value']);
+                $position['base_residual_value'] = bcmul($position['residual_value'], (string) ($asset->exchange_rate ?: '1'), 4);
+                $effectiveAsset->setAttribute('depreciation_plan', data_get($effective->snapshot, 'plan', []));
+            }
+            $position['depreciation_base'] = bcsub($position['acquisition_cost'], $position['residual_value'], 4);
+            $position['base_depreciation_base'] = bcsub($position['base_acquisition_cost'], $position['base_residual_value'], 4);
+            $position['net_book_value'] = bcsub($position['acquisition_cost'], $position['accumulated_depreciation'], 4);
+            $position['base_net_book_value'] = bcsub($position['base_acquisition_cost'], $position['base_accumulated_depreciation'], 4);
+            $position['remaining_depreciable_amount'] = bcsub($position['net_book_value'], $position['residual_value'], 4);
+            $position['base_remaining_depreciable_amount'] = bcsub($position['base_net_book_value'], $position['base_residual_value'], 4);
+            $segmentUnits = $usageUnits;
+            if ($asset->depreciation_method === FixedAsset::DepreciationMethodUnitsOfProduction && $usageUnits !== null) {
+                $nextAddition = $additions->first(fn (FixedAssetMovement $addition): bool => $addition->movement_date->isSameDay($boundaries[$index + 1]));
+                $cumulativeUnits = $nextAddition ? (string) data_get($nextAddition->snapshot, 'plan.usage_before_effective_date', '0') : $usageUnits;
+                $segmentUnits = bcsub($cumulativeUnits, $consumedUsage, 4);
+                if (bccomp($segmentUnits, '0', 4) < 0 || bccomp($cumulativeUnits, $usageUnits, 4) > 0) {
+                    throw new \DomainException(__('fixed_assets.cycle.usage_split_mismatch'));
+                }
+                $consumedUsage = $cumulativeUnits;
+            }
+            $row = $this->periodSnapshot($effectiveAsset, $start, $end, $position, $segmentUnits);
+            if (! $row) {
+                continue;
+            }
+            $first ??= $row['period_start'];
+            $last = $row['period_end'];
+            $total = bcadd($total, $row['period_depreciation'], 4);
+            $baseTotal = bcadd($baseTotal, $row['base_period_depreciation'], 4);
+            $position = [...$row, 'net_book_value' => $row['closing_net_book_value'], 'base_net_book_value' => $row['base_closing_net_book_value'], 'remaining_depreciable_amount' => bcsub($row['closing_net_book_value'], $row['residual_value'], 4), 'base_remaining_depreciable_amount' => bcsub($row['base_closing_net_book_value'], $row['base_residual_value'], 4), 'accumulated_depreciation' => $row['accumulated_after'], 'base_accumulated_depreciation' => $row['base_accumulated_after']];
+        }
+        if ($first === null) {
+            return null;
+        }
+
+        return [...$position, 'period_start' => $first, 'period_end' => $last, 'period_depreciation' => $total, 'base_period_depreciation' => $baseTotal,
+            'accumulated_before' => $initial['accumulated_depreciation'], 'base_accumulated_before' => $initial['base_accumulated_depreciation'], 'usage_units' => $usageUnits];
+    }
+
+    private function periodSnapshot(FixedAsset $asset, Carbon $from, Carbon $to, array $position, ?string $usageUnits = null): ?array
+    {
         if ($to->lt($from) || ! $this->canCalculateSnapshot($asset, $usageUnits) || bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
             return null;
         }
@@ -122,18 +197,24 @@ class FixedAssetDepreciationCalculator
         $days = (string) $eligibleRange['days'];
         $annualDepreciation = $this->annualAmountForSnapshot($asset, $position, $periodStart);
         $periodDepreciation = $asset->depreciation_method === FixedAsset::DepreciationMethodUnitsOfProduction
-            ? bcmul(bcdiv($position['depreciation_base'], number_format((float) $asset->expected_usage_units, 4, '.', ''), 8), (string) $usageUnits, 4)
+            ? bcmul((string) (data_get($asset->getAttribute('depreciation_plan'), 'unit_rate') ?? bcdiv($position['depreciation_base'], number_format((float) $asset->expected_usage_units, 4, '.', ''), 8)), (string) $usageUnits, 4)
             : bcmul(bcdiv($annualDepreciation, $dayBasis, 8), $days, 4);
+        $lifeEnd = data_get($asset->getAttribute('depreciation_plan'), 'end_date');
+        if (! $lifeEnd && in_array($asset->depreciation_method, [FixedAsset::DepreciationMethodStraightLine, FixedAsset::DepreciationMethodDoubleDecliningBalance, FixedAsset::DepreciationMethodSumOfYearsDigits], true) && $asset->useful_life) {
+            $lifeEnd = Carbon::parse($asset->depreciation_start_date)->addDays((int) round((float) $asset->useful_life * $this->dayBasis()))->subDay()->toDateString();
+        }
+        if ($lifeEnd && $periodEnd->gte(Carbon::parse($lifeEnd)) && $asset->depreciation_method !== FixedAsset::DepreciationMethodUnitsOfProduction) {
+            $periodDepreciation = $position['remaining_depreciable_amount'];
+        }
         $periodDepreciation = bccomp($periodDepreciation, $position['remaining_depreciable_amount'], 4) > 0
             ? $position['remaining_depreciable_amount']
             : $periodDepreciation;
 
-        if (bccomp($periodDepreciation, '0', 4) <= 0) {
+        if (bccomp($periodDepreciation, '0', 4) < 0 || (bccomp($periodDepreciation, '0', 4) === 0 && $asset->depreciation_method !== FixedAsset::DepreciationMethodUnitsOfProduction)) {
             return null;
         }
 
-        $rate = number_format((float) ($asset->exchange_rate ?: 1), 6, '.', '');
-        $basePeriodDepreciation = bcmul($periodDepreciation, $rate, 4);
+        $basePeriodDepreciation = bcmul($periodDepreciation, bcdiv($position['base_remaining_depreciable_amount'], $position['remaining_depreciable_amount'], 10), 4);
         $basePeriodDepreciation = bccomp($basePeriodDepreciation, $position['base_remaining_depreciable_amount'], 4) > 0
             ? $position['base_remaining_depreciable_amount']
             : $basePeriodDepreciation;
@@ -220,7 +301,7 @@ class FixedAssetDepreciationCalculator
                 && (float) $asset->expected_usage_units > 0
                 && $usageUnits !== null
                 && is_numeric($usageUnits)
-                && bccomp($usageUnits, '0', 4) > 0;
+                && bccomp($usageUnits, '0', 4) >= 0;
         }
 
         if (in_array($asset->depreciation_method, [FixedAsset::DepreciationMethodStraightLine, FixedAsset::DepreciationMethodDoubleDecliningBalance, FixedAsset::DepreciationMethodSumOfYearsDigits], true)) {
@@ -235,13 +316,17 @@ class FixedAssetDepreciationCalculator
      */
     private function annualAmountForSnapshot(FixedAsset $asset, array $position, Carbon $periodStart): string
     {
-        $usefulLife = number_format((float) ($asset->useful_life ?: 1), 4, '.', '');
+        $plan = $asset->getAttribute('depreciation_plan') ?: [];
+        if (isset($plan['annual_amount']) && $asset->depreciation_method === FixedAsset::DepreciationMethodStraightLine) {
+            return (string) $plan['annual_amount'];
+        }
+        $usefulLife = number_format((float) ($plan['useful_life'] ?? $asset->useful_life ?: 1), 4, '.', '');
         $bookValue = $position['net_book_value'];
 
         return match ($asset->depreciation_method) {
             FixedAsset::DepreciationMethodStraightLine => bcdiv($position['depreciation_base'], $usefulLife, 8),
-            FixedAsset::DepreciationMethodDecliningBalance => bcmul($bookValue, bcdiv(number_format((float) $asset->annual_depreciation_rate, 4, '.', ''), '100', 8), 8),
-            FixedAsset::DepreciationMethodDoubleDecliningBalance => bcmul($bookValue, bcdiv('2', $usefulLife, 8), 8),
+            FixedAsset::DepreciationMethodDecliningBalance => $this->decliningAnnualFromPosition($asset, $bookValue, (float) $asset->annual_depreciation_rate / 100, $periodStart),
+            FixedAsset::DepreciationMethodDoubleDecliningBalance => $this->decliningAnnualFromPosition($asset, $bookValue, 2 / (float) $usefulLife, $periodStart),
             FixedAsset::DepreciationMethodSumOfYearsDigits => $this->sumOfYearsDigitsAnnualAmount($asset, $position['depreciation_base'], $periodStart),
             default => '0.00000000',
         };
@@ -249,13 +334,33 @@ class FixedAssetDepreciationCalculator
 
     private function sumOfYearsDigitsAnnualAmount(FixedAsset $asset, string $depreciationBase, Carbon $periodStart): string
     {
-        $life = max(1, (int) ceil((float) $asset->useful_life));
-        $serviceDate = Carbon::parse($asset->depreciation_start_date);
-        $yearIndex = min($life - 1, max(0, $serviceDate->diffInYears($periodStart)));
+        $plan = $asset->getAttribute('depreciation_plan') ?: [];
+        $life = max(0.01, (float) ($plan['useful_life'] ?? $asset->useful_life));
+        $depreciationBase = (string) ($plan['basis'] ?? $depreciationBase);
+        $serviceDate = Carbon::parse($plan['effective_date'] ?? $asset->depreciation_start_date);
+        $yearIndex = min((int) ceil($life) - 1, max(0, (int) floor($serviceDate->diffInDays($periodStart) / $this->dayBasis())));
         $remainingYears = (string) ($life - $yearIndex);
-        $denominator = (string) (($life * ($life + 1)) / 2);
+        $denominator = number_format($this->yearsDigitsDenominator($life), 8, '.', '');
 
         return bcmul($depreciationBase, bcdiv($remainingYears, $denominator, 8), 8);
+    }
+
+    private function decliningAnnualFromPosition(FixedAsset $asset, string $bookValue, float $rate, Carbon $periodStart): string
+    {
+        $start = Carbon::parse(data_get($asset->getAttribute('depreciation_plan'), 'effective_date') ?: $asset->depreciation_start_date);
+        $elapsed = max(0, (int) $start->diffInDays($periodStart)) % $this->dayBasis();
+        $rate = min(1, $rate);
+        $denominator = max(1 / $this->dayBasis(), 1 - $rate * $elapsed / $this->dayBasis());
+
+        return number_format((float) $bookValue * $rate / $denominator, 8, '.', '');
+    }
+
+    private function yearsDigitsDenominator(float $life): float
+    {
+        $wholeYears = (int) floor($life);
+        $fraction = $life - $wholeYears;
+
+        return $wholeYears * $life - $wholeYears * ($wholeYears - 1) / 2 + $fraction * $fraction;
     }
 
     private function canDepreciate(FixedAsset $asset): bool
@@ -317,7 +422,7 @@ class FixedAssetDepreciationCalculator
         }
 
         $usefulLife = (float) $asset->useful_life;
-        $denominator = ($usefulLife * ($usefulLife + 1)) / 2;
+        $denominator = $this->yearsDigitsDenominator($usefulLife);
 
         return $denominator > 0 ? $depreciableBase * ($usefulLife / $denominator) : null;
     }

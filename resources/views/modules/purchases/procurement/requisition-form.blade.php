@@ -1,35 +1,47 @@
 @extends('layouts.app')
-
-@section('title', __('Create Purchase Requisition'))
-
+@php
+    $record ??= null;
+    $mode = $record ? 'edit' : 'create';
+    $title = $record ? __('Edit Purchase Requisition').' '.$record->doc_num : __('Create Purchase Requisition');
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $initialLines = $record?->lines->map(fn ($line) => [...$line->toArray(), 'product_doc_num' => $line->product?->doc_num, 'product_text' => $line->product?->doc_num.' / '.$line->product?->name, 'unit_doc_num' => $line->unit?->doc_num, 'unit_text' => $line->unit?->name, 'unit_options' => app(\Modules\Core\Services\ProductComponentUnitOptionsService::class)->options($line->product)])->all() ?? [[]];
+@endphp
+@section('title', $title)
 @section('content')
-    <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.store') }}" data-procurement-form data-lines-container="#requisition-lines" data-line-template="#requisition-line-template">
-        @csrf
-        <div class="card mb-3">
-            <div class="card-header"><h5 class="mb-0">{{ __('Create Purchase Requisition') }}</h5></div>
-            <div class="card-body">
-                @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
-                <div class="row g-3">
-                    <div class="col-md-3"><label class="form-label">{{ __('Request date') }}</label><input class="form-control" type="date" name="request_date" value="{{ old('request_date', now()->toDateString()) }}" required></div>
-                    <div class="col-md-3"><label class="form-label">{{ __('Required by') }}</label><input class="form-control" type="date" name="required_by_date" value="{{ old('required_by_date') }}"></div>
-                    <div class="col-md-3"><label class="form-label">{{ __('Destination store') }}</label><select class="form-select js-select2" name="branch_store_uuid"><option value="">{{ __('Select') }}</option>@foreach($stores as $store)<option value="{{ $store->public_uuid }}">{{ $store->doc_num }} / {{ $store->name }}</option>@endforeach</select></div>
-                    <div class="col-md-3"><label class="form-label">{{ __('Priority') }}</label><select class="form-select" name="priority"><option value="normal">{{ __('Normal') }}</option><option value="low">{{ __('Low') }}</option><option value="high">{{ __('High') }}</option><option value="urgent">{{ __('Urgent') }}</option></select></div>
-                    <div class="col-md-4"><label class="form-label">{{ __('Department') }}</label><input class="form-control" name="department" value="{{ old('department') }}"></div>
-                    <div class="col-md-8"><label class="form-label">{{ __('Notes') }}</label><input class="form-control" name="notes" value="{{ old('notes') }}"></div>
-                </div>
+<form method="POST" action="{{ $record ? route('admin.purchases.purchase-requisitions.update', $record->doc_num) : route('admin.purchases.purchase-requisitions.store') }}" data-procurement-form data-availability-url="{{ route('admin.purchases.purchase-requisitions.availability') }}" data-lines-container="#requisition-lines" data-line-template="#requisition-line-template">
+    @csrf
+    <x-forms.line-item-cards />
+    @if($record) @method('PUT') @endif
+    <input type="hidden" name="submit_action" value="save_view">
+    @if($store)<input type="hidden" name="branch_store_uuid" value="{{ $store->public_uuid }}">@endif
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0">{{ $title }}</h5>
+            @include('modules.finance.partials.form-actions', ['resource' => 'purchases.purchase_requisitions', 'routePrefix' => 'admin.purchases.purchase-requisitions', 'canClone' => false, 'canDeleteRecord' => false])
+        </div>
+        <div class="card-body">
+            @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+            <div class="d-flex flex-wrap gap-4 mb-3 text-700 fs-10">
+                <span>{{ __('Document Number') }}: <strong dir="ltr">{{ $record?->doc_num ?? __('Generated automatically') }}</strong></span>
+                <span>{{ __('Branch') }}: <strong>{{ $branch->name }}</strong>@if($store) / {{ $store->name }}@endif</span>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-3"><x-forms.label for="request_date" :label="__('Request date')" required /><input id="request_date" class="form-control js-date-picker" type="text" name="request_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('request_date', $dates->formatDate($record?->request_date ?? now())) }}" required></div>
+                <div class="col-md-5"><x-forms.label for="requester_employee_id" :label="__('procurement.ui.requester_employee')" required /><select id="requester_employee_id" class="form-select js-select2-ajax" name="requester_employee_id" data-url="{{ route('admin.purchases.select2.employees') }}" data-placeholder="{{ __('Select') }}" required>@if($employee)<option selected value="{{ $employee->id }}">{{ $employee->doc_num }} / {{ $employee->full_name ?: $employee->name }}</option>@endif</select></div>
+                <div class="col-md-4"><label class="form-label" for="required_by_date">{{ __('Required by') }}</label><input id="required_by_date" class="form-control js-date-picker" type="text" name="required_by_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('required_by_date', $dates->formatDate($record?->required_by_date, '')) }}"></div>
+                <div class="col-12"><label class="form-label" for="notes">{{ __('Notes') }}</label><textarea id="notes" class="form-control" rows="2" name="notes">{{ old('notes', $record?->notes) }}</textarea></div>
             </div>
         </div>
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center"><h6 class="mb-0">{{ __('Requirement lines') }}</h6><button class="btn btn-falcon-primary btn-sm" type="button" data-add-procurement-line>{{ __('Add line') }}</button></div>
-            <div class="card-body p-0"><div class="table-responsive procurement-lines-scroll"><table class="table table-sm align-middle mb-0 procurement-lines-table"><thead class="bg-100"><tr><th>#</th><th>{{ __('Item / service') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Demand source') }}</th><th>{{ __('Source document') }}</th><th>{{ __('Source line') }}</th><th>{{ __('Specification') }}</th><th></th></tr></thead><tbody id="requisition-lines">
-                @foreach(old('lines', [[]]) as $index => $line)
-                    @include('modules.purchases.procurement.partials.requisition-line', ['index' => $index, 'line' => $line, 'products' => $products])
-                @endforeach
-            </tbody></table></div></div>
-        </div>
-        <div class="d-flex justify-content-end"><button class="btn btn-primary" type="submit">{{ __('Save draft') }}</button></div>
-    </form>
-    <template id="requisition-line-template">@include('modules.purchases.procurement.partials.requisition-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products])</template>
+    </div>
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center"><h6 class="mb-0">{{ __('Requirement lines') }}</h6><button class="btn btn-falcon-primary btn-sm" type="button" data-add-procurement-line><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button></div>
+        <div class="card-body p-0"><table class="table align-middle mb-0"><thead><tr><th>#</th><th>{{ __('Item') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th></th><th>{{ __('Notes') }}</th><th></th></tr></thead><tbody id="requisition-lines">
+        @foreach(old('lines', $initialLines) as $index => $line)
+            @include('modules.purchases.procurement.partials.requisition-line')
+        @endforeach
+        </tbody></table></div>
+    </div>
+</form>
+<template id="requisition-line-template">@include('modules.purchases.procurement.partials.requisition-line', ['index' => '__INDEX__', 'line' => []])</template>
 @endsection
-
-@push('scripts')<script src="{{ asset('assets/js/modules/Purchases/procurement-cycle.js') }}"></script>@endpush
+@push('scripts')<script src="{{ asset('assets/js/modules/Purchases/procurement-cycle.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/procurement-cycle.js')) }}"></script>@endpush

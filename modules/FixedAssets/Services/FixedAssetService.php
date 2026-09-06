@@ -77,6 +77,7 @@ class FixedAssetService
                 ->whereKey($record->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+            app(FixedAssetAccessService::class)->assertAsset($record);
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
             $parentAccount = $this->parentAccount($data);
@@ -86,6 +87,10 @@ class FixedAssetService
                 ? $this->accounts->updateLinkedAccount(BusinessPartnerAccountService::FixedAsset, $linkedAccount, $parentAccount, $this->linkedAccountData($data))
                 : ['account' => $linkedAccount, 'changed' => false];
             $values = $this->values($data, (int) $record->company_id, $chartResult['account'], $parentAccount);
+            $values['period_id'] = $record->period_id;
+            if ($record->isMasterLocked()) {
+                $values['net_value'] = $record->net_value;
+            }
             $selectedImageFile = $this->selectedArchiveImageFile($data['image_archive_file_doc_num'] ?? null, (int) $record->company_id);
             $detachesImage = ($data['remove_image'] ?? false) === true;
 
@@ -145,6 +150,7 @@ class FixedAssetService
 
     public function delete(FixedAsset $record): void
     {
+        app(FixedAssetAccessService::class)->assertAsset($record);
         DB::transaction(function () use ($record): void {
             $record = FixedAsset::query()->forCompany($this->companies->requireCompanyId())->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
 
@@ -221,7 +227,7 @@ class FixedAssetService
             : null;
         [$usefulLife, $annualDepreciationRate, $expectedUsageUnits] = $this->depreciationValues($data, $isDepreciable, $depreciationMethod);
         $branchId = $this->idByDocNum(Branch::class, $companyId, $data['branch_doc_num'] ?? null);
-        $previousDepreciationUntilDate = $isDepreciable && $hasPreviousDepreciation
+        $previousDepreciationUntilDate = $isDepreciable && $entryType === FixedAsset::EntryTypeOpeningAsset
             ? ($data['previous_depreciation_until_date'] ?? null)
             : null;
 
@@ -252,12 +258,12 @@ class FixedAssetService
             'exchange_rate' => $exchangeRate,
             'previous_depreciation' => $previousDepreciationDecimal,
             'previous_depreciation_until_date' => $previousDepreciationUntilDate,
-            'depreciation_start_date' => $this->depreciationStartDate(
+            'depreciation_start_date' => $isDepreciable && ! empty($data['depreciation_start_date']) ? $data['depreciation_start_date'] : $this->depreciationStartDate(
                 $isDepreciable,
                 $entryType,
                 $data['operation_date'] ?? null,
-                $hasPreviousDepreciation,
-                $previousDepreciationUntilDate,
+                false,
+                null,
             ),
             'net_value' => $purchaseValueDecimal === null ? null : bcsub($purchaseValueDecimal, $previousDepreciationDecimal, 4),
             'annual_depreciation_rate' => $annualDepreciationRate,
@@ -297,6 +303,7 @@ class FixedAssetService
         }
 
         $protected = [
+            'asset_date',
             'branch_id',
             'branch_hall_id',
             'cost_center_id',
@@ -381,9 +388,10 @@ class FixedAssetService
     private function changes(object $record, array $values): array
     {
         $changes = [];
-
+        $candidate = clone $record;
+        $candidate->fill($values);
         foreach ($values as $field => $value) {
-            if ((string) $record->{$field} !== (string) $value) {
+            if ($candidate->isDirty($field)) {
                 $changes[$field] = ['old' => $record->{$field}, 'new' => $value];
             }
         }

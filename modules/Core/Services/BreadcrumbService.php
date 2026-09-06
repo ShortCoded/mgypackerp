@@ -156,7 +156,7 @@ class BreadcrumbService
             return __($translationKey);
         }
 
-        return (string) ($item['title'] ?? Str::headline($label));
+        return (string) ($item['text'] ?? $item['title'] ?? Str::headline($label));
     }
 
     /**

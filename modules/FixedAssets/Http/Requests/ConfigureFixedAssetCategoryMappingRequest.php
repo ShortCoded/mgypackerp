@@ -19,7 +19,7 @@ class ConfigureFixedAssetCategoryMappingRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         foreach (array_keys($this->rules()) as $key) {
-            $this->merge([$key => trim((string) $this->input($key))]);
+            $this->merge([$key => trim((string) $this->input($key)) ?: null]);
         }
     }
 
@@ -30,11 +30,11 @@ class ConfigureFixedAssetCategoryMappingRequest extends FormRequest
 
         return [
             'asset_group_account_doc_num' => ['required', 'string', Rule::exists('accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('is_group', true)->where('is_postable', false)->where('status', 'active')->whereNull('deleted_at'))],
-            'accumulated_depreciation_account_doc_num' => ['required', 'string', $postable()],
-            'depreciation_expense_account_doc_num' => ['required', 'string', $postable()],
-            'disposal_gain_account_doc_num' => ['required', 'string', $postable()],
-            'disposal_loss_account_doc_num' => ['required', 'string', $postable()],
-            'disposal_clearing_account_doc_num' => ['required', 'string', $postable()],
+            'accumulated_depreciation_account_doc_num' => ['nullable', 'string', $postable()],
+            'depreciation_expense_account_doc_num' => ['nullable', 'string', $postable()],
+            'disposal_gain_account_doc_num' => ['nullable', 'string', $postable()],
+            'disposal_loss_account_doc_num' => ['nullable', 'string', $postable()],
+            'disposal_clearing_account_doc_num' => ['nullable', 'string', $postable()],
         ];
     }
 

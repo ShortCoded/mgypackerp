@@ -48,6 +48,7 @@
         'authorized_signatory_signature_archive_file_doc_num',
         'status',
         'is_main',
+        'show_company_identity_on_prints',
         'notes',
         'commercial_register_number',
         'commercial_register_office',
@@ -79,8 +80,8 @@
     ];
 
     function fieldValue($form, field) {
-        if (field === 'is_main') {
-            const $checkbox = $form.find('[name="is_main"][type="checkbox"]');
+        if (['is_main', 'show_company_identity_on_prints'].includes(field)) {
+            const $checkbox = $form.find('[name="' + field + '"][type="checkbox"]');
 
             return $checkbox.length > 0 ? ($checkbox.is(':checked') ? '1' : '0') : '';
         }
@@ -224,8 +225,8 @@
                 return;
             }
 
-            if (field === 'is_main') {
-                $form.find('[name="is_main"][type="checkbox"]').prop('checked', false);
+            if (['is_main', 'show_company_identity_on_prints'].includes(field)) {
+                $form.find('[name="' + field + '"][type="checkbox"]').prop('checked', false);
                 return;
             }
 

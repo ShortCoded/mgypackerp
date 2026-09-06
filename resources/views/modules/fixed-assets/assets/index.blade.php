@@ -4,7 +4,7 @@
     $resource = 'fixed_assets';
     $routePrefix = 'admin.fixed-assets.assets';
     $title = __('fixed_assets.title');
-    $columns = ['doc_num', 'asset_name', 'entry_type', 'asset_category', 'branch', 'cost_center', 'purchase_value', 'currency', 'previous_depreciation', 'net_value', 'is_depreciable', 'status', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
+    $columns = ['doc_num', 'asset_name', 'status', 'purchase_value', 'previous_depreciation', 'net_value', 'entry_type', 'asset_category', 'branch', 'cost_center', 'currency', 'is_depreciable', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
     $auditColumns = ['created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
 @endphp
 
@@ -60,13 +60,28 @@
         </div>
     @endcan
 
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.movements.index') }}">{{ __('fixed_assets.product.movements') }}</a>
+        @can('fixed_assets.accounting.configure')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.accounting.index') }}">{{ __('fixed_assets.lifecycle.accounting_mappings') }}</a>@endcan
+    </div>
+    <form class="card card-body mb-3 js-asset-register-filters" autocomplete="off">
+        <div class="row g-2 align-items-end">
+            @foreach(['status' => \Modules\FixedAssets\Models\FixedAsset::statuses(), 'entry_type' => \Modules\FixedAssets\Models\FixedAsset::entryTypes()] as $field => $choices)
+            <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$field) }}</label><select class="form-select" name="{{ $field }}" id="asset-filter-{{ $field }}"><option value=""></option>@foreach($choices as $choice)<option value="{{ $choice }}">{{ __($field === 'status' ? 'fixed_assets.statuses.'.$choice : 'fixed_assets.entry_types.'.$choice) }}</option>@endforeach</select></div>
+            @endforeach
+            @foreach(['asset_group_account_doc_num' => ['asset_group_account', 'asset-categories'], 'branch_doc_num' => ['branch', 'branches'], 'cost_center_doc_num' => ['cost_center', 'cost-centers']] as $field => [$label, $endpoint])
+            <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$label) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" id="asset-filter-{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.'.$endpoint) }}" data-allow-clear="true"></select></div>
+            @endforeach
+            <div class="col-12 col-sm-auto"><button type="reset" class="btn btn-falcon-default">{{ __('common.actions.reset') }}</button></div>
+        </div>
+    </form>
     <div class="card erp-datatable-card fixed-assets-datatable-card" data-fixed-assets-root data-bulk-delete-url="{{ route($routePrefix.'.bulk-delete') }}">
         <div class="card-header">
-            <div class="row flex-between-center">
-                <div class="col-6 col-sm-auto d-flex align-items-center pe-0">
+            <div class="row flex-between-center gy-2">
+                <div class="col-12 col-sm-auto d-flex align-items-center pe-0">
                     <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ $title }}</h5>
                 </div>
-                <div class="col-6 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2">
+                <div class="col-12 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2 flex-wrap">
                     @can('fixed_assets.view_trashed')
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="fixed_assets_trash_filter">{{ __('business_partners.trash.filter_label') }}</label>
@@ -114,7 +129,7 @@
                                         </div>
                                     </th>
                                     @foreach($columns as $index => $column)
-                                        <th class="text-900 sort pe-1 align-middle white-space-nowrap {{ $index === 0 ? 'all no-colvis dt-code' : 'dt-text dt-ellipsis' }}">{{ in_array($column, $auditColumns, true) ? __("common.fields.{$column}") : __("fixed_assets.columns.{$column}") }}</th>
+                                        <th class="text-900 sort pe-1 align-middle white-space-nowrap {{ $index === 0 ? 'all no-colvis dt-code' : 'dt-text dt-ellipsis' }}">{{ in_array($column, $auditColumns, true) ? __("common.fields.{$column}") : __(match ($column) { 'purchase_value' => 'fixed_assets.reports.columns.cost', 'previous_depreciation' => 'fixed_assets.reports.columns.accumulated_depreciation', 'net_value' => 'fixed_assets.reports.columns.net_book_value', default => "fixed_assets.columns.{$column}" }) }}</th>
                                     @endforeach
                                     <th class="text-900 no-sort pe-1 align-middle data-table-row-action all no-colvis dt-actions"></th>
                                 </tr>
@@ -133,6 +148,7 @@
         window.fixedAssetsCrudColumns = @json($columns);
         window.dataTableTranslations = @json(__('datatables'));
     </script>
+    <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

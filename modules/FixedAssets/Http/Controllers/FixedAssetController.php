@@ -28,6 +28,7 @@ use Modules\FixedAssets\Http\Requests\StoreFixedAssetRequest;
 use Modules\FixedAssets\Http\Requests\UpdateFixedAssetDocumentNumberSettingsRequest;
 use Modules\FixedAssets\Http\Requests\UpdateFixedAssetRequest;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Services\FixedAssetAccessService;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
 use Modules\FixedAssets\Services\FixedAssetService;
 
@@ -60,18 +61,25 @@ class FixedAssetController extends Controller
 
     public function show(Request $request, FixedAsset $fixedAsset): View
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
         abort_if($fixedAsset->trashed() && ! $request->user()?->can('fixed_assets.view_trashed'), 404);
 
-        return $this->form('view', $fixedAsset);
+        return $fixedAsset->trashed() ? $this->form('view', $fixedAsset) : app(FixedAssetLifecycleController::class)->show($fixedAsset);
     }
 
     public function edit(FixedAsset $fixedAsset): View
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
+
+        abort_unless($fixedAsset->canEditMaster(), 409, __('fixed_assets.messages.master_locked'));
+
         return $this->form('edit', $fixedAsset);
     }
 
     public function clone(FixedAsset $fixedAsset): View
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
+
         return $this->form('clone', $fixedAsset, (string) Str::uuid());
     }
 
@@ -180,6 +188,7 @@ class FixedAssetController extends Controller
 
     public function image(Request $request, FixedAsset $fixedAsset)
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
         abort_if($fixedAsset->trashed() && ! $request->user()?->can('fixed_assets.view_trashed'), 404);
 
         $response = $this->assetImages->response($fixedAsset);
@@ -282,7 +291,7 @@ class FixedAssetController extends Controller
         $action = $request->string('submit_action')->trim()->toString() ?: 'save';
 
         if ($creating && $action === 'save') {
-            return 'save_new';
+            return 'save_view';
         }
 
         if ($action === 'save_new' || (! $creating && $action === 'save_edit')) {

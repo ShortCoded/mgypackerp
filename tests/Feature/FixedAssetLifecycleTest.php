@@ -89,6 +89,17 @@ function lifecycleFixedAssetContext(): array
         ->get();
 
     expect($postingAccounts)->toHaveCount(5);
+    foreach (['accumulated_depreciation', 'depreciation_expense', 'gain_on_asset_disposal', 'loss_on_asset_disposal'] as $index => $code) {
+        $classification = AccountClassification::query()->where('code', $code)->firstOrFail();
+        $parent = Account::query()->where('company_id', $company->getKey())->where('account_classification_id', $classification->getKey())->where('is_group', true)->first();
+        $postingAccounts[$index] = Account::query()->create([
+            'company_id' => $company->getKey(), 'doc_number' => 98000 + $index, 'doc_num' => 'ACC-9800'.$index,
+            'account_code' => '9800'.$index, 'name' => $code, 'parent_id' => $parent?->getKey(),
+            'account_classification_id' => $classification->getKey(), 'account_type' => $classification->account_type,
+            'statement_type' => $classification->statement_type, 'normal_balance' => $classification->normal_balance,
+            'is_group' => false, 'is_postable' => true, 'status' => 'active',
+        ]);
+    }
 
     $destinationBranch = Branch::query()->create([
         'doc_number' => 99002,
@@ -156,7 +167,7 @@ function lifecycleFixedAsset(array $context, array $overrides = []): FixedAsset
         'asset_name' => 'Lifecycle Asset '.fake()->unique()->numberBetween(1000, 9999),
         'entry_type' => FixedAsset::EntryTypeNewAsset,
         'asset_group_account_doc_num' => $context['category']->doc_num,
-        'credit_account_doc_num' => $context['postingAccounts'][4]->doc_num,
+        'credit_account_doc_num' => Account::query()->where('company_id', $context['company']->getKey())->where('is_postable', true)->whereNotIn('id', $context['postingAccounts']->modelKeys())->firstOrFail()->doc_num,
         'branch_doc_num' => $context['branch']->doc_num,
         'cost_center_doc_num' => $context['sourceCostCenter']->doc_num,
         'description' => 'Lifecycle verification asset',
@@ -176,7 +187,17 @@ function lifecycleFixedAsset(array $context, array $overrides = []): FixedAsset
         ...$overrides,
     ];
 
-    return app(FixedAssetService::class)->create($payload)['record'];
+    if ($payload['entry_type'] === FixedAsset::EntryTypeOpeningAsset) {
+        $payload['acquisition_date'] = $payload['purchase_date'] = $payload['operation_date'];
+        $context['period']->forceFill(['allows_opening_entries' => true])->save();
+    }
+    $asset = app(FixedAssetService::class)->create($payload)['record'];
+    if (($overrides['_unrecognized'] ?? false) || $asset->status === FixedAsset::StatusDraft || $asset->isDisposed()) {
+        return $asset;
+    }
+    $recognitionDate = $asset->previous_depreciation_until_date?->copy()->max($context['period']->from_date) ?: $asset->operation_date ?: $asset->asset_date;
+
+    return app(FixedAssetLifecycleService::class)->activate($asset, $recognitionDate->toDateString());
 }
 
 function assertInlineFixedAssetPdf(TestResponse $response, ?string $filename = null): void
@@ -233,12 +254,12 @@ test('opening assets establish controlled book values and non-depreciable assets
         ->and($position['accumulated_depreciation'])->toBe('40000.0000')
         ->and($position['net_book_value'])->toBe('60000.0000')
         ->and($position['remaining_depreciable_amount'])->toBe('50000.0000')
-        ->and($opening->depreciation_start_date?->toDateString())->toBe($context['period']->from_date->copy()->addDays(9)->toDateString())
+        ->and($opening->depreciation_start_date?->toDateString())->toBe($context['period']->from_date->copy()->subYears(3)->toDateString())
         ->and($schedule['rows'])->toBe([])
         ->and($activated->status)->toBe(FixedAsset::StatusActive)
         ->and($activated->capitalized_at)->not->toBeNull()
         ->and($activated->locked_at)->not->toBeNull()
-        ->and(JournalEntry::query()->where('source_type', 'fixed_asset_activation')->exists())->toBeFalse()
+        ->and($activated->costMovements()->first()->journalEntry->source_type)->toBe('fixed_asset_capitalization')
         ->and(collect($preview['excluded'])->pluck('asset.id'))->toContain($land->getKey())
         ->and(FixedAssetDepreciation::query()->where('fixed_asset_id', $land->getKey())->exists())->toBeFalse();
 
@@ -256,7 +277,7 @@ test('depreciation posts sequential balanced source journals with effective tran
     ]);
     $postingDate = $context['period']->from_date->copy()->endOfMonth()->toDateString();
 
-    expect(JournalEntry::query()->count())->toBe(0)
+    expect(JournalEntry::query()->count())->toBe(1)
         ->and($asset->source_doc_num)->toBe('PINV-LINE-901')
         ->and($asset->base_acquisition_value)->toBe('120000.0000');
 
@@ -532,7 +553,7 @@ test('transfers preserve history and sale and write-off post balanced gain and l
     );
 });
 
-test('customer invoiced asset disposal clears NBV once without inventory or COGS and reverses canonically', function (): void {
+test('customer invoiced asset disposal clears NBV once without inventory or COGS and reverses canonically', function (string $sellingExpenses): void {
     lifecycleFixedAssetActor(['fixed_assets.create', 'fixed_assets.dispose', 'fixed_assets.disposal.reverse']);
     $context = lifecycleFixedAssetContext();
     $context['company']->forceFill(['vat_registration_number' => '200000001'])->save();
@@ -583,6 +604,7 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         'settlement_path' => FixedAssetDisposal::SettlementCustomerInvoice,
         'customer_doc_num' => $customer->doc_num,
         'proceeds' => '150000',
+        'disposal_expenses' => $sellingExpenses, 'expenses_account_doc_num' => $asset->creditAccount->doc_num,
         'tax_rate' => '14',
         'due_date' => $date,
         'reason' => 'Sold through the canonical customer receivable path.',
@@ -595,7 +617,7 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         ->where('asset_group_account_id', $context['category']->getKey())
         ->valueOrFail('disposal_clearing_account_id');
     $clearingLines = DB::table('journal_entry_lines')
-        ->whereIn('journal_entry_id', [$derecognition->getKey(), $invoice->journal_entry_id, $gainLoss->getKey()])
+        ->whereIn('journal_entry_id', [$derecognition->getKey(), $invoice->journal_entry_id, $gainLoss->getKey(), $disposal->expenses_journal_entry_id])
         ->where('account_id', $clearingAccountId)
         ->selectRaw('coalesce(sum(debit_amount), 0) as debits, coalesce(sum(credit_amount), 0) as credits')
         ->first();
@@ -603,7 +625,7 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
     expect($disposal->settlement_path)->toBe(FixedAssetDisposal::SettlementCustomerInvoice)
         ->and($disposal->net_book_value)->toBe('120000.0000')
         ->and($disposal->proceeds)->toBe('150000.0000')
-        ->and($disposal->gain_amount)->toBe('30000.0000')
+        ->and($disposal->gain_amount)->toBe(bcsub('30000', $sellingExpenses, 4))
         ->and($disposal->tax_amount)->toBe('21000.0000')
         ->and($disposal->gross_proceeds)->toBe('171000.0000')
         ->and($invoice->posting_status)->toBe('posted')
@@ -614,7 +636,7 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         ->and((float) $derecognition->lines->firstWhere('account_id', $asset->account_id)?->credit_amount)->toBe(120000.0)
         ->and((float) $derecognition->lines->firstWhere('account_id', $clearingAccountId)?->debit_amount)->toBe(120000.0)
         ->and((float) $invoice->journalEntry->lines->firstWhere('account_id', $clearingAccountId)?->credit_amount)->toBe(150000.0)
-        ->and((float) $gainLoss->lines->firstWhere('account_id', $clearingAccountId)?->debit_amount)->toBe(30000.0)
+        ->and((float) $gainLoss->lines->firstWhere('account_id', $clearingAccountId)?->debit_amount)->toBe(30000.0 - (float) $sellingExpenses)
         ->and((float) $clearingLines->debits)->toEqualWithDelta((float) $clearingLines->credits, 0.0001)
         ->and(InventoryTransaction::query()->count())->toBe($inventoryCount)
         ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count())->toBe($cogsJournalCount);
@@ -714,13 +736,13 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         ->and($customerLedger['ending'])->toBe(['debit' => '0.0000', 'credit' => '0.0000'])
         ->and(InventoryTransaction::query()->count())->toBe($inventoryCount)
         ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count())->toBe($cogsJournalCount);
-});
+})->with(['without selling expenses' => '0', 'with selling expenses' => '3000']);
 
 test('opening asset reconciliation consumes canonical opening GL balances without another asset journal', function (): void {
     lifecycleFixedAssetActor(['fixed_assets.create', 'fixed_assets.reports']);
     $context = lifecycleFixedAssetContext();
     $openingAsset = lifecycleFixedAsset($context, [
-        'asset_name' => 'Opening Reconciliation Asset',
+        'asset_name' => 'Opening Reconciliation Asset', '_unrecognized' => true,
         'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '100000',
         'salvage_value' => '0',
@@ -729,7 +751,7 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
         'operation_date' => $context['period']->from_date->copy()->subYears(3)->toDateString(),
     ]);
     $unrelatedOpeningAsset = lifecycleFixedAsset($context, [
-        'asset_name' => 'Unrelated Opening Reconciliation Asset',
+        'asset_name' => 'Unrelated Opening Reconciliation Asset', '_unrecognized' => true,
         'entry_type' => FixedAsset::EntryTypeOpeningAsset,
         'purchase_value' => '25000',
         'salvage_value' => '0',
@@ -740,7 +762,7 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
     $mapping = FixedAssetCategoryMapping::query()->where('asset_group_account_id', $openingAsset->asset_group_account_id)->firstOrFail();
     $entryDate = $context['period']->from_date->copy()->addDays(8)->toDateString();
 
-    app(JournalEntryService::class)->createPostedFromSource([
+    $openingJournal = app(JournalEntryService::class)->createPostedFromSource([
         'entry_date' => $entryDate,
         'company_id' => $context['company']->getKey(),
         'financial_period_id' => $context['period']->getKey(),
@@ -753,11 +775,12 @@ test('opening asset reconciliation consumes canonical opening GL balances withou
         'source_id' => 99001,
         'source_doc_num' => 'OB-99001',
     ], [
-        ['account_id' => $openingAsset->account_id, 'debit_amount' => '100000', 'credit_amount' => '0', 'description' => 'Opening asset cost'],
-        ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => '0', 'credit_amount' => '40000', 'description' => 'Opening accumulated depreciation'],
+        ['account_id' => $openingAsset->account_id, 'debit_amount' => '100000', 'credit_amount' => '0', 'branch_id' => $openingAsset->branch_id, 'cost_center_id' => $openingAsset->cost_center_id, 'description' => 'Opening asset cost'],
+        ['account_id' => $mapping->accumulated_depreciation_account_id, 'debit_amount' => '0', 'credit_amount' => '40000', 'branch_id' => $openingAsset->branch_id, 'cost_center_id' => $openingAsset->cost_center_id, 'description' => 'Opening accumulated depreciation'],
         ['account_id' => $context['postingAccounts'][4]->getKey(), 'debit_amount' => '0', 'credit_amount' => '60000', 'description' => 'Opening equity offset'],
     ]);
 
+    app(FixedAssetLifecycleService::class)->activate($openingAsset, $entryDate, $openingJournal->doc_num);
     $reconciliation = app(FixedAssetReportService::class)->report([
         'type' => FixedAssetReportService::Reconciliation,
         'asset_doc_num' => $openingAsset->doc_num,
@@ -812,7 +835,7 @@ test('asset card reports print and export screens use the canonical lifecycle re
         ->and((float) $periodReconciliation['difference'])->toEqualWithDelta(0, 0.0001);
 
     $this->actingAs($actor);
-    $this->get(route('admin.fixed-assets.lifecycle.show', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.lifecycle.movement_history'));
+    $this->get(route('admin.fixed-assets.lifecycle.show', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(__('fixed_assets.cycle.ledger'))->assertSee($movement->doc_num);
     $this->get(route('admin.fixed-assets.accounting.index'))->assertOk()->assertSee($context['category']->account_code);
     assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.prints.asset', $asset)), 'fixed-asset-'.$asset->doc_num.'.pdf');
     assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.prints.movement', $movement)), 'asset-transfer-'.$movement->doc_num.'.pdf');

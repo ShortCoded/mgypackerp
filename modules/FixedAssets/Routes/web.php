@@ -6,6 +6,7 @@ use Modules\Core\Http\Controllers\ExcelImportController;
 use Modules\FixedAssets\Http\Controllers\FixedAssetController;
 use Modules\FixedAssets\Http\Controllers\FixedAssetDepreciationController;
 use Modules\FixedAssets\Http\Controllers\FixedAssetLifecycleController;
+use Modules\FixedAssets\Http\Controllers\FixedAssetMovementController;
 use Modules\FixedAssets\Http\Controllers\FixedAssetReportController;
 use Modules\FixedAssets\Services\FixedAssetsSelect2Service;
 
@@ -39,19 +40,19 @@ Route::middleware('auth')
         })->name('select2.asset-categories');
 
         Route::get('/select2/credit-accounts', function (Request $request, FixedAssetsSelect2Service $select2) {
-            abort_unless((bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.accounting.configure'), 403);
+            abort_unless((bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.accounting.configure') || (bool) $request->user()?->can('fixed_assets.improvement.post') || (bool) $request->user()?->can('fixed_assets.dispose'), 403);
 
             return response()->json($select2->creditAccounts($request));
         })->name('select2.credit-accounts');
 
         Route::get('/select2/cost-centers', function (Request $request, FixedAssetsSelect2Service $select2) {
-            abort_unless((bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.transfer') || (bool) $request->user()?->can('fixed_assets.depreciation.preview') || (bool) $request->user()?->can('fixed_assets.reports'), 403);
+            abort_unless((bool) $request->user()?->can('fixed_assets.view') || (bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.transfer') || (bool) $request->user()?->can('fixed_assets.depreciation.preview') || (bool) $request->user()?->can('fixed_assets.reports'), 403);
 
             return response()->json($select2->costCenters($request));
         })->name('select2.cost-centers');
 
         Route::get('/select2/branches', function (Request $request, FixedAssetsSelect2Service $select2) {
-            abort_unless((bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.transfer') || (bool) $request->user()?->can('fixed_assets.depreciation.preview') || (bool) $request->user()?->can('fixed_assets.reports'), 403);
+            abort_unless((bool) $request->user()?->can('fixed_assets.view') || (bool) $request->user()?->can('fixed_assets.create') || (bool) $request->user()?->can('fixed_assets.edit') || (bool) $request->user()?->can('fixed_assets.transfer') || (bool) $request->user()?->can('fixed_assets.depreciation.preview') || (bool) $request->user()?->can('fixed_assets.reports'), 403);
 
             return response()->json($select2->branches($request));
         })->name('select2.branches');
@@ -88,10 +89,19 @@ Route::middleware('auth')
                 Route::post('/{batch:public_uuid}/cancel', 'cancel')->defaults('excelImportModule', 'fixed_assets')->middleware('can:fixed_assets.import')->name('cancel');
             });
 
+        Route::controller(FixedAssetMovementController::class)->group(function (): void {
+            Route::get('/movements', 'index')->middleware('can:fixed_assets.view')->name('movements.index');
+            Route::post('/assets/{fixedAsset}/documents', 'document')->middleware(['can:fixed_assets.edit', 'can:file_manager.view'])->name('movements.document');
+            Route::post('/assets/{fixedAsset}/additions', 'addition')->name('movements.addition');
+            Route::post('/assets/{fixedAsset}/custody', 'custody')->name('movements.custody');
+            Route::post('/movements/{movement}/reverse', 'reverse')->name('movements.reverse');
+        });
+
         Route::controller(FixedAssetLifecycleController::class)->group(function (): void {
             Route::get('/assets/{fixedAsset}/card', 'show')->middleware('can:fixed_assets.view')->name('lifecycle.show');
             Route::post('/assets/{fixedAsset}/activate', 'activate')->name('lifecycle.activate');
             Route::post('/assets/{fixedAsset}/transfers', 'transfer')->name('lifecycle.transfer');
+            Route::post('/assets/{fixedAsset}/disposals/preview', 'previewDisposal')->name('lifecycle.disposal-preview');
             Route::post('/assets/{fixedAsset}/disposals', 'dispose')->name('lifecycle.dispose');
             Route::post('/disposals/{disposal}/reverse', 'reverseDisposal')->name('disposal.reverse');
             Route::get('/accounting-mappings', 'accounting')->middleware('can:fixed_assets.accounting.configure')->name('accounting.index');

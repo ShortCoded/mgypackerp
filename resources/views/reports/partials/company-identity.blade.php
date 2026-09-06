@@ -1,3 +1,4 @@
+@if($showCompanyIdentity ?? true)
 @php($identity = $companyPrintIdentity ?? [])
 
 @if(array_filter([
@@ -9,13 +10,18 @@
     $identity['email'] ?? null,
 ]))
     <table class="document-identity-table">
+        @php($registrationFields = array_filter([
+            __('companies.print.commercial_register_number') => $identity['commercial_register_number'] ?? null,
+            __('companies.print.tax_card_number') => $identity['tax_card_number'] ?? null,
+            __('companies.print.vat_registration_number') => $identity['vat_registration_number'] ?? null,
+        ]))
+        @if($registrationFields)
+            <tr>@foreach($registrationFields as $label => $value)<td><strong>{{ $label }}:</strong> {{ $value }}</td>@endforeach</tr>
+        @endif
         <tr>
-            <td><strong>{{ __('companies.print.commercial_register_number') }}:</strong> {{ $identity['commercial_register_number'] ?? '—' }}</td>
-            <td><strong>{{ __('companies.print.tax_card_number') }}:</strong> {{ $identity['tax_card_number'] ?? '—' }}</td>
-            <td><strong>{{ __('companies.print.vat_registration_number') }}:</strong> {{ $identity['vat_registration_number'] ?? '—' }}</td>
-        </tr>
-        <tr>
-            <td colspan="3">{{ collect([$identity['address'] ?? null, $identity['phone'] ?? null, $identity['email'] ?? null])->filter()->join(' — ') }}</td>
+            <td colspan="{{ max(1, count($registrationFields)) }}">{{ collect([$identity['address'] ?? null, $identity['phone'] ?? null, $identity['email'] ?? null])->filter()->join(' — ') }}</td>
         </tr>
     </table>
+@endif
+
 @endif

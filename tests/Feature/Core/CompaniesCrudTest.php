@@ -10,6 +10,8 @@ use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Company;
+use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\CompanyService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrArea;
 use Modules\HR\Models\HrCity;
@@ -1317,4 +1319,29 @@ test('company bulk delete stays all or nothing when selected records include tra
         ->assertUnprocessable();
 
     expect($active->refresh()->trashed())->toBeFalse();
+});
+
+test('operational print identity defaults off and toggles independently without breaking no-op updates', function (): void {
+    $company = Company::factory()->create();
+    $actor = coreCompanyCrudActor(['companies.edit', 'companies.view']);
+    $this->actingAs($actor);
+    $service = app(CompanyService::class);
+    $identity = app(CompanyPrintIdentityService::class);
+    expect($company->show_company_identity_on_prints)->toBeFalse()
+        ->and($identity->shouldShow('operational', $company))->toBeFalse()
+        ->and($identity->shouldShow('quotation', $company))->toBeTrue()
+        ->and($identity->shouldShow('legal', $company))->toBeTrue();
+    $service->update($company, ['show_company_identity_on_prints' => true]);
+    $company->refresh();
+    expect($identity->shouldShow('operational', $company))->toBeTrue();
+    $previousUpdate = $company->updated_at->toDateTimeString();
+    $this->travel(1)->minutes();
+    $service->update($company, ['show_company_identity_on_prints' => true]);
+    expect($company->fresh()->updated_at->toDateTimeString())->toBe($previousUpdate);
+    $service->update($company, ['notes' => 'Preserves print setting']);
+    expect($company->fresh()->show_company_identity_on_prints)->toBeTrue();
+    $service->update($company, ['show_company_identity_on_prints' => false]);
+    expect($company->fresh()->show_company_identity_on_prints)->toBeFalse()
+        ->and($identity->forCompany($company->fresh())['name'])->toBe($company->name);
+    $this->travelBack();
 });

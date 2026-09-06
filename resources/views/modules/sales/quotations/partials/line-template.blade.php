@@ -7,7 +7,7 @@
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.description"></div>
 </td>
 <td>
-    <select class="form-select js-select2-ajax js-quotation-unit" name="lines[__INDEX__][unit_doc_num]" data-url="{{ route('admin.select2.item-units') }}" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true"></select>
+    <select class="form-select js-select2-local js-quotation-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true"></select>
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
 </td>
 <td>
@@ -32,7 +32,7 @@
     <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][tax_rate]" value="0" :scale="4" min="0" max="100" step="0.0001" />
 </td>
 <td class="text-center">
-    <span class="js-quotation-line-total" dir="ltr">0</span>
+    <span class="js-quotation-line-total" data-line-card-total dir="ltr">0</span>
 </td>
 <td>
     <input class="form-control js-date-picker" name="lines[__INDEX__][requested_date]" data-date-format="{{ app(\Modules\Core\Services\DateFormatService::class)->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off">
@@ -52,7 +52,7 @@
 <td>
     <input class="form-control" name="lines[__INDEX__][notes]" type="text" value="">
 </td>
-<td class="text-center">
-    <button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button"><span class="fas fa-copy"></span></button>
-    <button class="btn btn-link text-danger p-0 js-quotation-remove-line" type="button"><span class="fas fa-trash-alt"></span></button>
+<td class="text-center line-card-actions">
+    <button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}" title="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>
+    <button class="btn btn-link text-danger p-0 js-quotation-remove-line" type="button" aria-label="{{ __('Remove line') }}" title="{{ __('Remove line') }}"><span class="fas fa-trash-alt"></span></button>
 </td>

@@ -11,6 +11,7 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
@@ -22,8 +23,10 @@ use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Sales\DataTables\QuotationsDataTable;
 use Modules\Sales\Http\Requests\BulkDeleteQuotationsRequest;
+use Modules\Sales\Http\Requests\ConvertQuotationRequest;
 use Modules\Sales\Http\Requests\StoreQuotationRequest;
 use Modules\Sales\Http\Requests\UpdateQuotationDocumentNumberSettingsRequest;
 use Modules\Sales\Http\Requests\UpdateQuotationRequest;
@@ -275,7 +278,7 @@ class QuotationController extends Controller
         return $this->statusAction($request, $quotation, 'cancel', fn (): Quotation => $this->service->cancel($quotation), __('quotations.messages.cancelled'));
     }
 
-    public function convert(Request $request, Quotation $quotation, SalesOrderService $orders, OperatingContextService $context): JsonResponse
+    public function convert(ConvertQuotationRequest $request, Quotation $quotation, SalesOrderService $orders, OperatingContextService $context): JsonResponse
     {
         $snapshot = $context->snapshot($request);
         if (! $snapshot['company_id'] || ! $snapshot['financial_period_id'] || ! $snapshot['branch_id']) {
@@ -287,7 +290,7 @@ class QuotationController extends Controller
                 'company_id' => (int) $snapshot['company_id'],
                 'financial_period_id' => (int) $snapshot['financial_period_id'],
                 'branch_id' => (int) $snapshot['branch_id'],
-            ]);
+            ], $request->validated('lines'));
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -378,7 +381,8 @@ class QuotationController extends Controller
         abort_unless($revision instanceof QuotationRevision, 404);
 
         return $pdf->stream('reports.sales.quotation', [
-            'title' => __('quotations.print.title').' — '.$quotation->doc_num.' / '.$revision->revision_code,
+            'title' => __('quotations.print.title'),
+            'customerFacing' => true,
             'record' => $quotation,
             'revision' => $revision,
             'companyPrintIdentity' => $quotation->print_identity_snapshot ?: $printIdentity->forCompany($quotation->company),
@@ -520,7 +524,7 @@ class QuotationController extends Controller
      */
     private function salesPersonOption(?Quotation $record): ?array
     {
-        return $record?->salesPerson instanceof User
+        return $record?->salesPerson instanceof HrEmployee
             ? ['id' => (string) $record->salesPerson->doc_num, 'text' => trim(implode(' / ', array_filter([$record->salesPerson->name, $record->salesPerson->doc_num])))]
             : null;
     }
@@ -590,6 +594,15 @@ class QuotationController extends Controller
                 'notes' => null,
             ]];
         }
+
+        $products = Product::withTrashed()->with(['unit', 'equivalentUnit'])->forCompany(app(OperatingCompanyContextService::class)->requireCompanyId())
+            ->whereIn('doc_num', array_column($lines, 'product_doc_num'))->get()->keyBy('doc_num');
+        foreach ($lines as &$line) {
+            $product = $products->get($line['product_doc_num'] ?? '');
+            $line['product_label'] = $line['product_label'] ?? $product?->name;
+            $line['units'] = collect([$product?->unit, $product?->equivalentUnit])->filter()->unique('id')->map(fn ($unit): array => ['id' => $unit->doc_num, 'text' => $unit->name])->values()->all();
+        }
+        unset($line);
 
         return array_values($lines);
     }
@@ -685,7 +698,8 @@ class QuotationController extends Controller
 
         return (bool) $user?->can('quotations.view')
             || (bool) $user?->can('quotations.create')
-            || (bool) $user?->can('quotations.edit');
+            || (bool) $user?->can('quotations.edit')
+            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create']);
     }
 
     /**

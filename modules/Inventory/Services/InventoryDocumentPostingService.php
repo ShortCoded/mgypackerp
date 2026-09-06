@@ -7,10 +7,14 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesReturn;
 
 class InventoryDocumentPostingService
 {
@@ -34,18 +38,19 @@ class InventoryDocumentPostingService
             }
 
             if ($locked->status !== InventoryDocument::StatusDraft) {
-                throw new DomainException('Only a draft inventory document can be posted.');
+                throw new DomainException(__('Only a draft inventory document can be posted.'));
             }
 
             if ($locked->lines->isEmpty()) {
-                throw new DomainException('An inventory document must contain at least one line.');
+                throw new DomainException(__('An inventory document must contain at least one line.'));
             }
 
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
 
             if ($period->is_closed || (int) $period->company_id !== (int) $locked->company_id) {
-                throw new DomainException('Inventory movements cannot be posted to a closed or unrelated financial period.');
+                throw new DomainException(__('Inventory movements cannot be posted to a closed or unrelated financial period.'));
             }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $locked->document_date, (int) $locked->financial_period_id, lockForUpdate: true);
 
             $profile = $this->movementProfile($locked);
             BranchStore::query()->lockForUpdate()->findOrFail($locked->branch_store_id);
@@ -149,13 +154,26 @@ class InventoryDocumentPostingService
             }
 
             if ($locked->status !== InventoryDocument::StatusPosted) {
-                throw new DomainException('Only a posted inventory document can be reversed.');
+                throw new DomainException(__('Only a posted inventory document can be reversed.'));
+            }
+
+            $salesOrder = null;
+            if ($locked->document_type === InventoryDocument::TypeSalesDelivery) {
+                $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($locked->source_document_id);
+                $salesReturn = SalesReturn::query()->where('delivery_document_id', $locked->id)->where('status', '<>', SalesReturn::StatusCancelled)->first();
+                if ($salesReturn) {
+                    throw new DomainException(__('Delivery is linked to return :return.', ['return' => $salesReturn->doc_num]));
+                }
+                $invoice = CustomerInvoice::query()->whereHas('lines', fn ($query) => $query->whereIn('delivery_line_id', $locked->lines()->select('id')))->first();
+                if ($invoice) {
+                    throw new DomainException(__('Delivery :delivery cannot be reversed because it is linked to invoice :invoice.', ['delivery' => $locked->doc_num, 'invoice' => $invoice->doc_num]));
+                }
             }
 
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
 
             if ($period->is_closed || (int) $period->company_id !== (int) $locked->company_id) {
-                throw new DomainException('Inventory movements cannot be reversed in a closed or unrelated financial period.');
+                throw new DomainException(__('Inventory movements cannot be reversed in a closed or unrelated financial period.'));
             }
 
             $transactions = InventoryTransaction::query()
@@ -180,7 +198,7 @@ class InventoryDocumentPostingService
                     );
 
                     if (bccomp((string) $transaction->quantity_in, $position['available'], 8) > 0) {
-                        throw new DomainException('The document cannot be reversed because its received stock has already been consumed or moved.');
+                        throw new DomainException(__('The document cannot be reversed because its received stock has already been consumed or moved.'));
                     }
                 }
 
@@ -212,6 +230,19 @@ class InventoryDocumentPostingService
             }
 
             $this->accounting->reverse($locked);
+
+            if ($salesOrder) {
+                foreach ($locked->lines as $deliveryLine) {
+                    $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($deliveryLine->source_line_id);
+                    $salesLine->decrement('delivered_quantity', $deliveryLine->transaction_quantity);
+                    $salesLine->decrement('delivered_base_quantity', $deliveryLine->quantity);
+                }
+                $from = $salesOrder->status;
+                $status = $salesOrder->lines()->where('delivered_quantity', '>', 0)->exists()
+                    ? SalesOrder::StatusPartiallyFulfilled : SalesOrder::StatusApproved;
+                $salesOrder->update(['status' => $status, 'updated_by' => auth()->id()]);
+                $salesOrder->statusHistory()->create(['from_status' => $from, 'to_status' => $status, 'reason' => 'Delivery reversal '.$locked->doc_num, 'changed_by' => auth()->id(), 'changed_at' => now()]);
+            }
 
             $locked->update([
                 'status' => InventoryDocument::StatusReversed,
@@ -289,14 +320,16 @@ class InventoryDocumentPostingService
         );
 
         if (bccomp($quantity, $position['available'], 8) > 0) {
-            throw new DomainException(sprintf(
-                'The inventory movement exceeds unreserved stock in the selected store, location, batch, and status. Document: %s; product ID: %d; requested: %s; available: %s; store ID: %d; status: %s.',
-                $document->doc_num,
-                $line->product_id,
-                $quantity,
-                $position['available'],
-                $document->branch_store_id,
-                $stockStatus,
+            throw new DomainException(__(
+                'The inventory movement exceeds unreserved stock in the selected store, location, batch, and status. Document: :document; product ID: :product_id; requested: :requested; available: :available; store ID: :store_id; status: :status.',
+                [
+                    'document' => $document->doc_num,
+                    'product_id' => (int) $line->product_id,
+                    'requested' => $quantity,
+                    'available' => $position['available'],
+                    'store_id' => (int) $document->branch_store_id,
+                    'status' => $stockStatus,
+                ],
             ));
         }
     }
@@ -367,7 +400,7 @@ class InventoryDocumentPostingService
             ->exists();
 
         if ($hasLaterMovement) {
-            throw new DomainException('Backdated inventory posting is blocked because later valued movements already exist for this product and store.');
+            throw new DomainException(__('Backdated inventory posting is blocked because later valued movements already exist for this product and store.'));
         }
     }
 }

@@ -11,6 +11,19 @@ return [
         'active' => ['admin.currencies.*', 'admin.finance.*'],
         'children' => [
             [
+                'label' => 'supplier_payments', 'title' => 'Supplier Payments', 'icon' => 'money-check-alt',
+                'route' => 'admin.purchases.supplier-payments.index', 'permission' => 'supplier_payments.view',
+                'actions' => ['view' => 'supplier_payments.view', 'create' => 'supplier_payments.create',
+                    'approve' => 'supplier_payments.approve', 'cancel' => 'supplier_payments.cancel',
+                    'allocate' => 'supplier_payments.allocate', 'print' => 'supplier_payments.print'],
+                'active' => ['admin.purchases.supplier-payments.*'], 'phase_modes' => ['expanded'], 'children' => [],
+            ],
+            [
+                'label' => 'supplier_advances', 'title' => 'Supplier Advances', 'icon' => 'hand-holding-usd',
+                'route' => 'admin.purchases.supplier-advances.index', 'permission' => 'purchases.supplier_advances.view',
+                'active' => ['admin.purchases.supplier-advances.*'], 'phase_modes' => ['expanded'], 'children' => [],
+            ],
+            [
                 'label' => 'currencies',
                 'title' => 'Currencies',
                 'icon' => 'coins',

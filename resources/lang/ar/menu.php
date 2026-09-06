@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'purchase_requisitions' => 'طلبات الشراء',
+    'supplier_payments' => 'مدفوعات الموردين',
+    'supplier_advances' => 'دفعات الموردين المقدمة',
     'administration' => 'الإدارة',
     'activity_logs' => 'سجل النشاط',
     'auth_sessions' => 'الجلسات النشطة',
@@ -20,6 +23,7 @@ return [
     'file_manager' => 'مدير الملفات',
     'finance' => 'المالية',
     'fixed_assets' => 'الأصول الثابتة',
+    'fixed_asset_movements' => 'حركات الأصول',
     'fixed_assets_register' => 'دليل الأصول الثابتة',
     'fixed_asset_accounting_mappings' => 'الربط المحاسبي',
     'fixed_asset_depreciation' => 'إهلاك الأصول الثابتة',
@@ -31,6 +35,7 @@ return [
     'supplier_statement' => 'كشف حساب مورد',
     'sales' => 'المبيعات',
     'sales_orders' => 'أوامر المبيعات',
+    'sales_requests' => 'طلبات المبيعات',
     'deliveries' => 'أذون التسليم',
     'sales_invoices' => 'فواتير المبيعات',
     'customer_collections' => 'تحصيلات العملاء',
@@ -171,7 +176,7 @@ return [
     'payroll' => 'الرواتب',
     'employee_transactions' => 'معاملات الموظفين',
     'sales_reports' => 'تقارير المبيعات',
-    'reports_sales_sales_orders' => 'أوامر المبيعات',
+    'reports_sales_sales_orders' => 'تقارير المبيعات',
     'purchase_reports' => 'تقارير المشتريات',
     'inventory_reports' => 'تقارير المخزون',
     'production_reports' => 'تقارير الإنتاج',

@@ -66,6 +66,7 @@
         data-primary-focus="document_date"
         novalidate>
         @csrf
+        <x-forms.line-item-cards />
         @if($method !== 'POST')
             @method($method)
         @endif

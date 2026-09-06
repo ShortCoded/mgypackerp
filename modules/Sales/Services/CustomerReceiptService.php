@@ -6,12 +6,14 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
+use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoicePaymentSchedule;
 use Modules\Sales\Models\CustomerReceipt;
@@ -31,12 +33,16 @@ class CustomerReceiptService
     public function createAndApprove(array $data, array $allocations = []): CustomerReceipt
     {
         return DB::transaction(function () use ($data, $allocations): CustomerReceipt {
-            $this->amounts->assertPositive($data['amount'], 'Receipt amount must be greater than zero.', 4);
+            $this->amounts->assertPositive($data['amount'], __('Receipt amount must be greater than zero.'), 4);
             if (empty($data['cashbox_id']) === empty($data['bank_account_id'])) {
-                throw new DomainException('Select either one cashbox or one bank account.');
+                throw new DomainException(__('Select either one cashbox or one bank account.'));
             }
+            Customer::query()->where('company_id', $data['company_id'])->lockForUpdate()->findOrFail($data['customer_id']);
             $this->assertPaymentSource($data);
-            $numbers = $this->documents->nextForCompany('customer_receipts', CustomerReceipt::class, (int) $data['company_id'], fn ($query) => $query->where('financial_period_id', $data['financial_period_id']));
+            $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $data['company_id'], $data['receipt_date'], lockForUpdate: true);
+            $data['financial_period_id'] = $period->id;
+            $pendingCheque = $data['payment_method'] === 'cheque';
+            $numbers = $this->documents->nextForCompany('customer_receipts', CustomerReceipt::class, (int) $data['company_id']);
             $receipt = CustomerReceipt::query()->create([
                 ...$data, ...$numbers, 'status' => CustomerReceipt::StatusDraft,
                 'unallocated_amount' => $data['amount'], 'created_by' => auth()->id(),
@@ -45,31 +51,37 @@ class CustomerReceiptService
             $allocated = '0.0000';
             $allocatedScheduleIds = [];
             foreach ($allocations as $input) {
-                $schedule = CustomerInvoicePaymentSchedule::query()->with('invoice')->lockForUpdate()->findOrFail($input['customer_invoice_payment_schedule_id']);
+                $schedule = CustomerInvoicePaymentSchedule::query()->findOrFail($input['customer_invoice_payment_schedule_id']);
+                $invoice = CustomerInvoice::query()->lockForUpdate()->findOrFail($schedule->customer_invoice_id);
+                $schedule = CustomerInvoicePaymentSchedule::query()->lockForUpdate()->findOrFail($schedule->id);
+                $schedule->setRelation('invoice', $invoice);
                 if (in_array($schedule->getKey(), $allocatedScheduleIds, true)) {
-                    throw new DomainException('An installment may only be allocated once per receipt.');
+                    throw new DomainException(__('An installment may only be allocated once per receipt.'));
                 }
                 $allocatedScheduleIds[] = $schedule->getKey();
-                if ($schedule->invoice->customer_id !== $receipt->customer_id || $schedule->invoice->posting_status !== 'posted') {
-                    throw new DomainException('The selected installment is not an open posted invoice for this customer.');
+                if ($schedule->invoice->customer_id !== $receipt->customer_id || $schedule->invoice->company_id !== $receipt->company_id || $schedule->invoice->branch_id !== $receipt->branch_id || $schedule->invoice->currency_id !== $receipt->currency_id || $schedule->invoice->posting_status !== 'posted') {
+                    throw new DomainException(__('The selected installment is not an open posted invoice for this customer.'));
                 }
                 $amount = (string) $input['amount'];
-                $this->amounts->assertPositive($amount, 'Allocation amount must be greater than zero.', 4);
-                $this->amounts->assertNotGreaterThan($amount, $schedule->outstanding_amount, 'Allocation exceeds the installment outstanding amount.', 4);
+                $this->amounts->assertPositive($amount, __('Allocation amount must be greater than zero.'), 4);
+                $pending = (string) $schedule->invoice->allocations()->where('customer_invoice_payment_schedule_id', $schedule->id)->whereNull('applied_at')->whereHas('receipt', fn ($query) => $query->where('status', CustomerReceipt::StatusApproved))->sum('allocated_amount');
+                $this->amounts->assertNotGreaterThan($amount, bcsub($schedule->outstanding_amount, $pending, 4), __('Allocation exceeds the installment outstanding amount.'), 4);
                 $allocated = $this->amounts->add($allocated, $amount);
-                $this->amounts->assertNotGreaterThan($allocated, $receipt->amount, 'Allocations exceed the receipt amount.', 4);
+                $this->amounts->assertNotGreaterThan($allocated, $receipt->amount, __('Allocations exceed the receipt amount.'), 4);
                 $receipt->allocations()->create([
                     'customer_invoice_id' => $schedule->customer_invoice_id,
                     'customer_invoice_payment_schedule_id' => $schedule->getKey(), 'allocated_amount' => $amount,
-                    'applied_by' => auth()->id(), 'applied_at' => now(),
+                    'applied_by' => $pendingCheque ? null : auth()->id(), 'applied_at' => $pendingCheque ? null : now(),
                 ]);
-                $schedule->increment('collected_amount', $amount);
-                $this->refreshInvoice($schedule->invoice);
+                if (! $pendingCheque) {
+                    $schedule->increment('collected_amount', $amount);
+                    $this->refreshInvoice($schedule->invoice);
+                }
             }
-            $journal = $this->accounting->postReceipt($receipt);
+            $journal = $pendingCheque ? null : $this->accounting->postReceipt($receipt);
             $receipt->update([
                 'status' => CustomerReceipt::StatusApproved, 'unallocated_amount' => $this->amounts->subtract($receipt->amount, $allocated),
-                'journal_entry_id' => $journal->getKey(), 'approved_by' => auth()->id(), 'approved_at' => now(),
+                'journal_entry_id' => $journal?->getKey(), 'approved_by' => auth()->id(), 'approved_at' => now(),
                 'is_closed' => true, 'updated_by' => auth()->id(),
             ]);
             $this->audit->record($receipt, 'customer_receipt.approved', ['allocated_amount' => $allocated, 'unallocated_amount' => $receipt->fresh()->unallocated_amount]);
@@ -85,7 +97,7 @@ class CustomerReceiptService
         $account = $customer?->account;
 
         if (! $customer || ! $account) {
-            throw new DomainException('The customer must have a posting account before collection.');
+            throw new DomainException(__('The customer must have a posting account before collection.'));
         }
 
         if ($receipt->payment_method === 'cash') {
@@ -154,32 +166,32 @@ class CustomerReceiptService
     {
         $currency = Currency::query()->forCompany((int) $data['company_id'])->active()->find($data['currency_id']);
         if (! $currency instanceof Currency) {
-            throw new DomainException('The receipt currency is not active for this company.');
+            throw new DomainException(__('The receipt currency is not active for this company.'));
         }
 
         $method = (string) $data['payment_method'];
         if ($method === 'cash' && empty($data['cashbox_id'])) {
-            throw new DomainException('Cash collections require a cashbox.');
+            throw new DomainException(__('Cash collections require a cashbox.'));
         }
         if (in_array($method, ['bank', 'cheque', 'transfer'], true) && empty($data['bank_account_id'])) {
-            throw new DomainException('Bank, cheque, and transfer collections require a bank account.');
+            throw new DomainException(__('Bank, cheque, and transfer collections require a bank account.'));
         }
 
         if (! empty($data['cashbox_id'])) {
             $cashbox = Cashbox::query()->forCompany((int) $data['company_id'])->active()->find($data['cashbox_id']);
             if (! $cashbox instanceof Cashbox) {
-                throw new DomainException('The selected cashbox is not active for this company.');
+                throw new DomainException(__('The selected cashbox is not active for this company.'));
             }
             $allowedCurrencies = $cashbox->currencies()->where('status', 'active')->whereNull('deleted_at');
             if ($allowedCurrencies->exists() && ! (clone $allowedCurrencies)->where('currency_id', $currency->getKey())->exists()) {
-                throw new DomainException('The selected currency is not enabled for this cashbox.');
+                throw new DomainException(__('The selected currency is not enabled for this cashbox.'));
             }
         }
 
         if (! empty($data['bank_account_id'])) {
             $bank = BankAccount::query()->forCompany((int) $data['company_id'])->active()->find($data['bank_account_id']);
             if (! $bank instanceof BankAccount || (int) $bank->currency_id !== (int) $currency->getKey()) {
-                throw new DomainException('The selected bank account is not active in the receipt currency.');
+                throw new DomainException(__('The selected bank account is not active in the receipt currency.'));
             }
         }
     }

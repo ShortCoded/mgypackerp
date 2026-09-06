@@ -60,6 +60,7 @@ class StoreCompanyRequest extends FormRequest
                 'max:'.((int) config('archive.favicon.max_file_size_kib', 1024)),
             ],
             'status' => ['required', 'string', Rule::in(['active', 'inactive'])],
+            'show_company_identity_on_prints' => ['sometimes', 'boolean'],
             'notes' => ['nullable', 'string'],
             'commercial_register_number' => ['nullable', 'string', 'max:100', Rule::unique('companies', 'commercial_register_number')->withoutTrashed()],
             'commercial_register_office' => ['nullable', 'string', 'max:255'],

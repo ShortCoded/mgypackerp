@@ -5,7 +5,7 @@
     <title>{{ $reportTitle ?? $title ?? __('reports.report_title') }}</title>
     @include('reports.partials.styles')
 </head>
-<body>
+<body class="{{ ($printIdentityPolicy ?? 'report') === 'report' ? 'report-print' : 'operational-print' }}">
     <main>
         @if ($limited ?? false)
             <div class="report-warning">{{ __('reports.pdf_limited') }}</div>

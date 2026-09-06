@@ -39,7 +39,7 @@ class ProcurementWorkflowRequest extends FormRequest
         }
         foreach (['lines', 'schedules'] as $collection) {
             foreach ($data[$collection] ?? [] as $index => $line) {
-                foreach (['required_date', 'delivery_date', 'scheduled_date', 'required_delivery_date'] as $field) {
+                foreach (['required_date', 'delivery_date', 'scheduled_date', 'required_delivery_date', 'manufacture_date', 'expiry_date'] as $field) {
                     if (filled($line[$field] ?? null) && $dateService->isValidDate((string) $line[$field])) {
                         $data[$collection][$index][$field] = $dateService->normalizeForStorage((string) $line[$field]);
                     }
@@ -50,8 +50,8 @@ class ProcurementWorkflowRequest extends FormRequest
         if ($route === 'admin.purchases.supplier-selection.store') {
             $data['lines'] = array_values(array_filter($data['lines'] ?? [], fn (array $line): bool => filled($line['selected_quantity'] ?? null)));
         }
-        if (in_array($route, ['admin.purchases.goods-receipt-notes.store', 'admin.purchases.purchase-returns.store'], true)) {
-            $data['lines'] = array_values(array_filter($data['lines'] ?? [], fn (array $line): bool => filled($line[$route === 'admin.purchases.goods-receipt-notes.store' ? 'delivered_quantity' : 'quantity'] ?? null)));
+        if (in_array($route, ['admin.purchases.goods-receipt-notes.store', 'admin.purchases.goods-receipt-notes.update', 'admin.purchases.purchase-returns.store', 'admin.purchases.purchase-returns.update'], true)) {
+            $data['lines'] = array_values(array_filter($data['lines'] ?? [], fn (array $line): bool => (float) ($line[str_contains($route, 'goods-receipt-notes.') ? 'delivered_quantity' : 'quantity'] ?? 0) > 0));
         }
         if ($route === 'admin.purchases.purchase-order-delivery-schedule.store') {
             $data['schedules'] = array_values(array_filter($data['schedules'] ?? [], fn (array $line): bool => filled($line['scheduled_quantity'] ?? null)));
@@ -79,22 +79,25 @@ class ProcurementWorkflowRequest extends FormRequest
         $route = (string) $this->route()?->getName();
 
         return match ($route) {
-            'admin.purchases.purchase-requisitions.store' => $this->requisitionRules(),
+            'admin.purchases.purchase-requisitions.store', 'admin.purchases.purchase-requisitions.update' => $this->requisitionRules(),
+            'admin.purchases.purchase-requisitions.reject' => ['rejection_reason' => ['required', 'string', 'max:2000']],
+            'admin.purchases.purchase-requisitions.cancel' => ['cancel_reason' => ['required', 'string', 'max:2000']],
             'admin.purchases.purchase-requisitions.approve' => [
                 'approved_quantities' => ['nullable', 'array'],
                 'approved_quantities.*' => ['numeric', 'decimal:0,8', 'min:0'],
             ],
-            'admin.purchases.request-for-quotations.store' => $this->rfqRules(),
-            'admin.purchases.supplier-quotation-entry.store' => $this->quotationRules(),
+            'admin.purchases.request-for-quotations.store', 'admin.purchases.request-for-quotations.update' => $this->rfqRules(),
+            'admin.purchases.supplier-quotation-entry.store', 'admin.purchases.supplier-quotation-entry.update' => $this->quotationRules(),
             'admin.purchases.supplier-selection.store' => $this->selectionRules(),
             'admin.purchases.purchase-order-delivery-schedule.store' => $this->deliveryScheduleRules(),
-            'admin.purchases.goods-receipt-notes.store' => $this->receiptRules(),
+            'admin.purchases.goods-receipt-notes.reverse' => ['reversal_reason' => ['required', 'string', 'max:2000']],
+            'admin.purchases.goods-receipt-notes.store', 'admin.purchases.goods-receipt-notes.update' => $this->receiptRules(),
             'admin.purchases.goods-receipt-notes.cancel' => [
                 'cancel_reason' => ['required', 'string', 'max:2000'],
             ],
             'admin.purchases.goods-receipt-inspection.store' => $this->inspectionRules(),
             'admin.purchases.purchase-order-change-requests.store' => $this->changeRequestRules(),
-            'admin.purchases.purchase-returns.store' => $this->returnRules(),
+            'admin.purchases.purchase-returns.store', 'admin.purchases.purchase-returns.update' => $this->returnRules(),
             'admin.purchases.purchase-returns.reverse' => [
                 'reversal_reason' => ['required', 'string', 'max:2000'],
             ],
@@ -115,7 +118,7 @@ class ProcurementWorkflowRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            if (! $this->routeIs('admin.purchases.purchase-requisitions.store')) {
+            if (! $this->routeIs('admin.purchases.purchase-requisitions.store', 'admin.purchases.purchase-requisitions.update')) {
                 return;
             }
 
@@ -142,19 +145,23 @@ class ProcurementWorkflowRequest extends FormRequest
         $companyId = $this->companyId();
 
         return [
+            'requester_employee_id' => ['required', 'integer', Rule::exists('hr_employees', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
             'request_date' => ['required', 'date'],
             'required_by_date' => ['nullable', 'date', 'after_or_equal:request_date'],
             'branch_store_uuid' => ['nullable', 'uuid'],
             'department' => ['nullable', 'string', 'max:120'],
-            'priority' => ['required', Rule::in(['low', 'normal', 'high', 'urgent'])],
+            'lead_time_days' => ['nullable', 'integer', 'min:0', 'max:3650'],
+            'suggested_supplier_doc_num' => ['nullable', 'string', Rule::exists('suppliers', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
+            'lines.*.public_id' => ['nullable', 'uuid', 'distinct'],
+            'priority' => ['sometimes', Rule::in(['low', 'normal', 'high', 'urgent'])],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_doc_num' => ['required', 'string', Rule::exists('products', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.requested_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.required_date' => ['nullable', 'date'],
-            'lines.*.source_type' => ['required', Rule::in(['manual', 'production_order', 'work_order'])],
-            'lines.*.source_doc_num' => ['nullable', 'string', 'max:100', 'required_unless:lines.*.source_type,manual'],
+            'lines.*.source_type' => ['sometimes', Rule::in(['manual', 'production_order', 'work_order'])],
+            'lines.*.source_doc_num' => ['nullable', 'string', 'max:100', 'required_if:lines.*.source_type,production_order'],
             'lines.*.source_line_reference' => ['nullable', 'string', 'max:100', 'required_if:lines.*.source_type,production_order'],
             'lines.*.specification' => ['nullable', 'string'],
             'lines.*.notes' => ['nullable', 'string'],
@@ -192,7 +199,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'payment_terms' => ['nullable', 'string', 'max:255'],
             'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
             'commercial_notes' => ['nullable', 'string'],
-            'attachment_file_doc_nums' => ['nullable', 'array', 'max:20'],
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
             'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.rfq_line_public_id' => ['required', 'uuid'],
@@ -231,13 +238,15 @@ class ProcurementWorkflowRequest extends FormRequest
     private function receiptRules(): array
     {
         return [
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
+            'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'document_date' => ['required', 'date'],
             'received_at' => ['nullable', 'date'],
             'supplier_delivery_note' => ['nullable', 'string', 'max:120'],
             'supplier_delivery_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.purchase_order_line_public_id' => ['required', 'uuid'],
+            'lines.*.purchase_order_line_public_id' => ['required', 'uuid', 'distinct'],
             'lines.*.delivery_schedule_public_id' => ['nullable', 'uuid'],
             'lines.*.delivered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.supplier_lot_number' => ['nullable', 'string', 'max:120'],
@@ -252,7 +261,7 @@ class ProcurementWorkflowRequest extends FormRequest
         return [
             'inspection_at' => ['nullable', 'date'],
             'observations' => ['nullable', 'string'],
-            'attachment_file_doc_nums' => ['nullable', 'array', 'max:20'],
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
             'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.receipt_line_public_id' => ['required', 'uuid'],
@@ -267,6 +276,7 @@ class ProcurementWorkflowRequest extends FormRequest
     private function changeRequestRules(): array
     {
         return [
+            'requester_employee_id' => ['required', 'integer', Rule::exists('hr_employees', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
             'request_date' => ['required', 'date'],
             'reason' => ['required', 'string'],
             'requested_values' => ['required', 'array'],
@@ -302,6 +312,8 @@ class ProcurementWorkflowRequest extends FormRequest
         $companyId = $this->companyId();
 
         return [
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
+            'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'supplier_doc_num' => ['required', 'string', Rule::exists('suppliers', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'purchase_order_doc_num' => ['nullable', 'string'],
             'payment_method' => ['required', Rule::in(SupplierPaymentContext::methods())],

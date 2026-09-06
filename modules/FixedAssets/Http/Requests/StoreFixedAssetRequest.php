@@ -20,6 +20,7 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Services\FixedAssetAccessService;
 
 class StoreFixedAssetRequest extends FormRequest
 {
@@ -77,7 +78,7 @@ class StoreFixedAssetRequest extends FormRequest
             'expected_usage_units' => $this->normalizedNumber('expected_usage_units'),
             'useful_life' => $this->normalizedNumber('useful_life'),
             'net_value' => null,
-            'depreciation_start_date' => null,
+            'depreciation_start_date' => $dates->normalizeForStorage($this->nullableTrim('depreciation_start_date')),
         ]);
 
         if ($this->filled('image_archive_file_doc_num')) {
@@ -130,7 +131,7 @@ class StoreFixedAssetRequest extends FormRequest
                 Rule::exists('currencies', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at')),
             ],
-            'status' => ['required', Rule::in([FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusInactive])],
+            'status' => ['required', Rule::in([FixedAsset::StatusDraft, FixedAsset::StatusActive, FixedAsset::StatusSuspended, FixedAsset::StatusInactive, $this->route('fixedAsset') instanceof FixedAsset ? $this->route('fixedAsset')->status : FixedAsset::StatusDraft])],
             'description' => ['required', 'string'],
             'serial_number' => ['nullable', 'string', 'max:255', $this->uniqueActiveRule('serial_number')],
             'purchase_date' => ['required', 'date'],
@@ -140,9 +141,10 @@ class StoreFixedAssetRequest extends FormRequest
             'salvage_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'previous_depreciation' => [Rule::requiredIf($this->isDepreciable() && $this->input('entry_type') === FixedAsset::EntryTypeOpeningAsset), 'nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
-            'previous_depreciation_until_date' => ['nullable', 'date'],
+            'previous_depreciation_until_date' => [Rule::requiredIf($this->isDepreciable() && $this->input('entry_type') === FixedAsset::EntryTypeOpeningAsset), 'nullable', 'date'],
+            'depreciation_start_date' => ['nullable', 'date', 'after_or_equal:operation_date'],
             'depreciation_method' => [Rule::requiredIf($this->isDepreciable()), 'nullable', Rule::in(FixedAsset::depreciationMethods())],
-            'annual_depreciation_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'gt:0', 'max:100'],
+            'annual_depreciation_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'gt:0', $this->input('depreciation_method') === FixedAsset::DepreciationMethodDecliningBalance ? 'max:100' : 'max:20000'],
             'expected_usage_units' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'useful_life' => ['nullable', 'numeric', 'decimal:0,2', 'regex:/^\d{1,8}(?:\.\d{1,2})?$/D', 'gt:0'],
             'is_depreciable' => ['required', 'boolean'],
@@ -261,7 +263,8 @@ class StoreFixedAssetRequest extends FormRequest
 
     private function validatePeriodDates(Validator $validator): void
     {
-        $periodId = Arr::get(app(OperatingContextService::class)->snapshot($this), 'financial_period_id');
+        $record = $this->route('fixedAsset');
+        $periodId = $record instanceof FixedAsset ? $record->period_id : Arr::get(app(OperatingContextService::class)->snapshot($this), 'financial_period_id');
         $period = $periodId ? FinancialPeriod::query()->find($periodId) : null;
 
         if (! $period instanceof FinancialPeriod) {
@@ -338,7 +341,7 @@ class StoreFixedAssetRequest extends FormRequest
             ->whereNull('deleted_at')
             ->first();
 
-        if (! $branch instanceof Branch || $branch->status !== 'active') {
+        if (! $branch instanceof Branch || $branch->status !== 'active' || ! in_array((int) $branch->getKey(), app(FixedAssetAccessService::class)->branchIds(), true)) {
             $validator->errors()->add('branch_doc_num', __('fixed_assets.messages.branch_unavailable'));
         }
     }
@@ -411,6 +414,14 @@ class StoreFixedAssetRequest extends FormRequest
         $usefulLife = $this->filled('useful_life') ? (float) $this->input('useful_life') : null;
         $annualDepreciationRate = $this->filled('annual_depreciation_rate') ? (float) $this->input('annual_depreciation_rate') : null;
 
+        foreach ([$purchaseValue, $previousDepreciation, $salvageValue] as $value) {
+            if ($value !== null && ! is_numeric($value)) {
+                return;
+            }
+        }
+        if ($this->input('entry_type') === FixedAsset::EntryTypeNewAsset && $previousDepreciation !== null && bccomp($previousDepreciation, '0', 4) !== 0) {
+            $validator->errors()->add('previous_depreciation', __('fixed_assets.messages.previous_depreciation_opening_only'));
+        }
         if (! $this->isDepreciable()) {
             return;
         }
@@ -551,10 +562,22 @@ class StoreFixedAssetRequest extends FormRequest
 
     private function validateDateSequence(Validator $validator): void
     {
+        foreach (['purchase_date', 'acquisition_date', 'operation_date', 'depreciation_start_date', 'previous_depreciation_until_date'] as $field) {
+            if ($validator->errors()->has($field) && $this->filled($field)) {
+                return;
+            }
+        }
         $purchaseDate = $this->dateString('purchase_date');
         $acquisitionDate = $this->dateString('acquisition_date');
         $operationDate = $this->dateString('operation_date');
         $previousDepreciationUntilDate = $this->dateString('previous_depreciation_until_date');
+        if ($this->input('entry_type') === FixedAsset::EntryTypeNewAsset && $previousDepreciationUntilDate) {
+            $validator->errors()->add('previous_depreciation_until_date', __('fixed_assets.messages.previous_depreciation_opening_only'));
+        }
+        $start = $this->dateString('depreciation_start_date');
+        if ($this->input('entry_type') === FixedAsset::EntryTypeOpeningAsset && $start && $previousDepreciationUntilDate && $start > $previousDepreciationUntilDate) {
+            $validator->errors()->add('depreciation_start_date', __('fixed_assets.cycle.original_start_required'));
+        }
 
         if ($purchaseDate && $acquisitionDate && $acquisitionDate < $purchaseDate) {
             $validator->errors()->add('acquisition_date', __('fixed_assets.messages.acquisition_before_purchase'));

@@ -15,11 +15,11 @@
             @forelse($records as $record)
                 <tr>
                     <td><a href="{{ route('admin.inventory.documents.show', $record) }}">{{ $record->doc_num }}</a></td>
-                    <td>{{ str($record->document_type)->replace('_', ' ')->title() }}</td>
+                    <td>{{ __(str($record->document_type)->replace('_', ' ')->title()->toString()) }}</td>
                     <td>{{ $record->document_date?->toDateString() }}</td>
                     <td>{{ $record->branchStore?->name }}</td>
                     <td>{{ $record->destinationBranchStore?->name }}</td>
-                    <td><span class="badge bg-secondary">{{ str($record->status)->title() }}</span></td>
+                    <td><span class="badge bg-secondary">{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</span></td>
                 </tr>
             @empty
                 <tr><td colspan="6" class="text-center py-5 text-500">{{ __('No inventory movements found.') }}</td></tr>

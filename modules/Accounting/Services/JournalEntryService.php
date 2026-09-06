@@ -7,10 +7,10 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
-use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
 
@@ -167,22 +167,29 @@ class JournalEntryService
         }
 
         $credits = [];
+        $mappings = app(InventoryAccountingMappingService::class);
+        $mapping = $mappings->requireForCompany((int) $purchaseReturn->company_id);
         foreach ($purchaseReturn->lines as $returnLine) {
-            $code = match ($returnLine->product?->item_classification) {
-                Product::ClassificationRawMaterial => '1131',
-                Product::ClassificationSemiFinished => '1132',
-                Product::ClassificationFinishedProduct => '1133',
-                Product::ClassificationPackaging, Product::ClassificationOther => '1134',
-                Product::ClassificationService => '512',
-                default => '1134',
-            };
-            $account = Account::query()->forCompany((int) $purchaseReturn->company_id)
-                ->where('account_code', $code)->where('status', 'active')->where('is_postable', true)->where('is_group', false)->first();
-            if (! $account instanceof Account) {
-                throw new DomainException(__('A return posting account is not configured for account code :code.', ['code' => $code]));
+            $receiptLine = $returnLine->receiptLine;
+            if ($receiptLine === null || $returnLine->from_quarantine) {
+                throw new DomainException(__('The accepted receipt lineage is missing for the Purchase Return.'));
             }
-            $credits[$code] ??= ['account_id' => $account->getKey(), 'amount' => 0.0];
-            $credits[$code]['amount'] += (float) $returnLine->unit_price * (float) $returnLine->quantity;
+            $account = $mappings->inventoryAccount($mapping, $returnLine->product, __('Purchase Return'));
+            $inventoryValue = bcdiv(
+                bcmul((string) $receiptLine->provisional_unit_value, (string) $returnLine->quantity, 8),
+                (string) $invoice->exchange_rate,
+                4,
+            );
+            $key = (string) $account->getKey();
+            $credits[$key] ??= ['account_id' => $account->getKey(), 'amount' => 0.0];
+            $credits[$key]['amount'] += (float) $inventoryValue;
+            $variance = (float) $returnLine->unit_price * (float) $returnLine->quantity - (float) $inventoryValue;
+            if (abs($variance) >= 0.00005) {
+                $varianceAccount = $mappings->requirePostableAccount($mapping, 'purchasePriceVarianceAccount', __('Purchase Return'));
+                $key = (string) $varianceAccount->getKey();
+                $credits[$key] ??= ['account_id' => $varianceAccount->getKey(), 'amount' => 0.0];
+                $credits[$key]['amount'] += $variance;
+            }
         }
 
         $tax = (float) $purchaseReturn->lines->sum('tax_amount');
@@ -206,8 +213,8 @@ class JournalEntryService
             'branch_id' => $purchaseReturn->branch_id,
         ], ...collect($credits)->map(fn (array $credit): array => [
             'account_id' => (int) $credit['account_id'],
-            'debit_amount' => '0.0000',
-            'credit_amount' => number_format((float) $credit['amount'], 4, '.', ''),
+            'debit_amount' => number_format(max(0, -(float) $credit['amount']), 4, '.', ''),
+            'credit_amount' => number_format(max(0, (float) $credit['amount']), 4, '.', ''),
             'description' => __('Purchase return reversal'),
             'supplier_id' => $invoice->supplier_id,
             'branch_id' => $purchaseReturn->branch_id,
@@ -240,7 +247,7 @@ class JournalEntryService
     public function createPostedFromSource(array $header, array $lines): JournalEntry
     {
         if ($lines === []) {
-            throw new DomainException('A system journal entry requires at least one line.');
+            throw new DomainException(__('A system journal entry requires at least one line.'));
         }
 
         try {
@@ -270,7 +277,7 @@ class JournalEntryService
                     $credit = bcadd($credit, (string) $line['credit_amount'], 4);
                 }
                 if (bccomp($debit, $credit, 4) !== 0) {
-                    throw new DomainException('The system journal entry is not balanced.');
+                    throw new DomainException(__('The system journal entry is not balanced.'));
                 }
 
                 $now = now();
@@ -333,7 +340,7 @@ class JournalEntryService
             }
 
             if (! $locked->is_posted || $locked->status !== JournalEntry::StatusPosted) {
-                throw new DomainException('Only a posted journal entry can be reversed.');
+                throw new DomainException(__('Only a posted journal entry can be reversed.'));
             }
 
             $lines = $locked->lines->map(fn ($line): array => [

@@ -172,6 +172,7 @@ return [
         'count_value' => 'العدد',
         'unit' => 'الوحدة',
         'calculation_method' => 'طريقة الحساب',
+        'input_source' => 'مصدر إدخال المكوّن',
         'calculation' => 'الحساب',
         'direct' => 'وزن مباشر',
         'percentage' => 'نسبة من مكوّن',

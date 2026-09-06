@@ -8,6 +8,14 @@
 @section('title', $title)
 
 @section('content')
+    <div class="card mb-3">
+        <div class="card-header py-2"><button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center justify-content-between" type="button" data-bs-toggle="collapse" data-bs-target="#quotation-filters" aria-expanded="false"><span class="fw-semibold">{{ __('Filters') }}</span><span class="fas fa-chevron-down fs-11"></span></button></div>
+        <div class="collapse" id="quotation-filters"><div class="card-body"><form id="quotation-filter-form" class="row g-3 align-items-end">
+            <div class="col-md-4"><label for="quotation-filter-status" class="form-label">{{ __('Status') }}</label><select class="form-select" name="status" id="quotation-filter-status"><option value="">{{ __('All statuses') }}</option>@foreach(['draft','sent','accepted','rejected','expired','cancelled','converted'] as $status)<option value="{{ $status }}">{{ __('quotations.statuses.'.$status) }}</option>@endforeach</select></div>
+            <div class="col-md-4"><label class="form-label" for="quotation-filter-date">{{ __('From date') }}</label><input class="form-control js-date-picker" name="date_from" id="quotation-filter-date"></div>
+            <div class="col-md-4"><button class="btn btn-falcon-primary" type="submit">{{ __('Apply') }}</button> <button class="btn btn-falcon-default" type="reset">{{ __('Reset') }}</button></div>
+        </form></div></div>
+    </div>
     @can('quotations.document_number_settings.update')
         <div class="card mb-3">
             <div class="card-header py-2">
@@ -103,5 +111,5 @@
         window.dataTableTranslations = @json(__('datatables'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Sales/quotations.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Sales/quotations.js') }}"></script>
 @endpush

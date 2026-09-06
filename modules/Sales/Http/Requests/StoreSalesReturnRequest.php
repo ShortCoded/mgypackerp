@@ -17,13 +17,15 @@ class StoreSalesReturnRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->normalizeNumericInput(['lines.*.quantity']);
+        $this->merge(['lines' => array_values(array_filter($this->input('lines', []), fn (array $line): bool => filled($line['quantity'] ?? null) && (float) $line['quantity'] > 0))]);
     }
 
     public function rules(): array
     {
         return [
             'reason_code' => ['required', 'string'], 'reason_details' => ['nullable', 'string'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.invoice_line_public_id' => ['required', 'uuid'],
+            'lines' => ['required', 'array', 'min:1'], 'lines.*.invoice_line_public_id' => [$this->route('inventoryDocument') ? 'nullable' : 'required', 'uuid', 'distinct'],
+            'lines.*.delivery_line_public_id' => [$this->route('inventoryDocument') ? 'required' : 'nullable', 'uuid', 'distinct'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
         ];
     }

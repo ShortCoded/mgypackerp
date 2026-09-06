@@ -57,7 +57,7 @@ class PurchaseInvoiceLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity' => 'decimal:4',
+            'quantity' => 'decimal:8',
             'matched_quantity' => 'decimal:8',
             'unit_price' => 'decimal:4',
             'discount_value' => 'decimal:4',

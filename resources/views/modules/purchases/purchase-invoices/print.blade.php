@@ -47,8 +47,8 @@
             @foreach($record->lines as $line)
                 <tr>
                     <td>{{ $line->line_number }}</td>
-                    <td>{{ trim(implode(' / ', array_filter([$line->product?->doc_num, $line->product?->name]))) }}</td>
-                    <td>{{ trim(implode(' / ', array_filter([$line->unit?->doc_num, $line->unit?->name]))) }}</td>
+                    <td>@include('reports.partials.item-details', ['line' => $line])@if($line->receiptLine?->receipt)<div class="document-item-details">{{ __('Goods Receipt') }}: <span dir="ltr">{{ $line->receiptLine->receipt->doc_num }}</span></div>@endif</td>
+                    <td>{{ $line->unit?->name }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->quantity) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
@@ -67,6 +67,7 @@
         <tr><th>{{ __('purchase_invoices.totals.remaining') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->remaining_amount) }}</td><th>{{ __('purchase_invoices.attributes.payment_status') }}</th><td>{{ __('purchase_invoices.payment_statuses.'.$record->payment_status) }}</td></tr>
     </table>
 
+    @if($record->paymentSchedules->isNotEmpty())
     <h3>{{ __('purchase_invoices.sections.payment_schedule') }}</h3>
     <table class="report-table">
         <thead><tr><th>#</th><th>{{ __('purchase_invoices.attributes.due_date') }}</th><th class="text-end">{{ __('purchase_invoices.attributes.payment_amount') }}</th><th class="text-end">{{ __('purchase_invoices.totals.paid') }}</th><th class="text-end">{{ __('purchase_invoices.totals.credited') }}</th><th class="text-end">{{ __('purchase_invoices.totals.remaining') }}</th><th>{{ __('purchase_invoices.attributes.status') }}</th></tr></thead>
@@ -79,7 +80,11 @@
         </tbody>
     </table>
 
+    @endif
+
+    @include('reports.partials.amount-in-words')
+    @include('reports.partials.document-signatures', ['signatureType' => 'invoice'])
     @include('reports.partials.company-authorization')
 
-    <style>.purchase-invoice-print-table th, .purchase-invoice-print-table td { font-size: 7.5px; }</style>
+
 @endsection

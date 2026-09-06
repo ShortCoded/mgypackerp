@@ -17,6 +17,7 @@ class CreateDeliveryRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->normalizeNumericInput(['lines.*.quantity']);
+        $this->merge(['lines' => array_values(array_filter($this->input('lines', []), fn (array $line): bool => filled($line['quantity'] ?? null) && (float) str_replace(',', '', (string) $line['quantity']) > 0))]);
     }
 
     public function rules(): array
@@ -25,7 +26,7 @@ class CreateDeliveryRequest extends FormRequest
             'document_date' => ['required', 'date'], 'recipient_name' => ['nullable', 'string', 'max:160'],
             'recipient_phone' => ['nullable', 'string', 'max:80'], 'vehicle_number' => ['nullable', 'string', 'max:80'],
             'driver_name' => ['nullable', 'string', 'max:160'], 'notes' => ['nullable', 'string'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.sales_order_line_public_id' => ['required', 'uuid'],
+            'lines' => ['required', 'array', 'min:1'], 'lines.*.sales_order_line_public_id' => ['required', 'uuid', 'distinct'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
         ];
     }

@@ -249,6 +249,9 @@ return [
         'supplier_payable' => 'مستحقات المورد عن فاتورة مشتريات',
     ],
     'js' => [
+        'approved_quantity' => 'المعتمد',
+        'previously_invoiced' => 'سبق فوترته',
+        'remaining_quantity' => 'المتبقي',
         'validation_failed' => 'راجع الحقول المحددة.',
         'unexpected_error' => 'حدث خطأ غير متوقع. حاول مرة أخرى.',
         'saved' => 'تم الحفظ بنجاح.',

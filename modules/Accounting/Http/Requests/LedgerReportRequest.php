@@ -45,6 +45,7 @@ class LedgerReportRequest extends FormRequest
 
         return [
             'run' => ['required', 'boolean'],
+            'all_periods' => ['nullable', 'boolean'],
             'from_date' => ['required', 'date_format:Y-m-d'],
             'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
             'account_doc_num' => [$this->reportType() === 'account_ledger' ? 'required' : 'nullable', 'string', 'max:255'],
@@ -73,7 +74,7 @@ class LedgerReportRequest extends FormRequest
             }
 
             $period = FinancialPeriod::query()->whereKey($periodId)->where('company_id', $companyId)->first();
-            if ($period && $this->isValidDate($this->input('from_date')) && $this->isValidDate($this->input('to_date'))) {
+            if (! ($this->reportType() === 'customer_statement' && $this->boolean('all_periods')) && $period && $this->isValidDate($this->input('from_date')) && $this->isValidDate($this->input('to_date'))) {
                 $from = $this->date('from_date');
                 $to = $this->date('to_date');
                 if ($from->lt($period->from_date) || $to->gt($period->to_date)) {

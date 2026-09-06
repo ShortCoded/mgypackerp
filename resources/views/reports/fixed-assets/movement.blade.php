@@ -4,7 +4,7 @@
 
 @section('fixed_asset_content')
     <table class="fa-pdf-document-heading">
-        <tr><td><div class="fa-pdf-document-title">{{ __('fixed_assets.lifecycle.transfer') }}</div><div class="fa-pdf-document-number fa-pdf-code">{{ $movement->doc_num }}</div></td></tr>
+        <tr><td><div class="fa-pdf-document-title">{{ __('fixed_assets.cycle.'.$movement->movement_type) }}</div><div class="fa-pdf-document-number fa-pdf-code">{{ $movement->doc_num }}</div></td></tr>
     </table>
 
     <table class="fa-pdf-meta-table">
@@ -26,6 +26,7 @@
                 <th class="fa-pdf-transfer-side">{{ __('fixed_assets.pdf.to') }}</th>
             </tr>
             @foreach ([
+                [__('fixed_assets.cycle.custody'), $movement->sourceCustodian?->full_name, $movement->destinationCustodian?->full_name],
                 [__('fixed_assets.attributes.branch'), $movement->sourceBranch?->name, $movement->destinationBranch?->name],
                 [__('fixed_assets.attributes.hall'), $movement->sourceBranchHall?->name, $movement->destinationBranchHall?->name],
                 [__('fixed_assets.attributes.location_address'), $movement->source_location_address, $movement->destination_location_address],
@@ -48,5 +49,13 @@
         </table>
     </div>
 
+    @if(in_array($movement->movement_type, ['capitalization', 'opening', 'addition'], true))
+        <table class="fa-pdf-meta-table">
+        @foreach(['amount' => $movement->amount, 'accumulated' => $movement->opening_accumulated, 'revised_life' => $movement->revised_useful_life, 'revised_residual' => $movement->revised_residual_value, 'usage_before_addition' => data_get($movement->snapshot, 'plan.usage_before_effective_date'), 'remaining_units' => data_get($movement->snapshot, 'plan.estimated_remaining_units'), 'journal_entry' => $movement->journalEntry?->doc_num] as $label => $value)
+            <tr><td>{{ __('fixed_assets.cycle.'.$label) }}</td><td>{{ $value ?? '—' }}</td></tr>
+        @endforeach
+        <tr><td>{{ __('fixed_assets.attributes.exchange_rate') }}</td><td>{{ $movement->exchange_rate }}</td></tr>
+        </table>
+    @endif
     @include('reports.fixed-assets.partials.authorization')
 @endsection

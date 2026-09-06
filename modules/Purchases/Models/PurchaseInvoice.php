@@ -256,10 +256,10 @@ class PurchaseInvoice extends Model
                 ->whereHas('paymentContext', fn ($query) => $query->effectiveApproved())
                 ->sum('amount');
             if ($schedule->status === PurchaseInvoicePaymentSchedule::StatusCancelled) {
-                $schedule->forceFill([
+                PurchaseInvoicePaymentSchedule::withoutTimestamps(fn () => $schedule->forceFill([
                     'paid_amount' => number_format($schedulePaid, 4, '.', ''),
                     'credited_amount' => '0.0000',
-                ])->save();
+                ])->save());
 
                 continue;
             }
@@ -281,11 +281,11 @@ class PurchaseInvoice extends Model
                 $schedule->status === PurchaseInvoicePaymentSchedule::StatusVoucherDraft => PurchaseInvoicePaymentSchedule::StatusVoucherDraft,
                 default => PurchaseInvoicePaymentSchedule::StatusScheduled,
             };
-            $schedule->forceFill([
+            PurchaseInvoicePaymentSchedule::withoutTimestamps(fn () => $schedule->forceFill([
                 'paid_amount' => number_format($schedulePaid, 4, '.', ''),
                 'credited_amount' => number_format($scheduleCredit, 4, '.', ''),
                 'status' => $scheduleStatus,
-            ])->save();
+            ])->save());
         }
         $totalAmount = (float) $this->total_amount;
         $settledAmount = $paidAmount + $creditedAmount;
@@ -296,12 +296,12 @@ class PurchaseInvoice extends Model
             default => self::PaymentStatusUnpaid,
         };
 
-        $this->forceFill([
+        self::withoutTimestamps(fn () => $this->forceFill([
             'paid_amount' => number_format($paidAmount, 4, '.', ''),
             'credited_amount' => number_format($creditedAmount, 4, '.', ''),
             'remaining_amount' => number_format($remainingAmount, 4, '.', ''),
             'payment_status' => $paymentStatus,
-        ])->save();
+        ])->save());
 
         return $this->refresh();
     }

@@ -296,6 +296,8 @@
         url: $table.data('url'),
         data: function (data) {
           data.trash_filter = trashFilterValue();
+          const filters = document.getElementById('quotation-filter-form');
+          if (filters) new FormData(filters).forEach((value, key) => {data[key] = value;});
         }
       },
       responsive: {
@@ -323,6 +325,7 @@
       }
     }));
 
+    $('#quotation-filter-form').off('submit.quotationFilters reset.quotationFilters').on('submit.quotationFilters', function (event) {event.preventDefault(); quotationTable.ajax.reload();}).on('reset.quotationFilters', function () {setTimeout(() => quotationTable.ajax.reload(), 0);});
     $('#quotations_trash_filter').off('change.quotations').on('change.quotations', function () {
       clearSelection(quotationTable);
       quotationTable.ajax.reload(null, true);
@@ -485,12 +488,7 @@
   }
 
   function addTemplateRow($table, templateSelector, rowSelector, collection) {
-    const index = $table.find(rowSelector).length;
-    const html = String($(templateSelector).html() || '').replace(/__INDEX__/g, String(index));
-    const $row = $(html);
-
-    $table.find('tbody').append($row);
-    renumberRows($table, rowSelector, collection);
+    const $row = $(window.AppLineItemCards.append($table.find('tbody')[0], document.querySelector(templateSelector), collection));
     initSelect2($row[0]);
     initDatePickers($row[0]);
 
@@ -510,8 +508,7 @@
       return;
     }
 
-    $row.remove();
-    renumberRows($table, rowSelector, collection);
+    window.AppLineItemCards.remove($row[0], collection, rowSelector === '.js-quotation-line' ? 1 : 0);
   }
 
   function initSummernote() {
@@ -592,10 +589,6 @@
   function initForm() {
     const $form = $('.js-quotation-form').first();
 
-    if ($form.length === 0) {
-      return;
-    }
-
     initSelect2(document);
     initDatePickers(document);
     initSummernote();
@@ -664,12 +657,21 @@
         const unitLabel = data && data.unitLabel ? String(data.unitLabel) : '';
         const $unit = $row.find('.js-quotation-unit').first();
 
-        if (unitDocNum !== '' && $unit.length) {
-          if ($unit.find('option[value="' + unitDocNum + '"]').length === 0) {
-            $unit.append(new Option(unitLabel || unitDocNum, unitDocNum, true, true));
-          }
+        if ($unit.length) {
+          $unit.empty().append(new Option('', ''));
+          (data?.units || []).forEach(unit => $unit.append(new Option(unit.text, unit.id, false, unit.id === unitDocNum)));
           $unit.val(unitDocNum).trigger('change');
         }
+        const $description = $row.find('[name$="[description]"]');
+        if (!$description.val() || $description.data('autofilled')) $description.val(data?.productData?.name || '').data('autofilled', true);
+        let $details = $row.find('[data-product-characteristics]');
+        if (!$details.length) $details = $('<small class="text-600" data-product-characteristics></small>').insertAfter(this);
+        $details.text([data?.productData?.color, data?.productData?.model, data?.productData?.size].filter(Boolean).join(' · '));
+        window.AppSalesPricing?.suggest($row[0]);
+      })
+      .off('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]')
+      .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]', function () {
+        $(this).closest('.js-quotation-form').find('.js-quotation-line').each(function () {window.AppSalesPricing?.suggest(this);});
       })
       .off('click.quotationsAddLine', '.js-quotation-add-line')
       .on('click.quotationsAddLine', '.js-quotation-add-line', function () {
@@ -678,15 +680,8 @@
       .off('click.quotationsDuplicateLine', '.js-quotation-duplicate-line')
       .on('click.quotationsDuplicateLine', '.js-quotation-duplicate-line', function () {
         const $row = $(this).closest('.js-quotation-line');
-        const $newRow = addTemplateRow($row.closest('table'), '#quotation-line-template', '.js-quotation-line', 'lines');
-        $newRow.find('[name$="[description]"]').val($row.find('[name$="[description]"]').val());
-        $newRow.find('[name$="[quantity]"]').val($row.find('[name$="[quantity]"]').val());
-        $newRow.find('[name$="[unit_price]"]').val($row.find('[name$="[unit_price]"]').val());
-        $newRow.find('[name$="[discount_type]"]').val($row.find('[name$="[discount_type]"]').val());
-        $newRow.find('[name$="[discount_value]"]').val($row.find('[name$="[discount_value]"]').val());
-        $newRow.find('[name$="[tax_rate]"]').val($row.find('[name$="[tax_rate]"]').val());
-        $newRow.find('[name$="[notes]"]').val($row.find('[name$="[notes]"]').val());
-        calculateTotals($row.closest('form'));
+        const $newRow = $(window.AppLineItemCards.append($row.closest('tbody')[0], document.querySelector('#quotation-line-template'), 'lines', $row[0]));
+        initSelect2($newRow[0]); initDatePickers($newRow[0]); calculateTotals($row.closest('form'));
       })
       .off('click.quotationsRemoveLine', '.js-quotation-remove-line')
       .on('click.quotationsRemoveLine', '.js-quotation-remove-line', function () {

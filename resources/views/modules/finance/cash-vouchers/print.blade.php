@@ -39,5 +39,8 @@
         <tfoot><tr><th colspan="3">{{ __($translationKey.'.attributes.total_distributed') }}</th><th class="text-end" dir="ltr">{{ $numbers->format($record->lines->sum('amount')) }} {{ $record->currency?->code }}</th></tr></tfoot>
     </table>
 
+    @include('reports.partials.payment-sources')
+    @include('reports.partials.amount-in-words')
+    @include('reports.partials.document-signatures', ['signatureType' => 'payment'])
     @include('reports.partials.company-authorization')
 @endsection

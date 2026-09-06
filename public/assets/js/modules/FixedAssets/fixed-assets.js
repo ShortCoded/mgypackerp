@@ -122,7 +122,8 @@
                 data: column,
                 name: columnName(column),
                 className: columnClass(column, index),
-                responsivePriority: index < 2 ? 2 + index : 10 + index
+                orderable: !['purchase_value', 'previous_depreciation', 'net_value'].includes(column),
+                responsivePriority: column === 'net_value' ? 5 : (index < 2 ? 2 + index : 10 + index)
             });
         });
 
@@ -287,6 +288,7 @@
 
             $select.select2({
                 theme: 'bootstrap-5',
+                dropdownParent: $select.closest('.modal').length ? $select.closest('.modal') : $(document.body),
                 width: '100%',
                 dir: document.documentElement.getAttribute('dir') || 'ltr',
                 allowClear: String($select.data('allow-clear')) === 'true',
@@ -337,6 +339,7 @@
     }
 
     function updateNetValue() {
+        if (String($('#net_value').data('master-locked')) === '1') { return; }
         const purchase = window.AppNumbers.number($('#purchase_value').val(), NaN);
         const previous = window.AppNumbers.number($('#previous_depreciation').val(), NaN);
 
@@ -397,6 +400,8 @@
             || (method === 'straight_line' && rateValue === '')
         );
         const annualRateRequired = depreciable && method === 'declining_balance';
+        $('.js-fixed-asset-depreciation-rate').prop('readonly', method === 'straight_line');
+        $('.js-straight-line-hint').toggle(method === 'straight_line');
         const usageUnitsRequired = depreciable && method === 'units_of_production';
 
         $('.js-depreciable-required-marker').toggleClass('d-none', !depreciable);
@@ -446,11 +451,17 @@
 
         $('.js-opening-asset-required-marker').toggleClass('d-none', !openingAsset);
         $previous.prop('required', openingAsset);
+        $('.js-opening-only').toggleClass('d-none', !openingAsset);
+        if (!openingAsset && String($('.js-fixed-asset-form').data('financial-locked')) !== '1') {
+            $previous.val('0');
+            $('#previous_depreciation_until_date').val('');
+            updateNetValue();
+        }
     }
 
     function togglePreviousDepreciationDateRequirement() {
         const previous = window.AppNumbers.number($('#previous_depreciation').val(), NaN);
-        const required = formIsDepreciable() && Number.isFinite(previous) && previous > 0;
+        const required = formIsDepreciable() && String($('#entry_type').val() || '') === 'opening_asset';
         const $untilDate = $('#previous_depreciation_until_date');
 
         $('.js-previous-depreciation-date-required-marker').toggleClass('d-none', !required);
@@ -592,6 +603,7 @@
                 url: $table.data('url'),
                 data: function (data) {
                     data.trash_filter = trashFilterValue();
+                    $('.js-asset-register-filters').serializeArray().forEach(function (field) { data[field.name] = field.value; });
                 }
             },
             responsive: {
@@ -973,6 +985,21 @@
         togglePreviousDepreciationDateRequirement();
         applyMainCurrencyExchangeRate($form);
         resetAssetImagePreview($form.find('.js-fixed-asset-image-picker-field').first());
+        if (String($form.data('financial-locked')) === '1') {
+            const fields = ['asset_date', 'branch_doc_num', 'branch_hall_uuid', 'cost_center_doc_num', 'asset_group_account_doc_num', 'credit_account_doc_num', 'currency_doc_num', 'entry_type', 'source_type', 'source_id', 'source_doc_num', 'purchase_date', 'acquisition_date', 'operation_date', 'purchase_value', 'salvage_value', 'exchange_rate', 'previous_depreciation', 'previous_depreciation_until_date', 'depreciation_start_date', 'annual_depreciation_rate', 'expected_usage_units', 'useful_life', 'is_depreciable', 'depreciation_method', 'location_address', 'status'];
+            fields.forEach(function (name) {
+                const $field = $form.find('[name="' + name + '"]').first();
+                if (!$field.length) { return; }
+                if ($field.is('select')) {
+                    $('<input>', {type: 'hidden', name: name, value: $field.val() || ''}).appendTo($form);
+                    $field.prop('disabled', true);
+                } else {
+                    $field.prop('readonly', true);
+                    if ($field[0]._flatpickr) { $field[0]._flatpickr.destroy(); }
+                    $field.removeClass('js-date-picker');
+                }
+            });
+        }
     }
 
     function initInlineCategory() {
@@ -1105,6 +1132,14 @@
     $(function () {
         initSelect2();
         initTable();
+        $('.js-asset-register-filters').on('change', 'input, select', function () {
+            if (fixedAssetsTable) { fixedAssetsTable.ajax.reload(); }
+        }).on('reset', function () {
+            setTimeout(function () {
+                $('.js-asset-register-filters select').val('').trigger('change.select2');
+                if (fixedAssetsTable) { fixedAssetsTable.ajax.reload(); }
+            }, 0);
+        }).on('submit', function (event) { event.preventDefault(); });
         initForm();
         initInlineCategory();
         initDeleteRestore();

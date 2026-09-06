@@ -13,6 +13,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\HR\Models\HrEmployee;
 
 class Quotation extends Model
 {
@@ -58,6 +59,7 @@ class Quotation extends Model
      * @var list<string>
      */
     protected $fillable = [
+        'sales_request_id',
         'doc_number',
         'doc_num',
         'company_id',
@@ -72,6 +74,9 @@ class Quotation extends Model
         'currency_id',
         'exchange_rate',
         'sales_person_id',
+        'business_employee_id',
+        'sent_by',
+        'sent_at',
         'current_revision_id',
         'status',
         'notes',
@@ -104,6 +109,7 @@ class Quotation extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
+            'sent_at' => 'datetime',
         ];
     }
 
@@ -132,6 +138,11 @@ class Quotation extends Model
         return $this->belongsTo(Customer::class)->withTrashed();
     }
 
+    public function salesRequest(): BelongsTo
+    {
+        return $this->belongsTo(SalesRequest::class);
+    }
+
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class)->withTrashed();
@@ -142,9 +153,15 @@ class Quotation extends Model
         return $this->belongsTo(Currency::class)->withTrashed();
     }
 
-    public function salesPerson(): BelongsTo
+    /** Legacy authentication reference retained without inferring an employee mapping. */
+    public function legacySalesUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sales_person_id');
+    }
+
+    public function salesPerson(): BelongsTo
+    {
+        return $this->belongsTo(HrEmployee::class, 'business_employee_id')->withTrashed();
     }
 
     public function currentRevision(): BelongsTo
@@ -190,6 +207,29 @@ class Quotation extends Model
     public function scopeForCompany(Builder $query, int $companyId): Builder
     {
         return $query->where($this->getTable().'.company_id', $companyId);
+    }
+
+    public function canDeleteDraft(): bool
+    {
+        return ! $this->trashed() && $this->status === self::StatusDraft
+            && $this->revisions()->count() === 1 && ! $this->salesOrders()->exists();
+    }
+
+    public function canCancel(): bool
+    {
+        return ! $this->trashed() && ! in_array($this->status, [self::StatusCancelled, self::StatusConverted], true)
+            && ! $this->salesOrders()->exists();
+    }
+
+    public function canIssueRevision(): bool
+    {
+        return ! $this->trashed() && in_array($this->status, [self::StatusSent, self::StatusUnderReview, self::StatusAccepted, self::StatusRejected, self::StatusExpired], true)
+            && ! $this->salesOrders()->exists();
+    }
+
+    public function sentBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'sent_by');
     }
 
     public function canEditCurrentRevision(): bool

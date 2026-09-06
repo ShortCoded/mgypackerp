@@ -4,6 +4,7 @@ namespace Modules\FixedAssets\Http\Controllers;
 
 use DomainException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
@@ -22,11 +23,15 @@ use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
+use Modules\FixedAssets\Services\FixedAssetAccessService;
 use Modules\FixedAssets\Services\FixedAssetBookValueService;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
+use Modules\FixedAssets\Services\FixedAssetLedgerService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetPdfService;
 use Modules\FixedAssets\Services\FixedAssetScheduleService;
+use Modules\HR\Models\HrEmployee;
+use Spatie\Activitylog\Models\Activity;
 
 class FixedAssetLifecycleController extends Controller
 {
@@ -41,16 +46,31 @@ class FixedAssetLifecycleController extends Controller
 
     public function show(FixedAsset $fixedAsset): View
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
         $fixedAsset->load([
             'company', 'account', 'assetGroupAccount', 'creditAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file',
-            'categoryMapping.accumulatedDepreciationAccount', 'categoryMapping.depreciationExpenseAccount',
+            'costMovements.journalEntry', 'categoryMapping.accumulatedDepreciationAccount', 'categoryMapping.depreciationExpenseAccount',
             'postedDepreciations.journalEntry', 'postedDepreciations.costCenter', 'postedDepreciations.branch', 'postedDepreciations.postedBy',
             'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceBranchHall', 'movements.destinationBranchHall', 'movements.sourceCostCenter', 'movements.destinationCostCenter', 'movements.requestedBy',
             'disposals.customer', 'disposals.proceedsAccount', 'disposals.journalEntry',
             'disposals.customerInvoice', 'disposals.gainLossJournalEntry', 'disposals.reversalJournalEntry', 'disposals.gainLossReversalJournalEntry',
         ]);
 
+        $displayMapping = new FixedAssetCategoryMapping(['company_id' => $fixedAsset->company_id]);
+        $accountingWarnings = [];
+        if ($fixedAsset->is_depreciable) {
+            foreach (FixedAssetCategoryMapping::DepreciationAccounts as $field) {
+                try {
+                    $resolved = FixedAssetCategoryMapping::resolveForAsset($fixedAsset, [$field]);
+                    $displayMapping->{$field} = $resolved->{$field};
+                } catch (DomainException $exception) {
+                    $accountingWarnings[] = $exception->getMessage();
+                }
+            }
+        }
+
         return view('modules.fixed-assets.lifecycle.show', [
+            'displayMapping' => $displayMapping, 'accountingWarnings' => $accountingWarnings,
             'asset' => $fixedAsset,
             'position' => $this->bookValues->position($fixedAsset),
             'schedule' => $this->schedules->schedule($fixedAsset),
@@ -58,14 +78,22 @@ class FixedAssetLifecycleController extends Controller
                 ['label' => $fixedAsset->doc_num, 'url' => route('admin.fixed-assets.assets.show', $fixedAsset)],
                 ['label' => __('fixed_assets.lifecycle.asset_card')],
             ]),
+            'canEditMaster' => $fixedAsset->canEditMaster(),
+            'canRecognize' => ! $fixedAsset->hasPostedRecognition() && ! $fixedAsset->isDisposed(),
             'today' => app(DateFormatService::class)->formatDate(now(), ''),
+            'ledger' => app(FixedAssetLedgerService::class)->history($fixedAsset),
+            'journals' => app(FixedAssetLedgerService::class)->journals($fixedAsset),
+            'documents' => $fixedAsset->archiveFileUsages()->with('file')->get()->concat($fixedAsset->movements()->with('archiveFileUsages.file')->get()->flatMap(fn ($row) => $row->archiveFileUsages)),
+            'activities' => Activity::query()->with('causer')->where('subject_type', $fixedAsset->getMorphClass())->where('subject_id', $fixedAsset->getKey())->latest()->limit(100)->get(),
+            'custody' => $fixedAsset->movements()->where('movement_type', 'custody')->where('status', 'posted')->with('destinationCustodian')->first(),
+            'custodians' => auth()->user()?->can('fixed_assets.custody.post') ? HrEmployee::query()->where('company_id', $fixedAsset->company_id)->where('status', 'active')->whereIn('branch_id', app(FixedAssetAccessService::class)->branchIds())->orderBy('full_name')->get(['id', 'doc_num', 'full_name']) : collect(),
         ]);
     }
 
     public function activate(ActivateFixedAssetRequest $request, FixedAsset $fixedAsset): RedirectResponse
     {
         try {
-            $this->lifecycle->activate($fixedAsset, $request->validated('activation_date'));
+            $this->lifecycle->activate($fixedAsset, $request->validated('activation_date'), $request->validated('existing_journal_doc_num'));
         } catch (DomainException $exception) {
             return back()->withErrors(['activation_date' => $exception->getMessage()])->withInput();
         }
@@ -93,6 +121,15 @@ class FixedAssetLifecycleController extends Controller
         }
 
         return to_route('admin.fixed-assets.lifecycle.show', $fixedAsset)->with('success', __('fixed_assets.lifecycle.messages.disposed', ['document' => $disposal->doc_num]));
+    }
+
+    public function previewDisposal(StoreFixedAssetDisposalRequest $request, FixedAsset $fixedAsset): JsonResponse
+    {
+        try {
+            return response()->json($this->lifecycle->previewDisposal($fixedAsset, $request->validated()));
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
     }
 
     public function reverseDisposal(ReverseFixedAssetDocumentRequest $request, FixedAssetDisposal $disposal): RedirectResponse
@@ -159,6 +196,7 @@ class FixedAssetLifecycleController extends Controller
 
     public function printAsset(FixedAsset $fixedAsset): Response
     {
+        app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
         $fixedAsset->load([
             'company', 'account', 'assetGroupAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file',
             'categoryMapping.accumulatedDepreciationAccount', 'categoryMapping.depreciationExpenseAccount',
@@ -177,16 +215,18 @@ class FixedAssetLifecycleController extends Controller
 
     public function printMovement(FixedAssetMovement $movement): Response
     {
+        app(FixedAssetAccessService::class)->assertAsset($movement->asset);
         $movement->load(['company', 'asset', 'sourceBranch', 'destinationBranch', 'sourceBranchHall', 'destinationBranchHall', 'sourceCostCenter', 'destinationCostCenter', 'requestedBy', 'approvedBy', 'postedBy']);
 
         return $this->pdf->stream('reports.fixed-assets.movement', $movement->company, [
-            'title' => __('fixed_assets.lifecycle.transfer'),
+            'title' => __('fixed_assets.cycle.'.$movement->movement_type),
             'movement' => $movement,
         ], 'asset-transfer-'.$movement->doc_num.'.pdf');
     }
 
     public function printDisposal(FixedAssetDisposal $disposal): Response
     {
+        app(FixedAssetAccessService::class)->assertAsset($disposal->asset);
         $disposal->load(['company', 'financialPeriod', 'asset', 'customer', 'proceedsAccount', 'journalEntry', 'approvedBy', 'postedBy']);
         $title = __('fixed_assets.pdf.disposition_titles.'.$disposal->disposition_type);
 

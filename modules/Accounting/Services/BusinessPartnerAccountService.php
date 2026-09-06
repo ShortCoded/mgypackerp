@@ -322,7 +322,7 @@ class BusinessPartnerAccountService
         $classification = $this->classifications->activeRecord(AccountClassification::FixedAssets);
 
         if (! $classification instanceof AccountClassification) {
-            throw new DomainException('The fixed_assets account classification is not registered and active.');
+            throw new DomainException(__('The fixed_assets account classification is not registered and active.'));
         }
 
         return $classification;
@@ -365,7 +365,7 @@ class BusinessPartnerAccountService
                     'group_unavailable' => 'fixed_assets.messages.asset_category_unavailable',
                 ],
             ],
-            default => throw new DomainException('Unsupported business partner account type.'),
+            default => throw new DomainException(__('Unsupported business partner account type.')),
         };
     }
 

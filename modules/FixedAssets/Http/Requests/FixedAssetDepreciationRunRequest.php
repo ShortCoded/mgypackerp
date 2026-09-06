@@ -26,7 +26,7 @@ class FixedAssetDepreciationRunRequest extends FormRequest
             $normalized = app(NumericFormatService::class)->normalizeForValidation($value);
 
             return $normalized === null || trim($normalized) === '' ? null : $normalized;
-        })->filter()->all();
+        })->filter(fn ($value): bool => $value !== null)->all();
         $this->merge([
             'financial_period_doc_num' => $this->nullableTrim('financial_period_doc_num'),
             'posting_date' => app(DateFormatService::class)->normalizeForStorage($this->nullableTrim('posting_date')),
@@ -51,7 +51,7 @@ class FixedAssetDepreciationRunRequest extends FormRequest
             'asset_doc_nums' => [$this->routeIs('admin.fixed-assets.depreciation.post') ? 'required' : 'nullable', 'array'],
             'asset_doc_nums.*' => ['string', 'distinct', Rule::exists('fixed_assets', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
             'usage_units' => ['nullable', 'array'],
-            'usage_units.*' => ['numeric', 'decimal:0,4', 'gt:0'],
+            'usage_units.*' => ['numeric', 'decimal:0,4', 'min:0'],
         ];
     }
 

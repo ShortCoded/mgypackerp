@@ -1,0 +1,10 @@
+@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+<section class="card my-3"><div class="card-header"><h5>{{ __('Sales backorders and production demand') }}</h5><p class="mb-0 text-muted">{{ __('Open demand across financial periods; free stock is allocated once in order sequence.') }}</p></div>
+<div class="table-responsive"><table class="table table-sm report-table"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Item') }}</th><th>{{ __('Warehouse') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Reserved') }}</th><th>{{ __('Available') }}</th><th>{{ __('Shortage') }}</th><th>{{ __('Production requested') }}</th><th>{{ __('Produced') }}</th><th>{{ __('Remaining production') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Days late') }}</th></tr></thead><tbody>
+@forelse($backorders as $row)
+@php($line = $row['line'])
+<tr><td>@can('sales_orders.view')<a href="{{ route('admin.sales.sales-orders.show', $line->order) }}">{{ $line->order->doc_num }}</a>@else{{ $line->order->doc_num }}@endcan</td><td>{{ $line->order->customer?->name }}</td><td>{{ $line->product?->doc_num }} · {{ $line->description }} {{ $line->product?->color?->name }}</td><td>{{ $line->order->branchStore?->name }}</td><td>{{ $line->unit?->name }}</td><td>{{ $numbers->format($line->quantity) }}</td><td>{{ $numbers->format($line->delivered_quantity) }}</td><td>{{ $numbers->format($row['reserved']) }}</td><td>{{ $numbers->format($row['available']) }}</td><td>{{ $numbers->format($row['shortage']) }}</td><td>{{ $numbers->format($line->production_requested_quantity) }}</td><td>{{ $numbers->format($line->produced_quantity) }}</td><td>{{ $numbers->format($row['remaining_production']) }}</td><td>{{ $line->order->expected_delivery_date?->toDateString() }}</td><td>{{ $row['days_late'] }}</td></tr>
+@empty<tr><td colspan="15">{{ __('No matching records.') }}</td></tr>@endforelse
+</tbody></table></div></section>
+
+@if($backorders instanceof \Illuminate\Contracts\Pagination\Paginator)<div class="my-3">{{ $backorders->links() }}</div>@endif

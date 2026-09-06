@@ -2,7 +2,6 @@
 
 namespace Modules\Sales\Services;
 
-use App\Models\User;
 use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +19,7 @@ use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationAttachment;
 use Modules\Sales\Models\QuotationRevision;
+use Modules\Sales\Models\SalesOrder;
 
 class QuotationService
 {
@@ -61,7 +61,7 @@ class QuotationService
 
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
-            $values = $this->quotationValues($data, (int) $record->company_id);
+            $values = $this->quotationValues($data, (int) $record->company_id, $record->business_employee_id);
 
             if (array_key_exists('doc_number', $data) && $data['doc_number']) {
                 $values = [...$values, ...$this->document($data, (int) $record->company_id)];
@@ -89,6 +89,10 @@ class QuotationService
     public function createNewRevision(Quotation $record, ?string $changeReason = null): QuotationRevision
     {
         return DB::transaction(function () use ($record, $changeReason): QuotationRevision {
+            $record = Quotation::query()->lockForUpdate()->findOrFail($record->getKey());
+            if (SalesOrder::query()->where('quotation_id', $record->id)->exists()) {
+                throw new DomainException(__('A converted quotation cannot be revised; create a new commercial offer.'));
+            }
             $record->loadMissing(['currentRevision.lines', 'currentRevision.paymentMilestones', 'currentRevision.executionScheduleLines']);
             $source = $record->currentRevision;
 
@@ -133,6 +137,7 @@ class QuotationService
 
             foreach ($source->lines as $line) {
                 $revision->lines()->create($line->only([
+                    'sales_request_line_id',
                     'line_number',
                     'product_id',
                     'item_id',
@@ -215,7 +220,7 @@ class QuotationService
         return DB::transaction(function () use ($record): Quotation {
             $record->loadMissing('currentRevision');
 
-            if (in_array($record->status, [Quotation::StatusCancelled, Quotation::StatusConverted], true)) {
+            if (! $record->canCancel()) {
                 throw new DomainException(__('quotations.messages.transition_not_allowed'));
             }
 
@@ -229,6 +234,9 @@ class QuotationService
     public function delete(Quotation $record): void
     {
         DB::transaction(function () use ($record): void {
+            if (! $record->canDeleteDraft()) {
+                throw new DomainException(__('quotations.messages.transition_not_allowed'));
+            }
             $this->audit->softDelete($record);
         });
     }
@@ -297,7 +305,7 @@ class QuotationService
             }
 
             $revision->forceFill(['status' => $newRevisionStatus])->save();
-            $this->audit->saveUpdate($record, ['status' => $newStatus]);
+            $this->audit->saveUpdate($record, ['status' => $newStatus, ...($newStatus === Quotation::StatusSent ? ['sent_at' => now(), 'sent_by' => auth()->id()] : [])]);
 
             return $record->refresh()->load($this->defaultRelations());
         });
@@ -306,9 +314,10 @@ class QuotationService
     /**
      * @return array<string, mixed>
      */
-    private function quotationValues(array $data, int $companyId): array
+    private function quotationValues(array $data, int $companyId, ?int $preservedEmployeeId = null): array
     {
         return [
+            ...array_intersect_key($data, ['sales_request_id' => true]),
             'company_id' => $companyId,
             'branch_id' => $data['branch_id'],
             'customer_id' => $this->customerId($companyId, $data['customer_doc_num'] ?? null),
@@ -320,7 +329,7 @@ class QuotationService
             'valid_until' => $data['valid_until'] ?? null,
             'currency_id' => $this->currencyId($companyId, $data['currency_doc_num'] ?? null),
             'exchange_rate' => $this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000',
-            'sales_person_id' => $this->salesPersonId($data['sales_person_doc_num'] ?? null),
+            'business_employee_id' => $data['business_employee_id'] ?? app(SalesSelect2Service::class)->employeeId($companyId, $data['branch_id'], $data['sales_person_doc_num'] ?? null, $preservedEmployeeId),
             'notes' => $data['notes'] ?? null,
             'internal_notes' => $data['internal_notes'] ?? null,
         ];
@@ -386,6 +395,10 @@ class QuotationService
     {
         $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['discount_type'] ?? null, $data['discount_value'] ?? 0);
 
+        $sourceLines = $revision->lines()->get()->keyBy('line_number');
+        if ($record->sales_request_id && $sourceLines->isNotEmpty() && $sourceLines->count() !== count($calculation['lines'])) {
+            throw new DomainException(__('Source request lines must be preserved; convert another quantity from the request.'));
+        }
         $revision->lines()->delete();
         foreach ($calculation['lines'] as $index => $line) {
             $product = $this->productByDocNum((int) $record->company_id, $line['product_doc_num'] ?? null);
@@ -395,9 +408,14 @@ class QuotationService
                 throw new DomainException(__('quotations.messages.product_sales_ineligible'));
             }
 
+            $sourceLine = $sourceLines->get($index + 1);
+            if ($record->sales_request_id && $sourceLine && ((int) $sourceLine->product_id !== (int) $product->id || (int) $sourceLine->unit_id !== (int) $unit?->id || bccomp((string) $sourceLine->quantity, (string) $line['quantity'], 8) !== 0)) {
+                throw new DomainException(__('Source request lines must be preserved; convert another quantity from the request.'));
+            }
             $unitSnapshot = $this->unitConversions->snapshot($product, $unit?->getKey(), $line['quantity']);
 
             $revision->lines()->create([
+                'sales_request_line_id' => $sourceLine?->sales_request_line_id ?? $line['sales_request_line_id'] ?? null,
                 'line_number' => $index + 1,
                 'product_id' => $product?->getKey(),
                 'item_id' => $product?->getKey(),
@@ -481,13 +499,6 @@ class QuotationService
         $docNum = trim((string) $docNum);
 
         return $docNum === '' ? null : Currency::query()->forCompany($companyId)->where('doc_num', $docNum)->whereNull('deleted_at')->value('id');
-    }
-
-    private function salesPersonId(?string $docNum): ?int
-    {
-        $docNum = trim((string) $docNum);
-
-        return $docNum === '' ? null : User::query()->where('doc_num', $docNum)->where('status', 'active')->whereNull('deleted_at')->value('id');
     }
 
     private function productByDocNum(int $companyId, ?string $docNum): ?Product

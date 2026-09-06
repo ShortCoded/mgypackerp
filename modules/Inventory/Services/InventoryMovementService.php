@@ -25,7 +25,7 @@ class InventoryMovementService
     {
         return DB::transaction(function () use ($header, $lines): InventoryDocument {
             if ($lines === []) {
-                throw new DomainException('An inventory movement requires at least one line.');
+                throw new DomainException(__('An inventory movement requires at least one line.'));
             }
 
             $sourceStore = BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($header['branch_store_id']);
@@ -35,7 +35,7 @@ class InventoryMovementService
 
             if ((int) $sourceStore->branch_id !== (int) $header['branch_id']
                 || ($destinationStore && (int) $destinationStore->branch_id !== (int) $header['branch_id'])) {
-                throw new DomainException('Inventory stores must belong to the selected operating branch.');
+                throw new DomainException(__('Inventory stores must belong to the selected operating branch.'));
             }
 
             $this->assertLocationBelongsToStore($header['warehouse_location_id'] ?? null, (int) $sourceStore->getKey());
@@ -71,7 +71,7 @@ class InventoryMovementService
                 $destinationLocationId = $input['destination_warehouse_location_id'] ?? $header['destination_warehouse_location_id'] ?? null;
 
                 if ((int) $product->company_id !== (int) $header['company_id'] || bccomp($quantity, '0', 8) <= 0) {
-                    throw new DomainException('Inventory movement lines require a company product and a positive base quantity.');
+                    throw new DomainException(__('Inventory movement lines require a company product and a positive base quantity.'));
                 }
 
                 $this->assertLocationBelongsToStore($sourceLocationId, (int) $sourceStore->getKey());
@@ -127,7 +127,7 @@ class InventoryMovementService
             ->exists();
 
         if (! $belongsToStore) {
-            throw new DomainException('Warehouse locations must be active and belong to their selected store.');
+            throw new DomainException(__('Warehouse locations must be active and belong to their selected store.'));
         }
     }
 }

@@ -4,6 +4,7 @@
 @section('content')
 <form method="POST" action="{{ route('admin.purchases.supplier-payments.store') }}" class="js-supplier-payment-form">
     @csrf
+        <x-forms.line-item-cards />
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('Supplier Payment / Advance') }}</h5></div>
         <div class="card-body">
@@ -26,7 +27,7 @@
                     <label class="form-label" for="payment_method">{{ __('Payment method') }}</label>
                     <select class="form-select js-payment-method" id="payment_method" name="payment_method" required>
                         @foreach(\Modules\Purchases\Models\SupplierPaymentContext::methods() as $method)
-                            <option value="{{ $method }}" @selected(old('payment_method', 'cash') === $method)>{{ str($method)->title() }}</option>
+                            <option value="{{ $method }}" @selected(old('payment_method', 'cash') === $method)>{{ __(str($method)->replace('_', ' ')->title()->toString()) }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -99,6 +100,7 @@
         </table></div></div>
     </div>
     <div class="d-flex justify-content-end"><button class="btn btn-primary">{{ __('Create Supplier payment') }}</button></div>
+@include('modules.purchases.procurement.attachments', ['attachmentRecord' => $draft ?? null, 'attachmentsReadonly' => false])
 </form>
 @endsection
 

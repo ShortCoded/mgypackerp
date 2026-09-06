@@ -68,6 +68,8 @@ class StorePurchaseOrderRequest extends FormRequest
         $companyId = $this->input('company_id');
 
         return [
+            'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
+            'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'doc_number' => ['nullable', 'integer', 'min:1', $this->uniqueDocumentNumberRule()],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'financial_period_id' => ['required', 'integer', 'exists:financial_periods,id'],
@@ -103,7 +105,8 @@ class StorePurchaseOrderRequest extends FormRequest
             'direct_procurement_reason' => ['nullable', 'string', 'required_if:direct_procurement_override,1'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.public_id' => ['nullable', 'string'],
+            'lines.*.public_id' => ['nullable', 'string', 'distinct'],
+            'lines.*.purchase_requisition_line_id' => ['nullable', 'integer'],
             'lines.*.product_doc_num' => [
                 'required',
                 'string',
@@ -328,7 +331,9 @@ class StorePurchaseOrderRequest extends FormRequest
 
     private function validateDirectProcurement(Validator $validator, ?PurchaseOrder $current): void
     {
-        if ($current?->purchase_requisition_id !== null || $current?->supplier_selection_id !== null) {
+        $lines = collect($this->input('lines', []));
+        if (($lines->isNotEmpty() && $lines->every(fn (array $line): bool => filled($line['purchase_requisition_line_id'] ?? null)))
+            || $current?->purchase_requisition_id !== null || $current?->supplier_selection_id !== null) {
             return;
         }
 
@@ -364,6 +369,7 @@ class StorePurchaseOrderRequest extends FormRequest
             ->filter(fn (mixed $line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'public_id' => trim((string) ($line['public_id'] ?? '')) ?: null,
+                'purchase_requisition_line_id' => filled($line['purchase_requisition_line_id'] ?? null) ? $line['purchase_requisition_line_id'] : null,
                 'product_doc_num' => trim((string) ($line['product_doc_num'] ?? '')) ?: null,
                 'unit_doc_num' => trim((string) ($line['unit_doc_num'] ?? '')) ?: null,
                 'cost_center_doc_num' => trim((string) ($line['cost_center_doc_num'] ?? '')) ?: null,

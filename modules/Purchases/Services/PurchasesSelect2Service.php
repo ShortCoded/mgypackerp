@@ -5,12 +5,14 @@ namespace Modules\Purchases\Services;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
@@ -18,6 +20,15 @@ use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
+use Modules\HR\Models\HrEmployee;
+use Modules\Inventory\Models\UnpricedInventoryReceipt;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
+use Modules\Purchases\Models\PurchaseReturnLine;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Models\RequestForQuotation;
 use Modules\Purchases\Models\Supplier;
 
 class PurchasesSelect2Service
@@ -31,6 +42,110 @@ class PurchasesSelect2Service
         private readonly ProductImageResolver $productImages,
         private readonly ScreenDataVisibilityService $visibility,
     ) {}
+
+    public function currencyRate(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $currency = Currency::query()->forCompany((int) $context['company_id'])->where('doc_num', $request->input('currency_doc_num'))->firstOrFail();
+        if ($currency->is_main) {
+            return ['rate' => 1, 'is_main' => true, 'source' => null];
+        }
+        $date = app(DateFormatService::class)->normalizeForStorage($request->input('document_date')) ?? now()->toDateString();
+        $previous = PurchaseOrder::query()->where('company_id', $context['company_id'])->where('currency_id', $currency->id)
+            ->where('status', 'approved')->whereDate('document_date', '<=', $date)->latest('document_date')->latest('id')->first(['doc_num', 'exchange_rate']);
+
+        return ['rate' => $previous?->exchange_rate, 'is_main' => false, 'source' => $previous?->doc_num];
+    }
+
+    public function rfqs(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = RequestForQuotation::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('status', 'issued')->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num]);
+    }
+
+    public function employees(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = HrEmployee::query()->where('company_id', $context['company_id'])
+            ->active()->select(['id', 'doc_num', 'full_name', 'name'])->orderBy('full_name')->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num', 'full_name', 'name']]);
+
+        return $this->select2->paginated($query, $request, fn ($employee): array => ['id' => (string) $employee->id, 'text' => $employee->doc_num.' / '.($employee->full_name ?: $employee->name)]);
+    }
+
+    public function requisitions(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = PurchaseRequisition::query()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'partially_converted'])
+            ->whereHas('lines', fn ($lines) => $lines->whereRaw('approved_quantity > COALESCE((SELECT SUM(purchase_order_lines.ordered_quantity) FROM purchase_order_lines INNER JOIN purchase_orders ON purchase_orders.id = purchase_order_lines.purchase_order_id WHERE purchase_order_lines.purchase_requisition_line_id = purchase_requisition_lines.id AND purchase_order_lines.deleted_at IS NULL AND purchase_orders.deleted_at IS NULL AND purchase_orders.status NOT IN (?, ?)), 0)', ['cancelled', 'rejected']))
+            ->select(['id', 'doc_num', 'request_date'])->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num.' / '.$record->request_date->format('Y-m-d')]);
+    }
+
+    public function purchaseOrders(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = PurchaseOrder::query()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
+            ->with('supplier')->orderByDesc('id');
+        if ($request->input('purpose') === 'receipt') {
+            $query->where('status', PurchaseOrder::StatusApproved)->whereHas('lines', function ($lines): void {
+                $received = UnpricedInventoryReceiptLine::query()->selectRaw('COALESCE(SUM(delivered_quantity), 0)')
+                    ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
+                    ->whereHas('receipt', fn ($receipts) => $receipts->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']));
+                $lines->whereHas('product', fn ($products) => $products->where('item_classification', '<>', 'service'))
+                    ->where('ordered_quantity', '>', $received);
+            });
+        }
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num', 'supplier_reference']]);
+
+        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num.' / '.$record->supplier?->name]);
+    }
+
+    public function invoices(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+            ->whereIn('status', [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed])
+            ->whereHas('purchaseOrder', fn ($query) => $query->where('doc_num', $request->input('purchase_order')))
+            ->when($request->filled('receipt'), fn ($query) => $query->whereHas('lines.receiptLine.receipt', fn ($receipts) => $receipts->where('doc_num', $request->input('receipt'))))
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
+        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num]);
+    }
+
+    public function receipts(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = UnpricedInventoryReceipt::query()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->whereNotNull('purchase_order_id')->where('posting_status', 'posted')
+            ->when($request->filled('purchase_order'), fn ($query) => $query->whereHas('purchaseOrder', fn ($po) => $po->where('doc_num', $request->input('purchase_order'))))
+            ->with(['supplier', 'purchaseOrder'])->orderByDesc('id');
+        if (in_array($request->input('purpose'), ['invoice', 'return'], true)) {
+            $query->whereHas('lines', function ($lines) use ($request): void {
+                $returned = PurchaseReturnLine::query()->selectRaw('COALESCE(SUM(quantity), 0)')
+                    ->whereColumn('receipt_line_id', 'unpriced_inventory_receipt_lines.id')
+                    ->whereHas('purchaseReturn', fn ($returns) => $returns->whereNotIn('status', ['cancelled', 'reversed']));
+                if ($request->input('purpose') === 'return') {
+                    $lines->where('delivered_quantity', '>', $returned);
+                } else {
+                    $billed = PurchaseInvoiceLine::query()->selectRaw('COALESCE(SUM(quantity), 0)')
+                        ->whereColumn('receipt_line_id', 'unpriced_inventory_receipt_lines.id')
+                        ->whereHas('purchaseInvoice', fn ($invoices) => $invoices->whereNotIn('status', ['cancelled', 'reversed']));
+                    $lines->where('inventory_posted_quantity', '>', $billed);
+                }
+            });
+        }
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num.' / '.$record->supplier?->name]);
+    }
 
     public function suppliers(Request $request): array
     {
@@ -46,6 +161,10 @@ class PurchasesSelect2Service
             ->select(['doc_num', 'doc_number', 'name', 'phone', 'mobile', 'email'])
             ->orderBy('name')
             ->orderBy('doc_number');
+
+        if ($request->filled('rfq')) {
+            $query->whereIn('suppliers.id', DB::table('request_for_quotation_suppliers')->select('supplier_id')->whereIn('request_for_quotation_id', RequestForQuotation::query()->where('company_id', $companyId)->where('doc_num', $request->input('rfq'))->select('id')));
+        }
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {

@@ -21,12 +21,22 @@
                 'goods_receipts' => route('admin.purchases.goods-receipt-notes.show', $record->doc_num),
                 'goods_receipt_inspections' => route('admin.purchases.goods-receipt-inspection.show', $record->doc_num),
                 'purchase_returns', 'supplier_debit_notes' => route('admin.purchases.purchase-returns.show', $record->doc_num),
-                'supplier_payments', 'supplier_advances' => route('admin.purchases.supplier-payments.show', $record->cashVoucher?->doc_num),
+                'supplier_payments', 'supplier_advances' => route('admin.purchases.supplier-payments.show', $record->doc_num),
                 default => null,
             };
         };
     @endphp
 
+    @if($screen === 'purchase_requisitions')
+    @can('purchase_orders.create') @can('purchases.prices.view')
+    <form class="card mb-3" method="GET" action="{{ route('admin.purchases.purchase-orders.create') }}"><div class="card-body row g-3 align-items-end">
+        <div class="col-md-9"><label class="form-label">{{ __('Combine approved purchase requests') }}</label><select class="form-select" name="purchase_requisition_doc_nums[]" multiple required>
+            @foreach($records as $requestRecord) @if(in_array($requestRecord->status, ['approved', 'partially_converted']))<option value="{{ $requestRecord->doc_num }}">{{ $requestRecord->doc_num }} / {{ $requestRecord->branchStore?->name }}</option>@endif @endforeach
+        </select><div class="form-text">{{ __('Select purchase requests for the same receiving warehouse.') }}</div></div>
+        <div class="col-md-3"><button class="btn btn-primary">{{ __('Create Purchase Order') }}</button></div>
+    </div></form>
+    @endcan @endcan
+    @endif
     <div class="card erp-datatable-card">
         <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <div>
@@ -116,7 +126,7 @@
                                 @if($showPrices)
                                     <td class="text-end" dir="ltr">{{ $commercialValue !== null ? app(\Modules\Core\Services\NumericFormatService::class)->format($commercialValue) : '—' }}</td>
                                 @endif
-                                <td><span class="badge badge-subtle-secondary">{{ str((string) $status)->replace('_', ' ')->title() }}</span></td>
+                                <td><span class="badge badge-subtle-secondary">{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</span></td>
                                 <td class="text-end">
                                     @if($url)
                                         <a class="btn btn-falcon-default btn-sm" href="{{ $url }}">{{ __('View') }}</a>

@@ -8,7 +8,11 @@ class ReverseFixedAssetDocumentRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can($this->routeIs('admin.fixed-assets.depreciation.reverse') ? 'fixed_assets.depreciation.reverse' : 'fixed_assets.disposal.reverse');
+        return (bool) $this->user()?->can(match (true) {
+            $this->routeIs('admin.fixed-assets.depreciation.reverse') => 'fixed_assets.depreciation.reverse',
+            $this->routeIs('admin.fixed-assets.movements.reverse') => $this->route('movement')?->movement_type === 'addition' ? 'fixed_assets.improvement.reverse' : 'fixed_assets.recognition.reverse',
+            default => 'fixed_assets.disposal.reverse',
+        });
     }
 
     public function rules(): array

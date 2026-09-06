@@ -8,10 +8,26 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\PurchaseReturnLine;
 
 class PurchaseInvoiceMatchingService
 {
     public function __construct(private readonly ProcurementAuditService $audit) {}
+
+    public function remainingForReceipt(UnpricedInventoryReceiptLine $line, ?int $exceptInvoiceId = null): float
+    {
+        $line->loadMissing('receipt');
+        if (! $line->receipt?->approved || in_array($line->receipt->status, ['cancelled', 'reversed'], true)) {
+            return 0.0;
+        }
+        $billed = (float) PurchaseInvoiceLine::query()->where('receipt_line_id', $line->getKey())
+            ->when($exceptInvoiceId !== null, fn ($query) => $query->where('purchase_invoice_id', '<>', $exceptInvoiceId))
+            ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']))->sum('quantity');
+        $returnedBeforeInvoice = (float) PurchaseReturnLine::query()->where('receipt_line_id', $line->getKey())
+            ->where('from_quarantine', false)->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted')->whereNull('purchase_invoice_id'))->sum('quantity');
+
+        return max(0, (float) $line->inventory_posted_quantity - $returnedBeforeInvoice - $billed);
+    }
 
     public function matchForPosting(PurchaseInvoice $invoice): void
     {
@@ -30,19 +46,26 @@ class PurchaseInvoiceMatchingService
         $order = PurchaseOrder::query()->lockForUpdate()->findOrFail($invoice->purchase_order_id);
         if ((int) $order->company_id !== (int) $invoice->company_id
             || (int) $order->supplier_id !== (int) $invoice->supplier_id
+            || (int) $order->branch_id !== (int) $invoice->branch_id
+            || (int) $order->currency_id !== (int) $invoice->currency_id
             || ! in_array($order->status, [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed], true)) {
             throw new DomainException(__('Purchase order, supplier, and invoice context do not match.'));
         }
 
+        $variances = [];
         foreach ($invoice->lines as $invoiceLine) {
             $this->matchLine($invoiceLine, $order);
+            $source = $invoiceLine->purchaseOrderLine;
+            $variances[] = ['line' => $invoiceLine->public_id, 'order_line' => $source->public_id,
+                'quantity_variance' => number_format(max(0, (float) $invoiceLine->quantity - (float) ($invoiceLine->receiptLine?->inventory_posted_quantity ?? $source->ordered_quantity)), 8, '.', ''),
+                'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 4)];
         }
 
         $freightMatch = $this->matchFreight($invoice, $order);
 
         $invoice->forceFill([
             'matching_status' => 'matched',
-            'matching_notes' => json_encode($freightMatch, JSON_THROW_ON_ERROR),
+            'matching_notes' => json_encode([...$freightMatch, 'line_variances' => $variances], JSON_THROW_ON_ERROR),
         ])->save();
         $this->audit->record($invoice, 'purchase_invoice.matched', [
             'purchase_order_doc_num' => $order->doc_num,
@@ -58,7 +81,7 @@ class PurchaseInvoiceMatchingService
         $previouslyInvoiced = PurchaseInvoice::query()
             ->where('purchase_order_id', $order->getKey())
             ->whereKeyNot($invoice->getKey())
-            ->whereNotIn('status', [PurchaseInvoice::StatusCancelled])
+            ->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed'])
             ->lockForUpdate()
             ->get(['freight_amount'])
             ->sum(fn (PurchaseInvoice $matchedInvoice): float => (float) $matchedInvoice->freight_amount);
@@ -97,7 +120,7 @@ class PurchaseInvoiceMatchingService
 
         $invoicedForOrderLine = (float) PurchaseInvoiceLine::query()
             ->where('purchase_order_line_id', $orderLine->getKey())
-            ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled]))
+            ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']))
             ->sum('quantity');
 
         if ($orderLine->product?->isService()) {
@@ -107,24 +130,28 @@ class PurchaseInvoiceMatchingService
                 ->where('purchase_order_line_id', $orderLine->getKey())
                 ->find($invoiceLine->receipt_line_id);
             if (! $receiptLine instanceof UnpricedInventoryReceiptLine
-                || (int) $receiptLine->product_id !== (int) $invoiceLine->product_id) {
+                || (int) $receiptLine->product_id !== (int) $invoiceLine->product_id
+                || ! $receiptLine->receipt?->approved
+                || in_array($receiptLine->receipt?->status, ['cancelled', 'reversed'], true)) {
                 throw new DomainException(__('A stock invoice line requires an accepted goods receipt line.'));
             }
 
             $invoicedForReceipt = (float) PurchaseInvoiceLine::query()
                 ->where('receipt_line_id', $receiptLine->getKey())
-                ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled]))
+                ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']))
                 ->sum('quantity');
-            if ($invoicedForReceipt > (float) $receiptLine->accepted_quantity + 0.0001) {
+            if ($invoicedForReceipt > (float) $receiptLine->inventory_posted_quantity + 0.00000001) {
                 throw new DomainException(__('Invoice quantity exceeds quality-accepted receipt quantity.'));
             }
-            if ($invoicedForReceipt > (float) $receiptLine->accepted_quantity - (float) $receiptLine->grni_returned_quantity + 0.0001) {
+            $returned = (float) PurchaseReturnLine::query()->where('receipt_line_id', $receiptLine->getKey())
+                ->where('from_quarantine', false)->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted')->whereNull('purchase_invoice_id'))->sum('quantity');
+            if ($invoicedForReceipt > (float) $receiptLine->inventory_posted_quantity - $returned + 0.00000001) {
                 throw new DomainException(__('Invoice quantity exceeds the accepted GRNI quantity remaining after returns.'));
             }
-            $eligibleQuantity = (float) $orderLine->received_quantity;
+            $eligibleQuantity = $orderLine->receivedQuantity();
         }
 
-        if ($invoicedForOrderLine > $eligibleQuantity + 0.0001) {
+        if ($invoicedForOrderLine > $eligibleQuantity + 0.00000001) {
             throw new DomainException(__('Invoice quantity exceeds the eligible purchase quantity.'));
         }
 

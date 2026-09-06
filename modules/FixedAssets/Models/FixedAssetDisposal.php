@@ -32,6 +32,8 @@ class FixedAssetDisposal extends Model
     public const SettlementCustomerInvoice = 'customer_invoice';
 
     protected $fillable = [
+        'accumulated_account_id', 'branch_id', 'cost_center_id',
+        'disposal_expenses', 'base_disposal_expenses', 'net_proceeds', 'expenses_account_id', 'expenses_journal_entry_id', 'expenses_reversal_journal_entry_id',
         'doc_number',
         'doc_num',
         'company_id',
@@ -79,6 +81,7 @@ class FixedAssetDisposal extends Model
     protected function casts(): array
     {
         return [
+            'disposal_expenses' => 'decimal:4', 'base_disposal_expenses' => 'decimal:4', 'net_proceeds' => 'decimal:4',
             'disposal_date' => 'date',
             'original_cost' => 'decimal:4',
             'base_original_cost' => 'decimal:4',
@@ -141,6 +144,11 @@ class FixedAssetDisposal extends Model
     public function proceedsAccount(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'proceeds_account_id')->withTrashed();
+    }
+
+    public function expensesJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'expenses_journal_entry_id')->withTrashed();
     }
 
     public function journalEntry(): BelongsTo

@@ -52,6 +52,7 @@ return [
         'deleted' => 'Record deleted successfully.',
         'no_records_selected' => 'Select at least one record.',
         'restore_not_allowed' => 'This record cannot be restored.',
+        'restore_conflict' => 'This financial period cannot be restored because another period in the current company has the same name or document number.',
         'restored' => 'Record restored successfully.',
         'updated' => 'Record updated successfully.',
     ],

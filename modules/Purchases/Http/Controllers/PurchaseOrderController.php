@@ -6,10 +6,12 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
@@ -25,6 +27,8 @@ use Modules\Purchases\Http\Requests\PurchaseOrders\UpdatePurchaseOrderDocumentNu
 use Modules\Purchases\Http\Requests\PurchaseOrders\UpdatePurchaseOrderRequest;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Models\PurchaseRequisitionLine;
 use Modules\Purchases\Services\PurchaseOrderService;
 
 class PurchaseOrderController extends Controller
@@ -49,9 +53,43 @@ class PurchaseOrderController extends Controller
         return $dataTable->json($request);
     }
 
-    public function create(): View
+    public function create(Request $request): View|JsonResponse
     {
-        return $this->form('create');
+        $input = $request->validate(['purchase_requisition_doc_nums' => ['nullable', 'array', 'max:50'], 'purchase_requisition_doc_nums.*' => ['required', 'string', 'distinct']]);
+        $view = $request->expectsJson() ? null : $this->form('create');
+        $numbers = $input['purchase_requisition_doc_nums'] ?? [];
+        if ($numbers === []) {
+            return $view ?? response()->json(['lines' => []]);
+        }
+        abort_unless($request->user()?->can('purchases.purchase_requisitions.view'), 403);
+        $context = $this->operatingContext->snapshot($request);
+        $requests = PurchaseRequisition::query()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->whereIn('doc_num', $numbers)
+            ->whereIn('status', [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted])
+            ->with(['lines.product', 'lines.unit', 'branchStore', 'suggestedSupplier'])->get();
+        abort_unless($requests->count() === count($numbers), 422, __('Only approved purchase requests can create purchase orders.'));
+        abort_unless($requests->pluck('branch_store_id')->unique()->count() === 1, 422, __('Select purchase requests for the same receiving warehouse.'));
+        $lines = $requests->flatMap(fn (PurchaseRequisition $requisition) => $requisition->lines->map(function (PurchaseRequisitionLine $line) use ($requisition): array {
+            return [...$this->emptyLine(),
+                'purchase_requisition_line_id' => $line->getKey(), 'source_doc_num' => $requisition->doc_num,
+                'product_doc_num' => $line->product->doc_num, 'product_text' => $line->product->doc_num.' / '.$line->product->name,
+                'unit_doc_num' => $line->unit->doc_num, 'unit_text' => $line->unit->name,
+                'unit_options' => $this->unitOptions->options($line->product), 'ordered_quantity' => $line->availableToOrder(),
+                'notes' => $line->notes,
+            ];
+        }))->filter(fn (array $line): bool => $line['ordered_quantity'] > 0)->values()->all();
+        abort_if($lines === [], 422, __('There are no remaining approved quantities to order.'));
+        $first = $requests->first();
+
+        if ($request->expectsJson()) {
+            return response()->json(['lines' => $lines, 'store' => $first->branchStore ? ['id' => $first->branchStore->public_uuid, 'text' => $first->branchStore->name] : null]);
+        }
+
+        return $view->with([
+            'lines' => $lines, 'sourceRequests' => $requests,
+            'storeOption' => $first->branchStore ? ['id' => $first->branchStore->public_uuid, 'text' => $first->branchStore->name] : null,
+            'supplierOption' => $first->suggestedSupplier ? ['id' => $first->suggestedSupplier->doc_num, 'text' => $first->suggestedSupplier->name] : null,
+        ]);
     }
 
     public function store(StorePurchaseOrderRequest $request): JsonResponse
@@ -154,9 +192,46 @@ class PurchaseOrderController extends Controller
         return response()->json(['success' => true, 'message' => __('purchase_orders.messages.restored')]);
     }
 
+    public function markSent(PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
+    {
+        try {
+            $this->service->markSent($purchaseOrder);
+
+            return request()->expectsJson() ? response()->json(['success' => true, 'message' => __('Purchase order marked as sent.')]) : back()->with('success', __('Purchase order marked as sent.'));
+        } catch (DomainException $exception) {
+            return request()->expectsJson() ? response()->json(['success' => false, 'message' => $exception->getMessage()], 422) : back()->withErrors(['document' => $exception->getMessage()]);
+        }
+    }
+
+    public function submit(PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
+    {
+        try {
+            $this->service->submit($purchaseOrder);
+        } catch (DomainException $exception) {
+            return request()->expectsJson() ? response()->json(['success' => false, 'message' => $exception->getMessage()], 422) : back()->withErrors(['status' => $exception->getMessage()]);
+        }
+
+        return request()->expectsJson() ? response()->json(['success' => true, 'message' => __('Document saved successfully.')]) : to_route('admin.purchases.purchase-orders.show', $purchaseOrder->doc_num);
+    }
+
+    public function reject(Request $request, PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+        try {
+            $this->service->reject($purchaseOrder, $data['reason']);
+        } catch (DomainException $exception) {
+            return request()->expectsJson() ? response()->json(['success' => false, 'message' => $exception->getMessage()], 422) : back()->withErrors(['status' => $exception->getMessage()]);
+        }
+
+        return request()->expectsJson() ? response()->json(['success' => true, 'message' => __('Document saved successfully.')]) : to_route('admin.purchases.purchase-orders.show', $purchaseOrder->doc_num);
+    }
+
     public function approve(PurchaseOrder $purchaseOrder): JsonResponse
     {
         try {
+            if (! in_array($purchaseOrder->status, [PurchaseOrder::StatusSubmitted, PurchaseOrder::StatusApproved], true)) {
+                throw new DomainException(__('Submit this purchase order before approval.'));
+            }
             $record = $this->service->approve($purchaseOrder);
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
@@ -250,6 +325,7 @@ class PurchaseOrderController extends Controller
             'currencyOption' => $this->currencyOption($record),
             'storeOption' => $this->storeOption($record),
             'lines' => $this->lineRows($record),
+            'sourceRequests' => $record ? $record->lines->map(fn ($line) => $line->requisitionLine?->requisition)->filter()->unique('id') : collect(),
         ]);
     }
 
@@ -370,7 +446,7 @@ class PurchaseOrderController extends Controller
      */
     private function currencyOption(?PurchaseOrder $record): ?array
     {
-        $currency = $record?->currency;
+        $currency = $record?->currency ?? Currency::query()->forCompany((int) $this->operatingContext->snapshot(request())['company_id'])->active()->where('is_main', true)->first();
 
         if (! $currency) {
             return null;
@@ -453,6 +529,8 @@ class PurchaseOrderController extends Controller
             'unit_options' => $line->product ? $this->unitOptions->options($line->product) : [],
             'cost_center_doc_num' => $line->costCenter?->doc_num,
             'cost_center_text' => $line->costCenter?->codeNameLabel(),
+            'purchase_requisition_line_id' => $line->purchase_requisition_line_id,
+            'source_doc_num' => $line->requisitionLine?->requisition?->doc_num,
             'ordered_quantity' => $line->ordered_quantity,
             'received_quantity' => $line->received_quantity,
             'remaining_quantity' => $line->remaining_quantity,
@@ -526,7 +604,6 @@ class PurchaseOrderController extends Controller
             && $context['financial_period_id']
             && $context['branch_id']
             && (int) $record->company_id === (int) $context['company_id']
-            && (int) $record->financial_period_id === (int) $context['financial_period_id']
             && (int) $record->branch_id === (int) $context['branch_id'],
             404
         );

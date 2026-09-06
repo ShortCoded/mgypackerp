@@ -59,6 +59,7 @@
                     </div>
                     <div class="col-md-3 col-xl-2">
                         <label class="form-label" for="from_date">{{ __('ledger_reports.filters.from_date') }}</label>
+                        @if($type === 'customer_statement')<label class="d-block mb-2"><input type="checkbox" name="all_periods" value="1" @checked(request()->boolean('all_periods'))> {{ __('All financial periods') }}</label>@endif
                         <input class="form-control" id="from_date" name="from_date" type="date" value="{{ $fromDate }}" required>
                         @error('from_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                     </div>
@@ -185,7 +186,7 @@
             </div>
         </div>
         @if($type === 'customer_statement' && !empty($result['subledger_events']))
-            <div class="card mt-3"><div class="card-header"><h6 class="mb-0">{{ __('Customer Invoice, Payment and Credit History') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Date') }}</th><th>{{ __('Event') }}</th><th>{{ __('Document') }}</th><th>{{ __('Related Document') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Remaining Credit') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($result['subledger_events'] as $event)<tr><td>{{ $event['date'] }}</td><td>{{ __(str($event['event'])->replace('_', ' ')->title()->toString()) }}</td><td dir="ltr">{{ $event['document'] }}</td><td dir="ltr">{{ $event['related_document'] }}</td><td class="text-end">{{ $numbers->format($event['amount']) }}</td><td class="text-end">{{ $event['remaining_credit'] === null ? '—' : $numbers->format($event['remaining_credit']) }}</td><td>{{ __($event['status']) }}</td></tr>@endforeach</tbody></table></div></div>
+            <div class="card mt-3"><div class="card-header"><h6 class="mb-0">{{ __('Customer Invoice, Payment and Credit History') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Date') }}</th><th>{{ __('Event') }}</th><th>{{ __('Document') }}</th><th>{{ __('Related Document') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Remaining Credit') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($result['subledger_events'] as $event)<tr><td>{{ $event['date'] }}</td><td>{{ __(str($event['event'])->replace('_', ' ')->title()->toString()) }}</td><td dir="ltr">{{ $event['document'] }}</td><td dir="ltr">{{ $event['related_document'] }}</td><td class="text-end">{{ $numbers->format($event['amount']) }}</td><td class="text-end">{{ $event['remaining_credit'] === null ? '—' : $numbers->format($event['remaining_credit']) }}</td><td>{{ __(str($event['status'])->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table></div></div>
         @endif
     @elseif(request()->boolean('run'))
         <div class="alert alert-info">{{ __('ledger_reports.messages.no_movements') }}</div>

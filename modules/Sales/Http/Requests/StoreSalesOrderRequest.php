@@ -52,7 +52,7 @@ class StoreSalesOrderRequest extends FormRequest
             'currency_doc_num' => ['required', 'string'], 'order_date' => ['required', 'date'],
             'expected_delivery_date' => ['required', 'date', 'after_or_equal:order_date'],
             'customer_reference' => ['nullable', 'string', 'max:160'],
-            'sales_employee_doc_num' => ['nullable', 'string', 'exists:users,doc_num'],
+            'sales_employee_doc_num' => ['nullable', 'string', 'exists:hr_employees,doc_num'],
             'notes' => ['nullable', 'string'],
             'internal_notes' => ['nullable', 'string'], 'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['nullable', 'string'],

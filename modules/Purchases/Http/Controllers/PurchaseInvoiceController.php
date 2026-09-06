@@ -5,11 +5,14 @@ namespace Modules\Purchases\Http\Controllers;
 use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
@@ -17,6 +20,7 @@ use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
 use Modules\Purchases\Http\Requests\BulkDeletePurchaseInvoicesRequest;
@@ -25,7 +29,9 @@ use Modules\Purchases\Http\Requests\StorePurchaseInvoiceRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceDocumentNumberSettingsRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Services\PurchaseInvoiceMatchingService;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 
 class PurchaseInvoiceController extends Controller
@@ -49,9 +55,60 @@ class PurchaseInvoiceController extends Controller
         return $dataTable->json($request);
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
-        return $this->form('create');
+        $input = $request->validate(['purchase_order' => ['nullable', 'string'], 'receipts' => ['nullable', 'array'], 'receipts.*' => ['required', 'string', 'distinct']]);
+        if (blank($input['purchase_order'] ?? null) && ! empty($input['receipts'])) {
+            $context = $this->operatingContext->snapshot($request);
+            $receipt = UnpricedInventoryReceipt::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $input['receipts'][0])->with('purchaseOrder')->firstOrFail();
+            $input['purchase_order'] = $receipt->purchaseOrder?->doc_num;
+        }
+        if (blank($input['purchase_order'] ?? null)) {
+            return $this->form('create');
+        }
+        $context = $this->operatingContext->snapshot($request);
+        $order = PurchaseOrder::query()->forCompany($context['company_id'])
+            ->where('branch_id', $context['branch_id'])->where('doc_num', $input['purchase_order'])
+            ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
+            ->with(['supplier', 'currency', 'financialPeriod', 'lines.product', 'lines.unit', 'lines.costCenter'])->firstOrFail();
+        $matching = app(PurchaseInvoiceMatchingService::class);
+        $sourceLines = collect();
+        foreach ($order->lines as $orderLine) {
+            $receipts = $orderLine->product?->isService() ? collect([null]) : UnpricedInventoryReceiptLine::query()
+                ->where('purchase_order_line_id', $orderLine->getKey())->whereHas('receipt', fn ($query) => $query
+                ->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed'])
+                ->when(! empty($input['receipts']), fn ($query) => $query->whereIn('doc_num', $input['receipts'])))
+                ->with('receipt')->get();
+            foreach ($receipts as $receiptLine) {
+                $alreadyBilled = (float) PurchaseInvoiceLine::query()->where('purchase_order_line_id', $orderLine->getKey())
+                    ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))->sum('quantity');
+                $quantity = $receiptLine ? $matching->remainingForReceipt($receiptLine) : max(0, (float) $orderLine->ordered_quantity - $alreadyBilled);
+                if ($quantity <= 0) {
+                    continue;
+                }
+                $line = new PurchaseInvoiceLine([
+                    'product_id' => $orderLine->product_id, 'unit_id' => $orderLine->unit_id,
+                    'purchase_order_line_id' => $orderLine->getKey(), 'receipt_line_id' => $receiptLine?->getKey(),
+                    'quantity' => $quantity, 'unit_price' => $orderLine->unit_price,
+                    'discount_type' => 'fixed', 'discount_value' => (float) $orderLine->discount_amount * $quantity / (float) $orderLine->ordered_quantity,
+                    'tax_rate' => $orderLine->tax_rate, 'notes' => $orderLine->notes,
+                ]);
+                $line->setRelation('product', $orderLine->product)->setRelation('unit', $orderLine->unit)
+                    ->setRelation('costCenter', $orderLine->costCenter)->setRelation('purchaseOrderLine', $orderLine)->setRelation('receiptLine', $receiptLine);
+                $sourceLines->push($line);
+            }
+        }
+        abort_if($sourceLines->isEmpty(), 422, __('There are no accepted quantities remaining to invoice.'));
+        $draft = new PurchaseInvoice([
+            'company_id' => $order->company_id, 'financial_period_id' => $context['financial_period_id'], 'branch_id' => $order->branch_id,
+            'purchase_order_id' => $order->getKey(), 'supplier_id' => $order->supplier_id, 'currency_id' => $order->currency_id,
+            'exchange_rate' => $order->exchange_rate, 'invoice_date' => now()->toDateString(),
+            'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        ]);
+        $draft->setRelation('purchaseOrder', $order)->setRelation('supplier', $order->supplier)->setRelation('currency', $order->currency)
+            ->setRelation('financialPeriod', FinancialPeriod::query()->findOrFail($context['financial_period_id']))->setRelation('lines', new Collection($sourceLines->all()));
+
+        return $this->form('create', $draft);
     }
 
     public function store(StorePurchaseInvoiceRequest $request): JsonResponse
@@ -213,10 +270,14 @@ class PurchaseInvoiceController extends Controller
 
     public function print(PurchaseInvoice $purchaseInvoice, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
+        $this->assertDocumentContext($purchaseInvoice);
         $purchaseInvoice->loadMissing($this->service->defaultRelations());
         $identity = $printIdentities->forCompany($purchaseInvoice->company);
 
+        $copy = request()->validate(['copy' => ['nullable', Rule::in(['operational', 'legal'])]])['copy'] ?? 'operational';
+
         return $pdf->stream('modules.purchases.purchase-invoices.print', [
+            'printIdentityPolicy' => $copy,
             'title' => __('purchase_invoices.print_title', ['doc' => $purchaseInvoice->doc_num]),
             'companyName' => $identity['legal_name'] ?: $identity['name'],
             'companyLogoPath' => $identity['logo_source'],
@@ -236,8 +297,17 @@ class PurchaseInvoiceController extends Controller
         ]);
     }
 
+    private function assertDocumentContext(PurchaseInvoice $record): void
+    {
+        $context = $this->operatingContext->snapshot(request());
+        abort_unless((int) $record->company_id === (int) $context['company_id'] && (int) $record->branch_id === (int) $context['branch_id'], 404);
+    }
+
     private function form(string $mode, ?PurchaseInvoice $record = null, ?string $cloneSourceToken = null): View
     {
+        if ($record?->exists) {
+            $this->assertDocumentContext($record);
+        }
         $record?->loadMissing($this->service->defaultRelations());
         if ($mode === 'view') {
             $record?->loadMissing([
@@ -247,7 +317,8 @@ class PurchaseInvoiceController extends Controller
         }
         $context = $this->operatingContext->snapshot(request());
         $companyId = (int) ($context['company_id'] ?? 0);
-        $purchaseOrders = PurchaseOrder::query()->forCompany($companyId)
+        $purchaseOrders = PurchaseOrder::query()->forCompany($companyId)->where('doc_num', old('purchase_order_doc_num', $record?->purchaseOrder?->doc_num ?? ''))
+            ->where('branch_id', $context['branch_id'])
             ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
             ->with(['supplier', 'lines.product', 'lines.unit'])
             ->withSum([
@@ -258,10 +329,12 @@ class PurchaseInvoiceController extends Controller
             ->latest('document_date')
             ->limit(100)
             ->get();
-        $eligibleReceiptLines = UnpricedInventoryReceiptLine::query()
+        $eligibleReceiptLines = UnpricedInventoryReceiptLine::query()->whereIn('public_id', collect(old('lines', []))->pluck('receipt_line_public_id')->merge($record?->lines?->map(fn ($line) => $line->receiptLine?->public_id) ?? []))
             ->with(['receipt', 'product', 'unit', 'purchaseOrderLine.purchaseOrder'])
             ->where('company_id', $companyId)
-            ->where('accepted_quantity', '>', 0)
+            ->where('branch_id', $context['branch_id'])
+            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))
+            ->where('inventory_posted_quantity', '>', 0)
             ->whereNotNull('purchase_order_line_id')
             ->latest('id')
             ->limit(500)

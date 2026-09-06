@@ -35,7 +35,7 @@ final class PayrollCostAllocationService
             $item = $this->payslipItem($payslipItemId, lock: true);
 
             if ($allocations === []) {
-                throw new DomainException('At least one payroll cost allocation is required.');
+                throw new DomainException(__('At least one payroll cost allocation is required.'));
             }
 
             foreach ($allocations as $allocation) {
@@ -44,7 +44,7 @@ final class PayrollCostAllocationService
                 if (! is_numeric($percentage)
                     || bccomp((string) $percentage, '0', 4) <= 0
                     || bccomp((string) $percentage, '100', 4) > 0) {
-                    throw new DomainException('Each payroll allocation percentage must be greater than zero and at most 100%.');
+                    throw new DomainException(__('Each payroll allocation percentage must be greater than zero and at most 100%.'));
                 }
             }
 
@@ -54,7 +54,7 @@ final class PayrollCostAllocationService
             );
 
             if (bccomp($percentageTotal, '100.0000', 4) !== 0) {
-                throw new DomainException('Payroll allocation percentages must total exactly 100%.');
+                throw new DomainException(__('Payroll allocation percentages must total exactly 100%.'));
             }
 
             $employee = HrEmployee::query()->findOrFail($item->employee_id);
@@ -70,7 +70,7 @@ final class PayrollCostAllocationService
                     ->first();
 
                 if (! $costCenter instanceof CostCenter) {
-                    throw new DomainException('Payroll allocations require an active posting cost center in the payroll company.');
+                    throw new DomainException(__('Payroll allocations require an active posting cost center in the payroll company.'));
                 }
 
                 $type = $this->allocationType(
@@ -180,7 +180,7 @@ final class PayrollCostAllocationService
             $expenseLines = collect($preview['lines'])->where('direction', 'earning')->values();
 
             if ($expenseLines->isEmpty()) {
-                throw new DomainException('Payroll posting requires at least one allocated earning line.');
+                throw new DomainException(__('Payroll posting requires at least one allocated earning line.'));
             }
 
             $lines = $expenseLines->map(fn (array $line): array => [
@@ -253,7 +253,7 @@ final class PayrollCostAllocationService
         }
 
         return $this->costCenters->allocationTypeForCode((string) $costCenter->cost_center_code)
-            ?? throw new DomainException('The cost center labor nature is not configured; choose an explicit allocation type.');
+            ?? throw new DomainException(__('The cost center labor nature is not configured; choose an explicit allocation type.'));
     }
 
     private function classificationFor(string $allocationType): AccountClassification
@@ -294,7 +294,7 @@ final class PayrollCostAllocationService
             ->where('account_classification_id', $classification->getKey())
             ->orderBy('account_code')
             ->first()
-            ?? throw new DomainException('No active posting account is mapped to classification '.$classification->code.'.');
+            ?? throw new DomainException(__('No active posting account is mapped to classification :classification.', ['classification' => $classification->code]));
     }
 
     private function payslipItem(int $payslipItemId, bool $lock = false): object
@@ -309,7 +309,7 @@ final class PayrollCostAllocationService
             ->first([
                 'item.id', 'item.amount', 'item.direction', 'payslip.employee_id', 'period.company_id',
                 'payroll_item.code as payroll_item_code', 'payroll_item.account_classification_id', 'payroll_item.account_id',
-            ]) ?? throw new DomainException('Payroll item not found.');
+            ]) ?? throw new DomainException(__('Payroll item not found.'));
     }
 
     private function payrollRun(int $payrollRunId, bool $lock = false): object
@@ -319,7 +319,7 @@ final class PayrollCostAllocationService
             ->where('run.id', $payrollRunId)
             ->when($lock, fn ($query) => $query->lockForUpdate())
             ->first(['run.id', 'run.status', 'period.company_id', 'period.period_start', 'period.period_end'])
-            ?? throw new DomainException('Payroll run not found.');
+            ?? throw new DomainException(__('Payroll run not found.'));
     }
 
     /** @return Collection<int, object> */
@@ -373,7 +373,7 @@ final class PayrollCostAllocationService
             || $costCenter->trashed()
             || $costCenter->status !== 'active'
             || $costCenter->is_group) {
-            throw new DomainException('Employee department has no active posting cost center default for the payroll company.');
+            throw new DomainException(__('Employee department has no active posting cost center default for the payroll company.'));
         }
 
         $type = $this->allocationType(null, $costCenter, (string) ($item->payroll_item_code ?? ''));

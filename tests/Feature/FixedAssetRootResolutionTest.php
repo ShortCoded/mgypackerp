@@ -240,6 +240,7 @@ test('only explicit Fixed Asset category and asset writes add one correctly pare
     $accountCountBeforeAsset = Account::withTrashed()->where('company_id', $context['company']->getKey())->count();
     $assetResponse = $this->postJson(route('admin.fixed-assets.assets.store'), fixedAssetRootRegressionPayload($context, [
         'asset_group_account_doc_num' => $category->doc_num,
+        'status' => 'draft',
     ]))->assertOk()->assertJsonPath('success', true);
     $asset = FixedAsset::query()->where('doc_num', $assetResponse->json('data.doc_num'))->firstOrFail();
     $assetAccount = Account::query()->findOrFail($asset->account_id);

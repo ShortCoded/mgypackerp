@@ -167,7 +167,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
         'planned_end_at' => now()->addHours(4),
         'production_machine_id' => $fixture['machine']->getKey(),
         'production_mold_id' => $fixture['mold']->getKey(),
-    ]))->toThrow(DomainException::class, 'overlapping production run');
+    ]))->toThrow(DomainException::class, __('The selected machine or mold has an overlapping production run.'));
 
     $competingReservation = InventoryReservation::query()->create([
         'company_id' => $fixture['company']->getKey(),
@@ -182,7 +182,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
         'created_by' => $fixture['user']->getKey(),
     ]);
     expect(fn () => $cycle->reserveRun($run, $fixture['store']->getKey()))
-        ->toThrow(DomainException::class, 'exceeds available stock');
+        ->toThrow(DomainException::class, __('The production reservation exceeds available stock.'));
     $competingReservation->delete();
     $run = $cycle->reserveRun($run, $fixture['store']->getKey());
     $requirement = $run->requirements->first();
@@ -258,7 +258,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
             'quality_checkpoint_id' => $foreignCheckpointId,
             'result' => 'passed',
         ]],
-    ]))->toThrow(DomainException::class, 'operating company');
+    ]))->toThrow(DomainException::class, __('Quality checkpoints must be active and belong to the selected inspection type and operating company.'));
 
     $inspectionTimeFloor = now()->subSecond();
     $failedInspection = $cycle->recordInspection($run->fresh(), [
@@ -289,7 +289,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
     expect($documents)->toHaveKeys(['consumption', 'waste']);
 
     expect(fn () => $cycle->receiveFinishedGoods($run->fresh(), $fixture['store']->getKey(), '2'))
-        ->toThrow(DomainException::class, 'final passed quality inspection');
+        ->toThrow(DomainException::class, __('A final passed quality inspection is required before finished goods become available.'));
     $cycle->recordInspection($run->fresh(), [
         'quality_inspection_type_id' => $finalInspectionType->getKey(),
         'sampled_at' => now()->addYear(),
@@ -341,7 +341,7 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
     $cycle->reserveRun($secondRun, $fixture['store']->getKey());
     $cycle->issueMaterials($secondRun, $fixture['store']->getKey());
     expect(fn () => $cycle->shortCloseOrder($secondRun->order->fresh(), 'Balance no longer required'))
-        ->toThrow(DomainException::class, 'All issued materials must be returned');
+        ->toThrow(DomainException::class, __('All issued materials must be returned before a run can be cancelled.'));
     $cycle->returnMaterials(
         $secondRun->fresh(),
         $fixture['store']->getKey(),
@@ -376,7 +376,7 @@ test('inventory status transfers remain physically balanced and reject negative 
         ->and(array_sum(array_map('floatval', $statuses)))->toEqual(1000.0);
 
     expect(fn () => $movement->createAndPost($context, [['product_id' => $fixture['raw']->getKey(), 'quantity' => '996']]))
-        ->toThrow(DomainException::class, 'exceeds unreserved stock');
+        ->toThrow(DomainException::class, explode(':document', __('The inventory movement exceeds unreserved stock in the selected store, location, batch, and status. Document: :document; product ID: :product_id; requested: :requested; available: :available; store ID: :store_id; status: :status.'))[0]);
 
     $stockCounts = app(StockCountService::class);
     $count = $stockCounts->createSnapshot([
@@ -429,7 +429,7 @@ test('inventory status transfers remain physically balanced and reject negative 
         'document_type' => InventoryDocument::TypeAdjustmentIn,
     ], [['product_id' => $fixture['raw']->getKey(), 'quantity' => '1']]);
     expect(fn () => $stockCounts->approve($staleCount->fresh()))
-        ->toThrow(DomainException::class, 'Stock changed after the count snapshot');
+        ->toThrow(DomainException::class, __('Stock changed after the count snapshot. Create a new count before approval.'));
 
     $documentCount = InventoryDocument::query()->count();
     $transactionCount = InventoryTransaction::query()->count();
@@ -438,9 +438,9 @@ test('inventory status transfers remain physically balanced and reject negative 
         ...$context,
         'document_type' => InventoryDocument::TypeAdjustmentIn,
     ], [['product_id' => $fixture['raw']->getKey(), 'quantity' => '1']]))
-        ->toThrow(DomainException::class, 'closed or unrelated financial period');
+        ->toThrow(DomainException::class, __('Inventory movements cannot be posted to a closed or unrelated financial period.'));
     expect(fn () => app(InventoryDocumentPostingService::class)->reverse($damageDocument))
-        ->toThrow(DomainException::class, 'closed or unrelated financial period');
+        ->toThrow(DomainException::class, __('Inventory movements cannot be reversed in a closed or unrelated financial period.'));
     expect(InventoryDocument::query()->count())->toBe($documentCount)
         ->and(InventoryTransaction::query()->count())->toBe($transactionCount);
 });
@@ -954,7 +954,7 @@ test('a second packing factory protects customer material across orders and comp
         ->and($wrapperPosition['reserved'])->toBe('1000.00000000')
         ->and($wrapperPosition['available'])->toBe('0.00000000')
         ->and(fn () => $cycle->reserveRun($runB, $packingStore->getKey()))
-        ->toThrow(DomainException::class, 'exceeds available stock');
+        ->toThrow(DomainException::class, __('The production reservation exceeds available stock.'));
 
     $wrapperReservations = InventoryReservation::query()
         ->where('product_id', $wrapper->getKey())
@@ -1003,6 +1003,8 @@ test('a second packing factory protects customer material across orders and comp
     };
 
     $completeRun($runOne, '400', true);
+    expect($orderA->lines->first()->fresh()->activeReservedQuantity())->toBe('400.00000000')
+        ->and(bcsub($orderA->lines->first()->fresh()->production_requested_quantity, $orderA->lines->first()->fresh()->produced_quantity, 8))->toBe('600.00000000');
     $completeRun($runTwo, '600');
     $additionalIssue = InventoryDocument::query()
         ->where('production_run_id', $runOne->getKey())
@@ -1017,7 +1019,9 @@ test('a second packing factory protects customer material across orders and comp
         ->and($waste->lines->first()->quantity)->toBe('5.00000000')
         ->and($productionA->fresh()->status)->toBe(ProductionOrder::StatusCompleted)
         ->and($orderA->lines->first()->fresh()->produced_quantity)->toBe('1000.00000000')
-        ->and(InventoryReservation::query()->where('production_order_id', $productionA->getKey())->where('status', InventoryReservation::StatusActive)->count())->toBe(0);
+        ->and(InventoryReservation::query()->where('production_order_id', $productionA->getKey())->whereNotNull('production_material_requirement_id')->where('status', InventoryReservation::StatusActive)->count())->toBe(0)
+        ->and($orderA->lines->first()->fresh()->activeReservedQuantity())->toBe('1000.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct($fixture['company']->id, $packingStore->id, $kit->id)['available'])->toBe('0.00000000');
 
     foreach ($runOne->fresh()->requirements->merge($runTwo->fresh()->requirements) as $requirement) {
         $accounted = bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8);
@@ -1088,8 +1092,8 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($operator)->withSession($session)
         ->get(route('admin.inventory.reports.index'))
         ->assertOk()
-        ->assertDontSee('<th>Value</th>', false)
-        ->assertDontSee('Inventory / Production to General Ledger Reconciliation');
+        ->assertDontSee('<th>'.__('Value').'</th>', false)
+        ->assertDontSee(__('Inventory / Production to General Ledger Reconciliation'));
     $this->actingAs($operator)->withSession($session)
         ->get(route('admin.inventory.accounting.index'))
         ->assertForbidden();
@@ -1143,8 +1147,8 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.index'))
         ->assertOk()
-        ->assertSee('<th>Value</th>', false)
-        ->assertSee('Inventory / Production to General Ledger Reconciliation');
+        ->assertSee('<th>'.__('Value').'</th>', false)
+        ->assertSee(__('Inventory / Production to General Ledger Reconciliation'));
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.export'))
         ->assertOk()
@@ -1158,7 +1162,7 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.production.reports.index'))
         ->assertOk()
-        ->assertSee('Production Cost and Work in Process');
+        ->assertSee(__('Production Cost and Work in Process'));
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.production.reports.export'))
         ->assertOk()
@@ -1209,9 +1213,9 @@ test('financial inventory reports remain operational before accounting mappings 
         ->get(route('admin.inventory.reports.index'))
         ->assertOk()
         ->assertSee('Plastic Resin')
-        ->assertSee('<th>Value</th>', false)
+        ->assertSee('<th>'.__('Value').'</th>', false)
         ->assertSee($unavailableMessage)
-        ->assertDontSee('Reconciled');
+        ->assertDontSee(__('Reconciled'));
 
     $this->actingAs($financialUser)->withSession($session)
         ->get(route('admin.inventory.reports.export'))
@@ -1333,7 +1337,7 @@ test('receipt layers preserve aging and enforce FEFO without consuming expired s
 
     $failedIssue = $issue($expiryProduct, 'expiry-failed-issue', '26');
     expect(fn () => $layers->allocateIssue($failedIssue))
-        ->toThrow(DomainException::class, 'Expired or undated expiry layers are blocked.');
+        ->toThrow(DomainException::class, __('The issue exceeds non-expired stock. Expired or undated expiry layers are blocked.'));
     expect(InventoryLayerAllocation::query()->where('issue_transaction_id', $failedIssue->getKey())->count())->toBe(0)
         ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $later->getKey())->value('remaining_quantity'))->toBe('25.00000000');
 
@@ -1348,3 +1352,48 @@ test('receipt layers preserve aging and enforce FEFO without consuming expired s
         ->and($expiry->firstWhere('expiry_state', 'expired')?->remaining_quantity)->toBe('10.00000000')
         ->and($expiry->firstWhere('expiry_state', 'expiring')?->remaining_quantity)->toBe('25.00000000');
 });
+
+test('inventory and production screens translate labels without changing status values', function (string $locale): void {
+    $fixture = manufacturingInventoryFixture();
+    $permissions = ['inventory.documents.create', 'inventory.documents.adjust', 'production.orders.view'];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $fixture['user']->forceFill(['locale' => $locale])->save();
+    $session = [
+        'locale' => $locale,
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $arabic = $locale === 'ar';
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.create'))
+        ->assertOk()
+        ->assertSee($arabic ? 'حركة مخزون جديدة' : 'New Inventory Movement')
+        ->assertSee('<option value="inventory_adjustment_in">'.($arabic ? 'تسوية زيادة مخزون' : 'Inventory Adjustment In').'</option>', false);
+
+    $order = app(ProductionCycleService::class)->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '2',
+    ]]);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.work-orders.index'))
+        ->assertOk()
+        ->assertSee($arabic ? 'أوامر التشغيل' : 'Production Work Orders')
+        ->assertSee('value="in_progress"', false)
+        ->assertSee($arabic ? 'قيد التنفيذ' : 'In Progress')
+        ->assertSee($arabic ? 'مسودة' : 'Draft')
+        ->assertSee($order->doc_num);
+})->with(['ar', 'en']);

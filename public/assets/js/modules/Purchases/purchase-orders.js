@@ -7,7 +7,7 @@
   let purchaseOrderTable = null;
 
   function msg(key, fallback) {
-    return messages[key] || fallback || key;
+    return messages[key] ?? fallback ?? key;
   }
 
   function headers() {
@@ -259,7 +259,7 @@
       return;
     }
 
-    purchaseOrderTable = $table.DataTable({
+    purchaseOrderTable = $table.DataTable(window.AppDataTables.options({
       processing: true,
       serverSide: true,
       responsive: true,
@@ -267,6 +267,7 @@
         url: $table.data('url'),
         data: function (data) {
           data.trash_filter = trashFilterValue();
+          $('#purchase-document-filters form').serializeArray().forEach(field => {data[field.name] = field.value;});
         }
       },
       columns: tableColumns(),
@@ -277,7 +278,9 @@
         $('.js-record-select-all').prop('checked', false);
         syncBulkUi();
       }
-    });
+    }));
+    $('#purchase-document-filters form').on('submit', function(event) {event.preventDefault(); purchaseOrderTable.ajax.reload();});
+    $('#purchase-document-filters .js-report-reset').on('click', function() {const form=this.closest('form'); form.reset(); $(form).find('.js-select2-ajax').val(null).trigger('change'); purchaseOrderTable.ajax.reload();});
   }
 
   function rowAction($button) {
@@ -293,7 +296,7 @@
       confirmButtonColor: action === 'delete' || action === 'cancel' ? '#d33' : '#2c7be5'
     };
 
-    if (action === 'cancel') {
+    if (action === 'cancel' || action === 'reject') {
       options.input = 'textarea';
       options.inputPlaceholder = msg('cancel_reason_placeholder', '');
       options.inputValidator = function (value) {
@@ -301,7 +304,7 @@
       };
     }
 
-    confirmDialog(options).done(function (result) {
+    confirmDialog(options).then(function (result) {
       if (!result.isConfirmed) {
         return;
       }
@@ -310,7 +313,7 @@
         url: url,
         method: method,
         headers: headers(),
-        data: action === 'cancel' ? { cancel_reason: result.value } : {}
+        data: action === 'cancel' ? { cancel_reason: result.value } : (action === 'reject' ? { reason: result.value } : {})
       }).done(function (response) {
         showToast('success', response.message || msg('saved', 'Saved successfully.'));
 
@@ -374,6 +377,10 @@
   }
 
   function calculateTotals() {
+    if ($('.js-purchase-order-form').attr('data-readonly') === '1') {
+      return;
+    }
+
     let totalOrdered = 0;
     let totalReceived = 0;
     let totalRemaining = 0;
@@ -582,7 +589,7 @@
         title: msg('delete_confirm_title', ''),
         text: msg('bulk_delete_confirm_text', ''),
         confirmButtonText: msg('delete_confirm_button', '')
-      }).done(function (result) {
+      }).then(function (result) {
         if (!result.isConfirmed) {
           return;
         }
@@ -611,6 +618,86 @@
 
     $(document).on('click', '.js-purchase-order-remove-line', function () {
       removeLine($(this));
+    });
+
+    let sourceRequest;
+    $(document).on('change', '.js-order-requisitions', async function () {
+      const form = this.closest('form');
+      const selection = $(this).val() || [];
+      sourceRequest?.abort();
+      const request = new AbortController(); sourceRequest = request;
+      const url = new URL(form.dataset.sourceUrl, location.href);
+      selection.forEach(value => url.searchParams.append('purchase_requisition_doc_nums[]', value));
+      const output = form.querySelector('[data-source-loading]');
+      output.textContent = msg('source_loading', '');
+      try {
+        const response = await fetch(url, {headers:{Accept:'application/json'},signal:request.signal});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || msg('unexpected_error',''));
+        const body = form.querySelector('.js-purchase-order-lines');
+        const previous = new Map(Array.from(body.children).map(row => [row.querySelector('[name$="[purchase_requisition_line_id]"]')?.value, row]));
+        $(body).find('.select2-hidden-accessible').each(function () {$(this).select2('destroy');});
+        body.replaceChildren();
+        data.lines.forEach(line => {
+          const row = window.AppLineItemCards.append(body, document.getElementById('purchase-order-line-template'), 'lines');
+          const old = previous.get(String(line.purchase_requisition_line_id));
+          Object.entries(line).forEach(([field,value]) => {
+            const input = row.querySelector('[name$="[' + field + ']"]');
+            if (!input || value === null) return;
+            if (input.tagName === 'SELECT') {
+              const text = line[field.replace('_doc_num','_text')] || value;
+              input.replaceChildren(new Option(text,value,true,true));
+            } else input.value = value;
+          });
+          if (old) ['public_id','unit_price','discount_type','discount_value','tax_rate','notes'].forEach(field => {
+            const input = row.querySelector('[name$="[' + field + ']"]');
+            const original = old.querySelector('[name$="[' + field + ']"]');
+            if (input && original) input.value = original.value;
+          });
+          row.querySelector('[data-source-label]').textContent = line.source_doc_num;
+          row.querySelector('.js-line-quantity').max = line.ordered_quantity;
+          row.querySelector('.js-purchase-order-duplicate-line')?.remove();
+          populateUnits($(row),line.unit_options,line.unit_doc_num);
+          initSelect2(row);
+        });
+        if (!data.lines.length) addLine();
+        if (data.store) {
+          const store = form.querySelector('[name="branch_store_uuid"]');
+          store.replaceChildren(new Option(data.store.text,data.store.id,true,true)); $(store).trigger('change');
+        }
+        reindexLines(); calculateTotals();
+        output.textContent = msg('source_loaded','') + ' ' + data.lines.length;
+      } catch(error) {if (error.name !== 'AbortError') output.textContent=error.message;}
+    });
+    $(document).on('click','.js-purchase-order-duplicate-line',function () {
+      const source=this.closest('.js-purchase-order-line');
+      if (source.querySelector('[name$="[purchase_requisition_line_id]"]')?.value) return;
+      const row=window.AppLineItemCards.append(source.parentElement,document.getElementById('purchase-order-line-template'),'lines',source);
+      initSelect2(row); reindexLines(); calculateTotals();
+    });
+    const direct = document.getElementById('direct_procurement_override');
+    const toggleDirect = () => {
+      const area = document.querySelector('[data-direct-purchase-reason]');
+      if (area) area.hidden = !direct?.checked;
+      const reason = document.getElementById('direct_procurement_reason');
+      if (reason) reason.required = !!direct?.checked;
+    };
+    direct?.addEventListener('change',toggleDirect); toggleDirect();
+    const currency = document.getElementById('currency_doc_num');
+    const rate = document.getElementById('exchange_rate');
+    if (currency && rate && currency.selectedOptions?.[0]?.dataset.isMain === '1') {rate.value='1';rate.readOnly=true;}
+    let rateRequest;
+    $(document).on('select2:select','.js-purchase-order-currency',async function () {
+      rateRequest?.abort(); const request=new AbortController();rateRequest=request;
+      const form=this.closest('form'); const url=new URL(form.dataset.currencyRateUrl,location.href);
+      url.searchParams.set('currency_doc_num',this.value);url.searchParams.set('document_date',form.querySelector('[name="document_date"]').value);
+      try {
+        const response=await fetch(url,{headers:{Accept:'application/json'},signal:request.signal});
+        if(!response.ok) return; const data=await response.json();
+        rate.value=data.rate ?? '';rate.readOnly=data.is_main;
+        form.querySelector('[data-rate-source]').textContent=data.source ? msg('rate_source','')+' '+data.source : (data.is_main ? '' : msg('rate_required',''));
+        calculateTotals();
+      } catch(error) {if(error.name!=='AbortError') showToast('error',msg('unexpected_error',''));}
     });
 
     $(document).on('select2:select', '.js-purchase-order-product', function (event) {

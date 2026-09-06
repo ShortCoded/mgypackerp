@@ -22,6 +22,10 @@ class PurchaseOrder extends Model
 
     public const StatusDraft = 'draft';
 
+    public const StatusSubmitted = 'submitted';
+
+    public const StatusRejected = 'rejected';
+
     public const StatusApproved = 'approved';
 
     public const StatusClosed = 'closed';
@@ -34,7 +38,7 @@ class PurchaseOrder extends Model
     public static function statuses(): array
     {
         return [
-            self::StatusDraft,
+            self::StatusDraft, self::StatusSubmitted, self::StatusRejected,
             self::StatusApproved,
             self::StatusClosed,
             self::StatusCancelled,
@@ -42,6 +46,7 @@ class PurchaseOrder extends Model
     }
 
     protected $fillable = [
+        'submitted_by', 'submitted_at', 'rejected_by', 'rejected_at', 'rejection_reason',
         'doc_number',
         'doc_num',
         'company_id',
@@ -73,6 +78,8 @@ class PurchaseOrder extends Model
         'notes',
         'created_by',
         'updated_by',
+        'sent_by',
+        'sent_at',
         'approved_by',
         'approved_at',
         'closed_by',
@@ -103,7 +110,8 @@ class PurchaseOrder extends Model
             'subtotal_amount' => 'decimal:4',
             'total_amount' => 'decimal:4',
             'direct_procurement_override' => 'boolean',
-            'approved_at' => 'datetime',
+            'submitted_at' => 'datetime', 'rejected_at' => 'datetime',
+            'approved_at' => 'datetime', 'sent_at' => 'datetime',
             'closed_at' => 'datetime',
             'cancelled_at' => 'datetime',
             'created_at' => 'datetime',
@@ -128,6 +136,26 @@ class PurchaseOrder extends Model
         return $this->companyScopedRouteQuery($value, $field)->withTrashed()->first();
     }
 
+    public function fulfillmentStatus(): string
+    {
+        if (! $this->isApproved()) {
+            return $this->status;
+        }
+        $lines = ($this->relationLoaded('lines') && ($this->lines->isEmpty() || array_key_exists('progress_received', $this->lines->first()->getAttributes()))
+            ? $this->lines : $this->lines()->withQuantityProgress()->with('product')->get())->reject(fn (PurchaseOrderLine $line): bool => $line->product?->isService() === true);
+        if ($lines->isEmpty()) {
+            return $this->status;
+        }
+        $ordered = $lines->sum(fn (PurchaseOrderLine $line): float => (float) $line->ordered_quantity);
+        $received = $lines->sum(fn (PurchaseOrderLine $line): float => $line->quantityProgress()['net_received']);
+
+        return match (true) {
+            $received <= 0 => $this->sent_at ? 'sent' : $this->status,
+            $received >= $ordered - 0.00000001 => 'fully_received',
+            default => 'partially_received',
+        };
+    }
+
     public function isDraft(): bool
     {
         return $this->status === self::StatusDraft;
@@ -150,7 +178,7 @@ class PurchaseOrder extends Model
 
     public function hasReceipts(): bool
     {
-        return (float) $this->total_received_quantity > 0;
+        return $this->lines()->get()->contains(fn (PurchaseOrderLine $line): bool => $line->receivedQuantity() > 0);
     }
 
     public function isLockedForEditing(): bool

@@ -71,6 +71,7 @@
         data-primary-focus="document_date"
         novalidate>
         @csrf
+        <x-forms.line-item-cards />
         @if($method !== 'POST')
             @method($method)
         @endif
@@ -287,11 +288,11 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <div class="form-control-plaintext">{{ str($line['stock_status'] ?? 'available')->replace('_', ' ')->title() }}</div>
+                                            <div class="form-control-plaintext">{{ __(str($line['stock_status'] ?? 'available')->replace('_', ' ')->title()->toString()) }}</div>
                                         @else
                                             <select class="form-select js-opening-stock-status" name="lines[{{ $index }}][stock_status]">
                                                 @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
-                                                    <option value="{{ $status }}" @selected(($line['stock_status'] ?? 'available') === $status)>{{ str($status)->replace('_', ' ')->title() }}</option>
+                                                    <option value="{{ $status }}" @selected(($line['stock_status'] ?? 'available') === $status)>{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>
                                                 @endforeach
                                             </select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.stock_status"></div>
@@ -412,7 +413,7 @@
                 <td>
                     <select class="form-select js-opening-stock-status" name="lines[__INDEX__][stock_status]">
                         @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
-                            <option value="{{ $status }}" @selected($status === 'available')>{{ str($status)->replace('_', ' ')->title() }}</option>
+                            <option value="{{ $status }}" @selected($status === 'available')>{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>
                         @endforeach
                     </select>
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.stock_status"></div>

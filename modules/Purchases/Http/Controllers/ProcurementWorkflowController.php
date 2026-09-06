@@ -12,6 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\Rule;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
@@ -20,12 +22,16 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Purchases\DataTables\ProcurementDocumentsDataTable;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
 use Modules\Purchases\Http\Requests\ProcurementWorkflowRequest;
 use Modules\Purchases\Models\GoodsReceiptInspection;
@@ -35,11 +41,13 @@ use Modules\Purchases\Models\PurchaseOrderChangeRequest;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\PurchaseReturn;
+use Modules\Purchases\Models\PurchaseReturnLine;
 use Modules\Purchases\Models\RequestForQuotation;
 use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Models\SupplierSelection;
+use Modules\Purchases\Services\ProcurementAuditService;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSettlementService;
 use Modules\Purchases\Services\ProcurementSourcingService;
@@ -58,11 +66,7 @@ class ProcurementWorkflowController extends Controller
 
     public function requisitionsIndex(): View
     {
-        $context = $this->context();
-        $records = PurchaseRequisition::query()->forContext($context['company_id'], $context['financial_period_id'])
-            ->with(['branch', 'branchStore'])->withCount('lines')->latest('request_date')->paginate(25);
-
-        return $this->indexView('purchase_requisitions', __('Purchase Requisitions'), $records);
+        return $this->documentIndex('purchase_requisitions');
     }
 
     public function requisitionLinesIndex(): RedirectResponse
@@ -77,10 +81,86 @@ class ProcurementWorkflowController extends Controller
 
     public function createRequisition(): View
     {
+        return $this->requisitionForm();
+    }
+
+    public function editRequisition(PurchaseRequisition $purchaseRequisition): View
+    {
+        $this->assertCurrent($purchaseRequisition);
+        abort_if($purchaseRequisition->isLockedForEditing(), 403);
+
+        return $this->requisitionForm($purchaseRequisition);
+    }
+
+    private function requisitionForm(?PurchaseRequisition $record = null): View
+    {
+        $context = $this->context();
+        try {
+            $store = $this->sourcing->requisitionStore($context, $record?->branchStore?->public_uuid);
+        } catch (DomainException $exception) {
+            abort(403, $exception->getMessage());
+        }
+        $record?->load(['lines.product.equivalentUnit', 'lines.product.unit', 'lines.unit', 'requesterEmployee', 'branchStore']);
+        $employeeId = old('requester_employee_id', $record?->requester_employee_id);
+        $employee = filled($employeeId) ? HrEmployee::query()->where('company_id', $context['company_id'])->find($employeeId) : null;
+        $productNumbers = collect(old('lines', []))->pluck('product_doc_num')->filter()->unique();
+        $products = Product::query()->forCompany($context['company_id'])->whereIn('doc_num', $productNumbers)->with(['unit', 'equivalentUnit'])->get()->keyBy('doc_num');
+
         return view('modules.purchases.procurement.requisition-form', [
-            'products' => $this->products(),
-            'stores' => $this->stores(),
+            'record' => $record, 'company' => Company::query()->findOrFail($context['company_id']),
+            'branch' => Branch::query()->findOrFail($context['branch_id']), 'store' => $store,
+            'employee' => $employee, 'products' => $products,
         ]);
+    }
+
+    public function updateRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->updateRequisition($purchaseRequisition, $request->validated()), 'admin.purchases.purchase-requisitions.show');
+    }
+
+    public function rejectRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->rejectRequisition($purchaseRequisition, $request->validated('rejection_reason')), 'admin.purchases.purchase-requisitions.show');
+    }
+
+    public function cancelRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->finishRequisition($purchaseRequisition, PurchaseRequisition::StatusCancelled, $request->validated('cancel_reason')), 'admin.purchases.purchase-requisitions.show');
+    }
+
+    public function closeRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->finishRequisition($purchaseRequisition, PurchaseRequisition::StatusClosed), 'admin.purchases.purchase-requisitions.show');
+    }
+
+    public function destroyRequisition(Request $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
+    {
+        $this->assertCurrent($purchaseRequisition);
+        try {
+            $this->sourcing->deleteRequisition($purchaseRequisition);
+        } catch (DomainException $exception) {
+            return back()->withErrors(['document' => $exception->getMessage()]);
+        }
+
+        return $request->expectsJson() ? response()->json(['success' => true]) : to_route('admin.purchases.purchase-requisitions.index');
+    }
+
+    public function requisitionAvailability(Request $request, InventoryAvailabilityService $availability): JsonResponse
+    {
+        $input = $request->validate(['branch_store_uuid' => ['nullable', 'uuid'], 'product_doc_num' => ['required', 'string']]);
+        $context = $this->context();
+        $store = $this->sourcing->requisitionStore($context, $input['branch_store_uuid'] ?? null);
+        $product = Product::query()->forCompany($context['company_id'])->active()->purchasable()->where('doc_num', $input['product_doc_num'])->firstOrFail();
+        $storeIds = $store ? [$store->getKey()] : BranchStore::query()->where('branch_id', $context['branch_id'])->purchasingEligible()->pluck('id')->all();
+        $stock = ['on_hand' => 0, 'reserved' => 0, 'available' => 0];
+        foreach ($storeIds as $storeId) {
+            $balance = $availability->forProduct($context['company_id'], $storeId, $product->getKey());
+            foreach (array_keys($stock) as $key) {
+                $stock[$key] += (float) $balance[$key];
+            }
+        }
+
+        return response()->json($stock);
     }
 
     public function storeRequisition(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
@@ -91,7 +171,7 @@ class ProcurementWorkflowController extends Controller
     public function showRequisition(PurchaseRequisition $purchaseRequisition): View
     {
         $this->assertCurrent($purchaseRequisition);
-        $purchaseRequisition->load(['lines.product', 'lines.unit', 'branch', 'branchStore', 'requestsForQuotation']);
+        $purchaseRequisition->load(['lines.product', 'lines.unit', 'branch', 'branchStore', 'requestsForQuotation', 'suggestedSupplier', 'requesterEmployee', 'requestedBy', 'submittedBy', 'approvedBy', 'rejectedBy']);
 
         return $this->showView('purchase_requisition', $purchaseRequisition, false);
     }
@@ -108,10 +188,7 @@ class ProcurementWorkflowController extends Controller
 
     public function rfqsIndex(): View
     {
-        $records = RequestForQuotation::query()->forContext(...array_values($this->contextOnlyCompanyPeriod()))
-            ->with(['requisition', 'suppliers'])->withCount(['lines', 'quotations'])->latest('issue_date')->paginate(25);
-
-        return $this->indexView('request_for_quotations', __('Requests for Quotation'), $records);
+        return $this->documentIndex('request_for_quotations');
     }
 
     public function createRfq(PurchaseRequisition $purchaseRequisition): View|RedirectResponse
@@ -130,8 +207,30 @@ class ProcurementWorkflowController extends Controller
 
         return view('modules.purchases.procurement.rfq-form', [
             'record' => $purchaseRequisition,
-            'suppliers' => $this->suppliers(),
+            'suppliers' => Supplier::query()->forCompany($this->context()['company_id'])->whereIn('doc_num', old('supplier_doc_nums', []))->get(),
         ]);
+    }
+
+    public function editRfq(RequestForQuotation $record): View|RedirectResponse
+    {
+        $this->assertCurrent($record);
+        abort_unless($record->status === 'draft', 403);
+        $record->loadMissing('lines');
+        $view = $this->createRfq($record->requisition);
+        return $view instanceof \Illuminate\Contracts\View\View ? $view->with(['draft' => $record, 'suppliers' => $record->suppliers,]) : $view;
+    }
+
+    public function updateRfq(ProcurementWorkflowRequest $request, RequestForQuotation $record): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->updateRequestForQuotation($record, $request->validated()), 'admin.purchases.request-for-quotations.show');
+    }
+
+    public function destroyRfq(Request $request, RequestForQuotation $record): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, function () use ($record) {
+            $this->sourcing->deleteSourcingDraft($record);
+            return $record;
+        }, 'admin.purchases.request-for-quotations.index');
     }
 
     public function storeRfq(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
@@ -154,11 +253,7 @@ class ProcurementWorkflowController extends Controller
 
     public function quotationsIndex(): View
     {
-        $context = $this->context();
-        $records = SupplierQuotation::query()->forContext($context['company_id'], $context['financial_period_id'])
-            ->with(['supplier', 'requestForQuotation'])->withCount('lines')->latest('quotation_date')->paginate(25);
-
-        return $this->indexView('supplier_quotations', __('Supplier Quotations'), $records, true);
+        return $this->documentIndex('supplier_quotations');
     }
 
     public function quotationLinesIndex(): RedirectResponse
@@ -173,8 +268,31 @@ class ProcurementWorkflowController extends Controller
 
         return view('modules.purchases.procurement.quotation-form', [
             'record' => $requestForQuotation,
-            'currencies' => $this->currencies(),
+            'currencies' => Currency::query()->forCompany($this->context()['company_id'])->where('doc_num', old('currency_doc_num', ''))->get(),
+            'selectedSuppliers' => $requestForQuotation->suppliers()->where('suppliers.doc_num', old('supplier_doc_num', ''))->get(),
         ]);
+    }
+
+    public function editQuotation(SupplierQuotation $record): View|RedirectResponse
+    {
+        $this->assertCurrent($record);
+        abort_unless($record->status === 'draft', 403);
+        $record->loadMissing('lines');
+        $view = $this->createQuotation($record->requestForQuotation);
+        return $view instanceof \Illuminate\Contracts\View\View ? $view->with(['draft' => $record, 'selectedSuppliers' => collect([$record->supplier]), 'currencies' => collect([$record->currency])->filter(),]) : $view;
+    }
+
+    public function updateQuotation(ProcurementWorkflowRequest $request, SupplierQuotation $record): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->updateSupplierQuotation($record, $request->validated()), 'admin.purchases.supplier-quotation-entry.show');
+    }
+
+    public function destroyQuotation(Request $request, SupplierQuotation $record): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, function () use ($record) {
+            $this->sourcing->deleteSourcingDraft($record);
+            return $record;
+        }, 'admin.purchases.supplier-quotation-entry.index');
     }
 
     public function storeQuotation(ProcurementWorkflowRequest $request, RequestForQuotation $requestForQuotation): JsonResponse|RedirectResponse
@@ -312,12 +430,7 @@ class ProcurementWorkflowController extends Controller
 
     public function receiptsIndex(): View
     {
-        $context = $this->context();
-        $records = UnpricedInventoryReceipt::query()->forContext($context['company_id'], $context['financial_period_id'])
-            ->whereNotNull('purchase_order_id')->with(['purchaseOrder', 'supplier', 'branchStore'])->withCount('lines')
-            ->latest('document_date')->paginate(25);
-
-        return $this->indexView('goods_receipts', __('Goods Receipt Notes'), $records);
+        return $this->documentIndex('goods_receipts');
     }
 
     public function receiptLinesIndex(): RedirectResponse
@@ -327,14 +440,43 @@ class ProcurementWorkflowController extends Controller
 
     public function createReceipt(PurchaseOrder $purchaseOrder): View
     {
-        $purchaseOrder->load(['supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.deliverySchedules']);
+        $this->assertCurrent($purchaseOrder);
+        $purchaseOrder->load(['supplier', 'branchStore', 'lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
 
         return view('modules.purchases.procurement.receipt-form', ['record' => $purchaseOrder]);
     }
 
     public function storeReceipt(ProcurementWorkflowRequest $request, PurchaseOrder $purchaseOrder): JsonResponse|RedirectResponse
     {
-        return $this->execute($request, fn () => $this->receiving->receive($purchaseOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
+        return $this->execute($request, fn () => $this->receiving->createReceipt($purchaseOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
+    }
+
+    public function editReceipt(string $goodsReceiptNote): View
+    {
+        $draft = $this->receipt($goodsReceiptNote)->load(['lines.deliverySchedule', 'purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
+        abort_unless($draft->status === 'draft' && $draft->posting_status === 'unposted', 403);
+
+        return view('modules.purchases.procurement.receipt-form', ['record' => $draft->purchaseOrder, 'draft' => $draft]);
+    }
+
+    public function updateReceipt(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->receiving->updateReceipt($this->receipt($goodsReceiptNote), $request->validated()), 'admin.purchases.goods-receipt-notes.show');
+    }
+
+    public function destroyReceipt(Request $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->receiving->deleteReceipt($this->receipt($goodsReceiptNote)), 'admin.purchases.goods-receipt-notes.index');
+    }
+
+    public function postReceipt(Request $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->receiving->postReceipt($this->receipt($goodsReceiptNote)), 'admin.purchases.goods-receipt-notes.show');
+    }
+
+    public function reverseReceipt(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->receiving->reverseReceipt($this->receipt($goodsReceiptNote), $request->validated('reversal_reason')), 'admin.purchases.goods-receipt-notes.show');
     }
 
     public function showReceipt(string $goodsReceiptNote): View
@@ -389,12 +531,7 @@ class ProcurementWorkflowController extends Controller
 
     public function returnsIndex(): View
     {
-        $context = $this->context();
-        $records = PurchaseReturn::query()->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])->with(['supplier', 'purchaseOrder'])->withCount('lines')
-            ->latest('return_date')->paginate(25);
-
-        return $this->indexView('purchase_returns', __('Purchase Returns'), $records, true);
+        return $this->documentIndex('purchase_returns');
     }
 
     public function returnLinesIndex(): RedirectResponse
@@ -402,19 +539,58 @@ class ProcurementWorkflowController extends Controller
         return to_route('admin.purchases.purchase-returns.index');
     }
 
-    public function createReturn(Request $request): View
+    public function createReturn(Request $request, ?PurchaseReturn $draft = null): View
     {
-        $order = filled($request->query('purchase_order'))
-            ? PurchaseOrder::query()->forCompany($this->context()['company_id'])->where('doc_num', $request->query('purchase_order'))->first()
-            : null;
-        $order?->load(['supplier', 'lines.product', 'lines' => fn ($query) => $query->whereHas('purchaseOrder')]);
+        $context = $this->context();
+        $sourceReceipt = $draft?->receipt ?? (filled($request->query('receipt')) ? $this->receipt($request->query('receipt')) : null);
+        $order = $sourceReceipt?->purchaseOrder ?? (filled($request->query('purchase_order'))
+            ? PurchaseOrder::query()->forCompany($context['company_id'])
+                ->where('branch_id', $context['branch_id'])->where('doc_num', $request->query('purchase_order'))->firstOrFail() : null);
+        $order?->load(['supplier', 'lines.product']);
+        $receiptLines = $order ? UnpricedInventoryReceiptLine::query()->with(['receipt', 'product', 'unit'])
+            ->whereHas('receipt', fn ($query) => $query->where('purchase_order_id', $order->getKey())->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))
+            ->when($sourceReceipt, fn ($query) => $query->where('receipt_id', $sourceReceipt->getKey()))->get()
+            ->map(function ($line) use ($draft) {
+                $activeReturns = PurchaseReturnLine::query()->where('receipt_line_id', $line->getKey())
+                    ->whereHas('purchaseReturn', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed'])->when($draft, fn ($query) => $query->whereKeyNot($draft->getKey())))->get();
+                $line->setAttribute('returnable_quantity', max(0, (float) $line->accepted_quantity - (float) $activeReturns->where('from_quarantine', false)->sum('quantity')));
+                $line->setAttribute('returnable_quarantine_quantity', max(0, (float) $line->rejected_quantity - (float) $activeReturns->where('from_quarantine', true)->sum('quantity')));
+                $line->setAttribute('previously_returned_quantity', (float) $activeReturns->sum('quantity'));
+
+                return $line;
+            })->filter(fn ($line) => $line->returnable_quantity > 0 || $line->returnable_quarantine_quantity > 0)->values() : collect();
+        $invoices = $order ? PurchaseInvoice::query()->where('purchase_order_id', $order->getKey())->whereIn('status', ['approved', 'closed'])
+            ->when($sourceReceipt, fn ($query) => $query->whereHas('lines', fn ($query) => $query->whereIn('receipt_line_id', $sourceReceipt->lines()->pluck('id'))))->limit(2)->get() : collect();
+        $selectedInvoice = old('purchase_invoice_doc_num', $draft?->purchaseInvoice?->doc_num);
+        if (filled($selectedInvoice)) {
+            $invoices = $order?->purchaseInvoices()->where('doc_num', $selectedInvoice)->get() ?? collect();
+        } elseif ($invoices->count() > 1) {
+            $invoices = collect();
+        }
 
         return view('modules.purchases.procurement.return-form', [
-            'record' => $order,
-            'orders' => PurchaseOrder::query()->forCompany($this->context()['company_id'])->whereIn('status', ['approved', 'closed'])->with('supplier')->limit(100)->get(),
-            'receiptLines' => $order ? UnpricedInventoryReceiptLine::query()->with(['receipt', 'product', 'unit'])->whereHas('receipt', fn ($query) => $query->where('purchase_order_id', $order->getKey()))->get() : collect(),
-            'invoices' => $order ? PurchaseInvoice::query()->where('purchase_order_id', $order->getKey())->whereIn('status', ['approved', 'closed'])->get() : collect(),
+            'record' => $order, 'sourceReceipt' => $sourceReceipt, 'draft' => $draft,
+            'orders' => collect($order ? [$order] : []),
+            'receiptLines' => $receiptLines, 'invoices' => $invoices,
         ]);
+    }
+
+    public function editReturn(Request $request, PurchaseReturn $purchaseReturn): View
+    {
+        $this->assertCurrent($purchaseReturn);
+        abort_unless($purchaseReturn->status === 'draft', 403);
+
+        return $this->createReturn($request, $purchaseReturn->load(['lines', 'receipt']));
+    }
+
+    public function updateReturn(ProcurementWorkflowRequest $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->settlement->updatePurchaseReturn($purchaseReturn, $request->validated()), 'admin.purchases.purchase-returns.show');
+    }
+
+    public function destroyReturn(Request $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->settlement->deletePurchaseReturn($purchaseReturn), 'admin.purchases.purchase-returns.index');
     }
 
     public function storeReturn(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
@@ -446,7 +622,7 @@ class ProcurementWorkflowController extends Controller
     public function supplierPaymentsIndex(): View
     {
         $context = $this->context();
-        $records = SupplierPaymentContext::query()->where('company_id', $context['company_id'])
+        $records = SupplierPaymentContext::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id'])
             ->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'supplier', 'purchaseOrder'])->withCount('allocations')->latest('id')->paginate(25);
 
         return $this->indexView('supplier_payments', __('Supplier Payments'), $records, true);
@@ -470,8 +646,8 @@ class ProcurementWorkflowController extends Controller
             'cashboxes' => Cashbox::query()->forCompany($context['company_id'])->active()->get(),
             'bankAccounts' => BankAccount::query()->forCompany($context['company_id'])->active()->with(['bank', 'account', 'currency'])->get(),
             'currencies' => $this->currencies(),
-            'invoices' => PurchaseInvoice::query()->where('company_id', $context['company_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'paymentSchedules'])->get(),
-            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->whereIn('status', ['approved', 'closed'])->get(),
+            'invoices' => PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'paymentSchedules'])->get(),
+            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->get(),
         ]);
     }
 
@@ -541,10 +717,25 @@ class ProcurementWorkflowController extends Controller
         $metrics = [
             'matching_rows' => $rows->count(),
             'quantity' => $rows->sum(fn (array $row): float => (float) $row['quantity']),
-            ...($showPrices ? ['amount' => $rows->sum(fn (array $row): float => (float) $row['amount'])] : []),
-            'outstanding' => $rows->sum(fn (array $row): float => (float) $row['outstanding']),
+            ...($showPrices && $rows->pluck('currency')->filter()->unique()->count() <= 1 ? ['amount' => $rows->sum(fn (array $row): float => (float) $row['amount'])] : []),
+            ...($showPrices && $rows->pluck('currency')->filter()->unique()->count() <= 1 ? ['outstanding' => $rows->sum(fn (array $row): float => (float) $row['outstanding'])] : []),
             'overdue' => $rows->where('overdue', true)->count(),
         ];
+        if ($reportType === ProcurementCycleReport::SupplierStatement) {
+            $statementGroups = $rows->groupBy(fn (array $row): string => $row['supplier_doc_num'].':'.$row['currency_doc_num']);
+            $metrics = ['matching_rows' => $rows->count()];
+            if ($rows->pluck('currency_doc_num')->filter()->unique()->count() === 1) {
+                $metrics += [
+                    'opening_balance' => $statementGroups->sum(fn ($group): float => (float) $group->first()['balance']),
+                    'debit' => $rows->sum('debit'),
+                    'credit' => $rows->sum('credit'),
+                    'closing_balance' => $statementGroups->sum(fn ($group): float => (float) $group->last()['balance']),
+                ];
+            }
+        }
+        if ($reportType === ProcurementCycleReport::PurchaseLedger) {
+            unset($metrics['quantity']);
+        }
 
         return view('modules.purchases.procurement.report', [
             'metrics' => $metrics,
@@ -554,13 +745,14 @@ class ProcurementWorkflowController extends Controller
             'reportTypes' => ProcurementCycleReport::types(),
             'showPrices' => $showPrices,
             'grniReconciliation' => $reportType === ProcurementCycleReport::GoodsReceivedNotInvoiced
-                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'])
+                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'], $filters['branch_id'])
                 : null,
-            'suppliers' => $this->suppliers(),
-            'products' => $this->products(),
-            'requisitions' => PurchaseRequisition::query()->forContext($context['company_id'], $context['financial_period_id'])->latest('id')->limit(200)->get(),
-            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('financial_period_id', $context['financial_period_id'])->latest('id')->limit(200)->get(),
-            'branches' => Branch::query()->where('company_id', $context['company_id'])->whereNull('deleted_at')->orderBy('name')->get(),
+            'suppliers' => Supplier::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['supplier_doc_num'] ?? '')->get(),
+            'currencies' => Currency::query()->where('company_id', $context['company_id'])->orderBy('doc_num')->get(),
+            'products' => Product::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['product_doc_num'] ?? '')->get(),
+            'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->latest('id')->limit(200)->get(),
+            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->latest('id')->limit(200)->get(),
+            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->orderBy('name')->get(),
             'warehouses' => BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id']))->whereNull('deleted_at')->orderBy('name')->get(),
         ]);
     }
@@ -577,6 +769,7 @@ class ProcurementWorkflowController extends Controller
                 $rows,
                 (bool) $request->user()?->can('purchases.prices.view'),
                 $filters['report_type'],
+                $filters['detail_level'] ?? 'summary',
             ),
             'procurement-'.$filters['report_type'].'.xlsx',
         );
@@ -601,7 +794,7 @@ class ProcurementWorkflowController extends Controller
             'reportType' => $filters['report_type'],
             'showPrices' => (bool) $request->user()?->can('purchases.prices.view'),
             'grniReconciliation' => $filters['report_type'] === ProcurementCycleReport::GoodsReceivedNotInvoiced
-                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'])
+                ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'], $filters['branch_id'])
                 : null,
         ], 'procurement-'.$filters['report_type'].'.pdf');
     }
@@ -673,6 +866,62 @@ class ProcurementWorkflowController extends Controller
         };
     }
 
+    public function chooseSource(Request $request): View
+    {
+        $screen = $request->route('screen');
+        [$title, $lookup, $destination] = match ($screen) {
+            'request_for_quotations' => [__('Create Request for Quotation'), 'requisitions', 'request-for-quotations'],
+            'supplier_quotations' => [__('Supplier Quotation Entry'), 'rfqs', 'supplier-quotation-entry'],
+            'goods_receipts' => [__('Goods Receipt Note'), 'purchase-orders', 'goods-receipt-notes'],
+            default => abort(404),
+        };
+
+        return view('modules.purchases.procurement.source-picker', compact('title', 'lookup', 'destination'));
+    }
+
+    private function documentIndex(string $screen): View
+    {
+        $definition = ProcurementDocumentsDataTable::definition($screen);
+        $createUrl = route('admin.purchases.'.$definition['route'].(in_array($screen, ['purchase_requisitions', 'purchase_returns'], true) ? '.create' : '.choose-source'));
+        if ($screen === 'purchase_requisitions') {
+            try {
+                $this->sourcing->requisitionStore($this->context());
+            } catch (DomainException) {
+                $createUrl = null;
+            }
+        }
+        $statuses = match ($screen) {
+            'purchase_requisitions' => ['draft', 'pending_approval', 'approved', 'rejected', 'partially_converted', 'fully_converted', 'closed', 'cancelled'],
+            'goods_receipts' => ['unposted', 'posted', 'reversed'],
+            'purchase_returns' => ['draft', 'posted', 'reversed'],
+            default => ['draft', 'issued', 'submitted', 'approved', 'cancelled'],
+        };
+
+        return view('modules.purchases.procurement.document-index', compact('screen', 'definition', 'createUrl', 'statuses'));
+    }
+
+    public function documentData(Request $request, string $screen, ProcurementDocumentsDataTable $table): JsonResponse
+    {
+        return $table->json($request, $screen);
+    }
+
+    public function restoreDocument(Request $request, string $screen, string $document): JsonResponse
+    {
+        $definition = ProcurementDocumentsDataTable::definition($screen);
+        abort_unless($request->user()?->can('purchases.'.$definition['permission'].'.restore'), 403);
+        $context = $this->context();
+        DB::transaction(function () use ($definition, $document, $context, $screen): void {
+            $record = $definition['model']::onlyTrashed()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $document)->lockForUpdate()->firstOrFail();
+            abort_unless($record->status === 'draft' && ($screen !== 'goods_receipts' || $record->posting_status === 'unposted'), 422);
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $record->{$definition['date']}->toDateString(), $record->financial_period_id, lockForUpdate: true);
+            abort_unless($record->lines()->exists(), 422, __('A purchase request requires at least one line.'));
+            $record->restore();
+            app(ProcurementAuditService::class)->record($record, 'document.restored');
+        });
+
+        return response()->json(['success' => true]);
+    }
+
     private function indexView(string $screen, string $title, LengthAwarePaginator $records, bool $commercial = false): View
     {
         return view('modules.purchases.procurement.index', compact('screen', 'title', 'records', 'commercial'));
@@ -696,19 +945,30 @@ class ProcurementWorkflowController extends Controller
         }
 
         $key = $routeKey ?? (string) ($record->doc_num ?? data_get($record, 'cashVoucher.doc_num'));
+        $destination = route($route, $key);
+        if ($request->has('submit_action')) {
+            $prefix = str($route)->beforeLast('.')->toString();
+            $action = $request->string('submit_action')->toString();
+            $destination = match ($action) {
+                'save_back' => route($prefix.'.index'),
+                'save_edit' => Route::has($prefix.'.edit') ? route($prefix.'.edit', $key) : $destination,
+                'save' => Route::has($prefix.'.create') && $prefix === 'admin.purchases.purchase-requisitions' ? route($prefix.'.create') : $destination,
+                default => $destination,
+            };
+        }
         if ($request->expectsJson()) {
-            return response()->json(['success' => true, 'data' => ['doc_num' => $key, 'url' => route($route, $key)]]);
+            return response()->json(['success' => true, 'data' => ['doc_num' => $key, 'url' => $destination], 'redirect' => $destination]);
         }
 
-        return redirect()->route($route, $key)->with('success', __('Document saved successfully.'));
+        return redirect()->to($destination)->with('success', __('Document saved successfully.'));
     }
 
     private function receipt(string $docNum): UnpricedInventoryReceipt
     {
         $context = $this->context();
 
-        return UnpricedInventoryReceipt::query()->forContext($context['company_id'], $context['financial_period_id'])
-            ->where('doc_num', $docNum)->whereNotNull('purchase_order_id')->firstOrFail();
+        return UnpricedInventoryReceipt::query()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->where('doc_num', $docNum)->whereNotNull('purchase_order_id')->firstOrFail();
     }
 
     /** @param list<string> $relations */
@@ -748,7 +1008,8 @@ class ProcurementWorkflowController extends Controller
     private function assertCurrent(object $record): void
     {
         $context = $this->context();
-        abort_unless((int) $record->company_id === $context['company_id'] && (int) $record->financial_period_id === $context['financial_period_id'], 404);
+        $branchId = $record->branch_id ?? $record->purchaseOrder?->branch_id ?? $record->receipt?->branch_id;
+        abort_unless((int) $record->company_id === $context['company_id'] && (int) $branchId === $context['branch_id'], 404);
     }
 
     /** @return array<string, mixed> */
@@ -762,6 +1023,11 @@ class ProcurementWorkflowController extends Controller
             'product_doc_num' => ['nullable', 'string', 'max:100'],
             'purchase_requisition_doc_num' => ['nullable', 'string', 'max:100'],
             'purchase_order_doc_num' => ['nullable', 'string', 'max:100'],
+            'currency_doc_num' => ['nullable', 'string', 'max:100'],
+            'payment_status' => ['nullable', 'string', 'max:50'],
+            'document_type' => ['nullable', 'string', Rule::in(['purchase_invoice', 'purchase_return', 'supplier_payment', 'supplier_cheque_issue', 'supplier_cheque_clearing', 'cash_voucher', 'cheque', 'opening_balance', 'manual'])],
+            'category_key' => ['nullable', 'string', 'max:100'],
+            'detail_level' => ['nullable', Rule::in(['summary', 'lines'])],
             'status' => ['nullable', 'string', 'max:50'],
             'branch_id' => ['nullable', 'integer'],
             'warehouse_uuid' => ['nullable', 'uuid'],
@@ -771,7 +1037,12 @@ class ProcurementWorkflowController extends Controller
             'overdue' => ['nullable', Rule::in(['0', '1'])],
             'outstanding' => ['nullable', Rule::in(['0', '1'])],
         ]);
+        $filters['branch_id'] = $filters['branch_id'] ?? $this->context()['branch_id'];
+        abort_unless($this->operatingContext->allowedBranchQueryForCurrentCompany($request)->whereKey($filters['branch_id'])->exists(), 422);
         $filters['report_type'] = $filters['report_type'] ?? ProcurementCycleReport::OpenRequirements;
+        if (in_array($filters['report_type'], [ProcurementCycleReport::SupplierStatement, ProcurementCycleReport::PurchaseLedger, ProcurementCycleReport::OutstandingSupplierInvoices, ProcurementCycleReport::SupplierAging, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::DueSupplierInstallments, ProcurementCycleReport::UpcomingSupplierPayments, ProcurementCycleReport::GoodsReceivedNotInvoiced], true)) {
+            abort_unless($request->user()?->can('purchases.prices.view'), 403);
+        }
 
         return $filters;
     }

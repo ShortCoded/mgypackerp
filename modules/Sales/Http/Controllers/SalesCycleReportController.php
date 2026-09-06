@@ -3,26 +3,31 @@
 namespace Modules\Sales\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Currency;
+use Modules\Core\Models\ItemCategory;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Exports\SalesCycleReportExport;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Services\SalesCycleReadService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class SalesCycleReportController extends Controller
@@ -35,18 +40,26 @@ class SalesCycleReportController extends Controller
         abort_unless($context['company_id'] && $context['financial_period_id'], 422, 'Operating context is required.');
         $companyId = (int) $context['company_id'];
         $periodId = (int) $context['financial_period_id'];
+        $fullReport = $request->routeIs('*.print', '*.export');
+        $request->validate(['from' => ['nullable', 'date'], 'to' => ['nullable', 'date', 'after_or_equal:from']]);
         $from = $request->date('from');
         $to = $request->date('to');
         $filters = collect([
-            'customer_doc_num', 'product_doc_num', 'sales_person_doc_num', 'branch_doc_num',
+            'currency_doc_num', 'warehouse_uuid', 'category_doc_num', 'customer_doc_num', 'product_doc_num', 'sales_person_doc_num', 'branch_doc_num',
             'quotation_doc_num', 'order_doc_num', 'invoice_doc_num', 'quotation_status',
             'order_status', 'overdue_state', 'payment_state', 'return_reason', 'quality_disposition',
         ])->mapWithKeys(fn (string $field): array => [$field => $request->string($field)->trim()->toString()])->all();
 
+        $currencies = Currency::query()->where('company_id', $companyId)->where('status', 'active')->orderByDesc('is_main')->get();
+        $filters['currency_doc_num'] = $filters['currency_doc_num'] ?: ($currencies->first()?->doc_num ?? '');
+        $reportCurrency = $currencies->firstWhere('doc_num', $filters['currency_doc_num']);
+        $currencyId = $reportCurrency?->id ?? -1;
+        $categoryId = $this->contextId(ItemCategory::query()->where('company_id', $companyId), $filters['category_doc_num']);
+        $warehouseId = $filters['warehouse_uuid'] === '' ? null : (BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $companyId))->where('public_uuid', $filters['warehouse_uuid'])->value('id') ?? -1);
         $customerId = $this->contextId(Customer::query()->where('company_id', $companyId), $filters['customer_doc_num']);
         $productId = $this->contextId(Product::query()->where('company_id', $companyId), $filters['product_doc_num']);
-        $salesPersonId = $this->contextId(User::query(), $filters['sales_person_doc_num']);
-        $branchId = $this->contextId(Branch::query()->where('company_id', $companyId), $filters['branch_doc_num']);
+        $salesPersonId = $this->contextId(HrEmployee::query()->where('company_id', $context['company_id']), $filters['sales_person_doc_num']);
+        $branchId = $this->contextId(Branch::query()->where('company_id', $companyId), $filters['branch_doc_num']) ?? (int) $context['branch_id'];
         $quotationId = $this->contextId(Quotation::query()->where('company_id', $companyId), $filters['quotation_doc_num']);
         $orderId = $this->contextId(SalesOrder::query()->where('company_id', $companyId), $filters['order_doc_num']);
         $invoiceId = $this->contextId(CustomerInvoice::query()->where('company_id', $companyId), $filters['invoice_doc_num']);
@@ -67,11 +80,13 @@ class SalesCycleReportController extends Controller
         $returnReason = in_array($filters['return_reason'], $returnReasons, true) ? $filters['return_reason'] : null;
         $qualityDisposition = in_array($filters['quality_disposition'], ['saleable', 'quarantine', 'rework', 'scrap'], true) ? $filters['quality_disposition'] : null;
 
-        $applyOrderFilters = static function ($query) use ($customerId, $productId, $salesPersonId, $branchId, $quotationId, $orderId, $orderStatus, $overdueState) {
-            return $query
+        $applyOrderFilters = static function ($query) use ($customerId, $productId, $salesPersonId, $branchId, $quotationId, $orderId, $orderStatus, $overdueState, $currencyId, $warehouseId, $categoryId) {
+            return $query->where('currency_id', $currencyId)
+                ->when($warehouseId, fn ($builder) => $builder->where('branch_store_id', $warehouseId))
+                ->when($categoryId, fn ($builder) => $builder->whereHas('lines.product', fn ($product) => $product->where('item_category_id', $categoryId)))
                 ->when($customerId, fn ($builder) => $builder->where('customer_id', $customerId))
                 ->when($productId, fn ($builder) => $builder->whereHas('lines', fn ($lines) => $lines->where('product_id', $productId)))
-                ->when($salesPersonId, fn ($builder) => $builder->where('sales_employee_id', $salesPersonId))
+                ->when($salesPersonId, fn ($builder) => $builder->where('business_employee_id', $salesPersonId))
                 ->when($branchId, fn ($builder) => $builder->where('branch_id', $branchId))
                 ->when($quotationId, fn ($builder) => $builder->where('quotation_id', $quotationId))
                 ->when($orderId, fn ($builder) => $builder->whereKey($orderId))
@@ -80,13 +95,13 @@ class SalesCycleReportController extends Controller
                 ->when($overdueState === 'not_overdue', fn ($builder) => $builder->whereDate('expected_delivery_date', '>=', today()));
         };
 
-        $hasOrderFilter = (bool) ($productId || $salesPersonId || $quotationId || $orderId || $orderStatus || $overdueState);
+        $hasOrderFilter = (bool) ($warehouseId || $categoryId || $productId || $salesPersonId || $quotationId || $orderId || $orderStatus || $overdueState);
         $filteredOrderIds = $hasOrderFilter
             ? $applyOrderFilters(SalesOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId))->pluck('id')
             : collect();
 
-        $applyInvoiceFilters = static function ($query) use ($customerId, $productId, $branchId, $invoiceId, $paymentState, $hasOrderFilter, $filteredOrderIds) {
-            return $query
+        $applyInvoiceFilters = static function ($query) use ($customerId, $productId, $branchId, $invoiceId, $paymentState, $hasOrderFilter, $filteredOrderIds, $currencyId) {
+            return $query->where('customer_invoices.currency_id', $currencyId)
                 ->when($customerId, fn ($builder) => $builder->where('customer_invoices.customer_id', $customerId))
                 ->when($branchId, fn ($builder) => $builder->where('customer_invoices.branch_id', $branchId))
                 ->when($invoiceId, fn ($builder) => $builder->where('customer_invoices.id', $invoiceId))
@@ -101,40 +116,40 @@ class SalesCycleReportController extends Controller
         };
 
         $quotations = Quotation::query()->with(['customer', 'currentRevision'])
-            ->where('company_id', $companyId)
+            ->where('company_id', $companyId)->where('currency_id', $currencyId)
             ->when($customerId, fn ($query) => $query->where('customer_id', $customerId))
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-            ->when($salesPersonId, fn ($query) => $query->where('sales_person_id', $salesPersonId))
+            ->when($salesPersonId, fn ($query) => $query->where('business_employee_id', $salesPersonId))
             ->when($quotationId, fn ($query) => $query->whereKey($quotationId))
             ->when($quotationStatus, fn ($query) => $query->where('status', $quotationStatus))
             ->when($productId, fn ($query) => $query->whereHas('revisions.lines', fn ($lines) => $lines->where('product_id', $productId)))
             ->when($from, fn ($query) => $query->whereDate('quotation_date', '>=', $from))
             ->when($to, fn ($query) => $query->whereDate('quotation_date', '<=', $to))
-            ->latest('quotation_date')->limit(100)->get();
+            ->latest('quotation_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $openOrders = $applyOrderFilters(SalesOrder::query()->with('customer')->where('company_id', $companyId)->where('financial_period_id', $periodId))
             ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit])
             ->when($from, fn ($query) => $query->whereDate('order_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('order_date', '<=', $to))
             ->withSum('lines as ordered_quantity', 'quantity')->withSum('lines as delivered_quantity', 'delivered_quantity')
             ->withSum('lines as reserved_quantity', 'reserved_quantity')->withSum('lines as produced_quantity', 'produced_quantity')
-            ->withSum('lines as production_requested_quantity', 'production_requested_quantity')->orderBy('expected_delivery_date')->limit(100)->get();
+            ->withSum('lines as production_requested_quantity', 'production_requested_quantity')->orderBy('expected_delivery_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $orderHistory = $applyOrderFilters(SalesOrder::query()->with('customer')->where('company_id', $companyId)->where('financial_period_id', $periodId))
             ->when($from, fn ($query) => $query->whereDate('order_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('order_date', '<=', $to))
             ->withSum('lines as ordered_quantity', 'quantity')->withSum('lines as delivered_quantity', 'delivered_quantity')
-            ->latest('order_date')->limit(100)->get();
+            ->latest('order_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $salesByCustomer = $applyInvoiceFilters(CustomerInvoice::query()->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
             ->where('customer_invoices.document_type', CustomerInvoice::TypeInvoice)->where('customer_invoices.posting_status', 'posted')
             ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
-            ->groupBy('customers.doc_num', 'customers.name')->selectRaw('customers.doc_num, customers.name, sum(customer_invoices.total_amount) as sales_value, sum(customer_invoices.remaining_amount) as outstanding')->orderByDesc('sales_value')->limit(100)->get();
+            ->groupBy('customers.doc_num', 'customers.name')->selectRaw('customers.doc_num, customers.name, sum(customer_invoices.total_amount) as sales_value, sum(customer_invoices.remaining_amount) as outstanding')->orderByDesc('sales_value')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $salesByItem = $applyInvoiceFilters(DB::table('customer_invoice_lines')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_lines.customer_invoice_id')->join('products', 'products.id', '=', 'customer_invoice_lines.product_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
             ->where('customer_invoices.document_type', CustomerInvoice::TypeInvoice)->where('customer_invoices.posting_status', 'posted')->when($productId, fn ($query) => $query->where('customer_invoice_lines.product_id', $productId))
             ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
-            ->groupBy('products.doc_num', 'products.name')->selectRaw('products.doc_num, products.name, sum(customer_invoice_lines.quantity) as sold_quantity, sum(customer_invoice_lines.line_total) as sales_value')->orderByDesc('sales_value')->limit(100)->get();
+            ->groupBy('products.doc_num', 'products.name')->selectRaw('products.doc_num, products.name, sum(customer_invoice_lines.quantity) as sold_quantity, sum(customer_invoice_lines.line_total) as sales_value')->orderByDesc('sales_value')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $salesByCustomerItem = $applyInvoiceFilters(DB::table('customer_invoice_lines')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_lines.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id')->join('products', 'products.id', '=', 'customer_invoice_lines.product_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
@@ -142,7 +157,7 @@ class SalesCycleReportController extends Controller
             ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
             ->groupBy('customers.doc_num', 'customers.name', 'products.doc_num', 'products.name')
             ->selectRaw('customers.doc_num as customer_doc_num, customers.name as customer_name, products.doc_num as product_doc_num, products.name as product_name, sum(customer_invoice_lines.quantity) as sold_quantity, sum(customer_invoice_lines.line_total) as sales_value')
-            ->orderByDesc('sales_value')->limit(100)->get();
+            ->orderByDesc('sales_value')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
         $salesByPeriod = $applyInvoiceFilters(CustomerInvoice::query())->where('company_id', $companyId)->where('financial_period_id', $periodId)
             ->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')
@@ -156,7 +171,7 @@ class SalesCycleReportController extends Controller
             ->orderBy('customer_invoice_payment_schedules.due_date')->get();
         $invoiceOutstanding = $applyInvoiceFilters(CustomerInvoice::query()->with('customer'))->where('company_id', $companyId)->where('financial_period_id', $periodId)
             ->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')->where('remaining_amount', '>', 0)
-            ->orderBy('due_date')->limit(100)->get();
+            ->orderBy('due_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
         $upcomingCollections = $installments->filter(fn (object $row): bool => Carbon::parse($row->due_date)->isSameDay(today()) || Carbon::parse($row->due_date)->isFuture())->take(100);
         $aging = $installments->groupBy('name')->map(function ($rows, string $customer): array {
             $buckets = ['current' => '0', '1_30' => '0', '31_60' => '0', '61_90' => '0', 'over_90' => '0'];
@@ -170,7 +185,10 @@ class SalesCycleReportController extends Controller
         })->values();
 
         $returns = SalesReturn::query()->join('sales_return_lines', 'sales_return_lines.sales_return_id', '=', 'sales_returns.id')->join('customers', 'customers.id', '=', 'sales_returns.customer_id')
-            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)
+            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)->where(function ($query) use ($currencyId): void {
+                $query->whereExists(fn ($invoice) => $invoice->selectRaw('1')->from('customer_invoices')->whereColumn('customer_invoices.id', 'sales_returns.customer_invoice_id')->where('customer_invoices.currency_id', $currencyId))
+                    ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
+            })
             ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
             ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
             ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
@@ -182,7 +200,10 @@ class SalesCycleReportController extends Controller
             ->groupBy('sales_returns.reason_code')->selectRaw('sales_returns.reason_code, count(distinct sales_returns.id) as return_count, sum(sales_return_lines.quantity) as returned_quantity, sum(sales_return_lines.saleable_quantity) as saleable_quantity, sum(sales_return_lines.quarantine_quantity + sales_return_lines.rework_quantity + sales_return_lines.scrap_quantity) as rejected_quantity')->orderByDesc('return_count')->get();
 
         $returnAnalysis = DB::table('sales_return_lines')->join('sales_returns', 'sales_returns.id', '=', 'sales_return_lines.sales_return_id')->join('customers', 'customers.id', '=', 'sales_returns.customer_id')->leftJoin('products', 'products.id', '=', 'sales_return_lines.product_id')
-            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)
+            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)->where(function ($query) use ($currencyId): void {
+                $query->whereExists(fn ($invoice) => $invoice->selectRaw('1')->from('customer_invoices')->whereColumn('customer_invoices.id', 'sales_returns.customer_invoice_id')->where('customer_invoices.currency_id', $currencyId))
+                    ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
+            })
             ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
             ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
             ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
@@ -192,9 +213,22 @@ class SalesCycleReportController extends Controller
             ->when($qualityDisposition, fn ($query) => $query->where('sales_return_lines.quality_disposition', 'like', "%{$qualityDisposition}%"))
             ->when($from, fn ($query) => $query->whereDate('return_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('return_date', '<=', $to))
             ->groupBy('customers.doc_num', 'customers.name', 'products.doc_num', 'products.name', 'sales_returns.reason_code', 'sales_return_lines.quality_disposition')
-            ->selectRaw('customers.doc_num as customer_doc_num, customers.name as customer_name, products.doc_num as product_doc_num, products.name as product_name, sales_returns.reason_code, sales_return_lines.quality_disposition, sum(sales_return_lines.quantity) as returned_quantity')->orderByDesc('returned_quantity')->limit(100)->get();
+            ->selectRaw('customers.doc_num as customer_doc_num, customers.name as customer_name, products.doc_num as product_doc_num, products.name as product_name, sales_returns.reason_code, sales_return_lines.quality_disposition, sum(sales_return_lines.quantity) as returned_quantity')->orderByDesc('returned_quantity')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
-        return view('modules.sales.cycle.report', compact('quotations', 'openOrders', 'orderHistory', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'aging', 'returns', 'returnAnalysis', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        $readService = app(SalesCycleReadService::class);
+        $readFilters = ['customer_id' => $customerId, 'product_id' => $productId, 'category_id' => $categoryId, 'currency_id' => $currencyId,
+            'branch_store_id' => $warehouseId, 'sales_person_id' => $salesPersonId, 'order_id' => $orderId, 'invoice_id' => $invoiceId,
+            'overdue_state' => $overdueState, 'payment_state' => $paymentState, 'from' => $from, 'to' => $to];
+        $backorders = $readService->backorders($companyId, $branchId, $readFilters);
+        $ledgerQuery = $readService->ledger($companyId, $branchId, $readFilters)->withSum(['creditNotes as returns_amount' => fn ($query) => $query->where('posting_status', 'posted')], 'total_amount');
+        $fullReport = $request->routeIs('*.print', '*.export');
+        $salesLedger = $fullReport ? $ledgerQuery->get() : $ledgerQuery->paginate(25, ['*'], 'ledger_page')->withQueryString();
+        if (! $fullReport) {
+            $page = max(1, (int) $request->query('backorders_page', 1));
+            $backorders = new LengthAwarePaginator($backorders->forPage($page, 50)->values(), $backorders->count(), 50, $page, ['path' => $request->url(), 'query' => $request->query(), 'pageName' => 'backorders_page']);
+        }
+
+        return view('modules.sales.cycle.report', compact('currencies', 'reportCurrency', 'backorders', 'salesLedger', 'quotations', 'openOrders', 'orderHistory', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'aging', 'returns', 'returnAnalysis', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response

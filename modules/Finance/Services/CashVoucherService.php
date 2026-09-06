@@ -16,6 +16,8 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierPaymentPostingService;
+use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Services\CustomerReceiptSettlementService;
 
 class CashVoucherService
 {
@@ -214,6 +216,10 @@ class CashVoucherService
                 'updated_by' => auth()->id(),
             ])->save();
             $this->reverseSupplierPayment($locked);
+            $receipt = CustomerReceipt::query()->where('cash_voucher_id', $locked->id)->lockForUpdate()->first();
+            if ($receipt) {
+                app(CustomerReceiptSettlementService::class)->reverse($receipt, $reason);
+            }
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);

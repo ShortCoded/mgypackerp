@@ -43,7 +43,7 @@ class FixedAssetDuplicateAccountRepairService
         $case = collect($audit['cases'])->firstWhere('asset_doc_num', $assetDocNum);
 
         if (! is_array($case) || ! $case['is_actual_duplicate']) {
-            throw new DomainException('The reviewed asset does not have an evidence-backed duplicate account pair.');
+            throw new DomainException(__('The reviewed asset does not have an evidence-backed duplicate account pair.'));
         }
 
         if ($case['repair_status'] !== 'safe'
@@ -53,7 +53,7 @@ class FixedAssetDuplicateAccountRepairService
                 FixedAssetDuplicateAccountAuditService::ClassificationBothEmpty,
             ], true)
         ) {
-            throw new DomainException('The reviewed case is blocked and cannot be applied automatically: '.$case['decision_reason']);
+            throw new DomainException(__('The reviewed case is blocked and cannot be applied automatically: :reason', ['reason' => $case['decision_reason']]));
         }
 
         $canonicalAccountId = $this->positiveInteger($expectations, 'canonical_account_id');
@@ -62,23 +62,23 @@ class FixedAssetDuplicateAccountRepairService
         $expectedParentAccountId = $this->positiveInteger($expectations, 'expected_parent_account_id');
 
         if ($canonicalAccountId === $duplicateAccountId) {
-            throw new DomainException('The canonical and duplicate account IDs must differ.');
+            throw new DomainException(__('The canonical and duplicate account IDs must differ.'));
         }
 
         if ((int) $case['recommended_canonical_account_id'] !== $canonicalAccountId) {
-            throw new DomainException('The explicit canonical account does not match the audit decision.');
+            throw new DomainException(__('The explicit canonical account does not match the audit decision.'));
         }
 
         if (collect($case['duplicate_account_ids'])->map(fn (mixed $id): int => (int) $id)->all() !== [$duplicateAccountId]) {
-            throw new DomainException('The explicit duplicate account does not match the single reviewed duplicate.');
+            throw new DomainException(__('The explicit duplicate account does not match the single reviewed duplicate.'));
         }
 
         if ((int) $case['current_account_id'] !== $expectedCurrentAccountId) {
-            throw new DomainException('The current fixed_assets.account_id differs from the expected value.');
+            throw new DomainException(__('The current fixed_assets.account_id differs from the expected value.'));
         }
 
         if ((int) $case['approved_parent_account_id'] !== $expectedParentAccountId) {
-            throw new DomainException('The approved current category account differs from the expected value.');
+            throw new DomainException(__('The approved current category account differs from the expected value.'));
         }
 
         $accounts = collect($case['accounts'])->keyBy(fn (array $account): int => (int) $account['id']);
@@ -86,7 +86,7 @@ class FixedAssetDuplicateAccountRepairService
         $duplicate = $accounts->get($duplicateAccountId);
 
         if (! is_array($canonical) || ! is_array($duplicate)) {
-            throw new DomainException('Both explicitly selected accounts must be present in the reviewed evidence set.');
+            throw new DomainException(__('Both explicitly selected accounts must be present in the reviewed evidence set.'));
         }
 
         $this->assertExpectedMetrics('canonical', $canonical, $expectations);
@@ -110,7 +110,7 @@ class FixedAssetDuplicateAccountRepairService
         $accountingReconciliation = $this->accountingReconciliation($asset, $canonicalAccountId);
 
         if (! $accountingReconciliation['reconciled']) {
-            throw new DomainException('The Fixed Asset subledger does not reconcile to the reviewed canonical GL account. Automatic repair is blocked.');
+            throw new DomainException(__('The Fixed Asset subledger does not reconcile to the reviewed canonical GL account. Automatic repair is blocked.'));
         }
 
         $manifest = [
@@ -170,7 +170,7 @@ class FixedAssetDuplicateAccountRepairService
         string $productionAcknowledgement,
     ): array {
         if (! app()->isDownForMaintenance()) {
-            throw new DomainException('Apply requires Laravel maintenance mode with Octane and queue workers stopped.');
+            throw new DomainException(__('Apply requires Laravel maintenance mode with Octane and queue workers stopped.'));
         }
 
         $requiredAcknowledgement = $this->productionAcknowledgement(
@@ -181,7 +181,7 @@ class FixedAssetDuplicateAccountRepairService
         );
 
         if (! hash_equals($requiredAcknowledgement, $productionAcknowledgement)) {
-            throw new DomainException('The explicit Production acknowledgement does not match the reviewed account pair.');
+            throw new DomainException(__('The explicit Production acknowledgement does not match the reviewed account pair.'));
         }
 
         return DB::transaction(function () use ($company, $assetDocNum, $expectations, $reviewToken): array {
@@ -196,7 +196,7 @@ class FixedAssetDuplicateAccountRepairService
                 ->get();
 
             if ($asset->count() !== 1 || $asset->first()->trashed()) {
-                throw new DomainException('The company and asset document number must still resolve to exactly one active Fixed Asset record.');
+                throw new DomainException(__('The company and asset document number must still resolve to exactly one active Fixed Asset record.'));
             }
 
             $asset = $asset->first();
@@ -208,7 +208,7 @@ class FixedAssetDuplicateAccountRepairService
                 ->get();
 
             if ($accounts->count() !== 2) {
-                throw new DomainException('The explicit canonical and duplicate account IDs no longer resolve to the reviewed company.');
+                throw new DomainException(__('The explicit canonical and duplicate account IDs no longer resolve to the reviewed company.'));
             }
 
             $parentIds = $accounts->pluck('parent_id')
@@ -231,7 +231,7 @@ class FixedAssetDuplicateAccountRepairService
                 $manifest = $this->activityProperties($receipt)['manifest'] ?? null;
 
                 if (! is_array($manifest)) {
-                    throw new DomainException('The prior repair receipt is incomplete; manual review is required.');
+                    throw new DomainException(__('The prior repair receipt is incomplete; manual review is required.'));
                 }
 
                 return [
@@ -245,13 +245,13 @@ class FixedAssetDuplicateAccountRepairService
             $review = $this->review($company, $assetDocNum, $expectations);
 
             if (! hash_equals($review['review_token'], $reviewToken)) {
-                throw new DomainException('The database state differs from the reviewed manifest. Generate and approve a new dry run.');
+                throw new DomainException(__('The database state differs from the reviewed manifest. Generate and approve a new dry run.'));
             }
 
             $manifest = $review['manifest'];
 
             if (collect($manifest['journal_state']['journals'])->contains(fn (array $journal): bool => $journal['balanced'] !== true)) {
-                throw new DomainException('A referenced journal is not balanced; automatic repair is blocked.');
+                throw new DomainException(__('A referenced journal is not balanced; automatic repair is blocked.'));
             }
 
             $canonical = $accounts->firstWhere('id', $canonicalAccountId);
@@ -266,7 +266,7 @@ class FixedAssetDuplicateAccountRepairService
                 ->first();
 
             if (! $canonical instanceof Account || ! $duplicate instanceof Account || ! $approvedParent instanceof Account) {
-                throw new DomainException('The reviewed account or approved category is no longer eligible.');
+                throw new DomainException(__('The reviewed account or approved category is no longer eligible.'));
             }
 
             $now = now();
@@ -299,7 +299,7 @@ class FixedAssetDuplicateAccountRepairService
                 ->exists();
 
             if (! $assetMatches) {
-                throw new DomainException('Compare-and-swap validation failed for the Fixed Asset row.');
+                throw new DomainException(__('Compare-and-swap validation failed for the Fixed Asset row.'));
             }
 
             $canonicalUpdated = Account::query()
@@ -311,7 +311,7 @@ class FixedAssetDuplicateAccountRepairService
                 ->update($canonicalUpdates);
 
             if ($canonicalUpdated !== 1) {
-                throw new DomainException('Compare-and-swap validation failed for the canonical account.');
+                throw new DomainException(__('Compare-and-swap validation failed for the canonical account.'));
             }
 
             $assetUpdated = FixedAsset::query()
@@ -327,7 +327,7 @@ class FixedAssetDuplicateAccountRepairService
                 ]);
 
             if ($assetUpdated !== 1) {
-                throw new DomainException('Compare-and-swap update failed for the Fixed Asset row.');
+                throw new DomainException(__('Compare-and-swap update failed for the Fixed Asset row.'));
             }
 
             $duplicateArchived = Account::query()
@@ -343,7 +343,7 @@ class FixedAssetDuplicateAccountRepairService
                 ]);
 
             if ($duplicateArchived !== 1) {
-                throw new DomainException('Compare-and-swap archive failed for the empty duplicate account.');
+                throw new DomainException(__('Compare-and-swap archive failed for the empty duplicate account.'));
             }
 
             $asset = $asset->refresh();
@@ -405,14 +405,14 @@ class FixedAssetDuplicateAccountRepairService
         $expectedCount = $this->nonNegativeInteger($expectations, "expected_{$role}_journal_count");
 
         if ((int) $account['journal_line_count'] !== $expectedCount) {
-            throw new DomainException("The {$role} journal-line count differs from the expected value.");
+            throw new DomainException(__('The :role journal-line count differs from the expected value.', ['role' => $role]));
         }
 
         foreach (['debit' => 'total_debit', 'credit' => 'total_credit', 'balance' => 'balance'] as $option => $field) {
             $expected = $this->decimal($expectations["expected_{$role}_{$option}"] ?? null);
 
             if (bccomp((string) $account[$field], $expected, 4) !== 0) {
-                throw new DomainException("The {$role} {$option} total differs from the expected value.");
+                throw new DomainException(__('The :role :option total differs from the expected value.', ['role' => $role, 'option' => $option]));
             }
         }
     }
@@ -556,7 +556,7 @@ class FixedAssetDuplicateAccountRepairService
         ];
 
         if (in_array(false, $structuralChecks, true)) {
-            throw new DomainException('Post-repair verification failed; the transaction was rolled back.');
+            throw new DomainException(__('Post-repair verification failed; the transaction was rolled back.'));
         }
 
         return [
@@ -749,7 +749,7 @@ class FixedAssetDuplicateAccountRepairService
         $value = filter_var($values[$key] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
         if ($value === false) {
-            throw new DomainException("{$key} must be a positive integer.");
+            throw new DomainException(__(':key must be a positive integer.', ['key' => $key]));
         }
 
         return (int) $value;
@@ -761,7 +761,7 @@ class FixedAssetDuplicateAccountRepairService
         $value = filter_var($values[$key] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
 
         if ($value === false) {
-            throw new DomainException("{$key} must be a non-negative integer.");
+            throw new DomainException(__(':key must be a non-negative integer.', ['key' => $key]));
         }
 
         return (int) $value;
@@ -772,7 +772,7 @@ class FixedAssetDuplicateAccountRepairService
         $value = trim((string) $value);
 
         if ($value === '' || ! is_numeric($value)) {
-            throw new DomainException('Expected financial values must be numeric.');
+            throw new DomainException(__('Expected financial values must be numeric.'));
         }
 
         return number_format((float) $value, 4, '.', '');
@@ -817,7 +817,7 @@ class FixedAssetDuplicateAccountRepairService
             $connection->statement('PRAGMA query_only = ON');
             $sqliteQueryOnly = true;
         } elseif ($driver !== 'pgsql') {
-            throw new DomainException("The {$driver} driver has no configured read-only review guard.");
+            throw new DomainException(__('The :driver driver has no configured read-only review guard.', ['driver' => $driver]));
         }
 
         $connection->beginTransaction();

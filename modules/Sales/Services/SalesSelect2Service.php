@@ -3,18 +3,72 @@
 namespace Modules\Sales\Services;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
+use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Core\Services\Select2ResponseService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Models\Customer;
 
 class SalesSelect2Service
 {
+    public function employees(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = HrEmployee::query()->where('company_id', $context['company_id'])->where('status', 'active')
+            ->where(fn ($query) => $query->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))->orderBy('name')->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num', 'name', 'employee_code']]);
+
+        return $this->select2->paginated($query, $request, fn (HrEmployee $employee): array => ['id' => $employee->doc_num, 'text' => $employee->doc_num.' / '.$employee->name]);
+    }
+
+    public function stores(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = BranchStore::query()->where('branch_id', $context['branch_id'])->orderBy('name')->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['name']]);
+
+        return $this->select2->paginated($query, $request, fn (BranchStore $store): array => ['id' => $store->public_uuid, 'text' => $store->name]);
+    }
+
+    public function employeeId(int $companyId, ?int $branchId, ?string $docNum, ?int $preservedId = null): ?int
+    {
+        if (blank($docNum)) {
+            return null;
+        }
+        $employee = HrEmployee::withTrashed()->where('company_id', $companyId)->where('doc_num', $docNum)
+            ->where(fn ($query) => $query->whereNull('branch_id')->orWhere('branch_id', $branchId))->first();
+        if (! $employee || (($employee->status !== 'active' || $employee->trashed()) && $employee->id !== $preservedId)) {
+            throw ValidationException::withMessages(['sales_employee_doc_num' => __('The selected employee is not available in this company and branch.')]);
+        }
+
+        return $employee->id;
+    }
+
+    /** Only selected options are hydrated; full datasets stay behind paginated pickers. @return array<string, mixed> */
+    public function formOptions(Request $request, ?Model $record = null): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $selectedProducts = collect($request->old('lines', []))->pluck('product_doc_num')
+            ->merge($record?->lines?->map(fn ($line) => $line->product?->doc_num) ?? [])->filter()->unique();
+
+        return [
+            'products' => Product::query()->with('unit', 'equivalentUnit', 'color')->forCompany($context['company_id'])->whereIn('doc_num', $selectedProducts)->get(),
+            'customers' => Customer::query()->forCompany($context['company_id'])->where('doc_num', $request->old('customer_doc_num', $record?->customer?->doc_num))->get(),
+            'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $request->old('branch_store_uuid', $record?->branchStore?->public_uuid))->get(),
+            'currencies' => Currency::query()->forCompany($context['company_id'])->active()->orderByDesc('is_main')->get(),
+            'salesEmployees' => HrEmployee::withTrashed()->where('company_id', $context['company_id'])->where('doc_num', $request->old('sales_employee_doc_num', $record?->salesEmployee?->doc_num))->get(),
+        ];
+    }
+
     public function __construct(
         private readonly DataTableSearchService $search,
         private readonly Select2ResponseService $select2,
@@ -139,7 +193,7 @@ class SalesSelect2Service
     private function productQuery(?int $companyId): Builder
     {
         return Product::query()
-            ->with('mainImageUsage.file')
+            ->with('mainImageUsage.file', 'unit', 'equivalentUnit')
             ->active()
             ->salesEligible()
             ->when($companyId, fn ($query) => $query->forCompany((int) $companyId), fn ($query) => $query->whereRaw('1 = 0'))
@@ -159,6 +213,7 @@ class SalesSelect2Service
                 'products.barcode',
                 'products.item_classification',
                 'products.item_unit_id',
+                'products.equivalent_unit_id',
                 'item_units.doc_num as unit_doc_num',
                 'item_units.name as unit_name',
                 'item_categories.name as category_name',
@@ -181,9 +236,10 @@ class SalesSelect2Service
 
         return [
             'id' => (string) $product->doc_num,
-            'text' => trim(implode(' / ', array_filter([$product->doc_num, $product->name, $barcode === '' ? null : $barcode, $unitLabel]))),
+            'text' => trim(implode(' / ', array_filter([$product->doc_num, $product->name]))),
             'unitDocNum' => $product->unit_doc_num,
             'unitLabel' => $unitLabel,
+            'units' => collect([$product->unit, $product->equivalentUnit])->filter()->unique('id')->map(fn ($unit): array => ['id' => $unit->doc_num, 'text' => $unit->doc_num.' / '.$unit->name])->values()->all(),
             'imageUrl' => $this->imageUrl($product),
             'productData' => [
                 'doc_num' => (string) $product->doc_num,

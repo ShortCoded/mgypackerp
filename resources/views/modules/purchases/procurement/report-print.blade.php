@@ -11,23 +11,21 @@
     </div>
 
     <div class="report-filter-summary">
-        {{ collect([
-            $filters['date_from'] ?? null,
-            $filters['date_to'] ?? null,
-            $filters['status'] ?? null,
-            $filters['supplier_id'] ?? null,
-            $filters['product_id'] ?? null,
-        ])->filter(fn ($value) => filled($value))->isEmpty()
-            ? __('No filters applied.')
-            : __('Filtered report') }}
+        @foreach(['date_from' => 'From date', 'date_to' => 'To date', 'supplier_doc_num' => 'Supplier', 'product_doc_num' => 'Item', 'currency_doc_num' => 'Currency', 'status' => 'Status'] as $key => $label)
+            @if(filled($filters[$key] ?? null))<span>{{ __($label) }}: {{ $filters[$key] }} · </span>@endif
+        @endforeach
+        @if(filled($filters['document_type'] ?? null))<span>{{ __('Balances include all posted supplier movements; the document filter limits the displayed movements.') }}</span>@endif
     </div>
 
     @if($reportType === \Modules\Purchases\Services\Reports\ProcurementCycleReport::GoodsReceivedNotInvoiced)
         <h2>{{ __('Goods Received Not Invoiced') }}</h2>
         <table class="report-table"><thead><tr><th>{{ __('Date / GRN') }}</th><th>{{ __('Supplier / PO') }}</th><th>{{ __('Product / Store') }}</th><th class="text-end">{{ __('Received') }}</th><th class="text-end">{{ __('Invoiced') }}</th><th class="text-end">{{ __('Returned') }}</th><th class="text-end">{{ __('Remaining') }}</th><th class="text-end">{{ __('Unit Value') }}</th><th class="text-end">{{ __('GRNI Value') }}</th><th>{{ __('Currency') }}</th><th class="text-end">{{ __('Age') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($rows as $row)<tr><td>{{ $row['date'] }} / {{ $row['document'] }}</td><td>{{ $row['supplier'] }} / {{ $row['purchase_order'] }}</td><td>{{ $row['product'] }} / {{ $row['warehouse'] }}</td><td class="text-end">{{ $numbers->format($row['received_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['invoiced_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['returned_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['remaining_quantity']) }}</td><td class="text-end">{{ $numbers->format($row['provisional_unit_value']) }}</td><td class="text-end">{{ $numbers->format($row['remaining_grni_value']) }}</td><td>{{ $row['currency'] }}</td><td class="text-end">{{ $row['age_days'] }}</td><td>{{ __($row['status'] === 'cleared' ? 'Cleared' : 'Open') }}</td></tr>@endforeach</tbody></table>
-        @if($grniReconciliation)<h2>{{ __('GRNI Subledger to General Ledger Reconciliation') }}</h2><table class="report-table"><thead><tr><th>{{ __('Account') }}</th><th>{{ __('Subledger') }}</th><th>{{ __('General Ledger') }}</th><th>{{ __('Difference') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody><tr><td>{{ $grniReconciliation['account'] }}</td><td>{{ $numbers->format($grniReconciliation['subledger']) }}</td><td>{{ $numbers->format($grniReconciliation['gl']) }}</td><td>{{ $numbers->format($grniReconciliation['difference']) }}</td><td>{{ __($grniReconciliation['status']) }}</td></tr></tbody></table>@endif
+        @if($grniReconciliation)<h2>{{ __('GRNI Subledger to General Ledger Reconciliation') }}</h2><table class="report-table"><thead><tr><th>{{ __('Account') }}</th><th>{{ __('Subledger') }}</th><th>{{ __('General Ledger') }}</th><th>{{ __('Difference') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody><tr><td>{{ $grniReconciliation['account'] }}</td><td>{{ $numbers->format($grniReconciliation['subledger']) }}</td><td>{{ $numbers->format($grniReconciliation['gl']) }}</td><td>{{ $numbers->format($grniReconciliation['difference']) }}</td><td>{{ __(str($grniReconciliation['status'])->replace('_', ' ')->title()->toString()) }}</td></tr></tbody></table>@endif
     @endif
 
+@if(app(\Modules\Purchases\Services\Reports\ProcurementCycleReport::class)->columns($reportType, $showPrices))
+@include('modules.purchases.procurement.report-columns')
+@else
     <table class="report-table procurement-report-print-table">
         <thead>
             <tr>
@@ -74,6 +72,7 @@
             @endforelse
         </tbody>
     </table>
+@endif
 
     @include('reports.partials.company-authorization')
 

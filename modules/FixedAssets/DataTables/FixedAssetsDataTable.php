@@ -12,6 +12,8 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\SettingService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Services\FixedAssetAccessService;
+use Modules\FixedAssets\Services\FixedAssetBookValueService;
 use Yajra\DataTables\Facades\DataTables;
 
 class FixedAssetsDataTable
@@ -34,6 +36,13 @@ class FixedAssetsDataTable
         };
 
         $query = $this->companies->applyCompanyScope($query, 'fixed_assets', $request);
+        $query->whereIn('fixed_assets.branch_id', app(FixedAssetAccessService::class)->branchIds());
+
+        $query->with(['costMovements.journalEntry', 'postedDepreciations', 'disposals']);
+        $positions = [];
+        $position = function (FixedAsset $record) use (&$positions): array {
+            return $positions[$record->getKey()] ??= app(FixedAssetBookValueService::class)->position($record);
+        };
 
         $query
             ->leftJoin('accounts', 'accounts.id', '=', 'fixed_assets.account_id')
@@ -67,6 +76,11 @@ class FixedAssetsDataTable
 
         return DataTables::eloquent($query)
             ->filter(function ($query) use ($request): void {
+                foreach (['status' => 'fixed_assets.status', 'entry_type' => 'fixed_assets.entry_type', 'asset_group_account_doc_num' => 'category_accounts.doc_num', 'branch_doc_num' => 'branches.doc_num', 'cost_center_doc_num' => 'cost_centers.doc_num'] as $filter => $column) {
+                    if ($request->filled($filter)) {
+                        $query->where($column, $request->string($filter)->toString());
+                    }
+                }
                 $terms = $this->search->terms(is_string($request->input('search.value')) ? $request->input('search.value') : null);
                 if ($terms !== []) {
                     $this->search->applyMultiTermSearch($query, $terms, [
@@ -100,17 +114,17 @@ class FixedAssetsDataTable
                     ]);
                 }
             })
-            ->addColumn('checkbox', fn (FixedAsset $record): string => view('modules.finance.partials.checkbox', ['record' => $record])->render())
+            ->addColumn('checkbox', fn (FixedAsset $record): string => $record->canEditMaster() || $record->trashed() ? view('modules.finance.partials.checkbox', ['record' => $record])->render() : '')
             ->editColumn('doc_num', fn (FixedAsset $record): string => '<a class="fw-semibold dt-code-value" href="'.e(route('admin.fixed-assets.assets.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
             ->editColumn('asset_name', fn (FixedAsset $record): string => $this->ellipsisText($record->asset_name))
             ->editColumn('entry_type', fn (FixedAsset $record): string => $this->plainText(__("fixed_assets.entry_types.{$record->entry_type}")))
             ->addColumn('asset_category', fn (FixedAsset $record): string => $this->ellipsisText(Account::codeNameLabelFor($record->category_account_code, $record->category_account_label, $record->category_account_label_en)))
             ->addColumn('branch', fn (FixedAsset $record): string => $this->ellipsisText($record->branch_name))
             ->addColumn('cost_center', fn (FixedAsset $record): string => $this->ellipsisText(CostCenter::codeNameLabelFor($record->cost_center_code, $record->cost_center_name)))
-            ->editColumn('purchase_value', fn (FixedAsset $record): string => $this->plainText($this->moneyText($record->purchase_value, $record->currency_code)))
+            ->editColumn('purchase_value', fn (FixedAsset $record): string => $this->plainText($this->moneyText($position($record)['acquisition_cost'], $record->currency_code)))
             ->addColumn('currency', fn (FixedAsset $record): string => $this->plainText(trim(implode(' / ', array_filter([$record->currency_code, $record->currency_name])))))
-            ->editColumn('previous_depreciation', fn (FixedAsset $record): string => $this->plainText($this->moneyText($record->previous_depreciation, $record->currency_code)))
-            ->editColumn('net_value', fn (FixedAsset $record): string => $this->plainText($this->moneyText($record->net_value, $record->currency_code)))
+            ->editColumn('previous_depreciation', fn (FixedAsset $record): string => $this->plainText($this->moneyText($position($record)['accumulated_depreciation'], $record->currency_code)))
+            ->editColumn('net_value', fn (FixedAsset $record): string => $this->plainText($this->moneyText($position($record)['net_book_value'], $record->currency_code)))
             ->editColumn('is_depreciable', fn (FixedAsset $record): string => '<span class="badge rounded-pill badge-subtle-'.($record->is_depreciable ? 'success' : 'secondary').'">'.e(__('fixed_assets.booleans.'.($record->is_depreciable ? 'yes' : 'no'))).'</span>')
             ->editColumn('status', fn (FixedAsset $record): string => '<span class="badge rounded-pill badge-subtle-'.($record->status === 'active' ? 'success' : 'secondary').'">'.e(__("fixed_assets.statuses.{$record->status}")).'</span>')
             ->editColumn('created_by', fn (FixedAsset $record): string => $this->ellipsisText($this->auditUserLabel($record->created_by_name, $record->created_by_doc_num)))
@@ -119,7 +133,7 @@ class FixedAssetsDataTable
             ->editColumn('updated_at', fn (FixedAsset $record): string => $this->plainText($this->dateTimeText($record->updated_at, $dateTimeFormat)))
             ->editColumn('deleted_by', fn (FixedAsset $record): string => $this->ellipsisText($this->auditUserLabel($record->deleted_by_name, $record->deleted_by_doc_num)))
             ->editColumn('deleted_at', fn (FixedAsset $record): string => $this->plainText($this->dateTimeText($record->deleted_at, $dateTimeFormat)))
-            ->addColumn('actions', fn (FixedAsset $record): string => view('modules.finance.partials.actions', ['record' => $record, 'resource' => 'fixed_assets', 'routePrefix' => 'admin.fixed-assets.assets'])->render())
+            ->addColumn('actions', fn (FixedAsset $record): string => view('modules.fixed-assets.assets.actions', ['record' => $record])->render())
             ->orderColumn('doc_num', 'fixed_assets.doc_number $1')
             ->orderColumn('asset_name', 'fixed_assets.asset_name $1')
             ->orderColumn('entry_type', 'fixed_assets.entry_type $1')
@@ -138,6 +152,9 @@ class FixedAssetsDataTable
             ->orderColumn('updated_at', 'fixed_assets.updated_at $1')
             ->orderColumn('deleted_by', 'deleted_users.name $1')
             ->orderColumn('deleted_at', 'fixed_assets.deleted_at $1')
+            ->removeColumn('cost_movements')
+            ->removeColumn('posted_depreciations')
+            ->removeColumn('disposals')
             ->removeColumn('id')
             ->removeColumn('company_id')
             ->removeColumn('account_id')

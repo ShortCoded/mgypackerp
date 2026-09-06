@@ -1049,6 +1049,10 @@ test('system root account delete is blocked', function () {
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.accounting.accounts.destroy', $root->doc_num))
-        ->assertStatus(422)
-        ->assertJsonPath('success', false);
+        ->assertConflict()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('error_code', 'invalid_state');
+
+    expect($root->fresh())->not->toBeNull()
+        ->and($root->fresh()->deleted_at)->toBeNull();
 });

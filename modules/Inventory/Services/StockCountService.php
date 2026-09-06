@@ -27,7 +27,7 @@ class StockCountService
             $branchStore = BranchStore::query()->lockForUpdate()->findOrFail($data['branch_store_id']);
 
             if ((int) $branchStore->branch_id !== (int) $data['branch_id']) {
-                throw new DomainException('A stock count store must belong to the selected operating branch.');
+                throw new DomainException(__('A stock count store must belong to the selected operating branch.'));
             }
 
             if (($data['warehouse_location_id'] ?? null) !== null && ! WarehouseLocation::query()
@@ -36,7 +36,7 @@ class StockCountService
                 ->where('is_active', true)
                 ->lockForUpdate()
                 ->exists()) {
-                throw new DomainException('A stock count location must be active and belong to the selected store.');
+                throw new DomainException(__('A stock count location must be active and belong to the selected store.'));
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -110,21 +110,21 @@ class StockCountService
             $locked = StockCount::query()->with('lines')->lockForUpdate()->findOrFail($stockCount->getKey());
 
             if ($locked->status !== StockCount::StatusDraft) {
-                throw new DomainException('Only a draft stock count can receive physical quantities.');
+                throw new DomainException(__('Only a draft stock count can receive physical quantities.'));
             }
 
             foreach ($locked->lines as $line) {
                 $input = $valuesByLineId[$line->getKey()] ?? null;
 
                 if (! is_array($input) || bccomp((string) $input['physical_quantity'], '0', 8) < 0) {
-                    throw new DomainException('Every stock count line requires a non-negative physical quantity.');
+                    throw new DomainException(__('Every stock count line requires a non-negative physical quantity.'));
                 }
 
                 $variance = bcsub((string) $input['physical_quantity'], (string) $line->system_quantity, 8);
                 $reason = trim((string) ($input['variance_reason'] ?? ''));
 
                 if (bccomp($variance, '0', 8) !== 0 && $reason === '') {
-                    throw new DomainException('A variance reason is required for every stock difference.');
+                    throw new DomainException(__('A variance reason is required for every stock difference.'));
                 }
 
                 $line->update([
@@ -156,7 +156,7 @@ class StockCountService
             }
 
             if ($locked->status !== StockCount::StatusCounted) {
-                throw new DomainException('A stock count must be completed before approval.');
+                throw new DomainException(__('A stock count must be completed before approval.'));
             }
 
             foreach ($locked->lines as $line) {
@@ -172,7 +172,7 @@ class StockCountService
                     ->value('quantity');
 
                 if (bccomp((string) $currentQuantity, (string) $line->system_quantity, 8) !== 0) {
-                    throw new DomainException('Stock changed after the count snapshot. Create a new count before approval.');
+                    throw new DomainException(__('Stock changed after the count snapshot. Create a new count before approval.'));
                 }
             }
 
