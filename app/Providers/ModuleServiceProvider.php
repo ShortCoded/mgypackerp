@@ -9,10 +9,18 @@ use Illuminate\Support\Str;
 
 class ModuleServiceProvider extends ServiceProvider
 {
+    /**
+     * @var list<string>|null
+     */
+    private ?array $moduleNames = null;
+
     public function boot(): void
     {
         $this->loadModuleRoutes();
-        $this->loadModuleMigrations();
+
+        if ($this->app->runningInConsole()) {
+            $this->loadModuleMigrations();
+        }
     }
 
     protected function loadModuleRoutes(): void
@@ -84,13 +92,17 @@ class ModuleServiceProvider extends ServiceProvider
 
     protected function modules(): array
     {
+        if ($this->moduleNames !== null) {
+            return $this->moduleNames;
+        }
+
         $modulesPath = base_path('modules');
 
         if (! is_dir($modulesPath)) {
-            return [];
+            return $this->moduleNames = [];
         }
 
-        return collect(scandir($modulesPath))
+        return $this->moduleNames = collect(scandir($modulesPath))
             ->reject(fn (string $module) => in_array($module, ['.', '..'], true))
             ->filter(fn (string $module) => is_dir($modulesPath.DIRECTORY_SEPARATOR.$module))
             ->sort()

@@ -504,6 +504,7 @@
     const isBulkApply = isCtrlShortcut(event, ['Enter', 'NumpadEnter'], [13], ['enter']);
     const isAltQ = isAltShortcut(event, ['KeyQ'], [81], ['q']);
     const isAltK = isAltShortcut(event, ['KeyK'], [75], ['k']);
+    const isAltL = isAltShortcut(event, ['KeyL'], [76], ['l']);
     const isAltN = isAltShortcut(event, ['KeyN'], [78], ['n']);
     const isAltF = isAltShortcut(event, ['KeyF'], [70], ['f']);
     const isAltU = isAltShortcut(event, ['KeyU'], [85], ['u']);
@@ -520,7 +521,7 @@
       9: 'form.delete'
     }[shortcutDigit] : null;
 
-    if (!isAltN && !isAltF && !isAltU && !isAltShiftD && !isAltShiftX && !isGlobalSearch && !isDataTableSearch && !isBulkApply && !isAltQ && !isAltK && !formShortcutAction) {
+    if (!isAltN && !isAltF && !isAltU && !isAltShiftD && !isAltShiftX && !isGlobalSearch && !isDataTableSearch && !isBulkApply && !isAltQ && !isAltK && !isAltL && !formShortcutAction) {
       return;
     }
 
@@ -556,8 +557,14 @@
       return;
     }
 
+    if (isAltL && !isTypingTarget(event.target) && clickShortcutAction('line.add')) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (
-      (isAltN || isAltF || isAltU || isAltShiftD || isAltShiftX || isGlobalSearch || isDataTableSearch || isAltQ || isAltK || isBulkApply)
+      (isAltN || isAltF || isAltU || isAltShiftD || isAltShiftX || isGlobalSearch || isDataTableSearch || isAltQ || isAltK || isAltL || isBulkApply)
       && isTypingTarget(event.target)
       && !(isBulkApply && isBulkActionSelectTarget(event.target))
     ) {

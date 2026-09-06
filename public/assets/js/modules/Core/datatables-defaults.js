@@ -2,7 +2,10 @@
     'use strict';
 
     const noColvisSelector = ':not(.no-colvis)';
-    const lengthMenuValues = [10, 25, 50, 75, 100, 125, 150, 200, 225, 250, 275, 300];
+    const maxPageLength = 100;
+    const lengthMenuValues = [10, 25, 50, 75, maxPageLength];
+    let dropdownOverflowBound = false;
+    let selectAllCellBound = false;
 
     function translations() {
         return window.dataTableTranslations || {};
@@ -31,23 +34,46 @@
         }, overrides || {});
     }
 
-    function applyFalconEnhancements(root) {
+    function enhancementRoot(root) {
         const $root = $(root || document);
 
-        $root.find('.erp-datatable-card .dataTables_filter input, .erp-datatable-card .dt-search input').addClass('form-control-sm');
-        $root.find('.erp-datatable-card .dataTables_length select, .erp-datatable-card .dt-length select').addClass('form-select-sm');
-        $root.find('.erp-datatable-card .dt-buttons .btn').removeClass('btn-secondary').addClass('btn-falcon-default btn-sm');
-        bindDropdownOverflow($root);
+        if (!root || root === document) {
+            return $root;
+        }
+
+        const $card = $root.closest('.erp-datatable-card');
+
+        return $card.length ? $card : $root;
+    }
+
+    function enhancementSelector($root, selector) {
+        return $root.is('.erp-datatable-card') ? selector : '.erp-datatable-card ' + selector;
+    }
+
+    function applyFalconEnhancements(root) {
+        const $root = enhancementRoot(root);
+
+        $root.find(enhancementSelector($root, '.dataTables_filter input, .dt-search input')).addClass('form-control-sm');
+        $root.find(enhancementSelector($root, '.dataTables_length select, .dt-length select')).addClass('form-select-sm');
+        $root.find(enhancementSelector($root, '.dt-buttons .btn')).removeClass('btn-secondary').addClass('btn-falcon-default btn-sm');
+        bindDropdownOverflow();
+        bindSelectAllCell();
 
         if (window.AppShortcuts && typeof window.AppShortcuts.applyDataTableSearchTitles === 'function') {
-            window.AppShortcuts.applyDataTableSearchTitles(root || document);
+            window.AppShortcuts.applyDataTableSearchTitles($root.get(0) || root || document);
         }
     }
 
-    function bindDropdownOverflow($root) {
+    function bindDropdownOverflow() {
+        if (dropdownOverflowBound) {
+            return;
+        }
+
+        dropdownOverflowBound = true;
+
         const selector = '.erp-datatable-card .dropdown, .erp-datatable-card .btn-reveal-trigger';
 
-        $root
+        $(document)
             .off('show.bs.dropdown.erpDataTables', selector)
             .on('show.bs.dropdown.erpDataTables', selector, function () {
                 $(this)
@@ -60,6 +86,60 @@
                     .closest('.dataTables_scrollBody, .dt-scroll-body, .erp-datatable-scroll')
                     .removeClass('datatable-dropdown-open');
             });
+    }
+
+    function bindSelectAllCell() {
+        if (selectAllCellBound) {
+            return;
+        }
+
+        selectAllCellBound = true;
+
+        $(document)
+            .off('click.erpDataTableSelectAll', '.erp-datatable-card thead th.dt-select')
+            .on('click.erpDataTableSelectAll', '.erp-datatable-card thead th.dt-select', function (event) {
+                if ($(event.target).closest('input, label, button, a').length > 0) {
+                    return;
+                }
+
+                const checkbox = this.querySelector('input[type="checkbox"]');
+
+                if (!checkbox || checkbox.disabled) {
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                checkbox.click();
+            });
+    }
+
+    function cappedPageLength(value) {
+        const pageLength = Number(value);
+
+        if (!Number.isFinite(pageLength) || pageLength < 1 || pageLength > maxPageLength) {
+            return maxPageLength;
+        }
+
+        return pageLength;
+    }
+
+    function normalizeStatePageLength(settings, data) {
+        if (!data || !Object.prototype.hasOwnProperty.call(data, 'length')) {
+            return;
+        }
+
+        data.length = cappedPageLength(data.length);
+    }
+
+    function statePageLengthCallback(callback) {
+        return function (settings, data) {
+            normalizeStatePageLength(settings, data);
+
+            if (typeof callback === 'function') {
+                return callback.apply(this, arguments);
+            }
+        };
     }
 
     function resolveColumnIndex(index, totalColumns) {
@@ -102,9 +182,13 @@
 
     function defaults() {
         return {
+            autoWidth: false,
+            orderClasses: false,
             pagingType: 'full_numbers',
             pageLength: 10,
             lengthMenu: lengthMenu(),
+            processing: true,
+            searchDelay: 400,
             responsive: {
                 details: {
                     type: 'inline',
@@ -116,14 +200,24 @@
                 columnVisibilityButton()
             ],
             language: translations(),
+            stateLoadParams: normalizeStatePageLength,
+            stateSaveParams: normalizeStatePageLength,
             drawCallback: function () {
-                applyFalconEnhancements(document);
+                const api = this && typeof this.api === 'function' ? this.api() : null;
+                const table = api && typeof api.table === 'function' ? api.table() : null;
+                const container = table && typeof table.container === 'function' ? table.container() : document;
+
+                applyFalconEnhancements(container);
             }
         };
     }
 
     function options(overrides) {
         const merged = $.extend(true, {}, defaults(), overrides || {});
+
+        merged.pageLength = cappedPageLength(merged.pageLength);
+        merged.stateLoadParams = statePageLengthCallback(overrides && overrides.stateLoadParams);
+        merged.stateSaveParams = statePageLengthCallback(overrides && overrides.stateSaveParams);
 
         if (overrides && Object.prototype.hasOwnProperty.call(overrides, 'buttons')) {
             merged.buttons = overrides.buttons;

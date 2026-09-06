@@ -76,6 +76,11 @@ class StoreQuotationRequest extends FormRequest
             'attachment_file_doc_nums' => $this->normalizedStringList('attachment_file_doc_nums'),
         ];
 
+        if ($data['quotation_type'] !== Quotation::TypeProject) {
+            $data['project_name'] = null;
+            $data['execution_schedule_lines'] = [];
+        }
+
         if (! $this->user()?->can('quotations.document_number.control')) {
             $data['doc_number'] = null;
         }
@@ -91,7 +96,7 @@ class StoreQuotationRequest extends FormRequest
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'customer_doc_num' => ['required', 'string'],
             'quotation_type' => ['required', Rule::in(Quotation::Types)],
-            'project_name' => ['nullable', 'string', 'max:255'],
+            'project_name' => ['nullable', 'required_if:quotation_type,'.Quotation::TypeProject, 'string', 'max:255'],
             'subject' => ['nullable', 'string', 'max:255'],
             'quotation_date' => ['required', $this->dateRule('quotation_date')],
             'valid_until' => ['nullable', $this->dateRule('valid_until')],
@@ -112,12 +117,12 @@ class StoreQuotationRequest extends FormRequest
             'technical_notes' => ['nullable', 'string'],
             'customer_reference' => ['nullable', 'string', 'max:160'],
             'internal_notes' => ['nullable', 'string'],
-            'lines' => ['required', 'array'],
+            'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_doc_num' => ['required', 'string'],
             'lines.*.description' => ['nullable', 'string'],
-            'lines.*.unit_doc_num' => ['nullable', 'string'],
-            'lines.*.quantity' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
-            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
+            'lines.*.unit_doc_num' => ['required', 'string'],
+            'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
@@ -236,6 +241,9 @@ class StoreQuotationRequest extends FormRequest
             ->filter(fn (array $line): bool => ! ($line['_delete'] ?? false))
             ->filter(fn (array $line): bool => $this->lineHasContent($line))
             ->map(function (array $line): array {
+                if (blank($line['discount_type'] ?? null)) {
+                    $line['discount_value'] = '0';
+                }
                 if (($line['requested_date'] ?? null) !== null) {
                     $line['requested_date'] = app(DateFormatService::class)->normalizeForStorage((string) $line['requested_date']);
                 }
@@ -244,6 +252,10 @@ class StoreQuotationRequest extends FormRequest
             })
             ->values()
             ->all();
+
+        if (blank($data['discount_type'] ?? null)) {
+            $data['discount_value'] = '0';
+        }
 
         $data['payment_milestones'] = collect($data['payment_milestones'] ?? [])
             ->filter(fn (array $row): bool => ! ($row['_delete'] ?? false))
@@ -298,6 +310,7 @@ class StoreQuotationRequest extends FormRequest
         $this->validateCustomer($validator, $companyId);
         $this->validateCurrency($validator, $companyId);
         $this->validateDates($validator);
+        $this->validateDiscountContracts($validator);
         $this->validateLines($validator, $companyId);
         $this->validateMilestones($validator);
         $this->validateExecutionSchedule($validator);
@@ -367,6 +380,9 @@ class StoreQuotationRequest extends FormRequest
             if ($unitDocNum !== '' && ! $unit instanceof ItemUnit) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('validation.exists', ['attribute' => __('quotations.attributes.unit')]));
             }
+            if ($unitDocNum === '') {
+                $validator->errors()->add("lines.{$index}.unit_doc_num", __('validation.required', ['attribute' => __('quotations.attributes.unit')]));
+            }
 
             if ($quantity === null || $quantity === '' || ! is_numeric($quantity) || bccomp((string) $quantity, '0', 4) <= 0) {
                 $validator->errors()->add("lines.{$index}.quantity", __('quotations.messages.quantity_gt_zero'));
@@ -387,6 +403,35 @@ class StoreQuotationRequest extends FormRequest
 
         if ($validLineCount === 0) {
             $validator->errors()->add('lines', __('quotations.messages.lines_required'));
+        }
+    }
+
+    private function validateDiscountContracts(Validator $validator): void
+    {
+        $this->validateDiscount($validator, 'discount_value', $this->input('discount_type'), $this->input('discount_value'));
+
+        foreach ($this->input('lines', []) as $index => $line) {
+            if (! is_array($line) || ($line['_delete'] ?? false) || ! $this->lineHasContent($line)) {
+                continue;
+            }
+
+            $this->validateDiscount(
+                $validator,
+                "lines.{$index}.discount_value",
+                $line['discount_type'] ?? null,
+                $line['discount_value'] ?? null,
+            );
+        }
+    }
+
+    private function validateDiscount(Validator $validator, string $valueField, mixed $type, mixed $value): void
+    {
+        $numericValue = is_numeric($value) ? (float) $value : 0.0;
+        if (blank($type) && $numericValue > 0) {
+            $validator->errors()->add($valueField, __('sales_ui.discount_type_required'));
+        }
+        if ($type === 'percentage' && $numericValue > 100) {
+            $validator->errors()->add($valueField, __('sales_ui.discount_percentage_max'));
         }
     }
 

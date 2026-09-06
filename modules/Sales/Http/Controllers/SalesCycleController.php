@@ -4,6 +4,7 @@ namespace Modules\Sales\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryReservation;
@@ -51,6 +53,7 @@ use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Models\SalesReturnLine;
 use Modules\Sales\Services\CreditControlService;
@@ -61,6 +64,7 @@ use Modules\Sales\Services\CustomerReceiptSettlementService;
 use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
 use Modules\Sales\Services\SalesReturnService;
 use Modules\Sales\Services\SalesSelect2Service;
 
@@ -79,8 +83,21 @@ class SalesCycleController extends Controller
 
     public function createOrder(Request $request): View
     {
+        $context = $this->requiredContext($request);
+        if ($request->filled('source_request_doc_num')) {
+            abort_unless($request->user()?->can('sales_requests.view'), 403);
+        }
+        $sourceRequest = $request->filled('source_request_doc_num')
+            ? SalesRequest::query()->with(['customer', 'currency', 'salesEmployee', 'lines.product.unit', 'lines.product.equivalentUnit', 'lines.unit'])
+                ->where('company_id', $context['company_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->whereIn('status', ['approved', 'partially_converted'])
+                ->where('doc_num', $request->string('source_request_doc_num')->toString())
+                ->firstOrFail()
+            : null;
+
         return view('modules.sales.cycle.sales-order-form', [
-            ...$this->formOptions($request),
+            ...$this->formOptions($request, null, $sourceRequest),
             'mode' => 'create',
             'record' => null,
             'action' => route('admin.sales.sales-orders.store'),
@@ -116,9 +133,50 @@ class SalesCycleController extends Controller
         return $this->listing($request, 'sales_returns', SalesReturn::query()->with('customer')->latest('return_date'));
     }
 
+    public function createReturn(Request $request): View|RedirectResponse
+    {
+        $context = $this->requiredContext($request);
+        if (! $request->filled('invoice_doc_num')) {
+            return view('modules.sales.cycle.return-source');
+        }
+
+        $data = $request->validate([
+            'invoice_doc_num' => ['required', 'string'],
+        ]);
+
+        abort_unless($request->user()?->can('customer_invoices.view'), 403);
+        $invoice = CustomerInvoice::query()
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('document_type', CustomerInvoice::TypeInvoice)
+            ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->where('doc_num', $data['invoice_doc_num'])
+            ->firstOrFail();
+
+        return redirect()->to(route('admin.sales.sales-invoices.show', $invoice).'#sales-invoice-return');
+    }
+
     public function deliveries(Request $request): View|JsonResponse
     {
         return $this->listing($request, 'sales_deliveries', InventoryDocument::query()->with('customer')->where('document_type', InventoryDocument::TypeSalesDelivery)->latest('document_date'));
+    }
+
+    public function createDelivery(Request $request): View|RedirectResponse
+    {
+        $context = $this->requiredContext($request);
+        if (! $request->filled('invoice_doc_num')) {
+            return view('modules.sales.cycle.delivery-source');
+        }
+
+        $invoice = CustomerInvoice::query()
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('document_type', CustomerInvoice::TypeInvoice)
+            ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->where('doc_num', $request->string('invoice_doc_num')->toString())
+            ->firstOrFail();
+
+        return redirect()->to(route('admin.sales.sales-invoices.show', $invoice).'#sales-invoice-delivery');
     }
 
     public function showOrder(
@@ -161,26 +219,49 @@ class SalesCycleController extends Controller
         ]);
     }
 
+    public function destroyOrder(Request $request, SalesOrder $salesOrder, SalesOrderService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesOrder->company_id === $context['company_id'] && (int) $salesOrder->branch_id === $context['branch_id'], 404);
+        $service->delete($salesOrder);
+
+        return response()->json(['message' => __('Saved successfully')]);
+    }
+
+    public function restoreOrder(Request $request, string $document, SalesOrderService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $order = SalesOrder::onlyTrashed()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $document)->firstOrFail();
+        $service->restore($order);
+
+        return response()->json(['message' => __('Saved successfully')]);
+    }
+
+    public function createInvoice(Request $request): View|RedirectResponse
+    {
+        $context = $this->requiredContext($request);
+        if ($request->filled('sales_order_doc_num')) {
+            $order = SalesOrder::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                ->where('financial_period_id', $context['financial_period_id'])->where('doc_num', $request->string('sales_order_doc_num')->toString())
+                ->whereIn('status', ['approved', 'partially_fulfilled', 'fulfilled'])->firstOrFail();
+
+            return redirect()->to(route('admin.sales.sales-orders.show', $order).'#sales-order-invoice');
+        }
+
+        return view('modules.sales.cycle.invoice-source');
+    }
+
     public function showInvoice(CustomerInvoice $customerInvoice): View
     {
         $record = $customerInvoice->load([
-            'customer', 'order', 'delivery', 'deliveries', 'originalInvoice', 'lines.product', 'lines.unit',
+            'customer', 'order', 'delivery', 'deliveries.lines', 'originalInvoice', 'lines.product', 'lines.unit',
             'lines.orderLine', 'lines.deliveryLine.document', 'lines.returnLines.salesReturn', 'paymentSchedules',
             'allocations.receipt', 'journalEntry.lines', 'reversalJournalEntry', 'returns.creditNote', 'creditNotes',
             'creditAllocations.targetInvoice', 'appliedCredits.creditNote', 'creditRefunds.cashbox',
             'creditRefunds.bankAccount', 'electronicInvoiceSubmissions',
         ]);
 
-        return $this->show($record->document_type, $record, [
-            'creditTargetInvoices' => CustomerInvoice::query()
-                ->where('company_id', $record->company_id)
-                ->where('customer_id', $record->customer_id)
-                ->where('document_type', CustomerInvoice::TypeInvoice)
-                ->where('posting_status', 'posted')
-                ->where('remaining_amount', '>', 0)
-                ->orderBy('invoice_date')
-                ->get(['id', 'doc_num', 'invoice_date', 'remaining_amount']),
-        ]);
+        return $this->show($record->document_type, $record);
     }
 
     public function allocateCustomerCredit(
@@ -270,7 +351,7 @@ class SalesCycleController extends Controller
 
     public function showReceipt(CustomerReceipt $customerReceipt): View
     {
-        return $this->show('customer_receipt', $customerReceipt->load(['customer', 'order', 'cashVoucher', 'cheque', 'allocations.invoice', 'allocations.invoiceSchedule', 'journalEntry.lines']));
+        return $this->show('customer_receipt', $customerReceipt->load(['customer', 'receivedByEmployee', 'currency', 'cashbox', 'bankAccount.bank', 'order', 'cashVoucher', 'cheque', 'allocations.invoice', 'allocations.invoiceSchedule', 'journalEntry.lines']));
     }
 
     public function showReturn(SalesReturn $salesReturn): View
@@ -282,7 +363,7 @@ class SalesCycleController extends Controller
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
-        return $this->show('sales_delivery', $inventoryDocument->load(['customer', 'salesOrder', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']));
+        return $this->show('sales_delivery', $inventoryDocument->load(['customer', 'salesOrder.salesEmployee', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']));
     }
 
     public function showProduction(ProductionOrder $productionOrder): View
@@ -297,10 +378,19 @@ class SalesCycleController extends Controller
         ]);
     }
 
-    public function storeOrder(StoreSalesOrderRequest $request, SalesOrderService $service): JsonResponse
+    public function storeOrder(StoreSalesOrderRequest $request, SalesOrderService $service, SalesRequestService $requestService): JsonResponse
     {
         $context = $this->requiredContext($request);
-        $order = $service->create($this->salesOrderPayload($request->validated(), $context));
+        $payload = $this->salesOrderPayload($request->validated(), $context);
+        if ($request->filled('source_request_doc_num')) {
+            abort_unless($request->user()?->can('sales_requests.view'), 403);
+            $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
+            $order = $requestService->convertToOrder($sourceRequest, $payload);
+        } else {
+            $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+            $order = $service->create(collect($payload)->except('source_request_doc_num')->all());
+        }
 
         return $this->created($order, 'admin.sales.sales-orders.show');
     }
@@ -309,7 +399,9 @@ class SalesCycleController extends Controller
     {
         $context = $this->requiredContext($request);
         abort_unless((int) $salesOrder->financial_period_id === $context['financial_period_id'], 404);
-        $order = $service->update($salesOrder, $this->salesOrderPayload($request->validated(), $context, $salesOrder->business_employee_id));
+        $payload = $this->salesOrderPayload($request->validated(), $context, $salesOrder->business_employee_id);
+        $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+        $order = $service->update($salesOrder, collect($payload)->except('source_request_doc_num')->all());
 
         return response()->json(['data' => ['doc_num' => $order->doc_num, 'url' => route('admin.sales.sales-orders.show', $order)]]);
     }
@@ -344,12 +436,19 @@ class SalesCycleController extends Controller
         return response()->json(['data' => $service->cancel($salesOrder, (string) $request->validated('reason'))]);
     }
 
-    public function deliverOrder(CreateDeliveryRequest $request, SalesOrder $salesOrder, SalesFulfillmentService $service): JsonResponse
+    public function deliverInvoice(CreateDeliveryRequest $request, CustomerInvoice $customerInvoice, SalesFulfillmentService $service): JsonResponse
     {
         $data = $request->validated();
-        $lines = collect($data['lines'])->map(fn (array $line): array => ['sales_order_line_id' => SalesOrderLine::query()->where('sales_order_id', $salesOrder->getKey())->where('public_id', $line['sales_order_line_public_id'])->firstOrFail()->getKey(), 'quantity' => $line['quantity']])->all();
+        $lines = collect($data['lines'])->map(fn (array $line): array => [
+            'customer_invoice_line_id' => CustomerInvoiceLine::query()
+                ->where('customer_invoice_id', $customerInvoice->getKey())
+                ->where('public_id', $line['invoice_line_public_id'])
+                ->firstOrFail()
+                ->getKey(),
+            'quantity' => $line['quantity'],
+        ])->all();
 
-        return $this->created($service->deliver($salesOrder, $lines, collect($data)->except('lines')->all()), 'admin.sales.sales-deliveries.show');
+        return $this->created($service->deliverInvoice($customerInvoice, $lines, collect($data)->except('lines')->all()), 'admin.sales.delivery-notes.show');
     }
 
     public function reserveOrder(ReserveSalesStockRequest $request, SalesOrder $salesOrder, SalesFulfillmentService $service): JsonResponse
@@ -419,12 +518,19 @@ class SalesCycleController extends Controller
             ? SalesOrder::query()->where('company_id', $context['company_id'])->where('doc_num', $request->string('order'))->firstOrFail()
             : null);
         $customerId = $invoice?->customer_id ?? $order?->customer_id;
+        $selectedCurrencyId = $invoice?->currency_id ?? $order?->currency_id;
+        $selectedEmployeeDocNum = $request->old('received_by_employee_doc_num');
 
         return view('modules.sales.cycle.receipt-form', [
             'customers' => Customer::query()->forCompany($context['company_id'])->where('id', $customerId)->get(),
-            'currencies' => Currency::query()->forCompany($context['company_id'])->active()->orderByDesc('is_main')->get(),
+            'currencies' => Currency::query()->forCompany($context['company_id'])->active()
+                ->where(function ($query) use ($selectedCurrencyId): void {
+                    $query->where('is_main', true)
+                        ->when($selectedCurrencyId, fn ($selected) => $selected->orWhere('id', $selectedCurrencyId));
+                })->orderByDesc('is_main')->get(),
             'cashboxes' => Cashbox::query()->forCompany($context['company_id'])->where('doc_num', $request->old('cashbox_doc_num'))->get(),
             'bankAccounts' => BankAccount::query()->forCompany($context['company_id'])->where('doc_num', $request->old('bank_account_doc_num'))->get(),
+            'receivedByEmployees' => HrEmployee::withTrashed()->where('company_id', $context['company_id'])->where('doc_num', $selectedEmployeeDocNum)->get(),
             'schedules' => CustomerInvoicePaymentSchedule::query()
                 ->with(['invoice.customer'])
                 ->whereHas('invoice', fn ($query) => $query
@@ -504,27 +610,28 @@ class SalesCycleController extends Controller
                 ->getKey(),
             'amount' => $row['amount'],
         ])->all();
-        $receipt = $service->createAndApprove([...collect($data)->except(['customer_doc_num', 'sales_order_doc_num', 'currency_doc_num', 'cashbox_doc_num', 'bank_account_doc_num', 'allocations'])->all(), ...$context, 'customer_id' => $customer->getKey(), 'sales_order_id' => $order?->getKey(), 'currency_id' => $currency?->getKey(), 'cashbox_id' => $cashbox?->getKey(), 'bank_account_id' => $bank?->getKey()], $allocations);
+        $receivedByEmployeeId = app(SalesSelect2Service::class)->employeeId(
+            $context['company_id'],
+            $context['branch_id'],
+            $data['received_by_employee_doc_num'],
+            attribute: 'received_by_employee_doc_num',
+        );
+        $receipt = $service->createAndApprove([...collect($data)->except(['customer_doc_num', 'sales_order_doc_num', 'currency_doc_num', 'cashbox_doc_num', 'bank_account_doc_num', 'received_by_employee_doc_num', 'allocations'])->all(), ...$context, 'customer_id' => $customer->getKey(), 'received_by_employee_id' => $receivedByEmployeeId, 'sales_order_id' => $order?->getKey(), 'currency_id' => $currency?->getKey(), 'cashbox_id' => $cashbox?->getKey(), 'bank_account_id' => $bank?->getKey()], $allocations);
 
         return $this->created($receipt, 'admin.sales.customer-receipts.show', ['unallocated_amount' => $receipt->unallocated_amount]);
     }
 
     public function storeReturn(StoreSalesReturnRequest $request, CustomerInvoice $customerInvoice, SalesReturnService $service): JsonResponse
     {
+        $context = $this->requiredContext($request);
         $data = $request->validated();
+        $storeId = empty($data['branch_store_uuid']) ? null : BranchStore::query()
+            ->where('branch_id', $context['branch_id'])
+            ->where('public_uuid', $data['branch_store_uuid'])
+            ->valueOrFail('id');
         $lines = collect($data['lines'])->map(fn (array $row): array => ['customer_invoice_line_id' => CustomerInvoiceLine::query()->where('customer_invoice_id', $customerInvoice->getKey())->where('public_id', $row['invoice_line_public_id'])->firstOrFail()->getKey(), 'quantity' => $row['quantity']])->all();
 
-        return $this->created($service->create($customerInvoice, $data['reason_code'], $data['reason_details'] ?? null, $lines), 'admin.sales.sales-returns.show');
-    }
-
-    public function storeDeliveryReturn(StoreSalesReturnRequest $request, InventoryDocument $inventoryDocument, SalesReturnService $service): JsonResponse
-    {
-        $context = $this->context->snapshot($request);
-        abort_unless((int) $inventoryDocument->branch_id === (int) $context['branch_id'], 404);
-        $data = $request->validated();
-        $lines = collect($data['lines'])->map(fn (array $row): array => ['delivery_line_id' => $inventoryDocument->lines()->where('public_id', $row['delivery_line_public_id'])->firstOrFail()->getKey(), 'quantity' => $row['quantity']])->all();
-
-        return $this->created($service->createFromDelivery($inventoryDocument, $data['reason_code'], $data['reason_details'] ?? null, $lines), 'admin.sales.sales-returns.show');
+        return $this->created($service->create($customerInvoice, $data['reason_code'], $data['reason_details'] ?? null, $lines, $storeId), 'admin.sales.sales-returns.show');
     }
 
     public function authorizeReturn(SalesReturn $salesReturn, SalesReturnService $service): JsonResponse
@@ -575,34 +682,11 @@ class SalesCycleController extends Controller
     public function printReceipt(CustomerReceipt $customerReceipt): Response
     {
         $receipt = $customerReceipt->load([
-            'company', 'customer', 'currency', 'cashbox', 'bankAccount',
+            'company', 'customer', 'receivedByEmployee', 'currency', 'cashbox', 'bankAccount.bank',
             'cashVoucher.company', 'cashVoucher.cashbox.account', 'cashVoucher.currency', 'cashVoucher.lines.account',
             'cheque.company', 'cheque.bankAccount.bank', 'cheque.bankAccount.account', 'cheque.currency', 'cheque.lines.account',
             'order', 'allocations.invoice', 'allocations.invoiceSchedule',
         ]);
-        $identity = $receipt->print_identity_snapshot ?: $this->printIdentity->forCompany($receipt->company);
-
-        if ($receipt->cashVoucher) {
-            return $this->pdf->stream('modules.finance.cash-vouchers.print', [
-                'title' => __('cash_receipt_vouchers.print_title', ['doc' => $receipt->cashVoucher->doc_num]),
-                'record' => $receipt->cashVoucher,
-                'routePrefix' => 'admin.finance.cash-receipt-vouchers',
-                'translationKey' => 'cash_receipt_vouchers',
-                'companyName' => $identity['legal_name'] ?: $identity['name'],
-                'companyLogoPath' => $identity['logo_source'],
-                'companyPrintIdentity' => $identity,
-            ], str('cash-customer-receipt-'.$receipt->doc_num)->slug().'.pdf', 'P');
-        }
-
-        if ($receipt->cheque) {
-            return $this->pdf->stream('modules.finance.cheques.print', [
-                'title' => __('Received Cheque').' — '.$receipt->cheque->doc_num,
-                'record' => $receipt->cheque,
-                'companyName' => $identity['legal_name'] ?: $identity['name'],
-                'companyLogoPath' => $identity['logo_source'],
-                'companyPrintIdentity' => $identity,
-            ], str('cheque-customer-receipt-'.$receipt->doc_num)->slug().'.pdf', 'P');
-        }
 
         return $this->print('customer_receipt', $receipt, true);
     }
@@ -616,7 +700,7 @@ class SalesCycleController extends Controller
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
-        return $this->print('sales_delivery', $inventoryDocument->load(['company', 'customer', 'salesOrder', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']), false);
+        return $this->print('sales_delivery', $inventoryDocument->load(['company', 'customer', 'salesOrder.salesEmployee', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']), false);
     }
 
     public function printProduction(ProductionOrder $productionOrder): Response
@@ -685,11 +769,11 @@ class SalesCycleController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function formOptions(Request $request, ?SalesOrder $record = null): array
+    private function formOptions(Request $request, ?SalesOrder $record = null, ?SalesRequest $sourceRequest = null): array
     {
         $this->requiredContext($request);
 
-        return app(SalesSelect2Service::class)->formOptions($request, $record);
+        return app(SalesSelect2Service::class)->formOptions($request, $record, $sourceRequest);
     }
 
     /**

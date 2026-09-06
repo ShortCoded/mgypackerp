@@ -4,6 +4,8 @@ namespace Modules\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Production\Models\ProductionRun;
@@ -48,6 +50,16 @@ class InventoryTransaction extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class)->withTrashed();
+    }
+
+    public function branchHall(): BelongsTo
+    {
+        return $this->belongsTo(BranchHall::class)->withTrashed();
     }
 
     public function branchStore(): BelongsTo

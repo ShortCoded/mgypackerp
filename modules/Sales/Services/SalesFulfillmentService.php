@@ -13,6 +13,8 @@ use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 
@@ -108,17 +110,18 @@ class SalesFulfillmentService
             if (! $lockedOrder->isApprovedForFulfillment()) {
                 throw new DomainException(__('Only an approved sales order can be delivered.'));
             }
-            if (! $lockedOrder->branch_store_id) {
+            $branchStoreId = isset($logistics['branch_store_id']) ? (int) $logistics['branch_store_id'] : (int) $lockedOrder->branch_store_id;
+            if ($branchStoreId <= 0) {
                 throw new DomainException(__('A finished-goods store is required for delivery.'));
             }
 
             $documentDate = $logistics['document_date'] ?? now()->toDateString();
             $period = $this->periods->resolveOpenForPostingDate((int) $lockedOrder->company_id, $documentDate, lockForUpdate: true);
-            BranchStore::query()->lockForUpdate()->findOrFail($lockedOrder->branch_store_id);
+            BranchStore::query()->where('branch_id', $lockedOrder->branch_id)->lockForUpdate()->findOrFail($branchStoreId);
             $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $lockedOrder->company_id);
             $document = InventoryDocument::query()->create([
                 ...$numbers, 'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
-                'branch_id' => $lockedOrder->branch_id, 'branch_store_id' => $lockedOrder->branch_store_id,
+                'branch_id' => $lockedOrder->branch_id, 'branch_store_id' => $branchStoreId,
                 'document_type' => InventoryDocument::TypeSalesDelivery, 'document_date' => $documentDate,
                 'purpose' => 'Sales delivery', 'source_document_type' => SalesOrder::class,
                 'source_document_id' => $lockedOrder->getKey(), 'source_doc_num' => $lockedOrder->doc_num,
@@ -139,10 +142,10 @@ class SalesFulfillmentService
                 $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
                 $this->amounts->assertNotGreaterThan($quantity, $line->remainingDeliveryQuantity(), __('Delivery exceeds the remaining approved quantity.'));
                 $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
-                $stock = $this->availability->forProduct((int) $lockedOrder->company_id, (int) $lockedOrder->branch_store_id, (int) $line->product_id, (int) $line->getKey());
+                $stock = $this->availability->forProduct((int) $lockedOrder->company_id, $branchStoreId, (int) $line->product_id, (int) $line->getKey());
                 $this->amounts->assertNotGreaterThan($baseQuantity, $stock['available'], __('Delivery exceeds available or reserved stock.'));
 
-                foreach ($this->deliveryStockAllocations($line, $baseQuantity) as $allocation) {
+                foreach ($this->deliveryStockAllocations($line, $baseQuantity, $branchStoreId) as $allocation) {
                     $document->lines()->create([
                         'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
                         'line_number' => ++$documentLineNumber, 'product_id' => $line->product_id, 'unit_id' => $product->item_unit_id,
@@ -168,7 +171,7 @@ class SalesFulfillmentService
                 $line = SalesOrderLine::query()->lockForUpdate()->findOrFail($documentLine->source_line_id);
                 $line->increment('delivered_quantity', $documentLine->transaction_quantity);
                 $line->increment('delivered_base_quantity', $documentLine->quantity);
-                $this->consumeReservations($line, (string) $documentLine->quantity);
+                $this->consumeReservations($line, (string) $documentLine->quantity, $branchStoreId);
             }
             $this->refreshOrderStatus($lockedOrder);
 
@@ -176,10 +179,66 @@ class SalesFulfillmentService
         });
     }
 
-    private function consumeReservations(SalesOrderLine $line, string $quantity): void
+    /**
+     * @param  list<array{customer_invoice_line_id: int, quantity: string|int|float}>  $lines
+     * @param  array<string, mixed>  $logistics
+     */
+    public function deliverInvoice(CustomerInvoice $invoice, array $lines, array $logistics): InventoryDocument
+    {
+        return DB::transaction(function () use ($invoice, $lines, $logistics): InventoryDocument {
+            if ($lines === [] || count(array_unique(array_column($lines, 'customer_invoice_line_id'))) !== count($lines)) {
+                throw new DomainException(__('Select each invoice line once and enter its delivery quantity.'));
+            }
+
+            $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'deliveries.lines'])
+                ->lockForUpdate()->findOrFail($invoice->getKey());
+            if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted || ! $lockedInvoice->order) {
+                throw new DomainException(__('Only a posted sales invoice linked to a sales order can be delivered.'));
+            }
+
+            $branchStore = BranchStore::query()
+                ->where('branch_id', $lockedInvoice->branch_id)
+                ->where('public_uuid', $logistics['branch_store_uuid'] ?? '')
+                ->lockForUpdate()
+                ->firstOrFail();
+            $deliveryLines = [];
+            foreach ($lines as $input) {
+                $invoiceLine = CustomerInvoiceLine::query()->with('orderLine')->where('customer_invoice_id', $lockedInvoice->getKey())
+                    ->lockForUpdate()->findOrFail($input['customer_invoice_line_id']);
+                if ($invoiceLine->is_service || ! $invoiceLine->orderLine) {
+                    throw new DomainException(__('Service invoice lines do not generate warehouse deliveries.'));
+                }
+
+                $deliveredForInvoice = (string) $lockedInvoice->deliveries
+                    ->flatMap->lines
+                    ->where('source_line_type', SalesOrderLine::class)
+                    ->where('source_line_id', $invoiceLine->sales_order_line_id)
+                    ->sum('transaction_quantity');
+                $remaining = $this->amounts->subtract((string) $invoiceLine->quantity, $deliveredForInvoice, 8);
+                $quantity = (string) $input['quantity'];
+                $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
+                $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Delivery quantity exceeds the invoiced quantity remaining for delivery.'));
+                $deliveryLines[] = ['sales_order_line_id' => $invoiceLine->sales_order_line_id, 'quantity' => $quantity];
+            }
+
+            $document = $this->deliver($lockedInvoice->order, $deliveryLines, [
+                ...$logistics,
+                'branch_store_id' => $branchStore->getKey(),
+            ]);
+            $document->update(['source_doc_num' => $lockedInvoice->doc_num]);
+            $lockedInvoice->deliveries()->syncWithoutDetaching([$document->getKey()]);
+            if (! $lockedInvoice->delivery_document_id) {
+                $lockedInvoice->update(['delivery_document_id' => $document->getKey()]);
+            }
+
+            return $document->refresh()->load(['lines', 'branchStore']);
+        });
+    }
+
+    private function consumeReservations(SalesOrderLine $line, string $quantity, int $branchStoreId): void
     {
         $remaining = $quantity;
-        foreach (InventoryReservation::query()->where('sales_order_line_id', $line->getKey())->where('status', InventoryReservation::StatusActive)->lockForUpdate()->oldest()->get() as $reservation) {
+        foreach (InventoryReservation::query()->where('sales_order_line_id', $line->getKey())->where('branch_store_id', $branchStoreId)->where('status', InventoryReservation::StatusActive)->lockForUpdate()->oldest()->get() as $reservation) {
             if ($this->amounts->compare($remaining, '0', 8) <= 0) {
                 break;
             }
@@ -252,7 +311,7 @@ class SalesFulfillmentService
     /**
      * @return list<array{warehouse_location_id: int|null, batch_lot: string|null, quantity: string, inventory_reservation_id: int|null}>
      */
-    private function deliveryStockAllocations(SalesOrderLine $line, string $quantity): array
+    private function deliveryStockAllocations(SalesOrderLine $line, string $quantity, int $branchStoreId): array
     {
         $remaining = $quantity;
         $allocations = [];
@@ -261,6 +320,7 @@ class SalesFulfillmentService
 
         $reservations = InventoryReservation::query()
             ->where('sales_order_line_id', $line->getKey())
+            ->where('branch_store_id', $branchStoreId)
             ->where('status', InventoryReservation::StatusActive)
             ->oldest()
             ->lockForUpdate()
@@ -272,7 +332,7 @@ class SalesFulfillmentService
 
             $available = $this->availability->forProduct(
                 (int) $line->order->company_id,
-                (int) $line->order->branch_store_id,
+                $branchStoreId,
                 (int) $line->product_id,
                 (int) $line->getKey(),
                 $reservation->warehouse_location_id,
@@ -302,7 +362,7 @@ class SalesFulfillmentService
         if (bccomp($remaining, '0', 8) > 0) {
             foreach ($this->allocateStockPositions(
                 (int) $line->order->company_id,
-                (int) $line->order->branch_store_id,
+                $branchStoreId,
                 (int) $line->product_id,
                 bcadd($remaining, array_reduce($allocatedByPosition, fn (string $carry, string $value): string => bcadd($carry, $value, 8), '0'), 8),
                 (int) $line->getKey(),

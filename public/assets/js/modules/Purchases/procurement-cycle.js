@@ -70,6 +70,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (duplicate && container && template) {
                 const source = duplicate.closest('[data-procurement-line]');
                 const row = window.AppLineItemCards.append(container, template, 'lines', source);
+                row.querySelector('.js-procurement-existing-attachments')?.remove();
+                row.querySelector('.js-procurement-attachment-inputs')?.replaceChildren();
+                const selectedAttachments = row.querySelector('.js-procurement-selected-attachments');
+                selectedAttachments?.replaceChildren();
+                selectedAttachments?.classList.add('d-none');
                 nextLineIndex = container.children.length;
                 renumber(container); initialize(row); refreshAvailability(form, row);
                 return;

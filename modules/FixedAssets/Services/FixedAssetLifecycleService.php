@@ -8,6 +8,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Branch;
@@ -26,6 +27,7 @@ use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\HR\Models\HrEmployee;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -47,6 +49,20 @@ class FixedAssetLifecycleService
 
     public function activate(FixedAsset $asset, string $activationDate, ?string $existingJournalDocNum = null): FixedAsset
     {
+        if ($asset->source_type === FixedAssetPurchaseIntegrationService::SourceType) {
+            $sourceLine = PurchaseInvoiceLine::query()->with('purchaseInvoice')->find($asset->source_id);
+            $sourceInvoice = $sourceLine?->purchaseInvoice;
+            $journal = filled($existingJournalDocNum)
+                ? JournalEntry::query()->where('company_id', $asset->company_id)->where('doc_num', $existingJournalDocNum)->first()
+                : null;
+
+            if (! $sourceInvoice || ! $journal
+                || $journal->source_type !== 'purchase_invoice'
+                || (int) $journal->source_id !== (int) $sourceInvoice->getKey()) {
+                throw new DomainException(__('fixed_assets.purchase_source.activate_from_invoice_only'));
+            }
+        }
+
         return app(FixedAssetCostMovementService::class)->recognize($asset, $activationDate, $existingJournalDocNum);
     }
 
@@ -327,7 +343,7 @@ class FixedAssetLifecycleService
             }
             if ($settlementPath === FixedAssetDisposal::SettlementCustomerInvoice
                 && ($data['disposition_type'] !== FixedAssetDisposal::TypeSale || ! $customer instanceof Customer)) {
-                throw new DomainException(__('An invoiced Fixed Asset disposal requires a sale and an active Customer.'));
+                throw new DomainException(__('fixed_assets.lifecycle.errors.invoiced_sale_customer_required'));
             }
 
             $disposal = FixedAssetDisposal::query()->create([
@@ -376,7 +392,7 @@ class FixedAssetLifecycleService
             if ($settlementPath === FixedAssetDisposal::SettlementCustomerInvoice) {
                 $clearingAccount = $mapping->disposalClearingAccount;
                 if (! $clearingAccount instanceof Account || ! $this->postable($clearingAccount)) {
-                    throw new DomainException(__('The Fixed Asset disposal clearing account is not configured.'));
+                    throw new DomainException(__('fixed_assets.lifecycle.errors.disposal_clearing_required'));
                 }
                 $derecognitionLines = [];
                 if (bccomp($position['base_accumulated_depreciation'], '0', 4) > 0) {
@@ -390,7 +406,7 @@ class FixedAssetLifecycleService
                     'entry_date' => $date, 'company_id' => $asset->company_id,
                     'financial_period_id' => $period->getKey(), 'branch_id' => $asset->branch_id,
                     'currency_id' => $mainCurrency->getKey(), 'exchange_rate' => '1.000000',
-                    'description' => __('Fixed Asset derecognition :document', ['document' => $disposal->doc_num]),
+                    'description' => __('fixed_assets.lifecycle.journal.derecognition', ['document' => $disposal->doc_num]),
                     'notes' => $data['notes'] ?? null, 'source_type' => 'fixed_asset_disposal_derecognition',
                     'source_id' => $disposal->getKey(), 'source_doc_num' => $disposal->doc_num,
                 ], $derecognitionLines);
@@ -401,7 +417,7 @@ class FixedAssetLifecycleService
                     'invoice_date' => $date->toDateString(), 'due_date' => $data['due_date'] ?? $date->toDateString(),
                     'currency_id' => $asset->currency_id, 'exchange_rate' => $asset->exchange_rate,
                     'net_amount' => $proceeds, 'tax_amount' => $taxAmount,
-                    'description' => __('Fixed Asset sale :asset', ['asset' => $asset->doc_num]),
+                    'description' => __('fixed_assets.lifecycle.journal.sale', ['asset' => $asset->doc_num]),
                     'source_type' => 'fixed_asset_disposal', 'source_id' => $disposal->getKey(),
                     'source_doc_num' => $disposal->doc_num,
                     'source_snapshot' => ['fixed_asset_doc_num' => $asset->doc_num, 'disposal_doc_num' => $disposal->doc_num, 'tax_rate' => $taxRate, 'tax_code' => bccomp($taxAmount, '0', 4) > 0 ? 'VAT' : 'EXEMPT', 'unit_code' => 'EA'],
@@ -423,7 +439,7 @@ class FixedAssetLifecycleService
                         'entry_date' => $date, 'company_id' => $asset->company_id,
                         'financial_period_id' => $period->getKey(), 'branch_id' => $asset->branch_id,
                         'currency_id' => $mainCurrency->getKey(), 'exchange_rate' => '1.000000',
-                        'description' => __('Fixed Asset disposal gain/loss :document', ['document' => $disposal->doc_num]),
+                        'description' => __('fixed_assets.lifecycle.journal.disposal_gain_loss', ['document' => $disposal->doc_num]),
                         'notes' => $data['notes'] ?? null, 'source_type' => 'fixed_asset_disposal_gain_loss',
                         'source_id' => $disposal->getKey(), 'source_doc_num' => $disposal->doc_num,
                     ], $gainLossLines)
@@ -550,7 +566,7 @@ class FixedAssetLifecycleService
                     'financial_period_id' => $disposal->financial_period_id,
                     'currency_id' => $disposal->gainLossJournalEntry->currency_id,
                     'exchange_rate' => $disposal->gainLossJournalEntry->exchange_rate,
-                    'description' => __('Fixed Asset disposal gain/loss reversal :document', ['document' => $disposal->doc_num]),
+                    'description' => __('fixed_assets.lifecycle.journal.disposal_gain_loss_reversal', ['document' => $disposal->doc_num]),
                     'notes' => $reason,
                     'source_type' => 'fixed_asset_disposal_gain_loss_reversal',
                     'source_id' => $disposal->getKey(),

@@ -6,6 +6,75 @@
   var reloadButton = document.querySelector('[data-erp-pwa-reload]');
   var registration = null;
   var reloadRequested = false;
+  var legacyServiceWorkerPath = '/service-worker.js';
+  var disabledCleanupMarkerKey = 'erp-pwa-disabled-cleanup-v1';
+
+  function scriptPath(value) {
+    try {
+      return new URL(value, window.location.href).pathname;
+    } catch (error) {
+      return String(value || '');
+    }
+  }
+
+  function registrationUsesPath(currentRegistration, path) {
+    return ['active', 'waiting', 'installing'].some(function (state) {
+      var worker = currentRegistration[state];
+
+      return worker && scriptPath(worker.scriptURL) === path;
+    });
+  }
+
+  function registrations() {
+    if (typeof window.navigator.serviceWorker.getRegistrations !== 'function') {
+      return Promise.resolve([]);
+    }
+
+    return window.navigator.serviceWorker.getRegistrations();
+  }
+
+  function disabledCleanupVersion() {
+    return [
+      scriptPath(config.serviceWorkerUrl),
+      String(config.scope || ''),
+      String(config.cachePrefix || 'erp-pwa-cache'),
+      legacyServiceWorkerPath
+    ].join('|');
+  }
+
+  function disabledCleanupIsCurrent() {
+    try {
+      return window.localStorage.getItem(disabledCleanupMarkerKey) === disabledCleanupVersion();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function markDisabledCleanupComplete() {
+    try {
+      window.localStorage.setItem(disabledCleanupMarkerKey, disabledCleanupVersion());
+    } catch (error) {}
+  }
+
+  function clearDisabledCleanupMarker() {
+    try {
+      window.localStorage.removeItem(disabledCleanupMarkerKey);
+    } catch (error) {}
+  }
+
+  function unregisterLegacy() {
+    return registrations().then(function (currentRegistrations) {
+      return Promise.all(currentRegistrations
+        .filter(function (currentRegistration) {
+          return registrationUsesPath(currentRegistration, legacyServiceWorkerPath);
+        })
+        .map(function (currentRegistration) {
+          return currentRegistration.unregister().catch(function () {
+            return false;
+          });
+        }));
+    });
+  }
 
   function showUpdateNotice() {
     if (updateNotice) {
@@ -36,29 +105,57 @@
   }
 
   function register() {
-    window.navigator.serviceWorker.register(config.serviceWorkerUrl, {
-      scope: config.scope
+    return unregisterLegacy().then(function () {
+      return window.navigator.serviceWorker.register(config.serviceWorkerUrl, {
+        scope: config.scope
+      });
     }).then(watchRegistration).catch(function () {});
   }
 
   function unregister() {
-    window.navigator.serviceWorker.getRegistrations().then(function (registrations) {
-      registrations.forEach(function (currentRegistration) {
-        if (currentRegistration.active && currentRegistration.active.scriptURL.indexOf('/pwa-service-worker.js') !== -1) {
-          currentRegistration.unregister();
-        }
-      });
-    }).catch(function () {});
+    var managedPaths = [scriptPath(config.serviceWorkerUrl), legacyServiceWorkerPath];
+    var unregisterPromise = registrations().then(function (currentRegistrations) {
+      return Promise.all(currentRegistrations
+        .filter(function (currentRegistration) {
+          return managedPaths.some(function (path) {
+            return registrationUsesPath(currentRegistration, path);
+          });
+        })
+        .map(function (currentRegistration) {
+          return currentRegistration.unregister();
+        }));
+    });
+    var cachePromise = Promise.resolve([]);
 
     if ('caches' in window) {
-      window.caches.keys().then(function (keys) {
-        keys.filter(function (key) {
-          return key.indexOf(config.cachePrefix || 'erp-pwa-cache') === 0;
-        }).forEach(function (key) {
-          window.caches.delete(key);
-        });
-      }).catch(function () {});
+      cachePromise = window.caches.keys().then(function (keys) {
+        return Promise.all(keys
+          .filter(function (key) {
+            return key.indexOf(config.cachePrefix || 'erp-pwa-cache') === 0;
+          })
+          .map(function (key) {
+            return window.caches.delete(key);
+          }));
+      });
     }
+
+    return Promise.all([unregisterPromise, cachePromise]);
+  }
+
+  function unregisterOnce() {
+    if (disabledCleanupIsCurrent()) {
+      return Promise.resolve();
+    }
+
+    return unregister().then(function () {
+      markDisabledCleanupComplete();
+    });
+  }
+
+  function registerEnabledRuntime() {
+    clearDisabledCleanupMarker();
+
+    return register();
   }
 
   if (!('serviceWorker' in window.navigator)) {
@@ -83,5 +180,7 @@
     }
   });
 
-  window.addEventListener('load', config.enabled ? register : unregister);
+  window.addEventListener('load', config.enabled ? registerEnabledRuntime : function () {
+    return unregisterOnce().catch(function () {});
+  });
 })(window, document);

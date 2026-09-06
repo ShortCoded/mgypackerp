@@ -15,6 +15,7 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
+use Modules\HR\Models\HrEmployee;
 
 class CustomerReceipt extends Model
 {
@@ -61,6 +62,11 @@ class CustomerReceipt extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class)->withTrashed();
+    }
+
+    public function receivedByEmployee(): BelongsTo
+    {
+        return $this->belongsTo(HrEmployee::class, 'received_by_employee_id')->withTrashed();
     }
 
     public function currency(): BelongsTo

@@ -155,6 +155,16 @@
     }
   }
 
+  function summernoteIcons() {
+    return {
+      bold: 'fas fa-bold', italic: 'fas fa-italic', underline: 'fas fa-underline', eraser: 'fas fa-eraser',
+      unorderedlist: 'fas fa-list-ul', orderedlist: 'fas fa-list-ol', alignLeft: 'fas fa-align-left',
+      alignCenter: 'fas fa-align-center', alignRight: 'fas fa-align-right', alignJustify: 'fas fa-align-justify',
+      outdent: 'fas fa-outdent', indent: 'fas fa-indent', link: 'fas fa-link', table: 'fas fa-table',
+      code: 'fas fa-code', caret: 'fas fa-caret-down', close: 'fas fa-times', undo: 'fas fa-undo', redo: 'fas fa-redo'
+    };
+  }
+
   function columnName(column) {
     const map = {
       doc_num: 'quotations.doc_number',
@@ -472,6 +482,39 @@
     $form.find('.js-quotation-total').text(decimal(total));
   }
 
+  function syncDiscountInputs($form) {
+    $form.find('[name="discount_type"], [name$="[discount_type]"]').each(function () {
+      const $type = $(this);
+      const name = String($type.attr('name') || '');
+      const valueName = name === 'discount_type' ? 'discount_value' : name.replace('[discount_type]', '[discount_value]');
+      const $value = $form.find('[name="' + valueName + '"]').first();
+      const enabled = Boolean($type.val());
+      if (!enabled) $value.val('0');
+      $value.prop('disabled', !enabled);
+    });
+  }
+
+  function syncQuotationType($form) {
+    const isProject = $form.find('[name="quotation_type"]').val() === 'project';
+    $form.find('[data-quotation-project-only]').each(function () {
+      const $section = $(this);
+      $section.toggleClass('d-none', !isProject);
+      $section.find('input, select, textarea, button').prop('disabled', !isProject);
+    });
+    $form.find('[name="project_name"]').prop('required', isProject);
+    if (!isProject && $('#quotation-execution').hasClass('active')) {
+      $('#quotation-basic-tab').trigger('click');
+    }
+  }
+
+  function syncMainCurrency($form) {
+    const mainCurrency = String($form.data('main-currency-doc-num') || '');
+    const isMain = mainCurrency !== '' && String($form.find('[name="currency_doc_num"]').val() || '') === mainCurrency;
+    const $rate = $form.find('[name="exchange_rate"]');
+    if (isMain) $rate.val('1');
+    $rate.prop('readonly', isMain);
+  }
+
   function renumberRows($table, rowSelector, collection) {
     $table.find(rowSelector).each(function (index) {
       const $row = $(this);
@@ -526,6 +569,7 @@
       $editor.summernote({
         height: 180,
         direction: $editor.data('direction') || (document.documentElement.getAttribute('dir') || 'ltr'),
+        icons: summernoteIcons(),
         toolbar: [
           ['style', ['bold', 'italic', 'underline', 'clear']],
           ['para', ['ul', 'ol', 'paragraph']],
@@ -574,15 +618,29 @@
 
   function resetCreateForm($form) {
     $form.find('input[type="text"], input[type="number"], textarea').not('[name="exchange_rate"], [name$="[quantity]"], [name$="[discount_value]"], [name$="[tax_rate]"]').val('');
-    $form.find('[name="exchange_rate"]').val('1');
     $form.find('select').val(null).trigger('change');
-    $form.find('[name="quotation_type"]').val('standard');
+    $form.find('[name="quotation_type"]').val('standard').trigger('change');
+    const currencyDocNum = String($form.data('main-currency-doc-num') || '');
+    const currencyLabel = String($form.data('main-currency-label') || '');
+    const $currency = $form.find('[name="currency_doc_num"]');
+    if (currencyDocNum) {
+      $currency.empty().append(new Option(currencyLabel || currencyDocNum, currencyDocNum, true, true)).trigger('change');
+    }
+    $form.find('[name="exchange_rate"]').val('1');
+    $form.find('[name="quotation_date"]').val(String($form.data('default-quotation-date') || ''));
     $form.find('[name="submit_action"]').val('save');
     $form.find('[name="clone_source_token"]').remove();
     $form.find('.js-quotation-lines tbody').empty();
     addTemplateRow($form.find('.js-quotation-lines'), '#quotation-line-template', '.js-quotation-line', 'lines');
     $form.find('.js-quotation-milestones tbody, .js-quotation-schedule tbody, #quotation-selected-attachments, #quotation_attachment_file_inputs').empty();
     $('#quotation-selected-attachments-wrap').addClass('d-none');
+    $form.find('.js-quotation-rich-editor').each(function () {
+      const $editor = $(this);
+      if ($editor.data('summernote')) $editor.summernote('code', '');
+    });
+    syncQuotationType($form);
+    syncDiscountInputs($form);
+    syncMainCurrency($form);
     calculateTotals($form);
   }
 
@@ -592,6 +650,9 @@
     initSelect2(document);
     initDatePickers(document);
     initSummernote();
+    syncQuotationType($form);
+    syncDiscountInputs($form);
+    syncMainCurrency($form);
     calculateTotals($form);
 
     $(document)
@@ -647,7 +708,13 @@
       })
       .off('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc')
       .on('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc', function () {
-        calculateTotals($(this).closest('.js-quotation-form'));
+        const $currentForm = $(this).closest('.js-quotation-form');
+        syncDiscountInputs($currentForm);
+        calculateTotals($currentForm);
+      })
+      .off('change.quotationType', '[name="quotation_type"]')
+      .on('change.quotationType', '[name="quotation_type"]', function () {
+        syncQuotationType($(this).closest('.js-quotation-form'));
       })
       .off('select2:select.quotationsProduct', '.js-quotation-product')
       .on('select2:select.quotationsProduct', '.js-quotation-product', function (event) {
@@ -671,17 +738,21 @@
       })
       .off('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]')
       .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]', function () {
-        $(this).closest('.js-quotation-form').find('.js-quotation-line').each(function () {window.AppSalesPricing?.suggest(this);});
+        const $currentForm = $(this).closest('.js-quotation-form');
+        syncMainCurrency($currentForm);
+        $currentForm.find('.js-quotation-line').each(function () {window.AppSalesPricing?.suggest(this);});
       })
       .off('click.quotationsAddLine', '.js-quotation-add-line')
       .on('click.quotationsAddLine', '.js-quotation-add-line', function () {
-        addTemplateRow($(this).closest('form').find('.js-quotation-lines'), '#quotation-line-template', '.js-quotation-line', 'lines');
+        const $currentForm = $(this).closest('form');
+        addTemplateRow($currentForm.find('.js-quotation-lines'), '#quotation-line-template', '.js-quotation-line', 'lines');
+        syncDiscountInputs($currentForm);
       })
       .off('click.quotationsDuplicateLine', '.js-quotation-duplicate-line')
       .on('click.quotationsDuplicateLine', '.js-quotation-duplicate-line', function () {
         const $row = $(this).closest('.js-quotation-line');
         const $newRow = $(window.AppLineItemCards.append($row.closest('tbody')[0], document.querySelector('#quotation-line-template'), 'lines', $row[0]));
-        initSelect2($newRow[0]); initDatePickers($newRow[0]); calculateTotals($row.closest('form'));
+        initSelect2($newRow[0]); initDatePickers($newRow[0]); syncDiscountInputs($row.closest('form')); calculateTotals($row.closest('form'));
       })
       .off('click.quotationsRemoveLine', '.js-quotation-remove-line')
       .on('click.quotationsRemoveLine', '.js-quotation-remove-line', function () {

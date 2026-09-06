@@ -18,6 +18,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Purchases\Models\GoodsReceiptInspection;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\Supplier;
+use Modules\Purchases\Models\SupplyOrder;
 
 class UnpricedInventoryReceipt extends Model
 {
@@ -51,6 +52,7 @@ class UnpricedInventoryReceipt extends Model
         'branch_store_id',
         'supplier_id',
         'purchase_order_id',
+        'supply_order_id',
         'supplier_delivery_note',
         'received_at',
         'qc_status',
@@ -170,6 +172,11 @@ class UnpricedInventoryReceipt extends Model
     public function purchaseOrder(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function supplyOrder(): BelongsTo
+    {
+        return $this->belongsTo(SupplyOrder::class);
     }
 
     public function inspection(): HasOne

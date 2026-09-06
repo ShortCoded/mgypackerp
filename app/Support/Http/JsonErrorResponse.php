@@ -42,13 +42,28 @@ class JsonErrorResponse
 
     public function normalize(Request $request, JsonResponse $response): JsonResponse
     {
-        $original = $response->getData(true);
-        $data = is_array($original) ? $original : [];
+        if (! $this->expectsJson($request)) {
+            return $response;
+        }
+
+        $original = $response->getOriginalContent();
+        $data = is_array($original) ? $original : null;
+
+        if ($data === null && $response->getStatusCode() < 400) {
+            $decoded = $response->getData(true);
+            $data = is_array($decoded) ? $decoded : [];
+        }
+
         $isFailedOperation = ($data['success'] ?? null) === false
             && ($data['type'] ?? null) !== 'no_changes';
 
-        if (! $this->expectsJson($request) || ($response->getStatusCode() < 400 && ! $isFailedOperation)) {
+        if ($response->getStatusCode() < 400 && ! $isFailedOperation) {
             return $response;
+        }
+
+        if ($data === null) {
+            $decoded = $response->getData(true);
+            $data = is_array($decoded) ? $decoded : [];
         }
 
         $errors = is_array($data['errors'] ?? null) ? $data['errors'] : [];
@@ -212,6 +227,7 @@ class JsonErrorResponse
             'redirect_url',
             'submit_action',
             'authenticated',
+            'expired',
             'locked',
             'action',
             'lock_screen_url',

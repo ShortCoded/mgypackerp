@@ -1,21 +1,46 @@
 <?php
 
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Modules\Core\Models\ArchiveFile;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\MenuService;
 use Modules\HR\Models\HrEmployee;
+use Modules\Sales\Exports\SalesCycleReportExport;
+use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\QuotationService;
+use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesSelect2Service;
 use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/../SalesCycleSupport.php';
 
+test('sales report workbook headings and sheet titles follow the active locale', function (): void {
+    app()->setLocale('ar');
+
+    $sheets = (new SalesCycleReportExport([
+        'reportType' => 'financial',
+        'financialSummary' => [],
+        'salesByCustomer' => collect(),
+        'invoiceOutstanding' => collect(),
+        'aging' => collect(),
+    ]))->sheets();
+
+    expect($sheets)->toHaveCount(4)
+        ->and($sheets[0]->title())->toBe('الملخص المالي')
+        ->and($sheets[0]->headings())->toBe(['المؤشر', 'القيمة'])
+        ->and($sheets[1]->title())->toBe('المبيعات حسب العميل')
+        ->and($sheets[1]->headings())->toContain('العميل', 'المبيعات', 'المستحق');
+});
+
 function salesUiFixture(): array
 {
     $fixture = salesCycleFixture();
-    foreach (['sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'sales_orders.view_prices', 'sales_requests.view', 'sales_requests.create', 'quotations.view', 'quotations.create', 'quotations.edit', 'quotations.print'] as $permission) {
+    foreach (['sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'sales_orders.invoice', 'sales_orders.print', 'sales_orders.view_prices', 'sales_requests.view', 'sales_requests.create', 'customer_invoices.create', 'quotations.view', 'quotations.create', 'quotations.edit', 'quotations.print'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }
@@ -113,6 +138,31 @@ test('quotation customer PDF hides empty rich terms and system audit and separat
     file_put_contents('/tmp/sales-ui-normalized-quotation-ar.pdf', $arabic->getContent());
 });
 
+test('sales order displays a concise quotation revision and does not repeat the product name as its description', function () {
+    $f = salesUiFixture();
+    $quotationService = app(QuotationService::class);
+    $quote = $quotationService->accept($quotationService->markSent(salesUiQuote($f)));
+    $order = app(SalesOrderService::class)->createFromQuotation($quote, [
+        'company_id' => $f['company']->id,
+        'branch_id' => $f['branch']->id,
+        'financial_period_id' => $f['period']->id,
+    ]);
+    $order->lines()->update(['description' => $f['finished']->name]);
+    $session = salesCycleSession($f);
+
+    $this->actingAs($f['user'])->withSession($session)
+        ->get(route('admin.sales.sales-orders.show', $order))
+        ->assertOk()
+        ->assertSee($quote->doc_num.' · R01')
+        ->assertDontSee($quote->doc_num.' / '.$quote->currentRevision->revision_code)
+        ->assertDontSee($f['finished']->name.' / '.$f['finished']->name);
+
+    $pdf = $this->get(route('admin.sales.sales-orders.print', $order))->assertOk();
+    expect(salesPdfText($pdf->getContent()))
+        ->toContain($quote->doc_num, 'R01')
+        ->not->toContain($quote->currentRevision->revision_code, $f['finished']->name.' / '.$f['finished']->name);
+});
+
 test('sales request customer type requires customer and internal type uses separate business employee', function () {
     $f = salesUiFixture();
     $employee = salesUiEmployee($f);
@@ -123,7 +173,17 @@ test('sales request customer type requires customer and internal type uses separ
     $this->postJson(route('admin.sales.customer-requests.store'), [...$payload, 'request_type' => 'internal'])->assertSuccessful();
     $request = SalesRequest::query()->latest('id')->firstOrFail();
     expect($request->customer_id)->toBeNull()->and($request->sales_employee_id)->toBeNull()->and($request->business_employee_id)->toBe($employee->id);
-    $this->get(route('admin.sales.customer-requests.create'))->assertOk()->assertDontSee($f['finished']->name);
+    $requestForm = $this->get(route('admin.sales.customer-requests.create'))->assertOk()->assertDontSee($f['finished']->name);
+    $requestForm->assertDontSee('name="branch_store_uuid"', false)
+        ->assertDontSee('name="priority"', false)
+        ->assertDontSee('name="customer_reference"', false)
+        ->assertDontSee('[description]', false)
+        ->assertDontSee('[specifications][packaging]', false)
+        ->assertDontSee('[specifications][units_per_package]', false)
+        ->assertSee('data-sales-summary-total', false)
+        ->assertSee('data-sales-summary-quantity', false)
+        ->assertSee('data-shortcut-action="line.add"', false);
+    expect(substr_count($requestForm->getContent(), 'data-sales-add-line'))->toBe(2);
 });
 
 test('sales navigation is one ordered journey with canonical statement and collection links', function () {
@@ -134,10 +194,305 @@ test('sales navigation is one ordered journey with canonical statement and colle
     }
     $menu = app(MenuService::class)->getMenu($f['user']);
     $sales = collect($menu)->firstWhere('label', 'sales');
-    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'sales_requests', 'quotations', 'sales_orders', 'deliveries', 'sales_invoices', 'sales_returns', 'customer_collections', 'customer_statement', 'reports_sales_sales_orders']);
-    foreach ($sales['children'] as $item) {
-        expect($item['children'] ?? [])->toBeEmpty();
+    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports']);
+    $reportLabels = collect($sales['children'])->firstWhere('label', 'sales_cycle_reports')['children'] ?? [];
+    expect(collect($reportLabels)->pluck('label')->all())->toBe([
+        'customer_statement',
+        'sales_report_financial',
+        'sales_report_period',
+        'sales_report_customer',
+        'sales_report_product',
+        'sales_report_invoices',
+        'sales_report_receivables',
+        'sales_report_collections',
+        'sales_report_returns',
+        'sales_report_quotations',
+        'sales_report_fulfillment',
+        'sales_report_operational',
+    ]);
+});
+
+test('sales order and quotation omit production packing fields and expose a second add line control', function () {
+    $f = salesUiFixture();
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $order = $this->get(route('admin.sales.sales-orders.create'))->assertOk()
+        ->assertDontSee('name="customer_reference"', false)
+        ->assertDontSee('[specifications][packaging]', false)
+        ->assertDontSee('[specifications][customer_specification]', false)
+        ->assertDontSee('[warehouse_notes]', false)
+        ->assertDontSee('[production_notes]', false);
+    expect(substr_count($order->getContent(), 'data-sales-add-line'))->toBe(2);
+
+    $quotation = $this->get(route('admin.sales.quotations.create'))->assertOk()
+        ->assertDontSee('[specifications][packaging]', false)
+        ->assertDontSee('[specifications][customer_specification]', false)
+        ->assertDontSee('[warehouse_notes]', false)
+        ->assertDontSee('[production_notes]', false)
+        ->assertSee('data-quotation-project-only', false)
+        ->assertSee('data-main-currency-doc-num="'.$f['currency']->doc_num.'"', false)
+        ->assertSee(__('sales_ui.requested_date_help'));
+    expect(substr_count($quotation->getContent(), 'js-quotation-add-line'))->toBeGreaterThanOrEqual(2);
+});
+
+test('sales invoice creation starts from an invoiceable sales order without duplicating posting logic', function () {
+    $f = salesUiFixture();
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $this->get(route('admin.sales.sales-invoices.create'))->assertOk()
+        ->assertSee('js-select2-ajax')
+        ->assertSee(route('admin.sales.select2.invoiceable-orders'), false)
+        ->assertSee(__('sales_ui.invoice_source_help'));
+});
+
+test('delivery creation starts from a posted deliverable invoice and uses delivery permission', function () {
+    $f = salesUiFixture();
+    foreach (['sales_deliveries.create', 'sales_deliveries.view', 'sales_deliveries.print', 'customer_invoices.view', 'customer_invoices.reopen', 'sales_orders.view', 'sales_orders.cancel', 'sales_orders.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $f['user']->givePermissionTo($permission);
     }
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($f, [
+        'lines' => [
+            [
+                'product_id' => $f['finished']->getKey(),
+                'unit_id' => $f['unit']->getKey(),
+                'description' => 'Deliverable invoiced product',
+                'quantity' => '1',
+                'unit_price' => '10',
+            ],
+            [
+                'product_id' => $f['service']->getKey(),
+                'unit_id' => $f['unit']->getKey(),
+                'description' => 'Non-deliverable service',
+                'quantity' => '1',
+                'unit_price' => '10',
+            ],
+        ],
+        'payment_schedules' => [[
+            'title' => 'Due',
+            'amount' => '20',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $goodsOrderLine = $order->lines->firstWhere('product_id', $f['finished']->getKey());
+    $serviceOrderLine = $order->lines->firstWhere('product_id', $f['service']->getKey());
+    $invoiceService = app(CustomerInvoiceService::class);
+    $invoice = $invoiceService->createFromOrder($order, [
+        ['sales_order_line_id' => $goodsOrderLine->getKey(), 'quantity' => '1'],
+        ['sales_order_line_id' => $serviceOrderLine->getKey(), 'quantity' => '1'],
+    ], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '20',
+    ]]);
+
+    $this->get(route('admin.sales.sales-invoices.show', $invoice))->assertOk()
+        ->assertDontSee('id="sales-invoice-delivery"', false);
+    $invoice = $invoiceService->post($invoice);
+
+    $this->get(route('admin.sales.delivery-notes.create'))->assertOk()
+        ->assertSee(route('admin.sales.select2.deliverable-invoices'), false)
+        ->assertSee(__('sales_ui.delivery_source_help'))
+        ->assertSee(__('sales_ui.posted_invoice'));
+    $invoiceResponse = $this->get(route('admin.sales.sales-invoices.show', $invoice))->assertOk()
+        ->assertSee('id="sales-invoice-delivery"', false)
+        ->assertSee('data-electronic-invoice-summary', false)
+        ->assertSee('card-header py-2', false)
+        ->assertDontSee(__('Queue Electronic Invoice Submission'))
+        ->assertSee(route('admin.sales.sales-invoices.deliveries.store', $invoice), false);
+    preg_match('/<form id="sales-invoice-delivery".*?<\/form>/s', $invoiceResponse->getContent(), $deliveryForm);
+    $goodsInvoiceLine = $invoice->lines()->where('is_service', false)->sole();
+    $serviceInvoiceLine = $invoice->lines()->where('is_service', true)->sole();
+    expect($deliveryForm[0] ?? '')->toContain($goodsInvoiceLine->public_id)->not->toContain($serviceInvoiceLine->public_id);
+    $delivery = app(SalesFulfillmentService::class)->deliverInvoice($invoice, [[
+        'customer_invoice_line_id' => $goodsInvoiceLine->getKey(),
+        'quantity' => '1',
+    ]], [
+        'branch_store_uuid' => $f['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+        'recipient_name' => 'Nadia Receiving',
+        'recipient_phone' => '01000000001',
+        'vehicle_number' => 'DEL-100',
+        'driver_name' => 'Mahmoud Driver',
+        'notes' => 'Deliver during the agreed receiving hours.',
+    ]);
+    $this->get(route('admin.sales.delivery-notes.show', $delivery))->assertOk()
+        ->assertSee('data-sales-delivery-details', false)
+        ->assertSee('Nadia Receiving')
+        ->assertSee('Mahmoud Driver')
+        ->assertSee('DEL-100')
+        ->assertSee($invoice->doc_num);
+    $this->get(route('admin.sales.sales-invoices.show', $invoice->fresh()))->assertOk()
+        ->assertDontSee(__('Reverse and Reopen'));
+    $order = $order->fresh();
+    expect($order->canCancelSafely())->toBeFalse()
+        ->and($order->canReopenSafely())->toBeFalse();
+    $this->get(route('admin.sales.sales-orders.show', $order))->assertOk()
+        ->assertDontSee(__('Cancellation reason'))
+        ->assertDontSee(__('Reopen for Amendment'));
+    $orderActions = $this->getJson(route('admin.sales.sales-orders.index', ['draw' => 1, 'document' => $order->doc_num]))
+        ->assertOk()
+        ->json('data.0.actions');
+    expect($orderActions)->not->toContain('/cancel', '/reopen');
+    $deliveryPdf = $this->get(route('admin.sales.delivery-notes.print', $delivery))->assertOk();
+    expect(salesPdfText($deliveryPdf->getContent()))
+        ->toContain('Nadia Receiving', 'Mahmoud Driver', 'DEL-100', $invoice->doc_num);
+    $this->postJson(route('admin.sales.sales-invoices.deliveries.store', $invoice), [])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document_date', 'branch_store_uuid', 'lines']);
+});
+
+test('sales return creation is discoverable and starts from a returnable posted source', function () {
+    $f = salesUiFixture();
+    foreach (['sales_returns.view', 'sales_returns.create', 'customer_invoices.view'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $f['user']->givePermissionTo($permission);
+    }
+    $invoice = salesPostedServiceInvoice($f, '125');
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $this->get(route('admin.sales.sales-returns.index'))->assertOk()
+        ->assertSee(route('admin.sales.sales-returns.create'), false);
+    $this->get(route('admin.sales.sales-returns.create'))->assertOk()
+        ->assertSee(route('admin.sales.select2.returnable-invoices'), false)
+        ->assertSee(__('sales_ui.return_source_help'));
+    $this->getJson(route('admin.sales.select2.returnable-invoices'))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $invoice->doc_num);
+    $this->get(route('admin.sales.sales-returns.create', [
+        'source_type' => 'invoice',
+        'invoice_doc_num' => $invoice->doc_num,
+    ]))->assertRedirect(route('admin.sales.sales-invoices.show', $invoice).'#sales-invoice-return');
+});
+
+test('customer credit target invoices use the shared paginated ajax picker', function () {
+    $f = salesUiFixture();
+    Permission::findOrCreate('customer_credits.allocate', 'web');
+    $f['user']->givePermissionTo('customer_credits.allocate');
+    $invoice = salesPostedServiceInvoice($f, '125');
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $response = $this->getJson(route('admin.sales.select2.credit-target-invoices', [
+        'customer_doc_num' => $f['customer']->doc_num,
+        'q' => $invoice->doc_num,
+        'page' => 1,
+        'per_page' => 10,
+    ]))->assertOk();
+
+    $response->assertJsonPath('results.0.id', $invoice->doc_num)
+        ->assertJsonPath('pagination.more', false);
+    expect($response->json('results.0.text'))->toContain($invoice->doc_num, '125');
+});
+
+test('sales report uses ajax business filters and exposes financial analysis', function () {
+    $f = salesUiFixture();
+    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
+    $f['user']->givePermissionTo('reports.sales.sales_orders.view');
+    salesPostedServiceInvoice($f, '250');
+
+    $response = $this->actingAs($f['user'])->withSession(salesCycleSession($f))
+        ->get(route('admin.reports.sales.sales-orders.index'))
+        ->assertOk()
+        ->assertSee('data-sales-financial-summary', false)
+        ->assertSee('data-sales-financial-kpi-grid', false)
+        ->assertSee('col-12 col-sm-6 col-lg-4 col-xl-3', false)
+        ->assertSee(__('sales_ui.gross_sales'))
+        ->assertSee(__('sales_ui.net_sales'))
+        ->assertSee(__('sales_ui.collection_rate'));
+
+    foreach (['customers', 'quotation-products', 'employees', 'stores'] as $picker) {
+        expect($response->getContent())->toContain('/admin/sales/select2/'.$picker);
+    }
+});
+
+test('customer collection records the receiving employee and prints conditional cheque details', function () {
+    $f = salesUiFixture();
+    foreach (['customer_receipts.create', 'customer_receipts.view', 'customer_receipts.print', 'file_manager.view', 'reports.sales.sales_orders.view', 'reports.sales.sales_orders.print', 'reports.sales.sales_orders.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $f['user']->givePermissionTo($permission);
+    }
+    $employee = salesUiEmployee($f, 997);
+    salesPostedServiceInvoice($f, '125');
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $this->get(route('admin.sales.customer-receipts.create'))->assertOk()
+        ->assertSee('id="received_by_employee_doc_num"', false)
+        ->assertSee('value="'.app(DateFormatService::class)->formatDate(now()).'"', false)
+        ->assertDontSee('value="'.now()->toDateString().'"', false)
+        ->assertSee(route('admin.sales.select2.employees'), false)
+        ->assertSee(route('admin.select2.currencies'), false)
+        ->assertSee('data-shortcut-action="form.save"', false)
+        ->assertSee(__('common.actions.save_and_back'))
+        ->assertSee('data-required-for="cheque"', false);
+    $this->getJson(route('admin.sales.select2.cashboxes'))->assertOk()
+        ->assertJsonPath('results.0.id', $f['cashbox']->doc_num);
+    $this->getJson(route('admin.sales.select2.bank-accounts'))->assertOk()
+        ->assertJsonPath('results.0.id', $f['bankAccount']->doc_num);
+
+    $payload = [
+        'customer_doc_num' => $f['customer']->doc_num,
+        'received_by_employee_doc_num' => $employee->doc_num,
+        'receipt_date' => now()->toDateString(),
+        'currency_doc_num' => $f['currency']->doc_num,
+        'payment_method' => 'cheque',
+        'bank_account_doc_num' => $f['bankAccount']->doc_num,
+        'amount' => '125.50',
+        'receipt_type' => 'collection',
+    ];
+    $this->postJson(route('admin.sales.customer-receipts.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['reference_no', 'cheque_due_date', 'external_bank_name']);
+
+    $response = $this->postJson(route('admin.sales.customer-receipts.store'), [
+        ...$payload,
+        'reference_no' => 'CHQ-EMP-997',
+        'cheque_due_date' => now()->addWeek()->toDateString(),
+        'external_bank_name' => 'Receiving Test Bank',
+    ])->assertCreated();
+    $receipt = CustomerReceipt::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+    expect($receipt->received_by_employee_id)->toBe($employee->id)
+        ->and($receipt->created_by)->toBe($f['user']->id)
+        ->and($receipt->approved_by)->toBe($f['user']->id);
+
+    Storage::fake('public');
+    Storage::disk('public')->put('receipt-cheque.pdf', 'receipt-cheque');
+    $attachment = ArchiveFile::query()->create([
+        'doc_number' => 998,
+        'doc_num' => 'File-RECEIPT-998',
+        'attachable_type' => $f['company']->getMorphClass(),
+        'attachable_id' => $f['company']->id,
+        'original_name' => 'receipt-cheque.pdf',
+        'stored_name' => 'receipt-cheque.pdf',
+        'disk' => 'public',
+        'path' => 'receipt-cheque.pdf',
+        'mime_type' => 'application/pdf',
+        'extension' => 'pdf',
+        'size_bytes' => 14,
+    ]);
+    $this->postJson(route('admin.sales.document-attachments.store', ['customer_receipt', $receipt->doc_num]), [
+        'attachment_doc_nums' => [$attachment->doc_num],
+    ])->assertOk();
+
+    $this->get(route('admin.sales.customer-receipts.show', $receipt))->assertOk()
+        ->assertSee('data-customer-receipt-details', false)
+        ->assertSee('data-sales-attachments', false)
+        ->assertSee('receipt-cheque.pdf')
+        ->assertSee($employee->full_name)
+        ->assertSee('CHQ-EMP-997')
+        ->assertSee('Receiving Test Bank');
+    $pdf = $this->get(route('admin.sales.customer-receipts.print', $receipt))->assertOk();
+    expect(salesPdfText($pdf->getContent()))->toContain($employee->full_name, 'CHQ-EMP-997', 'Receiving Test Bank');
+
+    $this->get(route('admin.reports.sales.sales-orders.index', ['report' => 'collections']))->assertOk()
+        ->assertSee('id="recorded-collections"', false)
+        ->assertSee($employee->full_name)
+        ->assertSee('CHQ-EMP-997');
+    $collectionsPdf = $this->get(route('admin.reports.sales.sales-orders.print', ['report' => 'collections']))->assertOk();
+    expect(salesPdfText($collectionsPdf->getContent()))->toContain($employee->full_name, 'CHQ-EMP-997');
+    $this->get(route('admin.reports.sales.sales-orders.export', ['report' => 'collections']))
+        ->assertOk()
+        ->assertDownload();
 });
 
 test('quotation index exposes only permitted state actions and filters the requested state', function () {

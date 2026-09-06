@@ -710,6 +710,62 @@ test('closed period rejects invoice receipt and credit posting without partial s
         ->and(JournalEntry::query()->count())->toBe($journalCount);
 });
 
+test('physical sales delivery starts only from a posted invoice and preserves invoice lineage', function () {
+    $fixture = salesCycleFixture();
+    $orders = app(SalesOrderService::class);
+    $invoices = app(CustomerInvoiceService::class);
+    $fulfillment = app(SalesFulfillmentService::class);
+
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'branch_store_id' => null,
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Invoice-controlled delivery',
+            'quantity' => '5',
+            'unit_price' => '20',
+            'discount_amount' => 0,
+            'tax_amount' => 0,
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Invoice-controlled delivery',
+            'amount' => '100',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $orderLine = $order->lines->sole();
+    $invoice = $invoices->createFromOrder($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '5',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '100',
+    ]]);
+    $deliveryLines = [[
+        'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
+        'quantity' => '5',
+    ]];
+    $logistics = [
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+    ];
+
+    expect(fn () => $fulfillment->deliverInvoice($invoice, $deliveryLines, $logistics))
+        ->toThrow(DomainException::class, __('Only a posted sales invoice linked to a sales order can be delivered.'));
+
+    $invoice = $invoices->post($invoice);
+    $delivery = $fulfillment->deliverInvoice($invoice, $deliveryLines, $logistics);
+
+    expect($delivery->document_type)->toBe(InventoryDocument::TypeSalesDelivery)
+        ->and($delivery->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($delivery->source_doc_num)->toBe($invoice->doc_num)
+        ->and($delivery->branch_store_id)->toBe($fixture['store']->getKey())
+        ->and($delivery->lines->sole()->source_line_id)->toBe($orderLine->getKey())
+        ->and($invoice->fresh()->delivery_document_id)->toBe($delivery->getKey())
+        ->and($invoice->deliveries()->whereKey($delivery->getKey())->exists())->toBeTrue()
+        ->and($orderLine->fresh()->delivered_quantity)->toBe('5.00000000');
+});
+
 test('sales eligibility exposes only finished products and services and rejects internal items server side', function () {
     $fixture = salesCycleFixture();
     expect(Product::query()->salesEligible()->pluck('item_classification')->unique()->sort()->values()->all())->toBe([Product::ClassificationFinishedProduct, Product::ClassificationService]);
@@ -781,14 +837,10 @@ test('posted invoice correction reverses the original journal before amendment a
     $invoices = app(CustomerInvoiceService::class);
     $order = $orders->approve($orders->create($payload));
     $orderLine = $order->lines->first();
-    $delivery = $fulfillment->deliver($order, [[
-        'sales_order_line_id' => $orderLine->getKey(), 'quantity' => '10',
-    ]]);
     $invoice = $invoices->post($invoices->createFromOrder($order->fresh(), [[
         'sales_order_line_id' => $orderLine->getKey(),
-        'delivery_line_id' => $delivery->lines->first()->getKey(),
         'quantity' => '10',
-    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '100']], $delivery));
+    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '100']]));
     $originalJournalId = $invoice->journal_entry_id;
 
     $invoice = $invoices->reopen($invoice, 'Customer accepted a controlled quantity correction.');
@@ -813,11 +865,19 @@ test('posted invoice correction reverses the original journal before amendment a
         ->and($invoice->journalEntry->source_type)->toBe('customer_invoice_post_1')
         ->and($invoices->post($invoice)->journal_entry_id)->toBe($invoice->journal_entry_id);
 
+    $fulfillment->deliverInvoice($invoice, [[
+        'customer_invoice_line_id' => $invoice->lines->first()->getKey(),
+        'quantity' => '8',
+    ]], [
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+    ]);
+
     app(SalesReturnService::class)->create($invoice, SalesReturn::ReasonOther, 'Pending source-driven return.', [[
         'customer_invoice_line_id' => $invoice->lines->first()->getKey(), 'quantity' => '1',
     ]]);
     expect(fn () => $invoices->reopen($invoice->fresh(), 'Unsafe descendant mutation attempt.'))
-        ->toThrow(DomainException::class, __('An invoice with a return or credit note cannot be reopened.'));
+        ->toThrow(DomainException::class, __('An invoice with a delivery, return, receipt, or credit note cannot be reopened.'));
 });
 
 test('reservation oversubscription is rejected and an audited release restores reservable quantity', function () {
@@ -941,7 +1001,7 @@ test('restricted production and warehouse browser responses do not expose commer
         ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.sales.delivery-notes.show', $delivery))
-        ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price');
+        ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price')->assertDontSee('Sealed export carton');
 });
 
 test('authorized users can load the concrete create edit collection reporting and print screens', function () {
@@ -973,7 +1033,7 @@ test('authorized users can load the concrete create edit collection reporting an
         ->assertSee('js-select2-ajax')->assertDontSee($fixture['finished']->name)->assertDontSee($fixture['service']->name)
         ->assertDontSee($fixture['raw']->name)->assertDontSee($fixture['semiFinished']->name);
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.edit', $draftOrder))
-        ->assertOk()->assertSee('Edit Sales Order')->assertSee('Customer reference / PO');
+        ->assertOk()->assertSee('Edit Sales Order')->assertDontSee('Customer reference / PO');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.edit', $invoice))
         ->assertOk()->assertSee('Correct Sales Invoice')->assertSee('Corrected quantity');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.customer-receipts.create', ['invoice' => $invoice->doc_num]))
@@ -982,7 +1042,7 @@ test('authorized users can load the concrete create edit collection reporting an
     $orderPdf->assertOk()->assertHeader('content-type', 'application/pdf')->assertHeader('content-disposition', 'inline; filename="sales-order-'.$draftOrder->doc_num.'.pdf"');
     expect($orderPdf->getContent())->toStartWith('%PDF-');
     $reportPdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.print'));
-    $reportPdf->assertOk()->assertHeader('content-type', 'application/pdf')->assertHeader('content-disposition', 'inline; filename="sales-cycle-operational-report.pdf"');
+    $reportPdf->assertOk()->assertHeader('content-type', 'application/pdf')->assertHeader('content-disposition', 'inline; filename="sales-operational-report.pdf"');
     expect($reportPdf->getContent())->toStartWith('%PDF-');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.export'))
         ->assertOk()->assertDownload();
@@ -994,7 +1054,7 @@ test('every formal sales document streams canonical inline mPDF with operational
     $permissions = [
         'sales_orders.print', 'sales_orders.view_prices', 'sales_orders.production',
         'sales_deliveries.print', 'customer_invoices.print', 'customer_invoices.view_prices',
-        'customer_receipts.print', 'sales_returns.print', 'reports.sales.sales_orders.print',
+        'customer_receipts.print', 'sales_returns.view', 'sales_returns.print', 'reports.sales.sales_orders.print',
         'production.orders.print', 'cash_receipt_vouchers.print', 'cheques.print',
     ];
     foreach ($permissions as $permission) {
@@ -1140,6 +1200,18 @@ test('every formal sales document streams canonical inline mPDF with operational
     }
     expect(salesPdfText($responses['cash customer receipt']->getContent()))->toContain($cashReceipt->cashVoucher->doc_num)
         ->and(salesPdfText($responses['cheque customer receipt']->getContent()))->toContain($chequeReceipt->cheque->doc_num);
+
+    $fixture['user']->update(['locale' => 'ar']);
+    app()->setLocale('ar');
+    $returnPage = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-returns.show', $return));
+    $returnPage->assertOk()
+        ->assertSee(__('Saleable').'، '.__('Quarantine'))
+        ->assertSee(__('Print Quality Disposition'))
+        ->assertDontSee('Saleable,Quarantine')
+        ->assertDontSee(__('Return and quality actions'));
+    $returnPdf = $this->get(route('admin.sales.sales-returns.print', $return))->assertOk();
+    expect(salesPdfText($returnPdf->getContent()))
+        ->not->toContain('Saleable,Quarantine', $fixture['user']->name);
 });
 
 test('sales PDF routes enforce print authorization', function () {
@@ -1215,37 +1287,81 @@ test('25-line sales order and invoice remain complete across English and Arabic 
     }
 });
 
-test('sales operational report renders order, sales, aging, and return analyses in the selected context', function () {
+test('sales reports separate operational fulfillment financial aging and product analysis', function () {
     $fixture = salesCycleFixture();
     Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
     $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
     $session = salesCycleSession($fixture);
-    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
-        'sales_employee_id' => $fixture['user']->getKey(),
-    ]));
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Report product',
+            'quantity' => '5',
+            'unit_price' => '20',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Report installment',
+            'amount' => '100',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder($order, [[
+        'sales_order_line_id' => $order->lines->sole()->getKey(),
+        'quantity' => '2',
+    ]], [[
+        'due_date' => now()->toDateString(),
+        'amount' => '40',
+    ]]));
+    app(SalesFulfillmentService::class)->deliverInvoice($invoice, [[
+        'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
+        'quantity' => '1',
+    ]], [
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+    ]);
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.reports.sales.sales-orders.index', [
             'customer_doc_num' => $fixture['customer']->doc_num,
             'product_doc_num' => $fixture['finished']->doc_num,
-            'sales_person_doc_num' => $fixture['user']->doc_num,
+            'warehouse_uuid' => $fixture['store']->public_uuid,
             'branch_doc_num' => $fixture['branch']->doc_num,
             'order_doc_num' => $order->doc_num,
-            'order_status' => SalesOrder::StatusDraft,
+            'order_status' => SalesOrder::StatusPartiallyFulfilled,
         ]))
         ->assertOk()
         ->assertSee('Sales Cycle Operational Report')
+        ->assertSee('Sales financial summary')
         ->assertSee('Quotation Status / History')
-        ->assertSee('Reserved')
-        ->assertSee('Produced')
+        ->assertSee('Invoice to Delivery Fulfillment')
+        ->assertSee('Invoiced')
+        ->assertSee('Remaining Delivery')
         ->assertSee($order->doc_num)
-        ->assertSee($fixture['customer']->doc_num)
-        ->assertSee($fixture['finished']->doc_num)
+        ->assertSee($invoice->doc_num)
+        ->assertSee($fixture['customer']->name);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', [
+            'report' => 'financial',
+            'customer_doc_num' => $fixture['customer']->doc_num,
+        ]))
+        ->assertOk()
+        ->assertSee('Sales Financial Analysis')
         ->assertSee('Customer Aging')
+        ->assertSee('Sales / Outstanding by Customer')
+        ->assertSee($fixture['customer']->name);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', [
+            'report' => 'products',
+            'product_doc_num' => $fixture['finished']->doc_num,
+        ]))
+        ->assertOk()
+        ->assertSee('Sales by Product')
         ->assertSee('Sales by Item')
-        ->assertSee('Customer Order History')
-        ->assertSee('Upcoming Collections')
-        ->assertSee('Customer / Item Sales Analysis');
+        ->assertSee('Customer / Item Sales Analysis')
+        ->assertSee($fixture['finished']->name);
 });
 
 test('sales screens and validation follow language changes while retaining document data', function (): void {

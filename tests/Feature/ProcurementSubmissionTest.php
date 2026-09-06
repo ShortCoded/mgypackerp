@@ -90,21 +90,39 @@ test('procurement attachments reuse archive access remain company scoped and do 
     $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
     $file = procurementDocumentAttachment($fixture['company']);
     $sourcing = app(ProcurementSourcingService::class);
-    $request = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 100)));
+    $request = $sourcing->createRequisition([
+        'request_date' => now()->toDateString(),
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'requested_quantity' => 100,
+            'attachment_file_doc_nums' => [$file->doc_num],
+        ]],
+    ]);
+    $attachments = app(ProcurementAttachmentService::class);
+    expect($attachments->documents($request->lines->sole(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
+    $request = $sourcing->approveRequisition($sourcing->submitRequisition($request));
     $payload = ['document_date' => now()->toDateString(), 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
         'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1, 'branch_store_uuid' => $fixture['store']->public_uuid,
         'attachment_file_doc_nums' => [$file->doc_num],
         'lines' => [['purchase_requisition_line_id' => $request->lines->sole()->id, 'product_doc_num' => $fixture['raw']->doc_num,
-            'unit_doc_num' => $fixture['unit']->doc_num, 'ordered_quantity' => 100, 'unit_price' => 2]],
+            'unit_doc_num' => $fixture['unit']->doc_num, 'ordered_quantity' => 100, 'unit_price' => 2,
+            'attachment_file_doc_nums' => [$file->doc_num]]],
     ];
     $orders = app(PurchaseOrderService::class);
     $order = $orders->create($payload)['record'];
-    $attachments = app(ProcurementAttachmentService::class);
-    expect($attachments->documents($order))->toHaveCount(1);
+    expect($attachments->documents($order))->toHaveCount(1)
+        ->and($attachments->documents($order->lines->sole(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
     $payload['lines'][0]['public_id'] = $order->lines->sole()->public_id;
     $updatedAt = $order->updated_at;
     $orders->update($order, $payload);
-    expect($attachments->documents($order))->toHaveCount(1)->and($order->fresh()->updated_at?->toISOString())->toBe($updatedAt?->toISOString());
+    expect($attachments->documents($order))->toHaveCount(1)
+        ->and($attachments->documents($order->lines->sole(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1)
+        ->and($order->fresh()->updated_at?->toISOString())->toBe($updatedAt?->toISOString());
+    $this->get(route('admin.purchases.purchase-orders.show', $order))->assertOk()
+        ->assertSee($file->original_name)
+        ->assertSee('erp-status-indicator', false);
     $file->forceFill(['attachable_id' => $fixture['company']->id + 10000])->save();
     expect(fn () => $orders->create($payload))->toThrow(DomainException::class);
     $fixture['user']->revokePermissionTo(['file_manager.view', 'file_manager.download']);
@@ -138,7 +156,7 @@ test('saving a cash invoice without changes preserves audit schedules vouchers a
     CashboxCurrency::query()->create(['cashbox_id' => $cashbox->id, 'currency_id' => $fixture['currency']->id, 'status' => 'active', 'is_default' => true]);
     $payload = ['invoice_date' => now()->toDateString(), 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
         'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1, 'payment_type' => 'cash', 'cashbox_doc_num' => $cashbox->doc_num,
-        'lines' => [['product_doc_num' => $fixture['service']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => 2, 'unit_price' => 27]]];
+        'lines' => [['product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => 2, 'unit_price' => 27]]];
     $service = app(PurchaseInvoiceService::class);
     $invoice = $service->create($payload)['record'];
     $payload['lines'][0]['public_id'] = $invoice->lines->sole()->public_id;
@@ -194,11 +212,21 @@ test('draft receipts and returns keep line identities and audit untouched on a n
     expect([$updated->getAttributes(), $updated->lines->sole()->getAttributes()])->toBe($before);
 });
 
-test('procurement navigation uses inventory requests treasury payments and removes unused supplier shells', function (): void {
+test('procurement navigation follows the operational cycle and removes unused supplier shells', function (): void {
     $inventory = require config_path('menu/inventory.php');
-    $finance = require config_path('menu/finance.php');
-    expect(collect($inventory[0]['children'])->firstWhere('route', 'admin.purchases.purchase-requisitions.index'))->not->toBeNull()
-        ->and(collect($finance[0]['children'])->firstWhere('route', 'admin.purchases.supplier-payments.index'))->not->toBeNull();
+    $purchasesMenu = require config_path('menu/purchases.php');
+    $purchaseRoutes = collect($purchasesMenu[0]['children'])->pluck('route')->filter()->values();
+    expect(collect($inventory[0]['children'])->firstWhere('route', 'admin.purchases.purchase-requisitions.index'))->toBeNull()
+        ->and($purchaseRoutes->take(8)->all())->toBe([
+            'admin.purchases.purchase-requisitions.index',
+            'admin.purchases.supplier-quotation-entry.index',
+            'admin.purchases.purchase-orders.index',
+            'admin.purchases.supply-orders.index',
+            'admin.purchases.goods-receipt-notes.index',
+            'admin.purchases.purchase-invoices.index',
+            'admin.purchases.purchase-returns.index',
+            'admin.purchases.supplier-payments.index',
+        ]);
     $purchases = require config_path('erp_ui_screens/purchases.php');
     foreach (['supplier-payments', 'supplier-advances', 'supplier-debit-notes', 'supplier-contracts', 'supplier-contract-milestones', 'supplier-evaluation', 'supplier-price-lists', 'supplier-product-catalog', 'supplier-attachments', 'supplier-complaints'] as $slug) {
         $screen = collect($purchases['screens'])->firstWhere('slug', $slug);

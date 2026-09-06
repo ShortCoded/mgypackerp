@@ -7,6 +7,7 @@ use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\OperatingContextService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -127,6 +128,40 @@ function grantOperatingScopeAccess(Role $role, ?Company $company = null, ?Branch
         ]);
     }
 }
+
+test('restricted operating scope ids are loaded once per dimension during a request', function (): void {
+    $company = operatingScopeAccessCompany('Memoized Scope Company');
+    $branch = operatingScopeAccessBranch($company, 'Memoized Scope Branch');
+    $period = operatingScopeAccessPeriod($company, 'Memoized Scope Period');
+    $role = operatingScopeAccessRole();
+    grantOperatingScopeAccess($role, $company, $branch, $period);
+    $user = operatingScopeAccessUser([], $role);
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    try {
+        $this->withSession([
+            OperatingContextService::CompanyIdKey => $company->getKey(),
+            OperatingContextService::CompanyDocNumKey => $company->doc_num,
+            OperatingContextService::BranchIdKey => $branch->getKey(),
+            OperatingContextService::BranchDocNumKey => $branch->doc_num,
+            OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
+            OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
+        ])
+            ->actingAs($user)
+            ->getJson(route('admin.operating-context.options'))
+            ->assertOk();
+
+        $queries = collect(DB::getQueryLog());
+    } finally {
+        DB::disableQueryLog();
+    }
+
+    expect($queries->filter(fn (array $query): bool => str_contains($query['query'], 'role_company_access')))->toHaveCount(1)
+        ->and($queries->filter(fn (array $query): bool => str_contains($query['query'], 'role_branch_access')))->toHaveCount(1)
+        ->and($queries->filter(fn (array $query): bool => str_contains($query['query'], 'role_financial_period_access')))->toHaveCount(1);
+});
 
 test('operating context options expose only allowed companies and no branches or periods before company selection', function () {
     $allowedCompany = operatingScopeAccessCompany('Allowed Modal Company');

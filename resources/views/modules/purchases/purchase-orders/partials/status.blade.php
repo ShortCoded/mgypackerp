@@ -9,4 +9,4 @@
     };
 @endphp
 
-<span class="badge badge-subtle-{{ $class }}">{{ __('purchase_orders.statuses.'.$status) }}</span>
+<x-status-indicator :status="$status" :label="__('purchase_orders.statuses.'.$status)" :tone="$class" />

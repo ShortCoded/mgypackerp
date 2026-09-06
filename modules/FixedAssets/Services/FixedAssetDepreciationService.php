@@ -14,6 +14,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ActivityLogger;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -356,7 +357,7 @@ class FixedAssetDepreciationService
      */
     private function previewAsset(FixedAsset $asset, FinancialPeriod $period, Carbon $periodStart, Carbon $periodEnd, array $filters, array &$mappingStatuses): array
     {
-        $excluded = fn (string $reason): array => ['eligible' => false, 'asset' => $asset, 'reason' => $reason];
+        $excluded = fn (string $reason, bool $actionable = false, ?Carbon $next = null): array => ['eligible' => false, 'asset' => $asset, 'reason' => $reason, 'actionable' => $actionable, 'next_date' => $next?->copy()->endOfMonth()->toDateString()];
 
         if (! $asset->is_depreciable) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.non_depreciable'));
@@ -366,13 +367,13 @@ class FixedAssetDepreciationService
             return $excluded(__('fixed_assets.lifecycle.exclusions.disposed'));
         }
         if ($asset->status === FixedAsset::StatusDraft) {
-            return $excluded(__('fixed_assets.prerequisites.draft'));
+            return $excluded(__('fixed_assets.cycle.recognition_required'), true);
         }
         if (! in_array($asset->status, [FixedAsset::StatusActive, FixedAsset::StatusFullyDepreciated], true)) {
             return $excluded(__('fixed_assets.lifecycle.exclusions.status'));
         }
         if ($asset->depreciation_start_date === null) {
-            return $excluded(__('fixed_assets.lifecycle.exclusions.missing_service_date'));
+            return $excluded(__('fixed_assets.lifecycle.exclusions.missing_service_date'), true);
         }
 
         if ($asset->depreciation_start_date->gt($periodEnd)) {
@@ -384,13 +385,13 @@ class FixedAssetDepreciationService
             return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
         }
         if (! $asset->hasPostedRecognition()) {
-            return $excluded(__($asset->isMasterLocked() ? 'fixed_assets.prerequisites.legacy_required' : 'fixed_assets.cycle.recognition_required'));
+            return $excluded(__('fixed_assets.cycle.recognition_required'), true);
         }
         $asset->loadMissing('postedDepreciations');
         $nextDate = $this->nextUnpostedDate($asset);
         $coveredThrough = $nextDate?->copy()->subDay();
         if ($this->hasHistoricalGap($asset)) {
-            return $excluded(__('fixed_assets.cycle.historical_depreciation_gap', ['period' => $nextDate->format('Y-m')]));
+            return $excluded(__('fixed_assets.usability.start_period', ['period' => $nextDate->translatedFormat('F Y')]), true, $nextDate);
         }
 
         if ($coveredThrough instanceof Carbon && $coveredThrough->gte($periodEnd)) {
@@ -398,13 +399,13 @@ class FixedAssetDepreciationService
         }
 
         if ($nextDate->lt($periodStart)) {
-            return $excluded(__('fixed_assets.cycle.missing_period', ['period' => $nextDate->format('Y-m')]));
+            return $excluded(__('fixed_assets.usability.start_period', ['period' => $nextDate->translatedFormat('F Y')]), true, $nextDate);
         }
         try {
             $chart = $mappingStatuses['chart'] ??= Account::query()->where('company_id', $asset->company_id)->with('classification')->get()->keyBy('id');
             $mapping = FixedAssetCategoryMapping::resolveForAsset($asset, FixedAssetCategoryMapping::DepreciationAccounts, $chart);
         } catch (DomainException $exception) {
-            return $excluded($exception->getMessage());
+            return $excluded($exception->getMessage(), true);
         }
 
         $position = $this->bookValues->position($asset, $periodStart->copy()->max($nextDate));
@@ -464,6 +465,34 @@ class FixedAssetDepreciationService
         }
 
         return ['eligible' => true, 'asset' => $asset, 'mapping' => $mapping, 'financial_period' => $period, ...$snapshot, ...$effectiveDimensions];
+    }
+
+    public function readiness(FixedAsset $asset): string
+    {
+        if (! $asset->is_depreciable) {
+            return __('fixed_assets.lifecycle.exclusions.non_depreciable');
+        }
+        if ($asset->isDisposed()) {
+            return __('fixed_assets.lifecycle.exclusions.disposed');
+        }
+        if (bccomp($this->bookValues->position($asset)['remaining_depreciable_amount'], '0', 4) <= 0) {
+            return __('fixed_assets.lifecycle.exclusions.fully_depreciated');
+        }
+        if (! $asset->hasPostedRecognition() || $asset->status === FixedAsset::StatusDraft) {
+            return __('fixed_assets.cycle.recognition_required');
+        }
+        if (! in_array($asset->status, [FixedAsset::StatusActive, FixedAsset::StatusFullyDepreciated], true)) {
+            return __('fixed_assets.lifecycle.exclusions.status');
+        }
+        $next = $this->nextUnpostedDate($asset);
+        if (! $next) {
+            return __('fixed_assets.lifecycle.exclusions.missing_service_date');
+        }
+        if ($next->isFuture()) {
+            return __('fixed_assets.usability.starts_on', ['date' => app(DateFormatService::class)->formatDate($next, '')]);
+        }
+
+        return __('fixed_assets.usability.ready');
     }
 
     public function nextUnpostedDate(FixedAsset $asset, ?Carbon $through = null): ?Carbon

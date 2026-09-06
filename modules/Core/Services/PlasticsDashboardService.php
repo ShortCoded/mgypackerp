@@ -9,14 +9,34 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Models\UserTask;
 
 class PlasticsDashboardService
 {
+    /**
+     * Dashboard tables and the columns inspected while building context queries.
+     *
+     * @var array<string, array<string, true>>
+     */
+    private const DASHBOARD_SCHEMA = [
+        'branch_stores' => ['deleted_at' => true],
+        'customers' => ['company_id' => true, 'deleted_at' => true, 'status' => true],
+        'financial_periods' => [],
+        'inventory_opening_stocks' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
+        'item_units' => [],
+        'product_components' => [],
+        'products' => [],
+        'purchase_invoices' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
+        'purchase_orders' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
+        'quotations' => ['company_id' => true, 'deleted_at' => true],
+        'suppliers' => ['company_id' => true, 'deleted_at' => true, 'status' => true],
+        'unpriced_inventory_receipts' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
+        'user_task_assignees' => [],
+        'user_tasks' => [],
+    ];
+
     /**
      * @var list<string>
      */
@@ -30,17 +50,6 @@ class PlasticsDashboardService
         '#f7c948',
         '#27bcfd',
     ];
-
-    /**
-     * @var array<string, bool>
-     */
-    private array $tableCache = [];
-
-    /** @var list<string>|null */
-    private ?array $tableListing = null;
-
-    /** @var array<string, list<string>> */
-    private array $columnListingCache = [];
 
     public function __construct(
         private readonly OperatingContextService $operatingContext,
@@ -102,17 +111,18 @@ class PlasticsDashboardService
 
         $items = [];
         $companyId = (int) $context['company_id'];
+        $canViewProducts = $this->can($user, 'products.view');
+        $canViewRawMaterials = $this->can($user, 'raw_materials.view');
+        $canViewPackagingMaterials = $this->can($user, 'packaging_materials.view');
+        $rawMaterials = $canViewRawMaterials
+            ? $this->activeProductCount($user, Product::ContextRawMaterials, $companyId)
+            : null;
+        $packagingMaterials = $canViewPackagingMaterials
+            ? $this->activeProductCount($user, Product::ContextPackagingMaterials, $companyId)
+            : null;
 
-        if ($this->can($user, 'products.view')) {
-            $products = $this->productQuery($user, 'products', $companyId)
-                ->productItems()
-                ->where('status', 'active')
-                ->count();
-            $withComponents = $this->productQuery($user, 'products', $companyId)
-                ->productItems()
-                ->where('status', 'active')
-                ->whereHas('components')
-                ->count();
+        if ($canViewProducts) {
+            [$products, $withComponents, $productTypes] = $this->productSummary($user, $companyId);
             $withoutComponents = max(0, $products - $withComponents);
             $componentLines = $this->tableExists('product_components')
                 ? ProductComponent::query()
@@ -155,17 +165,19 @@ class PlasticsDashboardService
                 );
             }
 
-            $this->appendProductCharts($dashboard, $companyId, $user, $withComponents, $withoutComponents);
+            $this->appendProductCharts(
+                $dashboard,
+                $productTypes,
+                $withComponents,
+                $withoutComponents,
+                $rawMaterials,
+                $packagingMaterials,
+            );
             $this->appendQuickAction($dashboard, $user, 'products.create', 'admin.products.create', __('dashboard.plastics.quick_actions.product'), 'plus');
             $this->appendQuickAction($dashboard, $user, 'reports.products_data.view', 'admin.reports.products-data.index', __('dashboard.plastics.quick_actions.products_report'), 'chart-bar');
         }
 
-        if ($this->can($user, 'raw_materials.view')) {
-            $rawMaterials = $this->productQuery($user, 'raw_materials', $companyId)
-                ->rawMaterials()
-                ->where('status', 'active')
-                ->count();
-
+        if ($rawMaterials !== null) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.raw_materials.title'),
                 $rawMaterials,
@@ -186,12 +198,7 @@ class PlasticsDashboardService
             $this->appendQuickAction($dashboard, $user, 'raw_materials.create', 'admin.raw-materials.create', __('dashboard.plastics.quick_actions.raw_material'), 'plus');
         }
 
-        if ($this->can($user, 'packaging_materials.view')) {
-            $packagingMaterials = $this->productQuery($user, 'packaging_materials', $companyId)
-                ->packagingMaterials()
-                ->where('status', 'active')
-                ->count();
-
+        if ($packagingMaterials !== null) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.packaging_materials.title'),
                 $packagingMaterials,
@@ -219,52 +226,30 @@ class PlasticsDashboardService
 
     /**
      * @param  array<string, mixed>  $dashboard
+     * @param  list<array{name: string, value: int}>  $productTypes
      */
-    private function appendProductCharts(array &$dashboard, int $companyId, User $user, int $withComponents, int $withoutComponents): void
-    {
-        $typeRows = $this->productQuery($user, 'products', $companyId)
-            ->productItems()
-            ->where('status', 'active')
-            ->select('item_classification', DB::raw('COUNT(*) as aggregate'))
-            ->groupBy('item_classification')
-            ->orderByDesc('aggregate')
-            ->get();
+    private function appendProductCharts(
+        array &$dashboard,
+        array $productTypes,
+        int $withComponents,
+        int $withoutComponents,
+        ?int $rawMaterials,
+        ?int $packagingMaterials,
+    ): void {
+        $typeData = $productTypes;
 
-        $typeData = $typeRows
-            ->map(fn (Product $row): array => [
-                'name' => $this->classificationLabel((string) $row->item_classification),
-                'value' => (int) $row->aggregate,
-            ])
-            ->filter(fn (array $row): bool => $row['value'] > 0)
-            ->values()
-            ->all();
-
-        if ($this->can($user, 'raw_materials.view')) {
-            $rawCount = $this->productQuery($user, 'raw_materials', $companyId)
-                ->rawMaterials()
-                ->where('status', 'active')
-                ->count();
-
-            if ($rawCount > 0) {
-                $typeData[] = [
-                    'name' => __('products.classifications.raw_material'),
-                    'value' => $rawCount,
-                ];
-            }
+        if ($rawMaterials !== null && $rawMaterials > 0) {
+            $typeData[] = [
+                'name' => __('products.classifications.raw_material'),
+                'value' => $rawMaterials,
+            ];
         }
 
-        if ($this->can($user, 'packaging_materials.view')) {
-            $packagingCount = $this->productQuery($user, 'packaging_materials', $companyId)
-                ->packagingMaterials()
-                ->where('status', 'active')
-                ->count();
-
-            if ($packagingCount > 0) {
-                $typeData[] = [
-                    'name' => __('products.classifications.packaging'),
-                    'value' => $packagingCount,
-                ];
-            }
+        if ($packagingMaterials !== null && $packagingMaterials > 0) {
+            $typeData[] = [
+                'name' => __('products.classifications.packaging'),
+                'value' => $packagingMaterials,
+            ];
         }
 
         if ($typeData !== []) {
@@ -821,23 +806,52 @@ class PlasticsDashboardService
 
     private function tableExists(string $table): bool
     {
-        $this->tableListing ??= array_map(
-            fn (string $listedTable): string => Str::afterLast($listedTable, '.'),
-            Schema::getTableListing(),
-        );
-
-        return $this->tableCache[$table] ??= in_array($table, $this->tableListing, true);
+        return isset(self::DASHBOARD_SCHEMA[$table]);
     }
 
     private function hasColumn(string $table, string $column): bool
     {
-        if (! $this->tableExists($table)) {
-            return false;
-        }
+        return isset(self::DASHBOARD_SCHEMA[$table][$column]);
+    }
 
-        $columns = $this->columnListingCache[$table] ??= Schema::getColumnListing($table);
+    private function activeProductCount(User $user, string $context, int $companyId): int
+    {
+        return $this->productQuery($user, $context, $companyId)
+            ->forProductContext($context)
+            ->where('status', 'active')
+            ->count();
+    }
 
-        return in_array($column, $columns, true);
+    /** @return array{0: int, 1: int, 2: list<array{name: string, value: int}>} */
+    private function productSummary(User $user, int $companyId): array
+    {
+        $visibleProducts = $this->productQuery($user, Product::ContextProducts, $companyId)
+            ->productItems()
+            ->where('status', 'active')
+            ->select(['products.id', 'products.item_classification'])
+            ->withExists('components');
+        $summary = DB::query()
+            ->fromSub($visibleProducts, 'visible_products')
+            ->select('item_classification')
+            ->selectRaw('COUNT(*) as aggregate')
+            ->selectRaw('COALESCE(SUM(CASE WHEN components_exists THEN 1 ELSE 0 END), 0) as secondary_aggregate')
+            ->groupBy('item_classification')
+            ->orderByDesc('aggregate')
+            ->get();
+        $productTypes = $summary
+            ->map(fn (object $row): array => [
+                'name' => $this->classificationLabel((string) $row->item_classification),
+                'value' => (int) $row->aggregate,
+            ])
+            ->filter(fn (array $row): bool => $row['value'] > 0)
+            ->values()
+            ->all();
+
+        return [
+            (int) $summary->sum(fn (object $row): int => (int) $row->aggregate),
+            (int) $summary->sum(fn (object $row): int => (int) $row->secondary_aggregate),
+            $productTypes,
+        ];
     }
 
     /**

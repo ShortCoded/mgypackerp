@@ -15,7 +15,7 @@
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
     $numbers = app(NumericFormatService::class);
     $formatDate = fn ($date) => $dateFormatService->formatDate($date, '');
-    $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
+    $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? ($defaults[$field] ?? $default));
     $linkedAccount = $record?->account;
     $groupAccount = $record?->assetGroupAccount;
     if (! $groupAccount && $linkedAccount) {
@@ -23,13 +23,18 @@
             ->linkedAccountGroup(\Modules\Accounting\Services\BusinessPartnerAccountService::FixedAsset, $linkedAccount);
     }
     $accountOption = fn ($account) => $account ? ['id' => $account->doc_num, 'text' => $account->codeNameLabel()] : null;
-    $branchOption = $record?->branch ? ['id' => $record->branch->doc_num, 'text' => trim(implode(' / ', array_filter([$record->branch->doc_num, $record->branch->name])))] : null;
+    $branchOption = $record?->branch ? ['id' => $record->branch->doc_num, 'text' => trim(implode(' / ', array_filter([$record->branch->doc_num, $record->branch->name])))] : ($defaults['branch_option'] ?? null);
     $hallOption = $record?->branchHall ? ['id' => $record->branchHall->public_uuid, 'text' => $record->branchHall->name] : null;
-    $costCenterOption = $record?->costCenter ? ['id' => $record->costCenter->doc_num, 'text' => $record->costCenter->codeNameLabel()] : null;
+    $costCenterOption = $record?->costCenter ? ['id' => $record->costCenter->doc_num, 'text' => $record->costCenter->codeNameLabel()] : ($defaults['cost_center_option'] ?? null);
     $currencyOption = $record?->currency ? ['id' => $record->currency->doc_num, 'text' => trim(implode(' / ', array_filter([$record->currency->code, $record->currency->name])))] : ($defaults['currency_option'] ?? null);
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
-    $dateValue = fn ($field) => old($field, $record?->{$field} ? $formatDate($record->{$field}) : ($field === 'asset_date' ? ($defaults['asset_date'] ?? '') : ''));
-    $numericValue = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
+    $dateValue = fn ($field) => old($field, $record?->{$field} ? $formatDate($record->{$field}) : ($defaults[$field] ?? ''));
+    $numericValue = fn ($field, $default = '') => old($field, $record?->{$field} ?? ($defaults[$field] ?? $default));
+    $creditAccountOption = $record?->creditAccount ? $accountOption($record->creditAccount) : ($defaults['credit_account_option'] ?? null);
+    $sourceType = old('source_type', $record?->source_type ?? ($defaults['source_type'] ?? null));
+    $sourceId = old('source_id', $record?->source_id ?? ($defaults['source_id'] ?? null));
+    $sourceDocNum = old('source_doc_num', $record?->source_doc_num ?? ($defaults['source_doc_num'] ?? null));
+    $linkedPurchaseLine = $purchaseSource ?? ($sourceType === \Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService::SourceType ? $record?->purchaseInvoiceLine : null);
     $entryTypeValue = old('entry_type', $record?->entry_type ?? $fixedAssetClass::EntryTypeNewAsset);
     $isDepreciableValue = old('is_depreciable', ($record?->is_depreciable ?? true) ? '1' : '0');
     $isDepreciableSelected = (string) $isDepreciableValue === '1';
@@ -131,6 +136,11 @@
             @method($method)
         @endif
         <input type="hidden" name="submit_action" value="save">
+        @if($sourceType)
+            <input type="hidden" name="source_type" value="{{ $sourceType }}">
+            <input type="hidden" name="source_id" value="{{ $sourceId }}">
+            <input type="hidden" name="source_doc_num" value="{{ $sourceDocNum }}">
+        @endif
         @if($cloneSourceToken)
             <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
         @endif
@@ -149,6 +159,26 @@
             </div>
             <div class="card-body">
                 @if($financialLocked)<div class="alert alert-info">{{ __('fixed_assets.messages.master_locked') }}</div>@endif
+                @if($linkedPurchaseLine?->purchaseInvoice)
+                    <div class="alert alert-info d-flex flex-wrap align-items-start justify-content-between gap-2">
+                        <div>
+                            <div class="fw-semibold">{{ __('fixed_assets.purchase_source.title') }}</div>
+                            <div class="small">
+                                <a href="{{ route('admin.purchases.purchase-invoices.show', $linkedPurchaseLine->purchaseInvoice->doc_num) }}">{{ $linkedPurchaseLine->purchaseInvoice->doc_num }}</a>
+                                · {{ $linkedPurchaseLine->purchaseInvoice->supplier?->name }}
+                                · {{ $linkedPurchaseLine->product?->name }}
+                                @if($linkedPurchaseLine->purchaseOrderLine?->purchaseOrder)
+                                    · <a href="{{ route('admin.purchases.purchase-orders.show', $linkedPurchaseLine->purchaseOrderLine->purchaseOrder->doc_num) }}">{{ $linkedPurchaseLine->purchaseOrderLine->purchaseOrder->doc_num }}</a>
+                                @endif
+                                @if($linkedPurchaseLine->receiptLine?->receipt)
+                                    · <a href="{{ route('admin.purchases.goods-receipt-notes.show', $linkedPurchaseLine->receiptLine->receipt->doc_num) }}">{{ $linkedPurchaseLine->receiptLine->receipt->doc_num }}</a>
+                                @endif
+                            </div>
+                            <div class="small mt-1">{{ __('fixed_assets.purchase_source.allocation_help') }}</div>
+                        </div>
+                        <span class="badge badge-subtle-primary">{{ __('fixed_assets.statuses.draft') }}</span>
+                    </div>
+                @endif
                 <div class="alert d-none js-form-alert"><div class="js-form-alert-message"></div></div>
                 <ul class="nav nav-tabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#fixed-asset-basic-tab" type="button" role="tab">{{ __('fixed_assets.tabs.basic_data') }}</button></li>
@@ -318,11 +348,14 @@
                             <div class="col-xl-3 col-lg-6" data-layout-row="basic-accounts">
                                 <x-forms.label for="credit_account_doc_num" :label="__('fixed_assets.attributes.credit_account')" required />
                                 @if($isView)
-                                    <x-forms.view-field for="credit_account_doc_num" :value="$accountOption($record?->creditAccount)['text'] ?? null" />
+                                    <x-forms.view-field for="credit_account_doc_num" :value="$creditAccountOption['text'] ?? null" />
+                                @elseif($linkedPurchaseLine)
+                                    <input type="hidden" name="credit_account_doc_num" value="{{ $creditAccountOption['id'] ?? '' }}">
+                                    <x-forms.view-field for="credit_account_doc_num" :value="$creditAccountOption['text'] ?? null" />
                                 @else
                                     <select class="form-select js-select2-ajax" id="credit_account_doc_num" name="credit_account_doc_num" data-url="{{ route('admin.fixed-assets.select2.credit-accounts') }}" data-placeholder="{{ __('fixed_assets.placeholders.credit_account') }}" data-allow-clear="true" required>
-                                        @if($accountOption($record?->creditAccount))
-                                            <option value="{{ $accountOption($record?->creditAccount)['id'] }}" selected>{{ $accountOption($record?->creditAccount)['text'] }}</option>
+                                        @if($creditAccountOption)
+                                            <option value="{{ $creditAccountOption['id'] }}" selected>{{ $creditAccountOption['text'] }}</option>
                                         @endif
                                     </select>
                                 @endif
@@ -639,5 +672,5 @@
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/file-picker.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

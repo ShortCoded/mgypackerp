@@ -14,6 +14,14 @@
         'payment_schedule' => 'admin.sales.sales-invoices.show',
         'quality_disposition' => 'admin.sales.sales-returns.show',
     ];
+    $quotationReference = trim(implode(' · ', array_filter([
+        $record->quotation?->doc_num,
+        $record->quotationRevision?->revision_number ? sprintf('R%02d', $record->quotationRevision->revision_number) : null,
+    ])));
+    $qualityDispositionLabel = static fn (?string $value): string => collect(explode(',', (string) $value))
+        ->filter()
+        ->map(fn (string $bucket): string => __(str($bucket)->replace('_', ' ')->title()->toString()))
+        ->join(app()->isLocale('ar') ? '، ' : ', ');
 @endphp
 
 @section('title', $title.' '.$record->doc_num)
@@ -43,12 +51,11 @@
             </div>
             <div class="row g-3 mb-4">
                 @if($record->customer ?? null)<div class="col-6"><strong>{{ __('Customer') }}</strong><div>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</div></div>@endif
-                @if($record->quotation ?? null)<div class="col-6"><strong>{{ __('Source Quotation') }}</strong><div>{{ $record->quotation->doc_num }} / {{ $record->quotationRevision?->revision_code }}</div></div>@endif
+                @if($record->quotation ?? null)<div class="col-6"><strong>{{ __('Source Quotation') }}</strong><div>{{ $quotationReference }}</div></div>@endif
                 @if(($record->customer?->tax_number ?? null) && in_array($kind, ['invoice', 'credit_note'], true))<div class="col-6"><strong>{{ __('Customer tax number') }}</strong><div dir="ltr">{{ $record->customer->tax_number }}</div></div>@endif
                 @if(($record->customer?->address ?? null) && in_array($kind, ['invoice', 'credit_note'], true))<div class="col-12"><strong>{{ __('Customer address') }}</strong><div>{{ $record->customer->address }}</div></div>@endif
                 @if($record->salesOrder ?? $record->order ?? null)<div class="col-6"><strong>{{ __('Source Sales Order') }}</strong><div>{{ ($record->salesOrder ?? $record->order)->doc_num }}</div></div>@endif
                 @if(($record->source_doc_num ?? null) && $kind === 'sales_delivery')<div class="col-6"><strong>{{ __('Source Sales Order') }}</strong><div>{{ $record->source_doc_num }}</div></div>@endif
-                @if($record->customer_reference ?? null)<div class="col-6"><strong>{{ __('Customer reference / PO') }}</strong><div>{{ $record->customer_reference }}</div></div>@endif
                 @if($record->expected_delivery_date ?? null)<div class="col-6"><strong>{{ __('Required date') }}</strong><div>{{ $dates->formatDate($record->expected_delivery_date, '') }}</div></div>@endif
                 @if($record->due_date ?? null)<div class="col-6"><strong>{{ __('Due date') }}</strong><div>{{ $dates->formatDate($record->due_date, '') }}</div></div>@endif
                 @if($record->invoice ?? null)<div class="col-6"><strong>{{ __('Original Invoice') }}</strong><div>{{ $record->invoice->doc_num }}</div></div>@endif
@@ -56,11 +63,12 @@
                 @if($record->relationLoaded('deliveries') && $record->deliveries->isNotEmpty())<div class="col-6"><strong>{{ __('Source Deliveries') }}</strong><div>{{ $record->deliveries->pluck('doc_num')->join(' / ') }}</div></div>
                 @elseif($record->delivery ?? null)<div class="col-6"><strong>{{ __('Source Delivery') }}</strong><div>{{ $record->delivery->doc_num }}</div></div>@endif
                 @if($record->branchStore ?? null)<div class="col-6"><strong>{{ __('Store') }}</strong><div>{{ $record->branchStore->public_uuid }} / {{ $record->branchStore->name }}</div></div>@endif
-                @if($record->recipient_name ?? null)<div class="col-6"><strong>{{ __('Recipient') }}</strong><div>{{ $record->recipient_name }} / {{ $record->recipient_phone }}</div></div>@endif
+                @if($record->recipient_name ?? null)<div class="col-6"><strong>{{ __('Recipient') }}</strong><div>{{ $record->recipient_name }}</div></div>@endif
+                @if($record->recipient_phone ?? null)<div class="col-6"><strong>{{ __('Recipient phone') }}</strong><div dir="ltr">{{ $record->recipient_phone }}</div></div>@endif
                 @if($record->vehicle_number ?? null)<div class="col-6"><strong>{{ __('Vehicle / Driver') }}</strong><div>{{ $record->vehicle_number }} / {{ $record->driver_name }}</div></div>@endif
                 @if($record->reason_code ?? null)<div class="col-12"><strong>{{ __('Return reason') }}</strong><div>{{ __(str($record->reason_code)->replace('_', ' ')->title()->toString()) }} — {{ $record->reason_details }}</div></div>@endif
                 @if($record->salesReturn ?? null)<div class="col-12"><strong>{{ __('Credit reason / Return') }}</strong><div>{{ $record->salesReturn->doc_num }} — {{ __(str($record->salesReturn->reason_code)->replace('_', ' ')->title()->toString()) }}</div></div>@endif
-                @if($kind === 'customer_receipt')<div class="col-6"><strong>{{ __('Payment method') }}</strong><div>{{ __(str($record->payment_method)->replace('_', ' ')->title()->toString()) }}</div></div><div class="col-6"><strong>{{ __('Cash / Bank / Cheque reference') }}</strong><div>{{ $record->cashVoucher?->doc_num ?? $record->cheque?->doc_num ?? $record->bankAccount?->doc_num ?? $record->reference_no ?? '—' }}</div></div><div class="col-6"><strong>{{ __('Receipt amount') }}</strong><div dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</div></div>@endif
+                @if($kind === 'customer_receipt')<div class="col-6"><strong>{{ __('Payment method') }}</strong><div>{{ __(str($record->payment_method)->replace('_', ' ')->title()->toString()) }}</div></div><div class="col-6"><strong>{{ __('Receipt amount') }}</strong><div dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</div></div>@endif
                 @if(in_array($kind, ['invoice', 'credit_note'], true))<div class="col-6"><strong>{{ __('Electronic invoice status') }}</strong><div>{{ __(str($record->electronic_invoice_status)->replace('_', ' ')->title()->toString()) }}</div></div>@endif
                 @if($kind === 'quality_disposition')<div class="col-6"><strong>{{ __('Inspector') }}</strong><div>{{ $record->inspectedBy?->name ?? '—' }}</div></div><div class="col-6"><strong>{{ __('Inspection date') }}</strong><div>{{ $dates->formatDate($record->inspected_at, '—') }}</div></div>@endif
                 @if($kind === 'payment_schedule')<div class="col-6"><strong>{{ __('Invoice total') }}</strong><div dir="ltr">{{ $numbers->format($record->total_amount) }}</div></div><div class="col-6"><strong>{{ __('Outstanding') }}</strong><div dir="ltr">{{ $numbers->format($record->remaining_amount) }}</div></div>@endif
@@ -74,9 +82,15 @@
                             @php
                                 $printUnit = $line->transactionUnit ?? $line->unit;
                                 $printQuantity = $line->transaction_quantity ?? $line->quantity;
-                                $specifications = collect($line->specifications ?? $line->product_snapshot['specifications'] ?? [])->filter();
+                                $specifications = collect($line->specifications ?? $line->product_snapshot['specifications'] ?? [])
+                                    ->when($kind !== 'production_request', fn ($values) => $values->except(['packaging', 'packing', 'units_per_package']))
+                                    ->filter();
+                                $itemLabel = collect([$line->product?->doc_num, $line->product?->name, $line->description])
+                                    ->filter(fn ($value) => filled($value))
+                                    ->unique(fn ($value) => mb_strtolower(trim((string) $value)))
+                                    ->join(' / ');
                             @endphp
-                            <tr><td>{{ $line->line_number }}</td><td>{{ trim(implode(' / ', array_filter([$line->product?->doc_num, $line->product?->name, $line->description]))) }}@if($specifications->isNotEmpty())<br><small>{{ $specifications->map(fn($value, $key) => __(str($key)->replace('_', ' ')->title()->toString()).': '.$value)->join(' · ') }}</small>@endif @if($line->production_notes ?? null)<br><small>{{ $line->production_notes }}</small>@endif</td><td>{{ trim(implode(' / ', array_filter([$printUnit?->doc_num, $printUnit?->name]))) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($printQuantity) }}@if($kind === 'production_request' && isset($line->base_quantity))<br><small>{{ __('Base') }}: {{ $numbers->format($line->base_quantity) }}</small>@endif</td>@if($kind === 'sales_order')<td class="text-end" dir="ltr">{{ $numbers->format($line->delivered_quantity) }}</td>@endif @if($showPrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->line_total ?? 0) }}</td>@endif @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<td>{{ $line->quality_disposition ? __(str($line->quality_disposition)->replace('_', ' ')->title()->toString()) : __('Pending inspection') }}<br><small>{{ __('Saleable') }}: {{ $numbers->format($line->saleable_quantity) }} / {{ __('Quarantine') }}: {{ $numbers->format($line->quarantine_quantity) }} / {{ __('Rework') }}: {{ $numbers->format($line->rework_quantity) }} / {{ __('Scrap') }}: {{ $numbers->format($line->scrap_quantity) }}</small>@if($line->inspection_notes)<br><small>{{ $line->inspection_notes }}</small>@endif</td>@endif</tr>
+                            <tr><td>{{ $line->line_number }}</td><td>{{ $itemLabel }}@if($specifications->isNotEmpty())<br><small>{{ $specifications->map(fn($value, $key) => __(str($key)->replace('_', ' ')->title()->toString()).': '.$value)->join(' · ') }}</small>@endif @if($kind === 'production_request' && ($line->production_notes ?? null))<br><small>{{ $line->production_notes }}</small>@endif</td><td>{{ trim(implode(' / ', array_filter([$printUnit?->doc_num, $printUnit?->name]))) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($printQuantity) }}@if($kind === 'production_request' && isset($line->base_quantity))<br><small>{{ __('Base') }}: {{ $numbers->format($line->base_quantity) }}</small>@endif</td>@if($kind === 'sales_order')<td class="text-end" dir="ltr">{{ $numbers->format($line->delivered_quantity) }}</td>@endif @if($showPrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->line_total ?? 0) }}</td>@endif @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : __('Pending inspection') }}<br><small>{{ __('Saleable') }}: {{ $numbers->format($line->saleable_quantity) }} / {{ __('Quarantine') }}: {{ $numbers->format($line->quarantine_quantity) }} / {{ __('Rework') }}: {{ $numbers->format($line->rework_quantity) }} / {{ __('Scrap') }}: {{ $numbers->format($line->scrap_quantity) }}</small>@if($line->inspection_notes)<br><small>{{ $line->inspection_notes }}</small>@endif</td>@endif</tr>
                         @endforeach
                     </tbody>
                     @if($showPrices && isset($record->total_amount))<tfoot><tr><th colspan="{{ $kind === 'sales_order' ? 5 : 4 }}">{{ __('Total') }}</th><th colspan="4" class="text-end" dir="ltr">{{ $numbers->format($record->total_amount) }}</th></tr></tfoot>@endif

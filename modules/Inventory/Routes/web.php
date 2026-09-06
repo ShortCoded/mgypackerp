@@ -46,6 +46,15 @@ Route::middleware('auth')
         Route::get('/reports/operations/print', [InventoryReportController::class, 'print'])
             ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
             ->name('reports.print');
+        Route::get('/stock-balances', [InventoryReportController::class, 'stockBalances'])
+            ->middleware('can:inventory.reports.operational')
+            ->name('stock-balances.index');
+        Route::get('/stock-balances/export.xlsx', [InventoryReportController::class, 'stockBalancesExport'])
+            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->name('stock-balances.export');
+        Route::get('/stock-balances/print', [InventoryReportController::class, 'stockBalancesPrint'])
+            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->name('stock-balances.print');
         Route::prefix('stock-counts')->name('stock-counts.')->controller(StockCountController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:inventory.stock_counts.view')->name('index');
             Route::post('/', 'store')->middleware('can:inventory.stock_counts.create')->name('store');

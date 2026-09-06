@@ -4,7 +4,7 @@
     $resource = 'fixed_assets';
     $routePrefix = 'admin.fixed-assets.assets';
     $title = __('fixed_assets.title');
-    $columns = ['doc_num', 'asset_name', 'status', 'purchase_value', 'previous_depreciation', 'net_value', 'entry_type', 'asset_category', 'branch', 'cost_center', 'currency', 'is_depreciable', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
+    $columns = ['doc_num', 'asset_name', 'asset_category', 'branch', 'status', 'purchase_value', 'previous_depreciation', 'net_value', 'entry_type', 'cost_center', 'currency', 'is_depreciable', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
     $auditColumns = ['created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at'];
 @endphp
 
@@ -60,11 +60,26 @@
         </div>
     @endcan
 
-    <div class="d-flex flex-wrap gap-2 mb-3">
-        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.movements.index') }}">{{ __('fixed_assets.product.movements') }}</a>
-        @can('fixed_assets.accounting.configure')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.accounting.index') }}">{{ __('fixed_assets.lifecycle.accounting_mappings') }}</a>@endcan
+    <div class="card mb-3">
+        <div class="card-body d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
+            <div>
+                <h5 class="mb-1">{{ $title }}</h5>
+                <p class="text-600 mb-0">{{ __('fixed_assets.product.register_help') }}</p>
+            </div>
+            <div class="d-flex flex-column flex-sm-row gap-2 flex-shrink-0">
+                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.movements.index') }}">
+                    <span class="fas fa-exchange-alt me-1" aria-hidden="true"></span>{{ __('fixed_assets.product.open_movements') }}
+                </a>
+                @can('fixed_assets.depreciation.preview')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.depreciation.index') }}"><span class="fas fa-calculator me-1" aria-hidden="true"></span>{{ __('fixed_assets.lifecycle.depreciation_run') }}</a>@endcan
+                @can('fixed_assets.reports')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.index') }}"><span class="fas fa-chart-bar me-1" aria-hidden="true"></span>{{ __('fixed_assets.reports.title') }}</a>@endcan
+            </div>
+        </div>
     </div>
     <form class="card card-body mb-3 js-asset-register-filters" autocomplete="off">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <h6 class="mb-0">{{ __('fixed_assets.product.register_filters') }}</h6>
+            <span class="small text-600">{{ __('fixed_assets.product.register_filters_help') }}</span>
+        </div>
         <div class="row g-2 align-items-end">
             @foreach(['status' => \Modules\FixedAssets\Models\FixedAsset::statuses(), 'entry_type' => \Modules\FixedAssets\Models\FixedAsset::entryTypes()] as $field => $choices)
             <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$field) }}</label><select class="form-select" name="{{ $field }}" id="asset-filter-{{ $field }}"><option value=""></option>@foreach($choices as $choice)<option value="{{ $choice }}">{{ __($field === 'status' ? 'fixed_assets.statuses.'.$choice : 'fixed_assets.entry_types.'.$choice) }}</option>@endforeach</select></div>
@@ -72,7 +87,7 @@
             @foreach(['asset_group_account_doc_num' => ['asset_group_account', 'asset-categories'], 'branch_doc_num' => ['branch', 'branches'], 'cost_center_doc_num' => ['cost_center', 'cost-centers']] as $field => [$label, $endpoint])
             <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$label) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" id="asset-filter-{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.'.$endpoint) }}" data-allow-clear="true"></select></div>
             @endforeach
-            <div class="col-12 col-sm-auto"><button type="reset" class="btn btn-falcon-default">{{ __('common.actions.reset') }}</button></div>
+            <div class="col-12 col-sm-auto d-grid d-sm-block"><button type="reset" class="btn btn-falcon-default">{{ __('common.actions.reset') }}</button></div>
         </div>
     </form>
     <div class="card erp-datatable-card fixed-assets-datatable-card" data-fixed-assets-root data-bulk-delete-url="{{ route($routePrefix.'.bulk-delete') }}">
@@ -82,6 +97,11 @@
                     <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ $title }}</h5>
                 </div>
                 <div class="col-12 col-sm-auto ms-auto text-end ps-0 d-flex justify-content-end align-items-center gap-2 flex-wrap">
+                    @can('fixed_assets.accounting.configure')
+                        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.accounting.index') }}" title="{{ __('fixed_assets.product.accounting_override_help') }}" aria-label="{{ __('fixed_assets.lifecycle.accounting_mappings') }}">
+                            <span class="fas fa-sliders-h" aria-hidden="true"></span><span class="d-none d-xl-inline ms-1">{{ __('fixed_assets.prerequisites.advanced') }}</span>
+                        </a>
+                    @endcan
                     @can('fixed_assets.view_trashed')
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="fixed_assets_trash_filter">{{ __('business_partners.trash.filter_label') }}</label>
@@ -150,5 +170,5 @@
     </script>
     <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

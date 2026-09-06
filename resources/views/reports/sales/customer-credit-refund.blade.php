@@ -2,6 +2,7 @@
 
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
     @include('reports.partials.company-identity')
 
     <div class="document-title-row">
@@ -11,11 +12,11 @@
 
     <table class="report-table">
         <tbody>
-            <tr><th>{{ __('Customer') }}</th><td>{{ $record->creditNote->customer?->doc_num }} — {{ $record->creditNote->customer?->name }}</td><th>{{ __('Refund date') }}</th><td dir="ltr">{{ $record->refund_date?->toDateString() }}</td></tr>
+            <tr><th>{{ __('Customer') }}</th><td>{{ $record->creditNote->customer?->doc_num }} — {{ $record->creditNote->customer?->name }}</td><th>{{ __('Refund date') }}</th><td dir="ltr">{{ $dates->formatDate($record->refund_date, '') }}</td></tr>
             <tr><th>{{ __('Credit source') }}</th><td dir="ltr">{{ $record->creditNote?->doc_num }}</td><th>{{ __('Method') }}</th><td>{{ __($record->payment_method === 'cash' ? 'Cash' : 'Bank') }}</td></tr>
             <tr><th>{{ __('Cashbox / Bank') }}</th><td>{{ $record->cashbox?->doc_num ?? $record->bankAccount?->doc_num }} — {{ $record->cashbox?->name ?? $record->bankAccount?->account_name }}</td><th>{{ __('Reference') }}</th><td dir="ltr">{{ $record->reference_no ?: '—' }}</td></tr>
             <tr><th>{{ __('Refunded amount') }}</th><td class="number">{{ $numbers->format($record->amount) }}</td><th>{{ __('Journal Entry') }}</th><td dir="ltr">{{ $record->journalEntry?->doc_num }}</td></tr>
-            <tr><th>{{ __('Status') }}</th><td>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td><th>{{ __('Authorization') }}</th><td>{{ $record->posted_at?->toDateTimeString() }}</td></tr>
+            <tr><th>{{ __('Status') }}</th><td>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td><th>{{ __('Authorization') }}</th><td>{{ $dates->formatDateTime($record->posted_at, '') }}</td></tr>
         </tbody>
     </table>
 

@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Modules\Core\Models\CalendarEvent;
 use Modules\Core\Models\UserNotification;
 use Modules\Core\Models\UserTask;
+use stdClass;
 
 class NotificationService
 {
@@ -147,6 +148,48 @@ class NotificationService
             ->delivered()
             ->whereNull('read_at')
             ->count();
+    }
+
+    /**
+     * @return array{
+     *     unread_count: int,
+     *     notifications: Collection<int, stdClass>
+     * }
+     */
+    public function pollData(User $user, int $limit = 10): array
+    {
+        $unreadCount = UserNotification::query()
+            ->forUser($user)
+            ->delivered()
+            ->whereNull('read_at')
+            ->selectRaw('COUNT(*)');
+
+        $notifications = UserNotification::query()
+            ->forUser($user)
+            ->delivered()
+            ->select([
+                'public_uuid',
+                'type',
+                'category',
+                'title',
+                'body',
+                'url',
+                'read_at',
+                'delivered_at',
+                'created_at',
+            ])
+            ->selectSub($unreadCount, 'unread_count')
+            ->orderByRaw('CASE WHEN read_at IS NULL THEN 0 ELSE 1 END')
+            ->latest('delivered_at')
+            ->latest('created_at')
+            ->limit($limit)
+            ->toBase()
+            ->get();
+
+        return [
+            'unread_count' => (int) ($notifications->first()?->unread_count ?? 0),
+            'notifications' => $notifications,
+        ];
     }
 
     /**

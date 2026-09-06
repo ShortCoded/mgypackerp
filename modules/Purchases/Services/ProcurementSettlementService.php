@@ -303,7 +303,12 @@ class ProcurementSettlementService
                 if ($returnLine->isDirty() || ! $returnLine->exists) {
                     $returnLine->save();
                 }
-                $changed = $changed || $returnLine->wasChanged() || $returnLine->wasRecentlyCreated;
+                $lineAttachmentChanged = app(ProcurementAttachmentService::class)->attachLine(
+                    $returnLine,
+                    $input['attachment_file_doc_nums'] ?? [],
+                    $context['company_id'],
+                );
+                $changed = $changed || $returnLine->wasChanged() || $returnLine->wasRecentlyCreated || $lineAttachmentChanged;
                 $kept[] = $returnLine->getKey();
                 $receiptId ??= $receiptLine->receipt_id;
                 $totalQuantity += $quantity;
@@ -312,6 +317,12 @@ class ProcurementSettlementService
 
             $removed = $return->lines()->whereNotIn('id', $kept)->delete();
             $changed = $changed || $removed > 0;
+            $changed = app(ProcurementAttachmentService::class)->attach(
+                $return,
+                $data['attachment_file_doc_nums'] ?? [],
+                ProcurementAttachmentService::OperationalCollection,
+                $context['company_id'],
+            ) || $changed;
             $return->forceFill([
                 'receipt_id' => $receiptId,
                 'total_quantity' => $this->quantity($totalQuantity),
@@ -353,12 +364,23 @@ class ProcurementSettlementService
             BranchStore::query()->lockForUpdate()->findOrFail($return->branch_store_id);
             foreach ($return->lines as $line) {
                 $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
+                $receiptLine->loadMissing('product');
                 $this->assertReturnable($receiptLine, (float) $line->quantity, (bool) $line->from_quarantine, $return);
                 if (! $return->purchase_invoice_id && ! $line->from_quarantine && (float) $line->quantity > $this->matching->remainingForReceipt($receiptLine) + 0.00000001) {
                     throw new DomainException(__('Select the posted supplier invoice for a return of billed quantities.'));
                 }
                 if ($return->purchaseInvoice && ! in_array($return->purchaseInvoice->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)) {
                     throw new DomainException(__('The source invoice is no longer posted.'));
+                }
+                if (! $receiptLine->product?->cost_as_inventory) {
+                    throw new DomainException(__('fixed_assets.purchase_source.return_requires_invoice_reversal'));
+                }
+                if ($return->purchaseInvoice && PurchaseInvoiceLine::query()
+                    ->where('purchase_invoice_id', $return->purchase_invoice_id)
+                    ->where('receipt_line_id', $receiptLine->getKey())
+                    ->whereHas('fixedAssets', fn ($query) => $query->whereNotNull('capitalized_at'))
+                    ->exists()) {
+                    throw new DomainException(__('fixed_assets.purchase_source.return_requires_invoice_reversal'));
                 }
                 if (! $line->from_quarantine) {
                     $sourceMovement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->firstOrFail();

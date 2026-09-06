@@ -114,7 +114,7 @@ class FixedAssetsDataTable
                     ]);
                 }
             })
-            ->addColumn('checkbox', fn (FixedAsset $record): string => $record->canEditMaster() || $record->trashed() ? view('modules.finance.partials.checkbox', ['record' => $record])->render() : '')
+            ->addColumn('checkbox', fn (FixedAsset $record): string => ! $record->trashed() && $record->canEditMaster() ? view('modules.finance.partials.checkbox', ['record' => $record])->render() : '')
             ->editColumn('doc_num', fn (FixedAsset $record): string => '<a class="fw-semibold dt-code-value" href="'.e(route('admin.fixed-assets.assets.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
             ->editColumn('asset_name', fn (FixedAsset $record): string => $this->ellipsisText($record->asset_name))
             ->editColumn('entry_type', fn (FixedAsset $record): string => $this->plainText(__("fixed_assets.entry_types.{$record->entry_type}")))

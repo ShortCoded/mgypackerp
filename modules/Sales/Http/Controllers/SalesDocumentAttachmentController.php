@@ -14,6 +14,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Models\SalesReturn;
@@ -26,6 +27,7 @@ class SalesDocumentAttachmentController extends Controller
             'sales_request' => [SalesRequest::class, 'sales_requests.edit'],
             'sales_order' => [SalesOrder::class, 'sales_orders.edit'],
             'invoice', 'credit_note' => [CustomerInvoice::class, 'customer_invoices.edit'],
+            'customer_receipt' => [CustomerReceipt::class, 'customer_receipts.create'],
             'sales_delivery' => [InventoryDocument::class, 'sales_deliveries.create'],
             'sales_return' => [SalesReturn::class, 'sales_returns.create'],
             'customer' => [Customer::class, 'customers.edit'],

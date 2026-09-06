@@ -428,6 +428,9 @@
       $row.find('[data-error-for]').each(function () {
         $(this).attr('data-error-for', String($(this).attr('data-error-for')).replace(/lines\.\d+\./, 'lines.' + index + '.'));
       });
+      $row.find('[data-input-name]').each(function () {
+        this.dataset.inputName = String(this.dataset.inputName).replace(/lines\[\d+\]/, 'lines[' + index + ']');
+      });
     });
   }
 
@@ -450,6 +453,8 @@
   function removeLine($button) {
     if ($('.js-purchase-order-line').length <= 1) {
       $button.closest('.js-purchase-order-line').find('input, select').val('').trigger('change');
+      $button.closest('.js-purchase-order-line').find('.js-procurement-selected-attachments').empty().addClass('d-none');
+      $button.closest('.js-purchase-order-line').find('.js-procurement-attachment-inputs').empty();
       calculateTotals();
       return;
     }
@@ -673,6 +678,10 @@
       const source=this.closest('.js-purchase-order-line');
       if (source.querySelector('[name$="[purchase_requisition_line_id]"]')?.value) return;
       const row=window.AppLineItemCards.append(source.parentElement,document.getElementById('purchase-order-line-template'),'lines',source);
+      row.querySelector('.js-procurement-existing-attachments')?.remove();
+      row.querySelector('.js-procurement-attachment-inputs')?.replaceChildren();
+      const selectedAttachments=row.querySelector('.js-procurement-selected-attachments');
+      selectedAttachments?.replaceChildren(); selectedAttachments?.classList.add('d-none');
       initSelect2(row); reindexLines(); calculateTotals();
     });
     const direct = document.getElementById('direct_procurement_override');

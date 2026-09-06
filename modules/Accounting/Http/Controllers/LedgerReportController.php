@@ -21,10 +21,6 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
-use Modules\Sales\Models\CustomerCreditAllocation;
-use Modules\Sales\Models\CustomerCreditRefund;
-use Modules\Sales\Models\CustomerInvoice;
-use Modules\Sales\Models\CustomerReceipt;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class LedgerReportController extends Controller
@@ -82,7 +78,7 @@ class LedgerReportController extends Controller
         $writer = $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX;
         $extension = $format === 'csv' ? 'csv' : 'xlsx';
 
-        return Excel::download(new LedgerReportExport($result), "{$filename}.{$extension}", $writer);
+        return Excel::download(new LedgerReportExport($result, $type), "{$filename}.{$extension}", $writer);
     }
 
     private function report(LedgerReportRequest $request, string $type): View
@@ -132,18 +128,31 @@ class LedgerReportController extends Controller
             'account_id' => (int) $account->getKey(),
             'from_date' => $validated['from_date'],
             'to_date' => $validated['to_date'],
-            'branch_id' => $this->branchId((int) $context['company_id'], $validated['branch_doc_num'] ?? null),
-            'cost_center_id' => $this->costCenterId((int) $context['company_id'], $validated['cost_center_doc_num'] ?? null),
+            'branch_id' => $type === 'customer_statement'
+                ? null
+                : $this->branchId((int) $context['company_id'], $validated['branch_doc_num'] ?? null),
+            'cost_center_id' => $type === 'customer_statement'
+                ? null
+                : $this->costCenterId((int) $context['company_id'], $validated['cost_center_doc_num'] ?? null),
         ];
 
         $result = $this->ledger->accountLedger($filters);
         if ($type === 'customer_statement') {
-            $result['subledger_events'] = $this->customerSubledgerEvents(
-                (int) $selected['id'],
-                $filters['all_periods'] ? null : (int) $context['financial_period_id'],
-                $validated['from_date'],
-                $validated['to_date'],
-            );
+            $result['movements'] = array_map(function (array $movement): array {
+                $translationKey = match (trim((string) $movement['description'])) {
+                    'Customer receivable' => 'customer_receivable',
+                    'Customer receivable settlement' => 'customer_receivable_settlement',
+                    'Customer credit' => 'customer_credit',
+                    'Sales return' => 'sales_return',
+                    default => null,
+                };
+
+                if ($translationKey !== null) {
+                    $movement['description'] = __('ledger_reports.movement_descriptions.'.$translationKey);
+                }
+
+                return $movement;
+            }, $result['movements']);
         }
 
         return [$result, $selected, $validated];
@@ -176,68 +185,6 @@ class LedgerReportController extends Controller
             'name' => $party->name,
             'account' => $account->codeNameLabel(),
         ]];
-    }
-
-    /** @return list<array<string, mixed>> */
-    private function customerSubledgerEvents(int $customerId, ?int $periodId, string $fromDate, string $toDate): array
-    {
-        $invoices = CustomerInvoice::query()
-            ->where('customer_id', $customerId)
-            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
-            ->where('posting_status', 'posted')
-            ->whereBetween('invoice_date', [$fromDate, $toDate])
-            ->get()
-            ->map(fn (CustomerInvoice $invoice): array => [
-                'date' => $invoice->invoice_date?->toDateString(),
-                'event' => $invoice->document_type === CustomerInvoice::TypeCreditNote ? 'credit_note' : 'invoice',
-                'document' => $invoice->doc_num,
-                'related_document' => $invoice->originalInvoice?->doc_num,
-                'amount' => (string) $invoice->total_amount,
-                'remaining_credit' => $invoice->document_type === CustomerInvoice::TypeCreditNote ? (string) $invoice->credit_available_amount : null,
-                'status' => $invoice->status,
-                'sort' => 10,
-            ]);
-        $receipts = CustomerReceipt::query()
-            ->where('customer_id', $customerId)
-            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
-            ->where('status', CustomerReceipt::StatusApproved)
-            ->whereBetween('receipt_date', [$fromDate, $toDate])
-            ->get()
-            ->map(fn (CustomerReceipt $receipt): array => [
-                'date' => $receipt->receipt_date?->toDateString(), 'event' => 'payment',
-                'document' => $receipt->doc_num, 'related_document' => $receipt->order?->doc_num,
-                'amount' => (string) $receipt->amount, 'remaining_credit' => null,
-                'status' => $receipt->status, 'sort' => 20,
-            ]);
-        $allocations = CustomerCreditAllocation::query()
-            ->with(['creditNote', 'targetInvoice'])
-            ->where('customer_id', $customerId)
-            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
-            ->whereBetween('allocation_date', [$fromDate, $toDate])
-            ->get()
-            ->map(fn (CustomerCreditAllocation $allocation): array => [
-                'date' => $allocation->allocation_date?->toDateString(), 'event' => 'credit_allocation',
-                'document' => $allocation->creditNote?->doc_num, 'related_document' => $allocation->targetInvoice?->doc_num,
-                'amount' => (string) $allocation->amount, 'remaining_credit' => (string) $allocation->creditNote?->credit_available_amount,
-                'status' => $allocation->status, 'sort' => 30,
-            ]);
-        $refunds = CustomerCreditRefund::query()
-            ->with('creditNote')
-            ->where('customer_id', $customerId)
-            ->when($periodId, fn ($query) => $query->where('financial_period_id', $periodId))
-            ->whereBetween('refund_date', [$fromDate, $toDate])
-            ->get()
-            ->map(fn (CustomerCreditRefund $refund): array => [
-                'date' => $refund->refund_date?->toDateString(), 'event' => 'credit_refund',
-                'document' => $refund->doc_num, 'related_document' => $refund->creditNote?->doc_num,
-                'amount' => (string) $refund->amount, 'remaining_credit' => (string) $refund->creditNote?->credit_available_amount,
-                'status' => $refund->status, 'sort' => 40,
-            ]);
-
-        return $invoices->concat($receipts)->concat($allocations)->concat($refunds)
-            ->sortBy([['date', 'asc'], ['sort', 'asc']])
-            ->values()
-            ->all();
     }
 
     private function branchId(int $companyId, mixed $docNum): ?int

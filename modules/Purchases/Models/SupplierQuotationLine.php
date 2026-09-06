@@ -14,7 +14,8 @@ class SupplierQuotationLine extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'public_id', 'supplier_quotation_id', 'request_for_quotation_line_id', 'line_number', 'product_id',
+        'public_id', 'supplier_quotation_id', 'request_for_quotation_line_id', 'purchase_requisition_line_id',
+        'purchase_order_line_id', 'line_number', 'product_id',
         'unit_id', 'offered_quantity', 'unit_price', 'discount_amount', 'tax_rate', 'tax_amount',
         'line_total', 'delivery_date', 'notes',
     ];
@@ -42,6 +43,16 @@ class SupplierQuotationLine extends Model
     public function rfqLine(): BelongsTo
     {
         return $this->belongsTo(RequestForQuotationLine::class, 'request_for_quotation_line_id');
+    }
+
+    public function requisitionLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequisitionLine::class, 'purchase_requisition_line_id');
+    }
+
+    public function purchaseOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderLine::class, 'purchase_order_line_id');
     }
 
     public function product(): BelongsTo

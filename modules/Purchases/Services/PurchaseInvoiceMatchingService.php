@@ -16,7 +16,7 @@ class PurchaseInvoiceMatchingService
 
     public function remainingForReceipt(UnpricedInventoryReceiptLine $line, ?int $exceptInvoiceId = null): float
     {
-        $line->loadMissing('receipt');
+        $line->loadMissing(['receipt', 'product']);
         if (! $line->receipt?->approved || in_array($line->receipt->status, ['cancelled', 'reversed'], true)) {
             return 0.0;
         }
@@ -26,7 +26,7 @@ class PurchaseInvoiceMatchingService
         $returnedBeforeInvoice = (float) PurchaseReturnLine::query()->where('receipt_line_id', $line->getKey())
             ->where('from_quarantine', false)->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted')->whereNull('purchase_invoice_id'))->sum('quantity');
 
-        return max(0, (float) $line->inventory_posted_quantity - $returnedBeforeInvoice - $billed);
+        return max(0, $this->acceptedQuantity($line) - $returnedBeforeInvoice - $billed);
     }
 
     public function matchForPosting(PurchaseInvoice $invoice): void
@@ -57,7 +57,7 @@ class PurchaseInvoiceMatchingService
             $this->matchLine($invoiceLine, $order);
             $source = $invoiceLine->purchaseOrderLine;
             $variances[] = ['line' => $invoiceLine->public_id, 'order_line' => $source->public_id,
-                'quantity_variance' => number_format(max(0, (float) $invoiceLine->quantity - (float) ($invoiceLine->receiptLine?->inventory_posted_quantity ?? $source->ordered_quantity)), 8, '.', ''),
+                'quantity_variance' => number_format(max(0, (float) $invoiceLine->quantity - ($invoiceLine->receiptLine ? $this->acceptedQuantity($invoiceLine->receiptLine) : (float) $source->ordered_quantity)), 8, '.', ''),
                 'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 4)];
         }
 
@@ -140,12 +140,13 @@ class PurchaseInvoiceMatchingService
                 ->where('receipt_line_id', $receiptLine->getKey())
                 ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']))
                 ->sum('quantity');
-            if ($invoicedForReceipt > (float) $receiptLine->inventory_posted_quantity + 0.00000001) {
+            $acceptedQuantity = $this->acceptedQuantity($receiptLine, $orderLine->product);
+            if ($invoicedForReceipt > $acceptedQuantity + 0.00000001) {
                 throw new DomainException(__('Invoice quantity exceeds quality-accepted receipt quantity.'));
             }
             $returned = (float) PurchaseReturnLine::query()->where('receipt_line_id', $receiptLine->getKey())
                 ->where('from_quarantine', false)->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted')->whereNull('purchase_invoice_id'))->sum('quantity');
-            if ($invoicedForReceipt > (float) $receiptLine->inventory_posted_quantity - $returned + 0.00000001) {
+            if ($invoicedForReceipt > $acceptedQuantity - $returned + 0.00000001) {
                 throw new DomainException(__('Invoice quantity exceeds the accepted GRNI quantity remaining after returns.'));
             }
             $eligibleQuantity = $orderLine->receivedQuantity();
@@ -156,5 +157,14 @@ class PurchaseInvoiceMatchingService
         }
 
         $invoiceLine->forceFill(['matched_quantity' => $invoiceLine->quantity, 'updated_by' => auth()->id()])->save();
+    }
+
+    private function acceptedQuantity(UnpricedInventoryReceiptLine $line, mixed $product = null): float
+    {
+        $product ??= $line->product;
+
+        return $product && ! $product->cost_as_inventory
+            ? (float) $line->accepted_quantity
+            : (float) $line->inventory_posted_quantity;
     }
 }

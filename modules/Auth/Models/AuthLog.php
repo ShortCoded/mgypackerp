@@ -5,7 +5,6 @@ namespace Modules\Auth\Models;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
@@ -79,7 +78,7 @@ class AuthLog extends Model
     protected static function booted(): void
     {
         static::creating(function (AuthLog $authLog): void {
-            if (Schema::hasTable($authLog->getTable()) && Schema::hasColumn($authLog->getTable(), 'public_id') && (! is_string($authLog->public_id) || trim($authLog->public_id) === '')) {
+            if (! is_string($authLog->public_id) || trim($authLog->public_id) === '') {
                 $authLog->public_id = (string) Str::uuid();
             }
         });

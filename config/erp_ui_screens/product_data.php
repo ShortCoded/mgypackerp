@@ -1,14 +1,6 @@
 <?php
 
-$navigationHiddenKeys = [
-    'product_data_product_units',
-    'product_data_product_equivalent_units',
-    'product_data_product_barcodes',
-    'product_data_product_images',
-    'product_data_product_documents',
-];
-
-$screen = static function (string $slug, string $en, string $ar, string $group = 'classification', string $profile = 'master', array $extra = []) use ($navigationHiddenKeys): array {
+$screen = static function (string $slug, string $en, string $ar, string $group = 'classification', string $profile = 'master', array $extra = []): array {
     $key = 'product_data_'.str_replace('-', '_', $slug);
 
     return [
@@ -17,7 +9,9 @@ $screen = static function (string $slug, string $en, string $ar, string $group =
         'title' => ['en' => $en, 'ar' => $ar],
         'group' => $group,
         'profile' => $profile,
-        'menu_visible' => ! in_array($key, $navigationHiddenKeys, true),
+        'classification' => 'OUT_OF_SCOPE',
+        'menu_visible' => false,
+        'shell_enabled' => false,
         ...$extra,
     ];
 };

@@ -15,14 +15,15 @@ Route::middleware('auth')
     ->as('admin.purchases.')
     ->group(function (): void {
         foreach (['currency-rate' => ['purchase_orders.create', 'purchase_orders.edit'], 'employees' => ['purchases.purchase_requisitions.create', 'purchases.purchase_requisitions.edit'],
-            'rfqs' => ['purchases.supplier_quotation_entry.create'], 'requisitions' => ['purchase_orders.create', 'purchase_orders.edit', 'purchases.request_for_quotations.create'],
-            'purchase-orders' => ['purchases.goods_receipt_notes.create', 'purchase_invoices.create', 'purchase_invoices.edit'],
-            'invoices' => ['purchases.purchase_returns.create', 'purchases.purchase_returns.edit'],
+            'rfqs' => ['purchases.supplier_quotation_entry.create'], 'requisitions' => ['purchase_orders.create', 'purchase_orders.edit', 'purchases.request_for_quotations.create', 'purchases.supplier_quotation_entry.create'],
+            'purchase-orders' => ['purchases.goods_receipt_notes.create', 'purchases.supply_orders.create', 'purchases.supplier_quotation_entry.create', 'purchase_invoices.create', 'purchase_invoices.edit'],
+            'supply-orders' => ['purchases.goods_receipt_notes.create'],
+            'invoices' => ['purchases.purchase_returns.create', 'purchases.purchase_returns.edit', 'purchases.supply_orders.create'],
             'receipts' => ['purchases.purchase_returns.create', 'purchases.purchase_returns.edit', 'purchase_invoices.create', 'purchase_invoices.edit']] as $lookup => $permissions) {
             Route::get('/select2/'.$lookup, function (Request $request, PurchasesSelect2Service $select2) use ($lookup, $permissions) {
                 abort_unless(collect($permissions)->contains(fn ($permission) => $request->user()?->can($permission)), 403);
                 $method = match ($lookup) {
-                    'purchase-orders' => 'purchaseOrders', 'currency-rate' => 'currencyRate', default => $lookup
+                    'purchase-orders' => 'purchaseOrders', 'supply-orders' => 'supplyOrders', 'currency-rate' => 'currencyRate', default => $lookup
                 };
 
                 return response()->json($select2->{$method}($request));
@@ -55,6 +56,7 @@ Route::middleware('auth')
                 || (bool) $request->user()?->can('purchase_orders.view')
                 || (bool) $request->user()?->can('purchase_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.edit')
+                || (bool) $request->user()?->can('purchases.supply_orders.create')
                 || (bool) $request->user()?->can('suppliers.view')
                 || (bool) $request->user()?->can('reports.purchases.view'),
                 403
@@ -72,6 +74,7 @@ Route::middleware('auth')
                 || (bool) $request->user()?->can('purchase_invoices.view')
                 || (bool) $request->user()?->can('purchase_invoices.create')
                 || (bool) $request->user()?->can('purchase_invoices.edit')
+                || (bool) $request->user()?->can('purchases.supply_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.view')
                 || (bool) $request->user()?->can('purchase_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.edit')
@@ -104,7 +107,9 @@ Route::middleware('auth')
 
         Route::get('/select2/branch-stores', function (Request $request, PurchasesSelect2Service $select2) {
             abort_unless(
-                (bool) $request->user()?->can('purchase_orders.view')
+                (bool) $request->user()?->can('purchases.purchase_requisitions.create')
+                || (bool) $request->user()?->can('purchases.purchase_requisitions.edit')
+                || (bool) $request->user()?->can('purchase_orders.view')
                 || (bool) $request->user()?->can('purchase_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.edit'),
                 403
@@ -163,7 +168,8 @@ Route::middleware('auth')
             Route::post('/{purchaseInvoice}/approve', 'approve')->middleware('can:purchase_invoices.approve')->name('approve');
             Route::post('/{purchaseInvoice}/close', 'close')->middleware('can:purchase_invoices.close')->name('close');
             Route::post('/{purchaseInvoice}/cancel', 'cancel')->middleware('can:purchase_invoices.cancel')->name('cancel');
-            Route::post('/{purchaseInvoice}/reverse', 'reverse')->middleware('can:purchase_invoices.cancel')->name('reverse');
+            Route::post('/{purchaseInvoice}/reverse', 'reverse')->middleware('can:purchase_invoices.reverse')->name('reverse');
+            Route::post('/{purchaseInvoice}/asset-treatment', 'updateAssetTreatment')->middleware('can:purchase_invoices.edit')->name('asset-treatment');
             Route::get('/{purchaseInvoice}/print', 'print')->middleware('can:purchase_invoices.print')->name('print');
             Route::patch('/{purchaseInvoice}/restore', 'restore')->middleware('can:purchase_invoices.restore')->name('restore');
             Route::get('/{purchaseInvoice}/clone', 'clone')->middleware('can:purchase_invoices.clone')->name('clone');
@@ -231,8 +237,10 @@ Route::middleware('auth')
                 Route::get('/{record}/edit', 'editQuotation')->middleware('can:purchases.supplier_quotation_entry.edit')->name('edit');
                 Route::put('/{record}', 'updateQuotation')->middleware('can:purchases.supplier_quotation_entry.edit')->name('update');
                 Route::delete('/{record}', 'destroyQuotation')->middleware('can:purchases.supplier_quotation_entry.delete')->name('destroy');
-                Route::get('/create', 'chooseSource')->defaults('screen', 'supplier_quotations')->middleware('can:purchases.supplier_quotation_entry.create')->name('choose-source');
+                Route::get('/create', 'chooseQuotationSource')->middleware('can:purchases.supplier_quotation_entry.create')->name('choose-source');
                 Route::get('/', 'quotationsIndex')->middleware('can:purchases.supplier_quotation_entry.view')->name('index');
+                Route::get('/create/{sourceType}/{sourceDocument}', 'createQuotationFromSource')->middleware(['can:purchases.supplier_quotation_entry.create', 'can:purchases.prices.view'])->name('create-source');
+                Route::post('/from/{sourceType}/{sourceDocument}', 'storeQuotationFromSource')->middleware(['can:purchases.supplier_quotation_entry.create', 'can:purchases.prices.view'])->middleware(IdempotentDocumentSubmission::class)->name('store-source');
                 Route::get('/create/{requestForQuotation}', 'createQuotation')->middleware(['can:purchases.supplier_quotation_entry.create', 'can:purchases.prices.view'])->name('create');
                 Route::post('/from/{requestForQuotation}', 'storeQuotation')->middleware(['can:purchases.supplier_quotation_entry.create', 'can:purchases.prices.view'])->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{supplierQuotation}', 'showQuotation')->middleware('can:purchases.supplier_quotation_entry.view')->name('show');
@@ -266,11 +274,23 @@ Route::middleware('auth')
                 Route::post('/from/{purchaseOrder}', 'storeDeliverySchedule')->middleware('can:purchases.purchase_order_delivery_schedule.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
             });
 
+            Route::prefix('supply-orders')->name('supply-orders.')->group(function (): void {
+                Route::get('/', 'supplyOrdersIndex')->middleware('can:purchases.supply_orders.view')->name('index');
+                Route::get('/create', 'createSupplyOrder')->middleware('can:purchases.supply_orders.create')->name('create');
+                Route::post('/', 'storeSupplyOrder')->middleware('can:purchases.supply_orders.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
+                Route::get('/{supplyOrder}/edit', 'editSupplyOrder')->middleware('can:purchases.supply_orders.edit')->name('edit');
+                Route::put('/{supplyOrder}', 'updateSupplyOrder')->middleware('can:purchases.supply_orders.edit')->name('update');
+                Route::delete('/{supplyOrder}', 'destroySupplyOrder')->middleware('can:purchases.supply_orders.delete')->name('destroy');
+                Route::post('/{supplyOrder}/issue', 'issueSupplyOrder')->middleware('can:purchases.supply_orders.issue')->name('issue');
+                Route::post('/{supplyOrder}/cancel', 'cancelSupplyOrder')->middleware('can:purchases.supply_orders.cancel')->name('cancel');
+                Route::get('/{supplyOrder}', 'showSupplyOrder')->middleware('can:purchases.supply_orders.view')->name('show');
+            });
+
             Route::prefix('goods-receipt-notes')->name('goods-receipt-notes.')->group(function (): void {
                 Route::get('/create', 'chooseSource')->defaults('screen', 'goods_receipts')->middleware('can:purchases.goods_receipt_notes.create')->name('choose-source');
                 Route::get('/', 'receiptsIndex')->middleware('can:purchases.goods_receipt_notes.view')->name('index');
-                Route::get('/create/{purchaseOrder}', 'createReceipt')->middleware('can:purchases.goods_receipt_notes.create')->name('create');
-                Route::post('/from/{purchaseOrder}', 'storeReceipt')->middleware('can:purchases.goods_receipt_notes.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
+                Route::get('/create/{sourceDocument}', 'createReceipt')->middleware('can:purchases.goods_receipt_notes.create')->name('create');
+                Route::post('/from/{sourceDocument}', 'storeReceipt')->middleware('can:purchases.goods_receipt_notes.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{goodsReceiptNote}/edit', 'editReceipt')->middleware('can:purchases.goods_receipt_notes.edit')->name('edit');
                 Route::put('/{goodsReceiptNote}', 'updateReceipt')->middleware('can:purchases.goods_receipt_notes.edit')->name('update');
                 Route::delete('/{goodsReceiptNote}', 'destroyReceipt')->middleware('can:purchases.goods_receipt_notes.delete')->name('destroy');

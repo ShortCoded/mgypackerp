@@ -12,6 +12,7 @@
         'supplier_quotation' => 'purchases.supplier_quotation_entry.print',
         'supplier_selection' => 'purchases.supplier_selection.print',
         'purchase_order_change_request' => 'purchases.purchase_order_change_requests.print',
+        'supply_order' => 'purchases.supply_orders.print',
         'goods_receipt' => 'purchases.goods_receipt_notes.print',
         'goods_receipt_inspection' => 'purchases.goods_receipt_inspection.print',
         'purchase_return' => 'purchases.purchase_returns.print',
@@ -27,6 +28,11 @@
     }
     $originalChangeValues = $record->original_values ?? [];
     $requestedChangeValues = $record->requested_values ?? [];
+    $documentAttachmentCollection = match ($type) {
+        'supplier_quotation' => \Modules\Purchases\Models\SupplierQuotation::AttachmentCollection,
+        'goods_receipt_inspection' => \Modules\Purchases\Models\GoodsReceiptInspection::AttachmentCollection,
+        default => \Modules\Purchases\Services\ProcurementAttachmentService::OperationalCollection,
+    };
     if ($type === 'purchase_order_change_request' && ! $showPrices) {
         $originalChangeValues['lines'] = collect($originalChangeValues['lines'] ?? [])->map(fn ($line) => collect($line)->except('unit_price')->all())->all();
         $requestedChangeValues['lines'] = collect($requestedChangeValues['lines'] ?? [])->map(fn ($line) => collect($line)->except('unit_price')->all())->all();
@@ -45,6 +51,9 @@
     };
 
     if ($type === 'purchase_requisition') {
+        foreach ($record->supplierQuotations ?? [] as $quotation) {
+            $addLineage(__('Supplier Quotation'), $quotation, 'admin.purchases.supplier-quotation-entry.show', 'purchases.supplier_quotation_entry.view');
+        }
         foreach ($record->requestsForQuotation ?? [] as $rfq) {
             $addLineage(__('RFQ'), $rfq, 'admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view');
         }
@@ -54,6 +63,8 @@
             $addLineage(__('Supplier Quotation'), $quotation, 'admin.purchases.supplier-quotation-entry.show', 'purchases.supplier_quotation_entry.view');
         }
     } elseif ($type === 'supplier_quotation') {
+        $addLineage(__('Purchase Requisition'), $record->purchaseRequisition, 'admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view');
+        $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
         $addLineage(__('RFQ'), $record->requestForQuotation, 'admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view');
     } elseif ($type === 'supplier_selection') {
         $addLineage(__('RFQ'), $record->requestForQuotation, 'admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view');
@@ -62,7 +73,14 @@
         }
     } elseif ($type === 'purchase_order_change_request') {
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
+    } elseif ($type === 'supply_order') {
+        $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
+        $addLineage(__('Purchase Invoice'), $record->purchaseInvoice, 'admin.purchases.purchase-invoices.show', 'purchase_invoices.view');
+        foreach ($record->receipts ?? [] as $receipt) {
+            $addLineage(__('Goods Receipt'), $receipt, 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
+        }
     } elseif ($type === 'goods_receipt') {
+        $addLineage(__('Supply Order'), $record->supplyOrder, 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
         $addLineage(__('Incoming QC Inspection'), $record->inspection, 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
     } elseif ($type === 'goods_receipt_inspection') {
@@ -86,12 +104,15 @@
 
 @section('content')
     <div class="card mb-3">
-        <div class="card-header d-flex flex-wrap align-items-start justify-content-between gap-2">
+        <div class="card-header py-2 d-flex flex-wrap align-items-start justify-content-between gap-2">
             <div>
                 <h5 class="mb-1">{{ $title }}</h5>
-                <span class="badge badge-subtle-secondary">{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</span>
+                <x-status-indicator :status="$status" />
             </div>
             <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-falcon-default btn-sm" href="{{ url()->previous() }}">
+                    <span class="fas fa-arrow-left me-1"></span>{{ __('common.actions.back') }}
+                </a>
                 @if($printPermission && auth()->user()?->can($printPermission))
                 <a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ $printUrl }}">
                     <span class="fas fa-print me-1"></span>{{ __('Print') }}
@@ -110,15 +131,19 @@
                     <form id="purchase-request-approval" method="POST" action="{{ route('admin.purchases.purchase-requisitions.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'purchase_requisition' && in_array($record->status, ['approved', 'partially_converted'], true))
+                @if($type === 'purchase_requisition' && in_array($record->status, ['approved', 'partially_converted', 'fully_converted'], true))
+                    @can('purchases.supplier_quotation_entry.create')
+                    @can('purchases.prices.view')
+                    <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseRequisition, $record->doc_num]) }}">{{ __('Enter supplier quotation') }}</a>
+                    @endcan
+                    @endcan
+                    @if($record->status !== 'fully_converted')
                     @can('purchase_orders.create')
                     @can('purchases.prices.view')
                     <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-orders.create', ['purchase_requisition_doc_nums' => [$record->doc_num]]) }}">{{ __('Create Purchase Order') }}</a>
                     @endcan
                     @endcan
-                    @can('purchases.request_for_quotations.create')
-                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.request-for-quotations.create', $record->doc_num) }}">{{ __('Create RFQ') }}</a>
-                    @endcan
+                    @endif
                 @endif
 
                 @if($type === 'purchase_requisition')
@@ -162,7 +187,11 @@
 
                 @if($type === 'supplier_quotation' && $record->status === 'draft')
                     @can('purchases.supplier_quotation_entry.edit')
+                    <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.edit', $record->doc_num) }}">{{ __('Edit') }}</a>
                     <form method="POST" action="{{ route('admin.purchases.supplier-quotation-entry.submit', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Submit quotation') }}</button></form>
+                    @endcan
+                    @can('purchases.supplier_quotation_entry.delete')
+                    <form method="POST" action="{{ route('admin.purchases.supplier-quotation-entry.destroy', $record->doc_num) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>
                     @endcan
                 @endif
                 @if($type === 'supplier_selection' && $record->status === 'draft')
@@ -178,6 +207,15 @@
                     <form method="POST" action="{{ route('admin.purchases.purchase-order-change-requests.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve change') }}</button></form>
                     @endcan
                     @endcan
+                @endif
+                @if($type === 'supply_order' && $record->status === 'draft')
+                    @can('purchases.supply_orders.edit')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supply-orders.edit', $record) }}">{{ __('Edit draft') }}</a>@endcan
+                    @can('purchases.supply_orders.delete')<form method="POST" action="{{ route('admin.purchases.supply-orders.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
+                    @can('purchases.supply_orders.issue')<form method="POST" action="{{ route('admin.purchases.supply-orders.issue', $record) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Issue Supply Order') }}</button></form>@endcan
+                @endif
+                @if($type === 'supply_order' && in_array($record->status, ['issued', 'partially_received'], true))
+                    @can('purchases.goods_receipt_notes.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>@endcan
+                    @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan
                 @endif
                 @if($type === 'goods_receipt' && $record->posting_status === 'posted')
                     @can('purchase_invoices.create')
@@ -251,7 +289,7 @@
                 @endif
             </div>
         </div>
-        <div class="card-body">
+        <div class="card-body py-3">
             @if($errors->any())
                 <div class="alert alert-danger">{{ $errors->first() }}</div>
             @endif
@@ -263,6 +301,9 @@
                 @endif
                 @if($record->purchaseOrder ?? null)
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Purchase Order') }}</div><div dir="ltr">{{ $record->purchaseOrder?->doc_num }}</div></div>
+                @endif
+                @if($type === 'goods_receipt' && $record->supplyOrder)
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Supply Order') }}</div><div dir="ltr">{{ $record->supplyOrder->doc_num }}</div></div>
                 @endif
                 @if($type === 'goods_receipt')
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ __(str($record->qc_status)->replace('_', ' ')->title()->toString()) }}</div></div>
@@ -279,6 +320,9 @@
                         <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque') }}</div><div dir="ltr">{{ $record->cheque->doc_num }} / {{ $record->cheque->cheque_number }}</div></div>
                         <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque status') }}</div><div>{{ __(str($record->cheque->status)->replace('_', ' ')->title()->toString()) }}</div></div>
                     @endif
+                @endif
+                @if($type === 'supplier_quotation' && filled($record->source_doc_num))
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source document') }}</div><div dir="ltr">{{ $record->source_doc_num }}</div></div>
                 @endif
                 @if($type === 'purchase_requisition')
                     @foreach([__('Company') => $record->company?->name, __('Branch') => $record->branch?->name, __('Warehouse') => $record->branchStore?->name, __('procurement.ui.requester_employee') => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name, __('Submitted By') => $record->submittedBy?->name, __('Submitted At') => $record->submitted_at?->format('Y-m-d H:i'), __('Approved By') => $record->approvedBy?->name, __('Approved At') => $record->approved_at?->format('Y-m-d H:i'), __('Rejected By') => $record->rejectedBy?->name, __('Rejected At') => $record->rejected_at?->format('Y-m-d H:i'), __('Rejection reason') => $record->rejection_reason, __('Notes') => $record->notes] as $label => $value)
@@ -312,7 +356,7 @@
     @endif
 
     @if($type === 'purchase_order_change_request')
-        <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Controlled change') }}</h6></div><div class="card-body">
+        <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Controlled change') }}</h6></div><div class="card-body py-3">
             <p><strong>{{ __('Reason') }}:</strong> {{ $record->reason }}</p>
             <div class="row g-3"><div class="col-lg-6"><h6>{{ __('Original values') }}</h6><pre class="bg-100 rounded p-3">{{ json_encode($originalChangeValues, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre></div><div class="col-lg-6"><h6>{{ __('Requested values') }}</h6><pre class="bg-100 rounded p-3">{{ json_encode($requestedChangeValues, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre></div></div>
         </div></div>
@@ -320,10 +364,19 @@
 
     @php
         $lines = $record->lines ?? $record->allocations ?? collect();
+        $lineAttachmentsSupported = in_array($type, [
+            'purchase_requisition',
+            'request_for_quotation',
+            'supplier_quotation',
+            'supply_order',
+            'goods_receipt',
+            'goods_receipt_inspection',
+            'purchase_return',
+        ], true);
     @endphp
     @if($lines->count())
         <div class="card">
-            <div class="card-header"><h6 class="mb-0">{{ __('Document lines') }}</h6></div>
+            <div class="card-header py-2"><h6 class="mb-0">{{ __('Document lines') }}</h6></div>
             <div class="card-body p-0">
                 <div class="table-responsive procurement-lines-scroll">
                     <table class="table table-sm align-middle mb-0 procurement-lines-table">
@@ -333,13 +386,14 @@
                             @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th>@endif
                             @if($showPrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
                             <th>{{ __('Disposition / Notes') }}</th>
+                            @if($lineAttachmentsSupported)<th>{{ __('Attachments') }}</th>@endif
                         </tr></thead>
                         <tbody>
                             @foreach($lines as $index => $line)
                                 @php
                                     $item = $line->product?->name ?? $line->purchaseInvoice?->doc_num ?? '—';
                                     $source = $line->source_doc_num ?? $line->rfqLine?->requestForQuotation?->doc_num ?? $line->receiptLine?->receipt?->doc_num ?? $line->paymentSchedule?->public_id ?? '—';
-                                    $quantity = $line->requested_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
+                                    $quantity = $line->requested_quantity ?? $line->ordered_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
                                     if ($commercial && ! $showPrices && isset($line->amount)) {
                                         $quantity = '—';
                                     }
@@ -363,6 +417,16 @@
                                         <td class="text-end" dir="ltr">{{ isset($line->line_total) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->line_total) : (isset($line->amount) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->amount) : '—') }}</td>
                                     @endif
                                     <td>{{ $line->disposition ?? $line->reason ?? $line->specification ?? $line->notes ?? '—' }}</td>
+                                    @if($lineAttachmentsSupported)
+                                        <td>
+                                            @include('modules.purchases.procurement.line-attachments', [
+                                                'attachmentLine' => $line,
+                                                'attachmentCompanyId' => $record->company_id,
+                                                'index' => $index,
+                                                'lineAttachmentsReadonly' => true,
+                                            ])
+                                        </td>
+                                    @endif
                                 </tr>
                             @endforeach
                         </tbody>
@@ -372,27 +436,5 @@
         </div>
     @endif
 
-    @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => true])
-    @can('file_manager.view')
-    @if(($record->attachmentUsages ?? collect())->isNotEmpty())
-        <div class="card mt-3">
-            <div class="card-header"><h6 class="mb-0">{{ __('Attachments') }}</h6></div>
-            <div class="list-group list-group-flush">
-                @foreach($record->attachmentUsages as $usage)
-                    @if($usage->file)
-                        <div class="list-group-item d-flex flex-wrap align-items-center justify-content-between gap-2">
-                            <div><span class="fas fa-paperclip text-500 me-1"></span>{{ $usage->file->original_name }} <span class="text-600 fs-11" dir="ltr">{{ $usage->file->doc_num }}</span></div>
-                            <div class="d-flex gap-2">
-                                @if($usage->file->isPreviewable())
-                                    <a class="btn btn-falcon-default btn-sm" target="_blank" rel="noopener" href="{{ route('admin.file-manager.files.preview', $usage->file->doc_num) }}">{{ __('Preview') }}</a>
-                                @endif
-                                <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.file-manager.files.download', $usage->file->doc_num) }}">{{ __('Download') }}</a>
-                            </div>
-                        </div>
-                    @endif
-                @endforeach
-            </div>
-        </div>
-    @endif
-    @endcan
+    @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => true, 'attachmentCollection' => $documentAttachmentCollection])
 @endsection

@@ -2,6 +2,8 @@
     let nextId = 0;
     const reindex = (body, prefix) => Array.from(body.children).forEach((row, index) => {
         row.dataset.index = index;
+        const marker = body.closest('form')?.querySelector('[data-line-card-editor]');
+        if (marker) row.setAttribute('aria-label', `${marker.dataset.lineLabel} ${index + 1}`);
         const number = row.querySelector('[data-row-number]');
         if (number) number.textContent = index + 1;
         row.querySelectorAll('[name]').forEach(field => {

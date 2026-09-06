@@ -2,6 +2,7 @@
 
 namespace Modules\FixedAssets\Http\Requests;
 
+use DomainException;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
@@ -21,6 +22,7 @@ use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Services\FixedAssetAccessService;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 
 class StoreFixedAssetRequest extends FormRequest
 {
@@ -68,7 +70,7 @@ class StoreFixedAssetRequest extends FormRequest
             'serial_number' => $this->nullableTrim('serial_number'),
             'location_address' => $this->nullableTrim('location_address'),
             'notes' => $this->nullableTrim('notes'),
-            'is_depreciable' => $this->has('is_depreciable') && $this->nullableTrim('is_depreciable') !== null ? $this->boolean('is_depreciable') : null,
+            'is_depreciable' => $this->nullableBoolean('is_depreciable'),
             'purchase_value' => $this->normalizedNumber('purchase_value'),
             'salvage_value' => $this->normalizedNumber('salvage_value') ?? '0',
             'exchange_rate' => $this->normalizedNumber('exchange_rate'),
@@ -168,6 +170,14 @@ class StoreFixedAssetRequest extends FormRequest
             $this->validateDepreciationSetup($validator);
             $this->validateDateSequence($validator);
             $this->validateImageSelection($validator);
+
+            if ($validator->errors()->isEmpty()) {
+                try {
+                    app(FixedAssetPurchaseIntegrationService::class)->assertAssetPayload($this->all(), $this->currentFixedAsset());
+                } catch (DomainException $exception) {
+                    $validator->errors()->add('source_doc_num', $exception->getMessage());
+                }
+            }
         });
     }
 
@@ -252,6 +262,20 @@ class StoreFixedAssetRequest extends FormRequest
         $value = trim((string) $this->input($field));
 
         return $value === '' ? null : $value;
+    }
+
+    protected function nullableBoolean(string $field): ?bool
+    {
+        if (! $this->has($field)) {
+            return null;
+        }
+
+        $value = $this->input($field);
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            return null;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
     }
 
     private function normalizedNumber(string $field): ?string

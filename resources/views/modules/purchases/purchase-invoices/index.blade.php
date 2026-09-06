@@ -74,7 +74,7 @@
     @endcan
 
     <div class="card erp-datatable-card purchase-invoice-datatable-card" data-purchase-invoices-root>
-        <div class="card-header">
+        <div class="card-header py-2">
             <div class="row flex-between-center g-2">
                 <div class="col-12 col-lg-auto">
                     <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ $title }}</h5>
@@ -92,7 +92,7 @@
                     @endcan
                     @if(auth()->user()?->can('purchase_invoices.delete'))
                         <div class="d-none align-items-center gap-2 purchase-invoice-bulk-actions-bar" id="bulk_actions_bar">
-                            <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
+                            <span class="text-primary fw-semibold fs-10" id="bulk_selected_count">0</span>
                             <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('purchase_invoices.bulk_action') }}">
                                 <option value="">{{ __('purchase_invoices.bulk_action') }}</option>
                                 @can('purchase_invoices.delete')
@@ -145,5 +145,5 @@
         window.dataTableTranslations = @json(__('datatables'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-invoices.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-invoices.js')) }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Purchases/purchase-invoices.js') }}"></script>
 @endpush

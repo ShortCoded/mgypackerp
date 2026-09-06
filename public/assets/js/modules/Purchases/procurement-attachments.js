@@ -9,13 +9,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const file = payload?.file;
                 if (!form || !file?.public_id) return;
 
-                const inputs = form.querySelector('.js-procurement-attachment-inputs');
-                const list = form.querySelector('.js-procurement-selected-attachments');
+                const scope = this.closest('.js-procurement-attachment-scope') || form;
+                const inputs = scope.querySelector('.js-procurement-attachment-inputs');
+                const list = scope.querySelector('.js-procurement-selected-attachments');
                 if (!inputs || !list || inputs.querySelector(`[data-public-id="${CSS.escape(String(file.public_id))}"]`)) return;
 
                 const input = document.createElement('input');
                 input.type = 'hidden';
-                input.name = 'attachment_file_doc_nums[]';
+                input.name = this.dataset.inputName || 'attachment_file_doc_nums[]';
                 input.value = String(file.public_id);
                 input.dataset.publicId = String(file.public_id);
                 inputs.append(input);
@@ -39,14 +40,14 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .off('click.procurementAttachment', '.js-remove-procurement-attachment')
             .on('click.procurementAttachment', '.js-remove-procurement-attachment', function () {
-                const form = this.closest('form');
+                const scope = this.closest('.js-procurement-attachment-scope') || this.closest('form');
                 const item = this.closest('[data-public-id]');
-                if (!form || !item) return;
+                if (!scope || !item) return;
 
                 const publicId = item.dataset.publicId;
                 item.remove();
-                form.querySelector(`.js-procurement-attachment-inputs [data-public-id="${CSS.escape(publicId)}"]`)?.remove();
-                const list = form.querySelector('.js-procurement-selected-attachments');
+                scope.querySelector(`.js-procurement-attachment-inputs [data-public-id="${CSS.escape(publicId)}"]`)?.remove();
+                const list = scope.querySelector('.js-procurement-selected-attachments');
                 if (list && list.children.length === 0) list.classList.add('d-none');
             });
     }

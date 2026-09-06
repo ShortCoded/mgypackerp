@@ -2,6 +2,20 @@
 
 @php
     $isEdit = $mode === 'edit';
+    $sourceLineRows = $sourceRequest?->lines
+        ->filter(fn ($line) => bccomp($line->remainingQuantity(), '0', 8) > 0)
+        ->map(fn ($line) => [
+            'source_request_line_public_id' => $line->public_id,
+            'product_doc_num' => $line->product?->doc_num,
+            'unit_doc_num' => $line->unit?->doc_num,
+            'description' => $line->description,
+            'quantity' => $line->remainingQuantity(),
+            'unit_price' => $line->unit_price,
+            'discount_amount' => 0,
+            'tax_amount' => 0,
+            'requested_date' => $sourceRequest->required_delivery_date?->toDateString(),
+            'specifications' => $line->specifications,
+        ])->values()->all() ?? [];
     $lineRows = old('lines', $isEdit ? $record->lines->map(fn ($line) => [
         'product_doc_num' => $line->product?->doc_num,
         'unit_doc_num' => $line->unit?->doc_num,
@@ -14,7 +28,7 @@
         'specifications' => $line->specifications,
         'warehouse_notes' => $line->warehouse_notes,
         'production_notes' => $line->production_notes,
-    ])->all() : [[]]);
+    ])->all() : ($sourceLineRows ?: [[]]));
     $scheduleRows = old('payment_schedules', $isEdit ? $record->paymentSchedules->map(fn ($schedule) => [
         'title' => $schedule->title,
         'due_date' => $schedule->due_date?->toDateString(),
@@ -26,17 +40,9 @@
 
 @section('title', $isEdit ? __('Edit Sales Order') : __('Create Sales Order'))
 
-@push('styles')
-<style>
-    .sales-order-grid { min-width: 1600px; }
-    .sales-order-grid .product-column { min-width: 18rem; }
-    .sales-order-grid .notes-column { min-width: 14rem; }
-</style>
-@endpush
-
 @section('content')
 @if($record?->sales_employee_id && !$record?->business_employee_id)<div class="alert alert-subtle-warning">{{ __('sales_ui.employee_unresolved') }}</div>@endif
-<form class="js-sales-cycle-form" data-sales-ui data-index-url="{{ route('admin.sales.sales-orders.index') }}" data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-edit-url="{{ route('admin.sales.sales-orders.edit', '__DOCUMENT__') }}" action="{{ $action }}" method="POST" novalidate>
+<form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary data-index-url="{{ route('admin.sales.sales-orders.index') }}" data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-edit-url="{{ route('admin.sales.sales-orders.edit', '__DOCUMENT__') }}" action="{{ $action }}" method="POST" novalidate>
     @csrf
         <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
     @if($method !== 'POST') @method($method) @endif
@@ -52,11 +58,23 @@
         </div>
         <div class="card-body">
             <div class="row g-3">
+                @unless($isEdit)
+                    @can('sales_requests.view')
+                    <div class="col-12">
+                        <x-forms.label for="source_request_doc_num" :label="__('sales_ui.source_sales_request')" />
+                        <select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-sales-order-source data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.direct_sales_order') }}" data-allow-clear="true">
+                            <option value="">{{ __('sales_ui.direct_sales_order') }}</option>
+                            @if($sourceRequest)<option value="{{ $sourceRequest->doc_num }}" selected>{{ $sourceRequest->doc_num }} / {{ $sourceRequest->customer?->name }}</option>@endif
+                        </select>
+                        <small class="text-muted">{{ __('sales_ui.source_sales_request_help') }}</small>
+                    </div>
+                    @endcan
+                @endunless
                 <div class="col-md-4">
                     <label class="form-label" for="customer_doc_num">{{ __('Customer') }}</label>
                     <select class="form-select js-select2-ajax" id="customer_doc_num" name="customer_doc_num" required data-url="{{ route('admin.sales.select2.customers') }}" data-allow-clear="true">
                         <option value="">{{ __('Select customer') }}</option>
-                        @foreach($customers as $customer)<option value="{{ $customer->doc_num }}" @selected(old('customer_doc_num', $record?->customer?->doc_num) === $customer->doc_num)>{{ $customer->doc_num }} / {{ $customer->name }}</option>@endforeach
+                        @foreach($customers as $customer)<option value="{{ $customer->doc_num }}" @selected(old('customer_doc_num', $record?->customer?->doc_num ?? $sourceRequest?->customer?->doc_num) === $customer->doc_num)>{{ $customer->doc_num }} / {{ $customer->name }}</option>@endforeach
                     </select>
                     <div class="invalid-feedback d-block" data-error-for="customer_doc_num"></div>
                 </div>
@@ -67,34 +85,24 @@
                 </div>
                 <div class="col-md-2">
                     <label class="form-label" for="expected_delivery_date">{{ __('Required date') }}</label>
-                    <input class="form-control js-date-picker" id="expected_delivery_date" name="expected_delivery_date" value="{{ old('expected_delivery_date', app(\Modules\Core\Services\DateFormatService::class)->formatDate($record?->expected_delivery_date?->toDateString() ?? now()->addWeek()->toDateString())) }}" autocomplete="off" required>
+                    <input class="form-control js-date-picker" id="expected_delivery_date" name="expected_delivery_date" value="{{ old('expected_delivery_date', app(\Modules\Core\Services\DateFormatService::class)->formatDate($record?->expected_delivery_date?->toDateString() ?? $sourceRequest?->required_delivery_date?->toDateString() ?? now()->addWeek()->toDateString())) }}" autocomplete="off" required>
                     <div class="invalid-feedback d-block" data-error-for="expected_delivery_date"></div>
                 </div>
                 <div class="col-md-2">
                     <label class="form-label" for="currency_doc_num">{{ __('Currency') }}</label>
-                    <select class="form-select js-select2" id="currency_doc_num" name="currency_doc_num" required>
-                        @foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num', $record?->currency?->doc_num) === $currency->doc_num || (! $isEdit && $currency->is_main))>{{ $currency->doc_num }} / {{ $currency->code }}</option>@endforeach
+                    <select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('Currency') }}" required>
+                        @foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num', $record?->currency?->doc_num ?? $sourceRequest?->currency?->doc_num ?? $currencies->firstWhere('is_main', true)?->doc_num) === $currency->doc_num)>{{ $currency->code }} — {{ $currency->name }}</option>@endforeach
                     </select>
                     <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label" for="branch_store_uuid">{{ __('Finished-goods store') }}</label>
-                    <select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.sales.select2.stores') }}" data-allow-clear="true">
-                        <option value="">{{ __('Select store') }}</option>
-                        @foreach($stores as $store)<option value="{{ $store->public_uuid }}" @selected(old('branch_store_uuid', $record?->branchStore?->public_uuid) === $store->public_uuid)>{{ $store->name }}</option>@endforeach
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label" for="customer_reference">{{ __('Customer reference / PO') }}</label>
-                    <input class="form-control" id="customer_reference" name="customer_reference" value="{{ old('customer_reference', $record?->customer_reference) }}" maxlength="160">
-                </div>
                 <div class="col-md-4">
                     <label class="form-label" for="sales_employee_doc_num">{{ __('Sales representative') }}</label>
-                    <select class="form-select js-select2-ajax" id="sales_employee_doc_num" name="sales_employee_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-allow-clear="true"><option value="">{{ __('Unassigned') }}</option>@foreach($salesEmployees as $employee)<option value="{{ $employee->doc_num }}" @selected(old('sales_employee_doc_num', $record?->salesEmployee?->doc_num) === $employee->doc_num)>{{ $employee->doc_num }} / {{ $employee->name }}</option>@endforeach</select>
+                    <select class="form-select js-select2-ajax" id="sales_employee_doc_num" name="sales_employee_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-allow-clear="true"><option value="">{{ __('Unassigned') }}</option>@foreach($salesEmployees as $employee)<option value="{{ $employee->doc_num }}" @selected(old('sales_employee_doc_num', $record?->salesEmployee?->doc_num ?? $sourceRequest?->salesEmployee?->doc_num) === $employee->doc_num)>{{ $employee->doc_num }} / {{ $employee->full_name ?: $employee->name }}</option>@endforeach</select>
+                    <small class="text-muted">{{ __('sales_ui.employee_hint') }} @can('hr.employees.create')<a href="{{ route('admin.hr.employees.create') }}">{{ __('sales_ui.add_employee') }}</a>@endcan</small>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label" for="notes">{{ __('Customer-facing notes') }}</label>
-                    <textarea class="form-control" id="notes" name="notes" rows="2">{{ old('notes', $record?->notes) }}</textarea>
+                    <textarea class="form-control" id="notes" name="notes" rows="2">{{ old('notes', $record?->notes ?? $sourceRequest?->notes) }}</textarea>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label" for="internal_notes">{{ __('Internal notes') }}</label>
@@ -107,17 +115,26 @@
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h6 class="mb-0">{{ __('Sales lines') }}</h6>
-            <button class="btn btn-falcon-default btn-sm" type="button" data-sales-add-line><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button>
+            <button class="btn btn-falcon-default btn-sm" type="button" data-sales-add-line data-shortcut-action="line.add" title="{{ __('common.shortcuts.add_line') }}" data-bs-title="{{ __('common.shortcuts.add_line') }}"><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button>
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle sales-order-grid mb-0">
-                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Packaging') }}</th><th>{{ __('Customer specification') }}</th><th class="notes-column">{{ __('Warehouse / production notes') }}</th><th></th></tr></thead>
+                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th>{{ __('Required date') }}</th><th></th></tr></thead>
                 <tbody data-sales-lines>
                     @foreach($lineRows as $index => $line)
                         @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits])
                     @endforeach
                 </tbody>
             </table>
+        </div>
+        <div class="card-footer">
+            <div class="row g-2 mb-3">
+                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.line_count') }}</div><div class="fw-semibold" data-sales-summary-lines>0</div></div></div>
+                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.distinct_products') }}</div><div class="fw-semibold" data-sales-summary-products>0</div></div></div>
+                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.total_quantity') }}</div><div class="fw-semibold" data-sales-summary-quantity>0</div></div></div>
+                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.grand_total') }}</div><div class="fw-semibold"><span data-sales-summary-total>0</span> <span data-sales-summary-currency></span></div></div></div>
+            </div>
+            <button class="btn btn-falcon-default btn-sm" type="button" data-sales-add-line><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button>
         </div>
     </div>
 

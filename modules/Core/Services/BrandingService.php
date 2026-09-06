@@ -3,7 +3,6 @@
 namespace Modules\Core\Services;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Modules\Core\Models\Company;
 use Throwable;
@@ -52,10 +51,6 @@ class BrandingService
     {
         return $this->memo->remember('branding.main_company', function (): ?array {
             try {
-                if (! $this->companiesTableExists()) {
-                    return null;
-                }
-
                 return Cache::rememberForever(self::MainCompanyCacheKey, function (): ?array {
                     $company = Company::query()
                         ->select(['name', 'logo', 'favicon'])
@@ -89,17 +84,6 @@ class BrandingService
             app(RequestMemo::class)->forget('branding.main_company');
         } catch (Throwable) {
         }
-    }
-
-    private function companiesTableExists(): bool
-    {
-        return (bool) $this->memo->remember('schema.table.companies.exists', function (): bool {
-            try {
-                return Schema::hasTable('companies');
-            } catch (Throwable) {
-                return false;
-            }
-        });
     }
 
     private function assetUrl(?string $path): ?string

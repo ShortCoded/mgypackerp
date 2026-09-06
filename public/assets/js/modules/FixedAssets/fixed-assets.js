@@ -113,6 +113,16 @@
 
     function tableColumns() {
         const configuredColumns = window.fixedAssetsCrudColumns || [];
+        const responsivePriorities = {
+            status: 4,
+            net_value: 5,
+            asset_category: 6,
+            branch: 7,
+            purchase_value: 8,
+            previous_depreciation: 9,
+            entry_type: 10,
+            cost_center: 11
+        };
         const columns = [
             { data: 'checkbox', name: 'checkbox', orderable: false, searchable: false, className: 'dt-select no-colvis all align-middle text-center', responsivePriority: 1, width: '2.25rem' }
         ];
@@ -123,7 +133,7 @@
                 name: columnName(column),
                 className: columnClass(column, index),
                 orderable: !['purchase_value', 'previous_depreciation', 'net_value'].includes(column),
-                responsivePriority: column === 'net_value' ? 5 : (index < 2 ? 2 + index : 10 + index)
+                responsivePriority: responsivePriorities[column] || (20 + index)
             });
         });
 
@@ -271,14 +281,34 @@
             inputTooShort: function () { return msg('select2InputTooShort'); },
             loadingMore: function () { return msg('select2LoadingMore'); },
             noResults: function () { return msg('select2NoResults'); },
+            removeAllItems: function () { return msg('select2RemoveAllItems'); },
             removeItem: function () { return msg('select2RemoveItem'); },
             searching: function () { return msg('select2Searching'); }
         };
 
         $('.js-select2-ajax').each(function () {
             const $select = $(this);
+            const localizeSelect2Controls = function () {
+                const searchLabel = msg('select2Search');
+                const clearLabel = msg('select2RemoveAllItems');
+                $select.next('.select2-container').find('.select2-search__field').attr('aria-label', searchLabel);
+                $select.next('.select2-container').find('.select2-selection__clear').attr({
+                    'aria-label': clearLabel,
+                    title: clearLabel
+                });
+                $('.select2-container--open .select2-search__field').attr({
+                    'aria-label': searchLabel,
+                    placeholder: searchLabel
+                });
+            };
+
+            $select.off('.fixedAssetsAccessibility')
+                .on('select2:open.fixedAssetsAccessibility change.fixedAssetsAccessibility', function () {
+                    window.setTimeout(localizeSelect2Controls, 0);
+                });
 
             if ($select.data('select2')) {
+                localizeSelect2Controls();
                 return;
             }
 
@@ -312,6 +342,8 @@
                     }
                 }
             });
+
+            localizeSelect2Controls();
 
             if (dependsOn) {
                 const namespace = String($select.attr('id') || $select.attr('name') || Math.random()).replace(/[^A-Za-z0-9_]/g, '_');

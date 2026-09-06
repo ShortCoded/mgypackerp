@@ -151,6 +151,11 @@ class PurchaseRequisition extends Model
         return $this->hasMany(RequestForQuotation::class);
     }
 
+    public function supplierQuotations(): HasMany
+    {
+        return $this->hasMany(SupplierQuotation::class);
+    }
+
     public function scopeForContext(Builder $query, int $companyId, int $financialPeriodId): Builder
     {
         return $query->where('company_id', $companyId)->where('financial_period_id', $financialPeriodId);

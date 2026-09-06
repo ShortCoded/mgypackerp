@@ -40,6 +40,7 @@ class OperatingContextService
     public function current(Request $request): array
     {
         $user = $request->user();
+        $hadContextBeforeAutoSelection = $user ? $this->hasAnyContextSession($request) : false;
         $this->autoSelectIfOnlyOneValidContext($request);
 
         $company = $user ? $this->selectedCompany($request, $user) : null;
@@ -47,17 +48,23 @@ class OperatingContextService
         $financialPeriod = $user ? $this->selectedFinancialPeriod($request, $user, $company) : null;
 
         if ($user && (! $company || ! $branch || ! $financialPeriod)) {
+            $shouldRetryAutoSelection = $hadContextBeforeAutoSelection;
+
             if ($this->hasAnyContextSession($request)) {
                 $this->clear($request);
-                $company = null;
-                $branch = null;
-                $financialPeriod = null;
+                $shouldRetryAutoSelection = true;
             }
 
-            $this->autoSelectIfOnlyOneValidContext($request);
-            $company = $this->selectedCompany($request, $user);
-            $branch = $this->selectedBranch($request, $user, $company);
-            $financialPeriod = $this->selectedFinancialPeriod($request, $user, $company);
+            $company = null;
+            $branch = null;
+            $financialPeriod = null;
+
+            if ($shouldRetryAutoSelection) {
+                $this->autoSelectIfOnlyOneValidContext($request);
+                $company = $this->selectedCompany($request, $user);
+                $branch = $this->selectedBranch($request, $user, $company);
+                $financialPeriod = $this->selectedFinancialPeriod($request, $user, $company);
+            }
         }
 
         return [
@@ -349,6 +356,7 @@ class OperatingContextService
         $branch = $this->memo->remember(
             "operating_context.selected_branch.{$user->getKey()}.{$company->getKey()}.{$id}.{$docNum}",
             fn (): ?Branch => $this->allowedBranchQuery($user, $company)
+                ->without('company')
                 ->where('branches.id', (int) $id)
                 ->where('branches.doc_num', $docNum)
                 ->first()
@@ -356,6 +364,8 @@ class OperatingContextService
 
         if (! $branch) {
             $request->session()->forget([self::BranchIdKey, self::BranchDocNumKey]);
+        } else {
+            $branch->setRelation('company', $company);
         }
 
         return $branch;

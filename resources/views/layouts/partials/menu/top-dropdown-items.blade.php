@@ -1,4 +1,5 @@
 @foreach ($items as $item)
+    @if(($item['separator_before'] ?? false) || $item['label'] === 'customer_statement')<div class="dropdown-divider border-top my-2" role="separator"></div>@endif
     @php
         $hasChildren = count($item['children']) > 0;
         $itemPath = [...($menuPath ?? []), $item['key']];

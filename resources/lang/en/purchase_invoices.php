@@ -14,6 +14,7 @@ return [
     'tabs' => [
         'basic' => 'Basic Data',
         'lines' => 'Line Items',
+        'assets' => 'Fixed Assets',
         'payments' => 'Payment Schedule',
         'audit' => 'Audit',
     ],

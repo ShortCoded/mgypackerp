@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Services\EffectivePermissionResolver;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -14,6 +15,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use NotificationChannels\WebPush\HasPushSubscriptions;
+use Spatie\Permission\Contracts\Permission;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
@@ -91,6 +93,16 @@ class User extends Authenticatable
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    /**
+     * Check a permission without hydrating the application's complete permission registry.
+     *
+     * @param  string|int|Permission|\BackedEnum  $permission
+     */
+    public function checkPermissionTo(mixed $permission, ?string $guardName = null): bool
+    {
+        return app(EffectivePermissionResolver::class)->allows($this, $permission, $guardName);
     }
 
     /**

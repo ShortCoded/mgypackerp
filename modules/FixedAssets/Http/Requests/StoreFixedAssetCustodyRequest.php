@@ -19,6 +19,6 @@ class StoreFixedAssetCustodyRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['movement_date' => ['required', 'date'], 'custodian_doc_num' => ['nullable', 'string', 'max:255'], 'reason' => ['required', 'string', 'max:2000'], 'notes' => ['nullable', 'string', 'max:10000']];
+        return ['movement_date' => ['required', 'date'], 'custody_action' => ['sometimes', 'in:assign,return'], 'custodian_doc_num' => ['required_if:custody_action,assign', 'prohibited_if:custody_action,return', 'nullable', 'string', 'max:255'], 'reason' => ['required', 'string', 'max:2000'], 'notes' => ['nullable', 'string', 'max:10000']];
     }
 }

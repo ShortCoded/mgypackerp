@@ -18,7 +18,7 @@
             __('quotations.attributes.currency') => $record->currency?->code,
             __('quotations.attributes.valid_until') => $record->valid_until ? $dates->formatDate($record->valid_until, '') : null,
         ], fn ($value) => filled($value));
-        $characteristics = [__('Material') => 'material', __('Color') => 'color', __('Packing') => 'packaging', __('Units per package') => 'units_per_package'];
+        $characteristics = [__('Material') => 'material', __('Color') => 'color'];
         $characteristicValue = fn ($line, $key) => data_get($line->specifications, $key) ?: ($key === 'color' ? $line->product?->color?->name : null);
         $characteristics = array_filter($characteristics, fn ($key) => $revision->lines->contains(fn ($line) => filled($characteristicValue($line, $key))));
     @endphp

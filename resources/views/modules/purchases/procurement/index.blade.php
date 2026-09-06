@@ -38,7 +38,7 @@
     @endcan @endcan
     @endif
     <div class="card erp-datatable-card">
-        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
             <div>
                 <h5 class="mb-1">{{ $title }}</h5>
                 <div class="text-600 fs-10">{{ __('Scoped to the active company, branch, and financial period.') }}</div>
@@ -126,7 +126,7 @@
                                 @if($showPrices)
                                     <td class="text-end" dir="ltr">{{ $commercialValue !== null ? app(\Modules\Core\Services\NumericFormatService::class)->format($commercialValue) : '—' }}</td>
                                 @endif
-                                <td><span class="badge badge-subtle-secondary">{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</span></td>
+                                <td><x-status-indicator :status="$status" /></td>
                                 <td class="text-end">
                                     @if($url)
                                         <a class="btn btn-falcon-default btn-sm" href="{{ $url }}">{{ __('View') }}</a>

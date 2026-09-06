@@ -29,7 +29,8 @@ test('session status reports active session without refreshing activity', functi
             'server_time' => now()->getTimestamp(),
             'last_activity_at' => $lastActivityAt,
             'seconds_remaining' => 7140,
-        ]);
+        ])
+        ->assertJsonPath('session_identity', fn (mixed $identity): bool => is_string($identity) && strlen($identity) === 64);
 
     $this->assertAuthenticatedAs($user);
     expect(session(InactiveSessionService::LastActivitySessionKey))->toBe($lastActivityAt);
@@ -140,6 +141,7 @@ test('technical intended session urls are rejected after login', function (strin
             'password' => 'password',
         ])->assertRedirect(route('dashboard', absolute: false));
 })->with([
+    'legacy service worker' => ['/service-worker.js'],
     'service worker' => ['/pwa-service-worker.js'],
     'versioned pwa script' => ['/pwa-cache-v1.js'],
     'manifest' => ['/manifest.webmanifest'],
@@ -275,6 +277,7 @@ test('unsafe intended cookies are rejected after login', function (string $unsaf
     'http url' => ['http://evil.test/admin'],
     'scheme relative url' => ['//evil.test/admin'],
     'javascript url' => ['javascript:alert(1)'],
+    'legacy service worker' => ['/service-worker.js'],
     'service worker' => ['/pwa-service-worker.js'],
     'versioned pwa script' => ['/pwa-cache-v1.js'],
     'manifest' => ['/manifest.webmanifest'],
@@ -291,6 +294,9 @@ test('session timeout watcher loads only on authenticated layout with clean endp
     expect($script)
         ->toContain('/session/status')
         ->toContain('/session/touch')
+        ->toContain('isCheckingStatus')
+        ->toContain('statusCheckDebounceMilliseconds')
+        ->toContain("window.addEventListener('erp:bfcache-restore'")
         ->toContain('window.location.href = window.location.href')
         ->not->toContain('intended=')
         ->not->toContain('expired=')
@@ -306,4 +312,14 @@ test('session timeout watcher loads only on authenticated layout with clean endp
         ->assertSee('assets/js/modules/Core/session-timeout.js', false)
         ->assertSee('\\/session\\/status', false)
         ->assertSee('\\/session\\/touch', false);
+});
+
+test('back forward cache guard clears password fields and revalidates without forcing a reload', function () {
+    $script = file_get_contents(public_path('assets/js/modules/Core/page-cache-guard.js'));
+
+    expect($script)
+        ->toContain('clearPasswordFields()')
+        ->toContain("new Event('erp:bfcache-restore')")
+        ->not->toContain('window.location.reload()')
+        ->not->toContain('sessionStorage');
 });

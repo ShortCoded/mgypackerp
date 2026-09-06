@@ -51,12 +51,12 @@ class FixedAssetLedgerService
             }
             $rows->push(['date' => $movement->movement_date, 'type' => $movement->movement_type, 'document' => $movement->doc_num,
                 'amount' => in_array($movement->movement_type, ['opening', 'capitalization', 'addition'], true) ? $movement->amount : null,
-                'user_id' => $movement->posted_by, 'journal' => $movement->journalEntry, 'url' => $card.'#movement-'.$movement->doc_num,
+                'user_id' => $movement->posted_by, 'journal' => $movement->journalEntry, 'url' => $card.'?tab=movements#movement-'.$movement->doc_num,
                 'reversed' => $movement->status === 'reversed', 'detail' => $detail]);
             if ($movement->status === 'reversed') {
                 $rows->push(['date' => $movement->reversal_date, 'type' => $movement->movement_type.'_reversal', 'document' => $movement->doc_num,
                     'amount' => bcmul((string) $movement->amount, '-1', 4), 'user_id' => $movement->reversed_by, 'journal' => $movement->reversalJournalEntry,
-                    'url' => $card.'#movement-'.$movement->doc_num, 'reversed' => false, 'detail' => $movement->reversal_reason]);
+                    'url' => $card.'?tab=movements#movement-'.$movement->doc_num, 'reversed' => false, 'detail' => $movement->reversal_reason]);
             }
         }
         foreach ($asset->depreciations()->reorder()->orderBy('id')->with(['run.reversalJournalEntry', 'journalEntry'])->get() as $depreciation) {
@@ -71,12 +71,12 @@ class FixedAssetLedgerService
         }
         foreach ($asset->disposals()->reorder()->orderBy('id')->with(['journalEntry', 'reversalJournalEntry'])->get() as $disposal) {
             $rows->push(['date' => $disposal->disposal_date, 'type' => 'disposal', 'document' => $disposal->doc_num, 'amount' => $disposal->net_book_value,
-                'user_id' => $disposal->posted_by, 'journal' => $disposal->journalEntry, 'url' => $card.'#disposal-'.$disposal->doc_num,
+                'user_id' => $disposal->posted_by, 'journal' => $disposal->journalEntry, 'url' => $card.'?tab=movements#disposal-'.$disposal->doc_num,
                 'reversed' => $disposal->status === 'reversed', 'detail' => __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type).' / '.$disposal->reason]);
             if ($disposal->status === 'reversed') {
                 $rows->push(['date' => $disposal->disposal_date, 'type' => 'disposal_reversal', 'document' => $disposal->doc_num,
                     'amount' => bcmul((string) $disposal->net_book_value, '-1', 4), 'user_id' => $disposal->reversed_by, 'journal' => $disposal->reversalJournalEntry,
-                    'url' => $card.'#disposal-'.$disposal->doc_num, 'reversed' => false, 'detail' => $disposal->reversal_reason]);
+                    'url' => $card.'?tab=movements#disposal-'.$disposal->doc_num, 'reversed' => false, 'detail' => $disposal->reversal_reason]);
             }
         }
         $users = User::query()->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('name', 'id');

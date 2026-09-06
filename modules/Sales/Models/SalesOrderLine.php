@@ -64,8 +64,7 @@ class SalesOrderLine extends Model
 
     public function remainingInvoiceQuantity(): string
     {
-        $eligible = $this->isService() ? (string) $this->quantity : (string) $this->delivered_quantity;
-        $remaining = bcsub($eligible, (string) $this->invoiced_quantity, 8);
+        $remaining = bcsub((string) $this->quantity, (string) $this->invoiced_quantity, 8);
 
         return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
     }

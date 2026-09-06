@@ -22,6 +22,7 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -47,6 +48,7 @@ class PurchaseInvoiceService
         private readonly PurchaseInvoiceMatchingService $matching,
         private readonly NumericFormatService $numbers,
         private readonly InventoryAccountingMappingService $inventoryMappings,
+        private readonly FixedAssetPurchaseIntegrationService $fixedAssetPurchases,
     ) {}
 
     public function create(array $data): array
@@ -69,6 +71,7 @@ class PurchaseInvoiceService
             ]);
 
             $this->syncLines($record, $calculation['lines'], $context);
+            $this->fixedAssetPurchases->assertDraftInvoiceAssetsValid($record->refresh());
             app(ProcurementAttachmentService::class)->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
             $this->syncPaymentSchedules($record->refresh(), $this->schedulesForSync($data, $calculation), $context);
             $record->refreshPaymentTotals();
@@ -111,6 +114,7 @@ class PurchaseInvoiceService
             }
             $record = $record->refresh();
             $linesChanged = $this->syncLines($record, $calculation['lines'], $context);
+            $this->fixedAssetPurchases->assertDraftInvoiceAssetsValid($record->refresh());
             $attachmentsChanged = app(ProcurementAttachmentService::class)->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
             $schedulesChanged = $this->syncPaymentSchedules($record->refresh(), $this->schedulesForSync($data, $calculation, $record), $context);
             $changed = $headerChanged || $linesChanged || $schedulesChanged || $attachmentsChanged;
@@ -142,12 +146,14 @@ class PurchaseInvoiceService
                 return $this->load($locked);
             }
             $this->assertApprovable($locked);
+            $this->fixedAssetPurchases->assertDraftInvoiceAssetsValid($locked);
             $this->matching->matchForPosting($locked);
             $journalEntry = $this->journalEntries->createPostedFromSource(
                 $this->postingHeader($locked),
                 $this->postingLines($locked),
             );
             $this->applyInventoryValuation($locked);
+            $this->fixedAssetPurchases->recognize($locked, $journalEntry);
 
             $locked->forceFill([
                 'status' => PurchaseInvoice::StatusApproved,
@@ -247,6 +253,8 @@ class PurchaseInvoiceService
                 throw new DomainException(__('Reverse posted Purchase Returns before reversing this invoice.'));
             }
 
+            $this->fixedAssetPurchases->assertReversible($locked);
+
             if ((int) ($context['company_id'] ?? 0) !== (int) $locked->company_id
                 || empty($context['financial_period_id'])) {
                 throw new DomainException(__('The active accounting context is required for invoice reversal.'));
@@ -266,6 +274,7 @@ class PurchaseInvoiceService
                 'source_doc_num' => $locked->doc_num,
             ]);
             $this->applyInventoryValuation($locked, reverse: true);
+            $this->fixedAssetPurchases->reverseRecognitions($locked, $reversal, $reason);
 
             $locked->forceFill([
                 'status' => PurchaseInvoice::StatusCancelled,
@@ -290,6 +299,9 @@ class PurchaseInvoiceService
             $record = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertOperatingContext($record);
             $this->assertDeletable($record);
+            if ($record->lines()->where(fn ($query) => $query->whereHas('fixedAssets')->orWhereNotNull('target_fixed_asset_id'))->exists()) {
+                throw new DomainException(__('fixed_assets.purchase_source.remove_assets_first'));
+            }
             $this->audit->softDelete($record);
 
             $record->lines()->get()->each(function (PurchaseInvoiceLine $line): void {
@@ -375,9 +387,15 @@ class PurchaseInvoiceService
             'lines.costCenter',
             'lines.purchaseOrderLine.purchaseOrder',
             'lines.receiptLine.receipt',
+            'lines.fixedAssets.account',
+            'lines.targetFixedAsset.account',
+            'lines.assetImprovementMovement.asset',
             'paymentSchedules.cashbox',
             'paymentSchedules.bankAccount',
             'paymentSchedules.cashVoucher',
+            'paymentAllocations.paymentContext.cashVoucher',
+            'paymentAllocations.paymentContext.bankAccount',
+            'paymentAllocations.paymentContext.cheque',
         ];
     }
 
@@ -561,6 +579,11 @@ class PurchaseInvoiceService
                     $changed = true;
                     $existingLine->forceFill(['updated_by' => auth()->id()])->save();
                 }
+                $changed = app(ProcurementAttachmentService::class)->attachLine(
+                    $existingLine,
+                    $line['attachment_file_doc_nums'] ?? [],
+                    $context['company_id'],
+                ) || $changed;
                 $kept[] = $existingLine->getKey();
 
                 continue;
@@ -568,6 +591,11 @@ class PurchaseInvoiceService
 
             $changed = true;
             $created = $record->lines()->create([...$values, 'created_by' => auth()->id()]);
+            app(ProcurementAttachmentService::class)->attachLine(
+                $created,
+                $line['attachment_file_doc_nums'] ?? [],
+                $context['company_id'],
+            );
             $kept[] = $created->getKey();
         }
 
@@ -575,6 +603,9 @@ class PurchaseInvoiceService
             ->when($kept !== [], fn ($query) => $query->whereNotIn('id', $kept))
             ->get()
             ->each(function (PurchaseInvoiceLine $line) use (&$changed): void {
+                if ($line->fixedAssets()->exists() || $line->target_fixed_asset_id !== null) {
+                    throw new DomainException(__('fixed_assets.purchase_source.remove_assets_first'));
+                }
                 $changed = true;
                 $line->forceFill(['deleted_by' => auth()->id()])->save();
                 $line->delete();
@@ -857,7 +888,7 @@ class PurchaseInvoiceService
     {
         $record->loadMissing('lines.product');
         $posting = [];
-        $netAmounts = $this->netAmountsByLine($record);
+        $netAmounts = $this->calculator->netAmountsByLine($record);
         $mapping = null;
 
         foreach ($record->lines as $line) {
@@ -866,7 +897,23 @@ class PurchaseInvoiceService
                 continue;
             }
 
-            if ($line->receipt_line_id !== null && ! $line->product?->isService()) {
+            $assetPostings = $this->fixedAssetPurchases->postingsForLine($line, $finalAmount);
+            if ($assetPostings->isNotEmpty()) {
+                foreach ($assetPostings as $assetPosting) {
+                    $this->addPostingAmount(
+                        $posting,
+                        $assetPosting['asset']->account,
+                        $assetPosting['amount'],
+                        true,
+                        $assetPosting['description'],
+                        $assetPosting['cost_center_id'],
+                    );
+                }
+
+                continue;
+            }
+
+            if ($line->receipt_line_id !== null && ! $line->product?->isService() && $line->product?->cost_as_inventory) {
                 $mapping ??= $this->inventoryMappings->requireForCompany((int) $record->company_id);
                 $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
                 $provisionalBase = bcmul((string) $receiptLine->provisional_unit_value, (string) $line->quantity, 4);
@@ -932,10 +979,10 @@ class PurchaseInvoiceService
     private function applyInventoryValuation(PurchaseInvoice $record, bool $reverse = false): void
     {
         $record->loadMissing('lines.product');
-        $netAmounts = $this->netAmountsByLine($record);
+        $netAmounts = $this->calculator->netAmountsByLine($record);
 
         foreach ($record->lines as $line) {
-            if ($line->receipt_line_id === null || $line->product?->isService()) {
+            if ($line->receipt_line_id === null || $line->product?->isService() || ! $line->product?->cost_as_inventory) {
                 continue;
             }
 
@@ -984,30 +1031,6 @@ class PurchaseInvoiceService
         ];
         $column = $debit ? 'debit_amount' : 'credit_amount';
         $posting[$key][$column] = bcadd((string) $posting[$key][$column], $amount, 4);
-    }
-
-    /** @return array<int, string> */
-    private function netAmountsByLine(PurchaseInvoice $record): array
-    {
-        $lineBaseTotal = $record->lines->sum(fn (PurchaseInvoiceLine $line): float => (float) $line->total_before_tax);
-        $headerDiscount = (float) $record->header_discount_amount;
-        $allocatedHeaderDiscount = 0.0;
-        $lastIndex = max(0, $record->lines->count() - 1);
-        $amounts = [];
-
-        foreach ($record->lines->values() as $index => $line) {
-            $lineBase = (float) $line->total_before_tax;
-            $share = $lineBaseTotal > 0 ? $headerDiscount * ($lineBase / $lineBaseTotal) : 0.0;
-
-            if ($index === $lastIndex) {
-                $share = $headerDiscount - $allocatedHeaderDiscount;
-            }
-
-            $allocatedHeaderDiscount += $share;
-            $amounts[$line->getKey()] = number_format(max(0, $lineBase - $share), 4, '.', '');
-        }
-
-        return $amounts;
     }
 
     private function purchaseDebitAccount(PurchaseInvoiceLine $line): Account

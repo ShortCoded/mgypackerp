@@ -89,25 +89,27 @@
 
     <div class="card erp-datatable-card">
         <div class="card-body">
-            <table class="table table-sm table-striped fs--1 mb-0 falcon-data-table erp-datatable" id="user-tasks-table" data-ajax-url="{{ route('admin.tasks.data') }}">
-                <thead>
-                    <tr>
-                        <th data-orderable="false" data-searchable="false">
-                            <span class="visually-hidden">{{ __('user_tasks.select_all') }}</span>
-                        </th>
-                        <th>{{ __('user_tasks.attributes.doc_num') }}</th>
-                        <th>{{ __('user_tasks.attributes.title') }}</th>
-                        <th>{{ __('user_tasks.attributes.type') }}</th>
-                        <th>{{ __('user_tasks.attributes.status') }}</th>
-                        <th>{{ __('user_tasks.attributes.priority') }}</th>
-                        <th>{{ __('user_tasks.attributes.assigned_to') }}</th>
-                        <th>{{ __('user_tasks.attributes.assigned_by') }}</th>
-                        <th>{{ __('user_tasks.attributes.due_at') }}</th>
-                        <th>{{ __('common.fields.created_at') }}</th>
-                        <th data-orderable="false" data-searchable="false">{{ __('common.fields.actions') }}</th>
-                    </tr>
-                </thead>
-            </table>
+            <div class="erp-datatable-scroll" role="region" aria-label="{{ __('user_tasks.title') }}" tabindex="0">
+                <table class="table table-sm table-striped fs--1 mb-0 falcon-data-table erp-datatable" id="user-tasks-table" data-ajax-url="{{ route('admin.tasks.data') }}">
+                    <thead>
+                        <tr>
+                            <th data-orderable="false" data-searchable="false">
+                                <span class="visually-hidden">{{ __('user_tasks.select_all') }}</span>
+                            </th>
+                            <th>{{ __('user_tasks.attributes.doc_num') }}</th>
+                            <th>{{ __('user_tasks.attributes.title') }}</th>
+                            <th>{{ __('user_tasks.attributes.type') }}</th>
+                            <th>{{ __('user_tasks.attributes.status') }}</th>
+                            <th>{{ __('user_tasks.attributes.priority') }}</th>
+                            <th>{{ __('user_tasks.attributes.assigned_to') }}</th>
+                            <th>{{ __('user_tasks.attributes.assigned_by') }}</th>
+                            <th>{{ __('user_tasks.attributes.due_at') }}</th>
+                            <th>{{ __('common.fields.created_at') }}</th>
+                            <th data-orderable="false" data-searchable="false">{{ __('common.fields.actions') }}</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
         </div>
     </div>
 @endsection

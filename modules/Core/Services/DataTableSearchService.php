@@ -102,15 +102,15 @@ class DataTableSearchService
                     $this->applyTextSearch($termQuery, $column, $pattern);
                 }
 
-                foreach ($dateTextColumns as $column) {
-                    foreach ($this->dateTextSearchSql($termQuery, $column) as $sql) {
-                        $termQuery->orWhereRaw($sql, [$pattern]);
-                    }
-                }
-
                 if ($parsedDate instanceof Carbon) {
                     foreach ($dateColumns as $column) {
-                        $termQuery->orWhereDate($column, $parsedDate->toDateString());
+                        $this->applyDateSearch($termQuery, $column, $parsedDate);
+                    }
+                } else {
+                    foreach ($dateTextColumns as $column) {
+                        foreach ($this->dateTextSearchSql($termQuery, $column) as $sql) {
+                            $termQuery->orWhereRaw($sql, [$pattern]);
+                        }
                     }
                 }
 
@@ -166,6 +166,18 @@ class DataTableSearchService
         $column = $this->wrap($query, $column);
 
         $query->orWhereRaw("LOWER(CAST({$column} AS TEXT)) LIKE LOWER(?)".self::SqliteLikeEscape, [$pattern]);
+    }
+
+    private function applyDateSearch(EloquentBuilder|QueryBuilder $query, string $column, Carbon $date): void
+    {
+        $start = $date->copy()->startOfDay();
+        $end = $start->copy()->addDay();
+
+        $query->orWhere(function (EloquentBuilder|QueryBuilder $dateQuery) use ($column, $start, $end): void {
+            $dateQuery
+                ->where($column, '>=', $start->toDateString())
+                ->where($column, '<', $end->toDateString());
+        });
     }
 
     /**

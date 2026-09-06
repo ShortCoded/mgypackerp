@@ -45,6 +45,7 @@ use Modules\Core\Models\UserTask;
 Route::get('/session/status', [SessionController::class, 'status'])->name('session.status');
 Route::post('/session/touch', [SessionController::class, 'touch'])->middleware('auth')->name('session.touch');
 Route::get('/manifest.webmanifest', [PwaSettingsController::class, 'manifest'])->name('pwa.manifest');
+Route::get('/service-worker.js', [PwaSettingsController::class, 'legacyServiceWorker'])->name('pwa.legacy-service-worker');
 Route::get('/pwa-service-worker.js', [PwaSettingsController::class, 'serviceWorker'])->name('pwa.service-worker');
 Route::get('/offline', [PwaSettingsController::class, 'offline'])->name('pwa.offline');
 

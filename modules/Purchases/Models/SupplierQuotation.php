@@ -18,8 +18,15 @@ class SupplierQuotation extends Model
 
     public const AttachmentCollection = 'supplier_quotation_attachments';
 
+    public const SourceRequestForQuotation = 'request_for_quotation';
+
+    public const SourcePurchaseRequisition = 'purchase_requisition';
+
+    public const SourcePurchaseOrder = 'purchase_order';
+
     protected $fillable = [
         'doc_number', 'doc_num', 'company_id', 'financial_period_id', 'branch_id', 'request_for_quotation_id',
+        'purchase_requisition_id', 'purchase_order_id', 'source_type', 'source_id', 'source_doc_num',
         'supplier_id', 'currency_id', 'exchange_rate', 'supplier_reference', 'quotation_date', 'valid_until', 'lead_time_days',
         'payment_terms', 'freight_amount', 'subtotal_amount', 'discount_amount', 'tax_amount', 'total_amount',
         'status', 'commercial_notes', 'submitted_by', 'submitted_at', 'created_by', 'updated_by',
@@ -51,6 +58,25 @@ class SupplierQuotation extends Model
     public function requestForQuotation(): BelongsTo
     {
         return $this->belongsTo(RequestForQuotation::class);
+    }
+
+    public function purchaseRequisition(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequisition::class);
+    }
+
+    public function purchaseOrder(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function sourceDocument(): RequestForQuotation|PurchaseRequisition|PurchaseOrder|null
+    {
+        return match ($this->source_type) {
+            self::SourcePurchaseRequisition => $this->purchaseRequisition,
+            self::SourcePurchaseOrder => $this->purchaseOrder,
+            default => $this->requestForQuotation,
+        };
     }
 
     public function supplier(): BelongsTo

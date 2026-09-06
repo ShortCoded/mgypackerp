@@ -369,6 +369,29 @@ test('quotation grouped numeric input persists canonically and displays grouped 
         ->assertJsonValidationErrors(['lines.0.quantity']);
 });
 
+test('quotation project and discount contracts reject contradictory input', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    $actor = quotationActor(['quotations.create']);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), quotationPayload($product, $unit, $context['currency'], [
+            'project_name' => null,
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('project_name');
+
+    $payload = quotationPayload($product, $unit, $context['currency'], [
+        'quotation_type' => Quotation::TypeStandard,
+        'project_name' => 'Must be cleared',
+        'discount_type' => null,
+        'discount_value' => '10',
+    ]);
+    $this->postJson(route('admin.sales.quotations.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('discount_value');
+});
+
 test('draft revision can be updated in place', function (): void {
     ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp();
     $originalRevisionId = $quotation->current_revision_id;
@@ -509,7 +532,7 @@ test('accepted quotation converts once into a fully linked sales order without r
     $quotationPdf->assertOk()->assertHeader('content-type', 'application/pdf');
     expect($quotationPdf->headers->get('content-disposition'))->toStartWith('inline; filename=')
         ->and($quotationPdf->getContent())->toStartWith('%PDF-')
-        ->and(quotationPdfText($quotationPdf->getContent()))->toContain('Canonical quoted line')->toContain('Export carton');
+        ->and(quotationPdfText($quotationPdf->getContent()))->toContain('Canonical quoted line')->not->toContain('Export carton');
 
     $response = $this->actingAs($actor)
         ->postJson(route('admin.sales.quotations.convert', $quotation))
@@ -544,7 +567,8 @@ test('accepted quotation converts once into a fully linked sales order without r
         ->get(route('admin.sales.sales-orders.show', $order))
         ->assertOk()
         ->assertSee($quotation->doc_num)
-        ->assertSee($quotation->currentRevision->revision_code);
+        ->assertSee(sprintf('R%02d', $quotation->currentRevision->revision_number))
+        ->assertDontSee($quotation->currentRevision->revision_code);
 
     $this->actingAs($actor)
         ->postJson(route('admin.sales.quotations.convert', $quotation))

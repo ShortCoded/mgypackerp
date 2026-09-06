@@ -388,6 +388,37 @@ test('Customer can be created with nullable optional fields and a postable accou
         ->and($account->is_postable)->toBeTrue();
 });
 
+test('legacy customers without accounts are safely linked below the customer control account', function (): void {
+    $context = salesPurchasesContext();
+    $customer = Customer::query()->create([
+        'doc_number' => 99101,
+        'doc_num' => 'Customer-99101',
+        'company_id' => $context['company']->getKey(),
+        'account_id' => null,
+        'name' => 'Legacy Customer Without Account',
+        'status' => 'active',
+    ]);
+    $accountCount = Account::query()->where('company_id', $context['company']->getKey())->count();
+    $migration = require base_path('modules/Sales/Database/Migrations/2026_09_06_105121_backfill_missing_customer_accounts.php');
+
+    $migration->up();
+    $migration->up();
+
+    $customer->refresh();
+    $account = Account::query()->with('classification')->findOrFail($customer->account_id);
+    $root = Account::query()
+        ->where('company_id', $context['company']->getKey())
+        ->where('account_code', '1121')
+        ->firstOrFail();
+
+    expect($account->parent_id)->toBe($root->getKey())
+        ->and($account->name)->toBe($customer->name)
+        ->and($account->classification?->code)->toBe('accounts_receivable')
+        ->and($account->is_group)->toBeFalse()
+        ->and($account->is_postable)->toBeTrue()
+        ->and(Account::query()->where('company_id', $context['company']->getKey())->count())->toBe($accountCount + 1);
+});
+
 test('customer and supplier linked-account collisions retry the complete master transaction', function (
     string $modelClass,
     string $routeName,

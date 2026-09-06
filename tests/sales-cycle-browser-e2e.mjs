@@ -102,10 +102,12 @@ await Promise.all([
   client.send('Log.enable'),
   client.send('Network.enable'),
 ]);
-const mobileQa = process.env.SALES_E2E_MOBILE === '1';
+const viewportWidth = Number(process.env.SALES_E2E_VIEWPORT_WIDTH || (process.env.SALES_E2E_MOBILE === '1' ? 390 : 1280));
+const viewportHeight = Number(process.env.SALES_E2E_VIEWPORT_HEIGHT || (viewportWidth <= 575 ? 844 : 900));
+const mobileQa = viewportWidth <= 575;
 await client.send('Emulation.setDeviceMetricsOverride', mobileQa
-  ? { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }
-  : { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  ? { width: viewportWidth, height: viewportHeight, deviceScaleFactor: 1, mobile: true }
+  : { width: viewportWidth, height: viewportHeight, deviceScaleFactor: 1, mobile: false });
 
 async function evaluate(expression) {
   const result = await client.send('Runtime.evaluate', {
@@ -148,6 +150,15 @@ async function navigate(url) {
   await waitUntil(() => loadCount > before, `Navigation did not complete: ${url}`);
   await waitForReady();
   await waitUntil(() => evaluate('Boolean(document.body)'), `Document body missing: ${url}`);
+}
+
+async function captureScreenshot(filename) {
+  const screenshot = await client.send('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false,
+  });
+  await writeFile(path.join(artifactDirectory, filename), Buffer.from(screenshot.data, 'base64'));
 }
 
 async function currentUrl() {
@@ -248,7 +259,7 @@ const isoDate = (days) => {
   return date.toISOString().slice(0, 10);
 };
 
-async function fillOrder({ customer, lineCount, quantity, price, tax, total, reference }) {
+async function fillOrder({ customer, lineCount, quantity, price, tax, total }) {
   const filled = await evaluate(`(() => {
     const set = (selector, value) => {
       const field = document.querySelector(selector);
@@ -264,7 +275,6 @@ async function fillOrder({ customer, lineCount, quantity, price, tax, total, ref
     set('#customer_doc_num', ${JSON.stringify(customer)});
     set('#order_date', ${JSON.stringify(isoDate(0))});
     set('#expected_delivery_date', ${JSON.stringify(isoDate(14))});
-    set('#customer_reference', ${JSON.stringify(reference)});
     const store = document.querySelector('#branch_store_uuid');
     set('#branch_store_uuid', store.options[1].value);
     const representative = document.querySelector('#sales_employee_doc_num');
@@ -279,10 +289,6 @@ async function fillOrder({ customer, lineCount, quantity, price, tax, total, ref
       set('[name="lines[' + index + '][discount_amount]"]', '0');
       set('[name="lines[' + index + '][tax_amount]"]', ${JSON.stringify(tax)});
       set('[name="lines[' + index + '][requested_date]"]', ${JSON.stringify(isoDate(14))});
-      set('[name="lines[' + index + '][specifications][packaging]"]', '1000 pieces / export carton');
-      set('[name="lines[' + index + '][specifications][customer_specification]"]', 'Food-grade white spoon, sealed inner bags');
-      set('[name="lines[' + index + '][warehouse_notes]"]', 'Keep cartons dry and palletized');
-      set('[name="lines[' + index + '][production_notes]"]', 'Customer print mark E2E-' + String(index + 1).padStart(2, '0'));
     });
     if (document.querySelectorAll('[data-sales-schedules] tr').length === 0) {
       document.querySelector('[data-sales-add-schedule]').click();
@@ -337,10 +343,6 @@ async function fillQuotation({ customer, lines, total, reference }) {
       set('[name="lines[' + index + '][discount_value]"]', '0');
       set('[name="lines[' + index + '][tax_rate]"]', definition.taxRate);
       set('[name="lines[' + index + '][requested_date]"]', ${JSON.stringify(isoDate(14))});
-      set('[name="lines[' + index + '][specifications][packaging]"]', definition.packaging);
-      set('[name="lines[' + index + '][specifications][customer_specification]"]', 'Food-grade customer specification E2E-' + String(index + 1).padStart(2, '0'));
-      set('[name="lines[' + index + '][warehouse_notes]"]', 'Keep dry and palletized');
-      set('[name="lines[' + index + '][production_notes]"]', 'Customer print mark E2E-' + String(index + 1).padStart(2, '0'));
       set('[name="lines[' + index + '][notes]"]', 'Quoted source line ' + String(index + 1));
     });
     if (document.querySelectorAll('.js-quotation-milestones .js-quotation-milestone').length === 0) {
@@ -445,6 +447,204 @@ if (process.env.SALES_E2E_POSTCHECK_ONLY === '1') {
   process.exit(0);
 }
 
+if (process.env.SALES_E2E_UI_ONLY === '1') {
+  try {
+    await navigate(`${baseUrl}/login`);
+    if (await evaluate(`Boolean(document.querySelector('#login'))`)) {
+      await setField('#login', 'admin');
+      await setField('#password', 'admin');
+      await submitForm('form.js-auth-form', 'UI verification login');
+    }
+    assert(!(await currentUrl()).includes('/login'), 'UI verification login did not leave the login page.');
+
+    await navigate(`${baseUrl}/dashboard`);
+    const context = await evaluate(`fetch(${JSON.stringify(`${baseUrl}/admin/operating-context/select`)}, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({ company_doc_num: 'Company-00001', branch_doc_num: 'Branch-00001', financial_period_doc_num: 'Period-00001' })
+    }).then(async response => ({ ok: response.ok, status: response.status, payload: await response.json() }))`);
+    assert(context.ok && context.payload.success, `Operating context selection failed with HTTP ${context.status}.`);
+
+    const expectedColumns = viewportWidth <= 575 ? 1 : viewportWidth <= 991 ? 2 : null;
+
+    await navigate(`${baseUrl}/admin/sales/customer-requests/create`);
+    await waitUntil(() => evaluate(`Boolean(document.querySelector('[data-sales-lines]')?.closest('table')?.classList.contains('line-card-repeater'))`), 'Sales Request repeater did not initialize.');
+    const requestResult = await evaluate(`(() => {
+      const form = document.querySelector('.js-sales-cycle-form');
+      const buttons = [...form.querySelectorAll('[data-sales-add-line]')];
+      buttons.at(-1).click();
+      form.querySelector('[data-sales-line] [data-sales-duplicate-row]').click();
+      form.querySelectorAll('[data-sales-line]')[1].querySelector('[data-sales-remove-row]').click();
+      const rows = [...form.querySelectorAll('[data-sales-line]')];
+      const ids = [...form.querySelectorAll('[id]')].map(element => element.id).filter(Boolean);
+      const repeater = form.querySelector('.line-card-repeater');
+      return {
+        addButtons: buttons.length,
+        rows: rows.length,
+        indexes: rows.map(row => row.dataset.index),
+        labels: rows.map(row => row.getAttribute('aria-label')),
+        columns: getComputedStyle(rows[0]).gridTemplateColumns.split(' ').filter(Boolean).length,
+        uniqueIds: new Set(ids).size === ids.length,
+        noOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2,
+        absent: ['[name="branch_store_uuid"]', '[name="priority"]', '[name="customer_reference"]', '[name$="[description]"]', '[name$="[specifications][packaging]"]', '[name$="[specifications][units_per_package]"]'].every(selector => !form.querySelector(selector)),
+        employeeAjax: form.querySelector('#sales_employee_doc_num')?.dataset.url?.includes('/select2/employees') === true,
+        productAjax: form.querySelector('[name$="[product_doc_num]"]')?.dataset.url?.includes('/select2/quotation-products') === true,
+        summary: ['[data-sales-summary-lines]', '[data-sales-summary-products]', '[data-sales-summary-quantity]', '[data-sales-summary-total]'].every(selector => Boolean(form.querySelector(selector))),
+        shortcut: Boolean(form.querySelector('[data-shortcut-action="line.add"]')),
+      };
+    })()`);
+    assert(requestResult.addButtons === 2, 'Sales Request must expose Add line above and below the repeater.');
+    assert(requestResult.rows === 2 && requestResult.indexes.join(',') === '0,1', 'Sales Request add/duplicate/remove did not reindex to two lines.');
+    assert(requestResult.labels.every((label, index) => label?.endsWith(String(index + 1))), 'Sales Request line accessibility labels were not reindexed.');
+    assert(requestResult.uniqueIds && requestResult.noOverflow && requestResult.absent, `Sales Request repeater retained duplicate IDs, overflow, or removed fields: ${JSON.stringify(requestResult)}.`);
+    assert(requestResult.employeeAjax && requestResult.productAjax, 'Sales Request master-data pickers are not AJAX-backed.');
+    assert(requestResult.summary && requestResult.shortcut, 'Sales Request totals summary or Add-line shortcut is missing.');
+    if (expectedColumns) assert(requestResult.columns === expectedColumns, `Sales Request expected ${expectedColumns} responsive columns, found ${requestResult.columns}.`);
+    await captureScreenshot(`sales-request-${viewportWidth}.png`);
+
+    await navigate(`${baseUrl}/admin/sales/quotations/create`);
+    const quotationConditionalResult = await evaluate(`(() => {
+      const form = document.querySelector('.js-quotation-form');
+      const type = form.querySelector('#quotation_type');
+      const projectFields = [...form.querySelectorAll('[data-quotation-project-only]')];
+      const hiddenAsStandard = projectFields.every(element => element.classList.contains('d-none'));
+      type.value = 'project';
+      type.dispatchEvent(new Event('change', { bubbles: true }));
+      const visibleAsProject = projectFields.every(element => !element.classList.contains('d-none'));
+      type.value = 'standard';
+      type.dispatchEvent(new Event('change', { bubbles: true }));
+      return {
+        hiddenAsStandard,
+        visibleAsProject,
+        mainCurrencySelected: form.querySelector('#currency_doc_num')?.value === form.dataset.mainCurrencyDocNum,
+        editorIcons: form.querySelectorAll('.note-toolbar .note-btn .fas, .note-toolbar .note-btn svg[data-icon]').length,
+      };
+    })()`);
+    assert(quotationConditionalResult.hiddenAsStandard && quotationConditionalResult.visibleAsProject, 'Quotation project fields did not follow quotation type.');
+    assert(quotationConditionalResult.mainCurrencySelected, 'Quotation main currency was not selected by default.');
+    assert(quotationConditionalResult.editorIcons > 0, 'Quotation rich-text editor icons did not render.');
+    await click('#quotation-lines-tab', 'Open Quotation lines');
+    await waitUntil(() => evaluate(`Boolean(document.querySelector('.js-quotation-lines.line-card-repeater'))`), 'Quotation repeater did not initialize.');
+    const quotationResult = await evaluate(`(() => {
+      const form = document.querySelector('.js-quotation-form');
+      const row = form.querySelector('.js-quotation-line');
+      const repeater = form.querySelector('.js-quotation-lines');
+      return {
+        addButtons: form.querySelectorAll('.js-quotation-add-line').length,
+        columns: getComputedStyle(row).gridTemplateColumns.split(' ').filter(Boolean).length,
+        noOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2,
+        absent: ['[name$="[specifications][packaging]"]', '[name$="[specifications][customer_specification]"]', '[name$="[warehouse_notes]"]', '[name$="[production_notes]"]'].every(selector => !form.querySelector(selector)),
+        employeeAjax: form.querySelector('#sales_person_doc_num')?.dataset.url?.includes('/select2/employees') === true,
+        alignedControls: Math.abs((row.querySelector('.select2-selection')?.getBoundingClientRect().height || 0) - (row.querySelector('[name$="[quantity]"]')?.getBoundingClientRect().height || 0)) < 2,
+      };
+    })()`);
+    assert(quotationResult.addButtons >= 2 && quotationResult.noOverflow && quotationResult.absent && quotationResult.employeeAjax && quotationResult.alignedControls, 'Quotation repeater, Employee picker, or field alignment normalization failed.');
+    if (expectedColumns) assert(quotationResult.columns === expectedColumns, `Quotation expected ${expectedColumns} responsive columns, found ${quotationResult.columns}.`);
+    await captureScreenshot(`quotation-${viewportWidth}.png`);
+
+    await navigate(`${baseUrl}/admin/sales/sales-orders/create`);
+    await waitUntil(() => evaluate(`Boolean(document.querySelector('[data-sales-lines]')?.closest('table')?.classList.contains('line-card-repeater'))`), 'Sales Order repeater did not initialize.');
+    const orderResult = await evaluate(`(() => {
+      const form = document.querySelector('.js-sales-cycle-form');
+      const row = form.querySelector('[data-sales-line]');
+      const repeater = form.querySelector('[data-sales-lines]').closest('table');
+      return {
+        addButtons: form.querySelectorAll('[data-sales-add-line]').length,
+        columns: getComputedStyle(row).gridTemplateColumns.split(' ').filter(Boolean).length,
+        noOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2,
+        absent: ['[name="customer_reference"]', '[name$="[specifications][packaging]"]', '[name$="[specifications][customer_specification]"]', '[name$="[warehouse_notes]"]', '[name$="[production_notes]"]'].every(selector => !form.querySelector(selector)),
+      };
+    })()`);
+    assert(orderResult.addButtons === 2 && orderResult.noOverflow && orderResult.absent, `Sales Order repeater normalization failed: ${JSON.stringify(orderResult)}.`);
+    if (expectedColumns) assert(orderResult.columns === expectedColumns, `Sales Order expected ${expectedColumns} responsive columns, found ${orderResult.columns}.`);
+    await captureScreenshot(`sales-order-${viewportWidth}.png`);
+
+    await navigate(`${baseUrl}/admin/sales/sales-invoices/create`);
+    assert(await evaluate(`document.querySelector('.js-select2-ajax')?.dataset.url?.includes('/select2/invoiceable-orders') === true`), 'Sales Invoice create entry is not backed by invoiceable Sales Orders.');
+
+    await navigate(`${baseUrl}/admin/sales/delivery-notes/create`);
+    assert(await evaluate(`document.querySelector('.js-select2-ajax')?.dataset.url?.includes('/select2/deliverable-invoices') === true`), 'Sales Delivery create entry is not backed by posted deliverable invoices.');
+
+    await navigate(`${baseUrl}/admin/sales/sales-returns/create`);
+    assert(await evaluate(`document.querySelectorAll('[data-return-source-form] .js-select2-ajax').length >= 1`), 'Sales Return create entry does not expose a paginated source selector.');
+
+    await navigate(`${baseUrl}/admin/sales/customer-receipts/create`);
+    const receiptResult = await evaluate(`(() => {
+      const form = document.querySelector('.js-sales-cycle-form');
+      const method = form.querySelector('[data-sales-payment-method]');
+      method.value = 'cheque';
+      method.dispatchEvent(new Event('change', { bubbles: true }));
+      const chequeFields = ['#reference_no', '#cheque_due_date', '#external_bank_name'];
+      return {
+        employeeAjax: form.querySelector('#received_by_employee_doc_num')?.dataset.url?.includes('/select2/employees') === true,
+        currencyAjax: form.querySelector('#currency_doc_num')?.dataset.url?.includes('/select2/currencies') === true,
+        chequeFieldsVisible: chequeFields.every(selector => !form.querySelector(selector).closest('[data-payment-source]').classList.contains('d-none')),
+        chequeFieldsRequired: chequeFields.every(selector => form.querySelector(selector).required),
+        noOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2,
+      };
+    })()`);
+    assert(receiptResult.employeeAjax && receiptResult.currencyAjax && receiptResult.chequeFieldsVisible && receiptResult.chequeFieldsRequired && receiptResult.noOverflow, `Customer collection Employee, currency, cheque, or responsive UI failed: ${JSON.stringify(receiptResult)}.`);
+    await captureScreenshot(`customer-collection-${viewportWidth}.png`);
+
+    await navigate(`${baseUrl}/admin/reports/sales/sales-orders`);
+    assert(await evaluate(`Boolean(document.querySelector('[data-sales-financial-summary]')) && document.querySelectorAll('.erp-filter-grid .js-select2-ajax').length >= 4 && document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2`), 'Sales financial summary, AJAX report filters, or responsive report layout is invalid.');
+
+    await navigate(`${baseUrl}/admin/reports/sales/sales-orders?report=collections`);
+    assert(await evaluate(`Boolean(document.querySelector('#recorded-collections')) && Boolean(document.querySelector('#upcoming-collections')) && document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2`), 'Customer collection history/upcoming report or its responsive layout is invalid.');
+
+    const indexRoutes = ['/admin/sales/customer-requests', '/admin/sales/quotations', '/admin/sales/sales-orders', '/admin/sales/delivery-notes', '/admin/sales/sales-invoices', '/admin/sales/sales-returns', '/admin/sales/customer-receipts'];
+    for (const route of indexRoutes) {
+      await navigate(`${baseUrl}${route}`);
+      assert(await evaluate(`Boolean(document.querySelector('table.data-table, table.erp-datatable'))`), `${route} did not render the canonical DataTable.`);
+    }
+
+    await navigate(`${baseUrl}/dashboard`);
+    const menuOrder = await evaluate(`[...document.querySelectorAll('#top-menu-e04eb29020eaa961-submenu a[href]')].filter(link => new URL(link.href).pathname.startsWith('/admin/')).map(link => new URL(link.href).pathname + new URL(link.href).search)`);
+    const expectedMenuOrder = [
+      '/admin/sales/customers',
+      '/admin/sales/customer-requests',
+      '/admin/sales/quotations',
+      '/admin/sales/sales-orders',
+      '/admin/sales/sales-invoices',
+      '/admin/sales/delivery-notes',
+      '/admin/sales/customer-receipts',
+      '/admin/sales/sales-returns',
+      '/admin/accounting/reports/customer-statement',
+      '/admin/reports/sales/sales-orders?report=financial',
+      '/admin/reports/sales/sales-orders?report=period',
+      '/admin/reports/sales/sales-orders?report=customers',
+      '/admin/reports/sales/sales-orders?report=products',
+      '/admin/reports/sales/sales-orders?report=invoices',
+      '/admin/reports/sales/sales-orders?report=receivables',
+      '/admin/reports/sales/sales-orders?report=collections',
+      '/admin/reports/sales/sales-orders?report=returns',
+      '/admin/reports/sales/sales-orders?report=quotations',
+      '/admin/reports/sales/sales-orders?report=fulfillment',
+      '/admin/reports/sales/sales-orders?report=operational',
+    ];
+    assert(JSON.stringify(menuOrder) === JSON.stringify(expectedMenuOrder), `Sales menu order mismatch: ${JSON.stringify(menuOrder)}.`);
+
+    const actionableErrors = [...new Set(browserErrors)].filter((message) => message && !message.includes('favicon.ico'));
+    assert(actionableErrors.length === 0, `Browser console errors detected: ${actionableErrors.join(' | ')}`);
+    for (const [category, values] of Object.entries(runtimeErrors)) {
+      assert(values.length === 0, `${category} errors: ${JSON.stringify(values)}`);
+    }
+
+    const result = { viewport: { width: viewportWidth, height: viewportHeight }, requestResult, quotationResult, orderResult, receiptResult, menuOrder, indexRoutes, browserErrors: actionableErrors, runtimeErrors };
+    await writeFile(path.join(artifactDirectory, `ui-result-${viewportWidth}.json`), JSON.stringify(result, null, 2));
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } finally {
+    client.close();
+  }
+  process.exit(0);
+}
+
 try {
   await navigate(`${baseUrl}/login`);
   if (await evaluate(`Boolean(document.querySelector('#login'))`)) {
@@ -457,7 +657,6 @@ try {
   await navigate(`${baseUrl}/admin/sales/sales-orders/create`);
   await fillOrder({
     customer: 'Customer-990002', lineCount: 1, quantity: '1', price: '200', tax: '28', total: '228',
-    reference: 'E2E-CREDIT-HOLD',
   });
   await submitForm('form.js-sales-cycle-form', 'Create credit-hold test order');
   const creditOrderUrl = await currentUrl();
@@ -465,7 +664,7 @@ try {
   const editUrl = await evaluate(`document.querySelector('a[href*="/edit"]')?.href`);
   assert(editUrl, 'Draft credit order did not expose Edit Draft.');
   await navigate(editUrl);
-  await setField('#customer_reference', 'E2E-CREDIT-HOLD-EDITED');
+  await setField('#notes', 'E2E credit-hold order edited');
   await submitForm('form.js-sales-cycle-form', 'Edit and save draft credit order');
   await submitAction('/submit', 'Submit credit order');
   await submitAction('/approve', 'Evaluate blocked credit order');
@@ -483,8 +682,8 @@ try {
     reference: 'E2E-100-CARTONS-PLUS-SERVICE',
     total: '12540',
     lines: [
-      { product: 'Product-E2E-SPOON', unit: 'Unit-E2E-CARTON', description: 'TEST Plastic Spoon', quantity: '100', price: '100', taxRate: '14', packaging: '1000 pieces / export carton' },
-      { product: 'Product-E2E-SERVICE', unit: 'Unit-E2E-PIECE', description: 'TEST Packaging Design Service', quantity: '1', price: '1000', taxRate: '14', packaging: 'Digital service deliverable' },
+      { product: 'Product-E2E-SPOON', unit: 'Unit-E2E-CARTON', description: 'TEST Plastic Spoon', quantity: '100', price: '100', taxRate: '14' },
+      { product: 'Product-E2E-SERVICE', unit: 'Unit-E2E-PIECE', description: 'TEST Packaging Design Service', quantity: '1', price: '1000', taxRate: '14' },
     ],
   });
   await submitForm('form.js-quotation-form', 'Create canonical main quotation');
@@ -493,7 +692,6 @@ try {
   await click('#quotation-lines-tab', 'Open main quotation lines');
   await assertBodyContains('TEST Plastic Spoon', 'Reloaded main quotation');
   await assertBodyContains('TEST Packaging Design Service', 'Reloaded main quotation');
-  await assertBodyContains('1000 pieces / export carton', 'Reloaded main quotation');
   await clickAndWaitForNavigation('.js-quotation-status-action[data-url*="mark-sent"]', 'Mark main quotation sent');
   await clickAndWaitForNavigation('.js-quotation-status-action[data-url*="accept"]', 'Accept main quotation');
   await clickAndWaitForNavigation('.js-quotation-convert-action', 'Convert main quotation to sales order');
@@ -503,7 +701,6 @@ try {
   await assertBodyContains('TEST Plastic Spoon', 'Reloaded main order');
   await assertBodyContains('TEST Packaging Design Service', 'Reloaded main order');
   await assertBodyContains(quotationDoc, 'Main order source quotation');
-  await assertBodyContains('1000 pieces / export carton', 'Reloaded main order');
   await submitAction('/submit', 'Submit main order');
   await submitAction('/approve', 'Approve main order');
   await assertBodyContains('Approved', 'Approved main order');
@@ -527,7 +724,6 @@ try {
   const productionUrl = `${baseUrl}/admin/production/work-orders/${productionDoc}`;
   await navigate(productionUrl);
   await assertBodyContains(orderDoc, 'Manufacturing work order source Sales Order');
-  await assertBodyContains('1000 pieces / export carton', 'Manufacturing work order');
   assert(!(await bodyText()).includes('Unit price'), 'Manufacturing work order leaked selling prices.');
   await submitProductionAction('/release', 'Release 70-carton production requirement and snapshot BOM');
   await navigate(`${baseUrl}/admin/production/runs?production_order=${encodeURIComponent(productionDoc)}`);
@@ -703,7 +899,6 @@ try {
     quantity: '1',
     price: '100',
     taxRate: '14',
-    packaging: `Stress deliverable ${String(index + 1).padStart(2, '0')}`,
   }));
   await navigate(`${baseUrl}/admin/sales/quotations/create`);
   await fillQuotation({ customer: 'Customer-990001', lines: stressLines, total: '2850', reference: 'E2E-25-LINE-STRESS' });

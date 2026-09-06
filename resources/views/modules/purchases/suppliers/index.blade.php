@@ -78,7 +78,7 @@
                     @endcan
                     @can('suppliers.delete')
                         <div class="d-none align-items-center gap-2" id="bulk_actions_bar">
-                            <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
+                            <span class="text-primary fw-semibold fs-10" id="bulk_selected_count">0</span>
                             <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('business_partners.bulk_action') }}">
                                 <option value="delete">{{ __('common.actions.delete') }}</option>
                             </select>

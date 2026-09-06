@@ -23,6 +23,8 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:sales_requests.view')->name('index');
             Route::get('/create', 'create')->middleware('can:sales_requests.create')->name('create');
             Route::post('/', 'store')->middleware('can:sales_requests.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
+            Route::patch('/{document}/restore', 'restore')->middleware('can:sales_requests.restore')->name('restore');
+            Route::delete('/{salesRequest}', 'destroy')->middleware('can:sales_requests.delete')->name('destroy');
             Route::get('/{salesRequest}/edit', 'edit')->middleware('can:sales_requests.edit')->name('edit');
             Route::put('/{salesRequest}', 'update')->middleware('can:sales_requests.edit')->name('update');
             Route::get('/{salesRequest}/print', 'print')->middleware('can:sales_requests.print')->name('print');
@@ -35,6 +37,8 @@ Route::middleware('auth')
             Route::get('/sales-orders', 'orders')->middleware('can:sales_orders.view')->name('sales-orders.index');
             Route::get('/sales-orders/create', 'createOrder')->middleware('can:sales_orders.create')->name('sales-orders.create');
             Route::post('/sales-orders', 'storeOrder')->middleware('can:sales_orders.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.store');
+            Route::patch('/sales-orders/{document}/restore', 'restoreOrder')->middleware('can:sales_orders.restore')->name('sales-orders.restore');
+            Route::delete('/sales-orders/{salesOrder}', 'destroyOrder')->middleware('can:sales_orders.delete')->name('sales-orders.destroy');
             Route::get('/sales-orders/{salesOrder}/edit', 'editOrder')->middleware('can:sales_orders.edit')->name('sales-orders.edit');
             Route::put('/sales-orders/{salesOrder}', 'updateOrder')->middleware('can:sales_orders.edit')->name('sales-orders.update');
             Route::get('/sales-orders/{salesOrder}', 'showOrder')->middleware('can:sales_orders.view')->name('sales-orders.show');
@@ -45,13 +49,13 @@ Route::middleware('auth')
             Route::post('/sales-orders/{salesOrder}/credit-override', 'overrideOrder')->middleware('can:sales_orders.credit_override')->name('sales-orders.credit-override');
             Route::post('/sales-orders/{salesOrder}/reopen', 'reopenOrder')->middleware('can:sales_orders.reopen')->name('sales-orders.reopen');
             Route::post('/sales-orders/{salesOrder}/cancel', 'cancelOrder')->middleware('can:sales_orders.cancel')->name('sales-orders.cancel');
-            Route::post('/sales-orders/{salesOrder}/deliveries', 'deliverOrder')->middleware('can:sales_orders.deliver')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.deliveries.store');
             Route::post('/sales-orders/{salesOrder}/reservations', 'reserveOrder')->middleware('can:sales_orders.reserve')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.reservations.store');
             Route::post('/sales-orders/{salesOrder}/reservations/release', 'releaseReservation')->middleware('can:sales_orders.reserve')->name('sales-orders.reservations.release');
             Route::post('/sales-orders/{salesOrder}/production-requests', 'produceOrder')->middleware('can:sales_orders.production')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.production-requests.store');
             Route::post('/sales-orders/{salesOrder}/invoices', 'invoiceOrder')->middleware('can:sales_orders.invoice')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.invoices.store');
 
             Route::get('/sales-invoices', 'invoices')->middleware('can:customer_invoices.view')->name('sales-invoices.index');
+            Route::get('/sales-invoices/create', 'createInvoice')->middleware(['can:customer_invoices.create', 'can:sales_orders.invoice', 'can:sales_orders.view'])->name('sales-invoices.create');
             Route::get('/sales-invoices/{customerInvoice}', 'showInvoice')->middleware('can:customer_invoices.view')->name('sales-invoices.show');
             Route::get('/sales-invoices/{customerInvoice}/edit', 'editInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.edit');
             Route::put('/sales-invoices/{customerInvoice}', 'updateInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.update');
@@ -62,6 +66,7 @@ Route::middleware('auth')
             Route::post('/sales-invoices/{customerInvoice}/electronic-invoice', 'submitElectronicInvoice')->middleware('can:customer_invoices.electronic_invoice.submit')->name('sales-invoices.electronic-invoice.submit');
             Route::post('/sales-invoices/{customerInvoice}/reopen', 'reopenInvoice')->middleware('can:customer_invoices.reopen')->name('sales-invoices.reopen');
             Route::get('/sales-invoices/{customerInvoice}/payment-schedule/print', 'printPaymentSchedule')->middleware('can:customer_invoices.print')->name('sales-invoices.payment-schedule.print');
+            Route::post('/sales-invoices/{customerInvoice}/deliveries', 'deliverInvoice')->middleware('can:sales_deliveries.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-invoices.deliveries.store');
 
             Route::get('/customer-invoices', 'invoices')->middleware('can:customer_invoices.view')->name('customer-invoices.index');
             Route::get('/customer-invoices/{customerInvoice}', 'showInvoice')->middleware('can:customer_invoices.view')->name('customer-invoices.show');
@@ -76,6 +81,7 @@ Route::middleware('auth')
             Route::get('/customer-credit-refunds/{customerCreditRefund}/print', 'printCustomerCreditRefund')->middleware('can:customer_credits.refund')->name('customer-credit-refunds.print');
 
             Route::get('/sales-returns', 'returns')->middleware('can:sales_returns.view')->name('sales-returns.index');
+            Route::get('/sales-returns/create', 'createReturn')->middleware('can:sales_returns.create')->name('sales-returns.create');
             Route::post('/sales-invoices/{customerInvoice}/returns', 'storeReturn')->middleware('can:sales_returns.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-returns.store');
             Route::get('/sales-returns/{salesReturn}', 'showReturn')->middleware('can:sales_returns.view')->name('sales-returns.show');
             Route::get('/sales-returns/{salesReturn}/print', 'printReturn')->middleware('can:sales_returns.print')->name('sales-returns.print');
@@ -86,8 +92,8 @@ Route::middleware('auth')
             Route::post('/sales-returns/{salesReturn}/cancel', 'cancelReturn')->middleware('can:sales_returns.cancel')->name('sales-returns.cancel');
             Route::post('/sales-returns/{salesReturn}/close', 'closeReturn')->middleware('can:sales_returns.close')->name('sales-returns.close');
 
-            Route::post('/delivery-notes/{inventoryDocument}/returns', 'storeDeliveryReturn')->middleware('can:sales_returns.create')->middleware(IdempotentDocumentSubmission::class)->name('delivery-notes.returns.store');
             Route::get('/delivery-notes', 'deliveries')->middleware('can:sales_deliveries.view')->name('delivery-notes.index');
+            Route::get('/delivery-notes/create', 'createDelivery')->middleware(['can:sales_deliveries.create', 'can:customer_invoices.view'])->name('delivery-notes.create');
             Route::get('/delivery-notes/{inventoryDocument}', 'showDelivery')->middleware('can:sales_deliveries.view')->name('delivery-notes.show');
             Route::get('/delivery-notes/{inventoryDocument}/print', 'printDelivery')->middleware('can:sales_deliveries.print')->name('delivery-notes.print');
             Route::get('/sales-deliveries/{inventoryDocument}', 'showDelivery')->middleware('can:sales_deliveries.view')->name('sales-deliveries.show');
@@ -95,8 +101,21 @@ Route::middleware('auth')
             Route::get('/production-requests/{productionOrder}/print', 'printProduction')->middleware('can:sales_orders.production')->name('production-requests.print');
         });
 
-        Route::get('/select2/cashboxes', fn (Request $request, FinanceSelect2Service $select2) => response()->json($select2->cashboxes($request)))->middleware('permission:customer_receipts.create|customer_credits.refund')->name('select2.cashboxes');
-        Route::get('/select2/bank-accounts', fn (Request $request, FinanceSelect2Service $select2) => response()->json($select2->bankAccounts($request)))->middleware('permission:customer_receipts.create|customer_credits.refund')->name('select2.bank-accounts');
+        Route::get('/select2/invoiceable-orders', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->invoiceableOrders($request)))->middleware(['can:customer_invoices.create', 'can:sales_orders.invoice', 'can:sales_orders.view'])->name('select2.invoiceable-orders');
+        Route::get('/select2/convertible-requests', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->convertibleRequests($request)))->middleware(['can:sales_orders.create', 'can:sales_requests.view'])->name('select2.convertible-requests');
+        Route::get('/select2/deliverable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->deliverableInvoices($request)))->middleware(['can:sales_deliveries.create', 'can:customer_invoices.view'])->name('select2.deliverable-invoices');
+        Route::get('/select2/returnable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->returnableInvoices($request)))->middleware('can:sales_returns.create')->name('select2.returnable-invoices');
+        Route::get('/select2/credit-target-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->creditTargetInvoices($request)))->middleware('can:customer_credits.allocate')->name('select2.credit-target-invoices');
+        Route::get('/select2/cashboxes', function (Request $request, FinanceSelect2Service $select2) {
+            abort_unless($request->user()?->can('customer_receipts.create') || $request->user()?->can('customer_credits.refund'), 403);
+
+            return response()->json($select2->cashboxes($request));
+        })->name('select2.cashboxes');
+        Route::get('/select2/bank-accounts', function (Request $request, FinanceSelect2Service $select2) {
+            abort_unless($request->user()?->can('customer_receipts.create') || $request->user()?->can('customer_credits.refund'), 403);
+
+            return response()->json($select2->bankAccounts($request));
+        })->name('select2.bank-accounts');
         Route::get('/select2/customer-groups', function (Request $request, SalesSelect2Service $select2) {
             abort_unless(
                 (bool) $request->user()?->can('customers.view')
@@ -109,7 +128,7 @@ Route::middleware('auth')
         })->name('select2.customer-groups');
         foreach (['employees', 'stores'] as $picker) {
             Route::get('/select2/'.$picker, function (Request $request, SalesSelect2Service $select2) use ($picker) {
-                abort_unless($request->user()?->canAny(['quotations.view', 'quotations.create', 'quotations.edit', 'sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create']), 403);
+                abort_unless($request->user()?->canAny(['quotations.view', 'quotations.create', 'quotations.edit', 'sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'reports.sales.sales_orders.view']), 403);
 
                 return response()->json($select2->{$picker}($request));
             })->name('select2.'.$picker);
@@ -203,7 +222,7 @@ Route::middleware('auth')
     ->group(function (): void {
         Route::get('/sales-orders', 'index')->middleware('can:reports.sales.sales_orders.view')->name('sales-orders.index');
         Route::get('/sales-orders/print', 'print')->middleware('can:reports.sales.sales_orders.print')->name('sales-orders.print');
-        Route::get('/sales-orders/export', 'export')->middleware('can:reports.sales.sales_orders.export')->name('sales-orders.export');
+        Route::get('/sales-orders/export/{format?}', 'export')->whereIn('format', ['xlsx', 'csv'])->middleware('can:reports.sales.sales_orders.export')->name('sales-orders.export');
     });
 
 Route::middleware('auth')

@@ -80,14 +80,17 @@ class NavigationSearchService
      */
     private function recent(User $user, int $limit): array
     {
-        $permittedByUrl = $this->permittedItems($user)->keyBy('url');
+        $permittedItems = $this->permittedItems($user);
+        $permittedByRoute = $permittedItems->keyBy('route_name');
+        $permittedByUrl = $permittedItems->keyBy('url');
 
         return UserNavigationSearch::query()
             ->forUser($user)
             ->latest('last_used_at')
             ->limit($limit * 2)
             ->get()
-            ->map(fn (UserNavigationSearch $recent): ?array => $permittedByUrl->get($recent->url))
+            ->map(fn (UserNavigationSearch $recent): ?array => $permittedByRoute->get($recent->route_name)
+                ?? $permittedByUrl->get($recent->url))
             ->filter()
             ->take($limit)
             ->values()
@@ -231,9 +234,28 @@ class NavigationSearchService
 
     private function isSafeLocalUrl(string $url): bool
     {
-        return $url !== ''
-            && str_starts_with($url, url('/'))
-            && ! str_contains($url, "\n")
-            && ! str_contains($url, "\r");
+        if ($url === '' || preg_match('/[\x00-\x1F\x7F\\\\]/', $url) !== 0) {
+            return false;
+        }
+
+        if (str_starts_with($url, '/')) {
+            return ! str_starts_with($url, '//');
+        }
+
+        $candidate = parse_url($url);
+        $applicationRoot = parse_url(url('/'));
+
+        if (! is_array($candidate)
+            || ! is_array($applicationRoot)
+            || ! is_string($candidate['scheme'] ?? null)
+            || ! is_string($candidate['host'] ?? null)
+            || isset($candidate['user'])
+            || isset($candidate['pass'])) {
+            return false;
+        }
+
+        return strtolower($candidate['scheme']) === strtolower((string) ($applicationRoot['scheme'] ?? ''))
+            && strtolower($candidate['host']) === strtolower((string) ($applicationRoot['host'] ?? ''))
+            && ($candidate['port'] ?? null) === ($applicationRoot['port'] ?? null);
     }
 }

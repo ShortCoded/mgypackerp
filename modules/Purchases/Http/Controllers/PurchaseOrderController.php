@@ -306,7 +306,7 @@ class PurchaseOrderController extends Controller
         if ($mode === 'view') {
             $record?->loadMissing([
                 'requisition', 'requestForQuotation', 'supplierQuotation', 'supplierSelection',
-                'deliverySchedules', 'receipts.inspection', 'purchaseInvoices', 'purchaseReturns', 'supplierPayments',
+                'deliverySchedules', 'receipts.inspection', 'purchaseInvoices', 'purchaseReturns', 'supplierPayments', 'supplierQuotations',
             ]);
         }
 

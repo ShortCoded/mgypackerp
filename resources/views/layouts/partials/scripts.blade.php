@@ -5,7 +5,7 @@
 <script src="{{ $erpAsset->url('vendors/bootstrap/bootstrap.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/anchorjs/anchor.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/is/is.min.js') }}"></script>
-<script src="{{ $erpAsset->url('vendors/fontawesome/all.min.js') }}"></script>
+<script defer src="{{ $erpAsset->url('vendors/fontawesome/all.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/lodash/lodash.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/list.js/list.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/theme.js') }}"></script>
@@ -30,6 +30,7 @@
         $appSession = [
             'statusUrl' => route('session.status', [], false),
             'touchUrl' => route('session.touch', [], false),
+            'identity' => app(\Modules\Core\Services\SessionIdentityService::class)->for(request()),
             'lifetimeSeconds' => max(1, (int) config('session.lifetime', 120)) * 60,
             'warningBeforeSeconds' => 0,
         ];
@@ -83,6 +84,7 @@
             ],
         ];
         $appNotifications = [
+            'coordinationIdentity' => $appSession['identity'],
             'pollUrl' => route('admin.notifications.poll', [], false),
             'readUrl' => route('admin.notifications.read', ['notification' => '__NOTIFICATION__'], false),
             'readAllUrl' => route('admin.notifications.read-all', [], false),
@@ -106,6 +108,12 @@
         $appPushNotifications = [
             'enabled' => $appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled'] && $webPushConfigured,
             'publicKey' => $webPushConfigured ? config('webpush.vapid.public_key') : null,
+            'coordinationIdentity' => hash_hmac(
+                'sha256',
+                'push-notifications:v1|' . (string) auth()->user()->getRouteKey(),
+                (string) config('app.key'),
+            ),
+            'coordinationTtlMs' => 24 * 60 * 60 * 1000,
             'storeUrl' => route('admin.notifications.push-subscriptions.store', [], false),
             'destroyUrl' => route('admin.notifications.push-subscriptions.destroy', [], false),
             'messages' => [

@@ -5,8 +5,10 @@ namespace Modules\FixedAssets\Models;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\ArchiveFileUsage;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -174,6 +176,11 @@ class FixedAssetDisposal extends Model
     public function gainLossReversalJournalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class, 'gain_loss_reversal_journal_entry_id')->withTrashed();
+    }
+
+    public function archiveFileUsages(): MorphMany
+    {
+        return $this->morphMany(ArchiveFileUsage::class, 'usable');
     }
 
     public function approvedBy(): BelongsTo

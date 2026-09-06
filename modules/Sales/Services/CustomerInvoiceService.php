@@ -48,12 +48,9 @@ class CustomerInvoiceService
                 $quantity = (string) $input['quantity'];
                 $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
                 $quantitiesByOrderLine[$orderLine->getKey()] = bcadd($quantitiesByOrderLine[$orderLine->getKey()] ?? '0', $quantity, 8);
-                $this->amounts->assertNotGreaterThan($quantitiesByOrderLine[$orderLine->getKey()], $orderLine->remainingInvoiceQuantity(), __('Invoice quantity exceeds the delivered or ordered quantity available.'));
+                $this->amounts->assertNotGreaterThan($quantitiesByOrderLine[$orderLine->getKey()], $orderLine->remainingInvoiceQuantity(), __('Invoice quantity exceeds the remaining approved order quantity.'));
                 $deliveryLine = null;
-                if (! $orderLine->isService()) {
-                    if (empty($input['delivery_line_id'])) {
-                        throw new DomainException(__('Physical invoice lines require an explicit delivery line.'));
-                    }
+                if (! $orderLine->isService() && ! empty($input['delivery_line_id'])) {
                     $deliveryLine = InventoryDocumentLine::query()->with('document')->lockForUpdate()->where('source_line_type', SalesOrderLine::class)->where('source_line_id', $orderLine->getKey())->findOrFail($input['delivery_line_id']);
                     if ($deliveryLine->document->document_type !== InventoryDocument::TypeSalesDelivery || $deliveryLine->document->status !== InventoryDocument::StatusPosted || $deliveryLine->document->source_document_id !== $salesOrder->getKey()) {
                         throw new DomainException(__('The selected delivery line does not belong to a posted delivery for this order.'));
@@ -281,12 +278,12 @@ class CustomerInvoiceService
     public function reopen(CustomerInvoice $invoice, string $reason): CustomerInvoice
     {
         return DB::transaction(function () use ($invoice, $reason): CustomerInvoice {
-            $locked = CustomerInvoice::query()->with(['returns', 'creditNotes'])->lockForUpdate()->findOrFail($invoice->getKey());
+            $locked = CustomerInvoice::query()->with(['returns', 'creditNotes', 'deliveries'])->lockForUpdate()->findOrFail($invoice->getKey());
             if ($locked->posting_status !== 'posted' || $this->amounts->compare($locked->paid_amount, '0') > 0 || $this->amounts->compare($locked->credited_amount, '0') > 0) {
                 throw new DomainException(__('Only an unsettled posted invoice may be reopened.'));
             }
-            if ($locked->returns->where('status', '<>', 'cancelled')->isNotEmpty() || $locked->creditNotes->isNotEmpty() || $locked->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists()) {
-                throw new DomainException(__('An invoice with a return or credit note cannot be reopened.'));
+            if ($locked->deliveries->isNotEmpty() || $locked->returns->where('status', '<>', 'cancelled')->isNotEmpty() || $locked->creditNotes->isNotEmpty() || $locked->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists()) {
+                throw new DomainException(__('An invoice with a delivery, return, receipt, or credit note cannot be reopened.'));
             }
             if ($locked->electronic_invoice_uuid !== null || ! in_array($locked->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)) {
                 throw new DomainException(__('A submitted electronic invoice must be corrected through the tax-authority amendment workflow.'));

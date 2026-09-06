@@ -194,13 +194,16 @@ class OperatingScopeAccessService
             return null;
         }
 
-        return DB::table('role_company_access')
-            ->whereIn('role_id', $roles->pluck('id')->all())
-            ->pluck('company_id')
-            ->unique()
-            ->map(fn (mixed $id): int => (int) $id)
-            ->values()
-            ->all();
+        return $this->memo->remember(
+            $this->restrictedIdsMemoKey('companies', $roles),
+            fn (): array => DB::table('role_company_access')
+                ->whereIn('role_id', $roles->pluck('id')->all())
+                ->pluck('company_id')
+                ->unique()
+                ->map(fn (mixed $id): int => (int) $id)
+                ->values()
+                ->all(),
+        );
     }
 
     /**
@@ -213,13 +216,16 @@ class OperatingScopeAccessService
             return null;
         }
 
-        return DB::table('role_branch_access')
-            ->whereIn('role_id', $roles->pluck('id')->all())
-            ->pluck('branch_id')
-            ->unique()
-            ->map(fn (mixed $id): int => (int) $id)
-            ->values()
-            ->all();
+        return $this->memo->remember(
+            $this->restrictedIdsMemoKey('branches', $roles),
+            fn (): array => DB::table('role_branch_access')
+                ->whereIn('role_id', $roles->pluck('id')->all())
+                ->pluck('branch_id')
+                ->unique()
+                ->map(fn (mixed $id): int => (int) $id)
+                ->values()
+                ->all(),
+        );
     }
 
     /**
@@ -232,13 +238,30 @@ class OperatingScopeAccessService
             return null;
         }
 
-        return DB::table('role_financial_period_access')
-            ->whereIn('role_id', $roles->pluck('id')->all())
-            ->pluck('financial_period_id')
-            ->unique()
-            ->map(fn (mixed $id): int => (int) $id)
-            ->values()
-            ->all();
+        return $this->memo->remember(
+            $this->restrictedIdsMemoKey('financial_periods', $roles),
+            fn (): array => DB::table('role_financial_period_access')
+                ->whereIn('role_id', $roles->pluck('id')->all())
+                ->pluck('financial_period_id')
+                ->unique()
+                ->map(fn (mixed $id): int => (int) $id)
+                ->values()
+                ->all(),
+        );
+    }
+
+    /**
+     * @param  Collection<int, Role>  $roles
+     */
+    private function restrictedIdsMemoKey(string $dimension, Collection $roles): string
+    {
+        $roleIds = $roles
+            ->pluck('id')
+            ->map(fn (mixed $roleId): int => (int) $roleId)
+            ->sort()
+            ->implode(',');
+
+        return "operating_scope_access.restricted_ids.{$dimension}.{$roleIds}";
     }
 
     private function roleHasUnrestrictedCompanyAccess(Role $role): bool

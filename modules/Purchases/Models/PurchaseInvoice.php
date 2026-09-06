@@ -361,6 +361,11 @@ class PurchaseInvoice extends Model
         return $this->hasMany(PurchaseInvoiceLine::class)->orderBy('line_number');
     }
 
+    public function supplyOrders(): HasMany
+    {
+        return $this->hasMany(SupplyOrder::class);
+    }
+
     public function paymentSchedules(): HasMany
     {
         return $this->hasMany(PurchaseInvoicePaymentSchedule::class)->orderBy('line_number');

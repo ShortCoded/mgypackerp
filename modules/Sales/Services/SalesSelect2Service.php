@@ -12,11 +12,19 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\HR\Models\HrEmployee;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Models\SalesReturn;
 
 class SalesSelect2Service
 {
@@ -24,10 +32,140 @@ class SalesSelect2Service
     {
         $context = $this->operatingContext->snapshot($request);
         $query = HrEmployee::query()->where('company_id', $context['company_id'])->where('status', 'active')
-            ->where(fn ($query) => $query->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))->orderBy('name')->orderBy('id');
-        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num', 'name', 'employee_code']]);
+            ->where(fn ($query) => $query->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))->orderBy('full_name')->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num', 'full_name', 'name', 'employee_code']]);
 
-        return $this->select2->paginated($query, $request, fn (HrEmployee $employee): array => ['id' => $employee->doc_num, 'text' => $employee->doc_num.' / '.$employee->name]);
+        return $this->select2->paginated($query, $request, fn (HrEmployee $employee): array => ['id' => $employee->doc_num, 'text' => $employee->doc_num.' / '.($employee->full_name ?: $employee->name)]);
+    }
+
+    public function invoiceableOrders(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = SalesOrder::query()->with('customer')
+            ->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->whereIn('status', ['approved', 'partially_fulfilled', 'fulfilled'])
+            ->whereHas('lines', fn ($lines) => $lines->whereColumn('invoiced_quantity', '<', 'quantity'))
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn ($order): array => ['id' => $order->doc_num, 'text' => $order->doc_num.' / '.$order->customer?->name]);
+    }
+
+    public function convertibleRequests(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = SalesRequest::query()->with('customer')
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereIn('status', ['approved', 'partially_converted'])
+            ->whereNotNull('customer_id')
+            ->whereNotNull('currency_id')
+            ->whereHas('lines', fn (Builder $lines) => $lines->whereColumn('converted_quantity', '<', 'quantity'))
+            ->orderByDesc('request_date')
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (SalesRequest $salesRequest): array => [
+            'id' => $salesRequest->doc_num,
+            'text' => trim(implode(' / ', array_filter([$salesRequest->doc_num, $salesRequest->customer?->name, $salesRequest->request_date?->toDateString()]))),
+        ]);
+    }
+
+    public function returnableInvoices(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = CustomerInvoice::query()->with('customer')
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('document_type', CustomerInvoice::TypeInvoice)
+            ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->whereHas('lines', fn (Builder $lines) => $lines->where(function (Builder $eligible): void {
+                $returnsSql = '(select coalesce(sum(sales_return_lines.quantity), 0) from sales_return_lines inner join sales_returns on sales_returns.id = sales_return_lines.sales_return_id where sales_return_lines.customer_invoice_line_id = customer_invoice_lines.id and sales_returns.status <> ? and sales_returns.deleted_at is null)';
+                $eligible->where(fn (Builder $service) => $service
+                    ->where('customer_invoice_lines.is_service', true)
+                    ->whereRaw('customer_invoice_lines.quantity > '.$returnsSql, [SalesReturn::StatusCancelled]))
+                    ->orWhere(fn (Builder $physical) => $physical
+                        ->where('customer_invoice_lines.is_service', false)
+                        ->whereRaw('(select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = ? and inventory_document_lines.source_line_id = customer_invoice_lines.sales_order_line_id and inventory_documents.status = ? and inventory_documents.deleted_at is null) > '.$returnsSql, [SalesOrderLine::class, InventoryDocument::StatusPosted, SalesReturn::StatusCancelled]));
+            }))
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (CustomerInvoice $invoice): array => [
+            'id' => $invoice->doc_num,
+            'text' => trim(implode(' / ', array_filter([$invoice->doc_num, $invoice->customer?->name, $invoice->invoice_date?->toDateString()]))),
+        ]);
+    }
+
+    public function creditTargetInvoices(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $customerDocNum = $request->string('customer_doc_num')->trim()->toString();
+        $query = CustomerInvoice::query()
+            ->with('customer')
+            ->where('company_id', $context['company_id'])
+            ->where('document_type', CustomerInvoice::TypeInvoice)
+            ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->where('remaining_amount', '>', 0)
+            ->whereHas('customer', fn (Builder $customer) => $customer->where('doc_num', $customerDocNum))
+            ->orderBy('invoice_date')
+            ->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (CustomerInvoice $invoice): array => [
+            'id' => $invoice->doc_num,
+            'text' => trim(implode(' / ', array_filter([
+                $invoice->doc_num,
+                app(DateFormatService::class)->formatDate($invoice->invoice_date, ''),
+                app(NumericFormatService::class)->format($invoice->remaining_amount),
+            ]))),
+        ]);
+    }
+
+    public function deliverableInvoices(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = CustomerInvoice::query()->with('customer')
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('document_type', CustomerInvoice::TypeInvoice)
+            ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->whereHas('lines', fn (Builder $lines) => $lines
+                ->where('is_service', false)
+                ->whereRaw('customer_invoice_lines.quantity > (select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = ? and inventory_document_lines.source_line_id = customer_invoice_lines.sales_order_line_id and inventory_documents.status = ? and inventory_documents.deleted_at is null)', [SalesOrderLine::class, InventoryDocument::StatusPosted]))
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (CustomerInvoice $invoice): array => [
+            'id' => $invoice->doc_num,
+            'text' => trim(implode(' / ', array_filter([$invoice->doc_num, $invoice->customer?->name, $invoice->invoice_date?->toDateString()]))),
+        ]);
+    }
+
+    public function returnableDeliveries(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = InventoryDocument::query()->with('salesOrder.customer')
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('document_type', InventoryDocument::TypeSalesDelivery)
+            ->where('status', InventoryDocument::StatusPosted)
+            ->where('source_document_type', SalesOrder::class)
+            ->whereHas('lines', fn ($lines) => $lines->whereRaw(
+                'inventory_document_lines.transaction_quantity > (select coalesce(sum(customer_invoice_lines.quantity), 0) from customer_invoice_lines inner join customer_invoices on customer_invoices.id = customer_invoice_lines.customer_invoice_id where customer_invoice_lines.delivery_line_id = inventory_document_lines.id and customer_invoices.document_type = ?) + (select coalesce(sum(sales_return_lines.quantity), 0) from sales_return_lines inner join sales_returns on sales_returns.id = sales_return_lines.sales_return_id where sales_return_lines.delivery_line_id = inventory_document_lines.id and sales_return_lines.customer_invoice_line_id is null and sales_returns.status <> ? and sales_returns.deleted_at is null)',
+                [CustomerInvoice::TypeInvoice, SalesReturn::StatusCancelled],
+            ))
+            ->orderByDesc('document_date')
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (InventoryDocument $delivery): array => [
+            'id' => $delivery->doc_num,
+            'text' => trim(implode(' / ', array_filter([$delivery->doc_num, $delivery->salesOrder?->customer?->name, $delivery->document_date?->toDateString()]))),
+        ]);
     }
 
     public function stores(Request $request): array
@@ -39,7 +177,7 @@ class SalesSelect2Service
         return $this->select2->paginated($query, $request, fn (BranchStore $store): array => ['id' => $store->public_uuid, 'text' => $store->name]);
     }
 
-    public function employeeId(int $companyId, ?int $branchId, ?string $docNum, ?int $preservedId = null): ?int
+    public function employeeId(int $companyId, ?int $branchId, ?string $docNum, ?int $preservedId = null, string $attribute = 'sales_employee_doc_num'): ?int
     {
         if (blank($docNum)) {
             return null;
@@ -47,25 +185,35 @@ class SalesSelect2Service
         $employee = HrEmployee::withTrashed()->where('company_id', $companyId)->where('doc_num', $docNum)
             ->where(fn ($query) => $query->whereNull('branch_id')->orWhere('branch_id', $branchId))->first();
         if (! $employee || (($employee->status !== 'active' || $employee->trashed()) && $employee->id !== $preservedId)) {
-            throw ValidationException::withMessages(['sales_employee_doc_num' => __('The selected employee is not available in this company and branch.')]);
+            throw ValidationException::withMessages([$attribute => __('The selected employee is not available in this company and branch.')]);
         }
 
         return $employee->id;
     }
 
     /** Only selected options are hydrated; full datasets stay behind paginated pickers. @return array<string, mixed> */
-    public function formOptions(Request $request, ?Model $record = null): array
+    public function formOptions(Request $request, ?Model $record = null, ?SalesRequest $sourceRequest = null): array
     {
         $context = $this->operatingContext->snapshot($request);
         $selectedProducts = collect($request->old('lines', []))->pluck('product_doc_num')
-            ->merge($record?->lines?->map(fn ($line) => $line->product?->doc_num) ?? [])->filter()->unique();
+            ->merge($record?->lines?->map(fn ($line) => $line->product?->doc_num) ?? [])
+            ->merge($sourceRequest?->lines?->map(fn ($line) => $line->product?->doc_num) ?? [])->filter()->unique();
+        $selectedCurrencyDocNum = $request->old('currency_doc_num', $record?->currency?->doc_num ?? $sourceRequest?->currency?->doc_num);
+        $selectedCustomerDocNum = $request->old('customer_doc_num', $record?->customer?->doc_num ?? $sourceRequest?->customer?->doc_num);
+        $selectedEmployeeDocNum = $request->old('sales_employee_doc_num', $record?->salesEmployee?->doc_num ?? $sourceRequest?->salesEmployee?->doc_num);
 
         return [
             'products' => Product::query()->with('unit', 'equivalentUnit', 'color')->forCompany($context['company_id'])->whereIn('doc_num', $selectedProducts)->get(),
-            'customers' => Customer::query()->forCompany($context['company_id'])->where('doc_num', $request->old('customer_doc_num', $record?->customer?->doc_num))->get(),
+            'customers' => Customer::query()->forCompany($context['company_id'])->where('doc_num', $selectedCustomerDocNum)->get(),
             'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $request->old('branch_store_uuid', $record?->branchStore?->public_uuid))->get(),
-            'currencies' => Currency::query()->forCompany($context['company_id'])->active()->orderByDesc('is_main')->get(),
-            'salesEmployees' => HrEmployee::withTrashed()->where('company_id', $context['company_id'])->where('doc_num', $request->old('sales_employee_doc_num', $record?->salesEmployee?->doc_num))->get(),
+            'currencies' => Currency::query()->forCompany($context['company_id'])->active()
+                ->where(function (Builder $query) use ($selectedCurrencyDocNum): void {
+                    $query->where('is_main', true)
+                        ->when($selectedCurrencyDocNum, fn (Builder $selected) => $selected->orWhere('doc_num', $selectedCurrencyDocNum));
+                })
+                ->orderByDesc('is_main')->get(),
+            'salesEmployees' => HrEmployee::withTrashed()->where('company_id', $context['company_id'])->where('doc_num', $selectedEmployeeDocNum)->get(),
+            'sourceRequest' => $sourceRequest,
         ];
     }
 

@@ -48,6 +48,7 @@ class StoreSalesOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'source_request_doc_num' => ['nullable', 'string'],
             'customer_doc_num' => ['required', 'string'], 'branch_store_uuid' => ['nullable', 'uuid'],
             'currency_doc_num' => ['required', 'string'], 'order_date' => ['required', 'date'],
             'expected_delivery_date' => ['required', 'date', 'after_or_equal:order_date'],
@@ -56,6 +57,7 @@ class StoreSalesOrderRequest extends FormRequest
             'notes' => ['nullable', 'string'],
             'internal_notes' => ['nullable', 'string'], 'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['nullable', 'string'],
+            'lines.*.source_request_line_public_id' => ['nullable', 'uuid', 'distinct'],
             'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'gt:0'], 'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
             'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'], 'lines.*.requested_date' => ['nullable', 'date'],

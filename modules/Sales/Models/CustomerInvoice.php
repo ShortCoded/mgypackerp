@@ -68,6 +68,23 @@ class CustomerInvoice extends Model
         return in_array($this->status, [self::StatusDraft, self::StatusReopened], true) && ! $this->is_closed;
     }
 
+    public function canReopenSafely(): bool
+    {
+        if ($this->document_type !== self::TypeInvoice
+            || $this->posting_status !== 'posted'
+            || bccomp((string) $this->paid_amount, '0', 4) > 0
+            || bccomp((string) $this->credited_amount, '0', 4) > 0
+            || filled($this->electronic_invoice_uuid)
+            || ! in_array($this->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)) {
+            return false;
+        }
+
+        return ! $this->deliveries()->exists()
+            && ! $this->returns()->where('status', '<>', 'cancelled')->exists()
+            && ! $this->creditNotes()->exists()
+            && ! $this->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists();
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);

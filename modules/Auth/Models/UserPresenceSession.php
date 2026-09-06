@@ -5,11 +5,9 @@ namespace Modules\Auth\Models;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
-use Modules\Core\Services\RequestMemo;
 
 class UserPresenceSession extends Model
 {
@@ -45,12 +43,7 @@ class UserPresenceSession extends Model
     protected static function booted(): void
     {
         static::creating(function (UserPresenceSession $presenceSession): void {
-            $columns = app(RequestMemo::class)->remember(
-                'schema.columns.'.$presenceSession->getTable(),
-                fn (): array => Schema::getColumnListing($presenceSession->getTable()),
-            );
-
-            if (in_array('public_id', $columns, true) && (! is_string($presenceSession->public_id) || trim($presenceSession->public_id) === '')) {
+            if (! is_string($presenceSession->public_id) || trim($presenceSession->public_id) === '') {
                 $presenceSession->public_id = (string) Str::uuid();
             }
         });

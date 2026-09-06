@@ -555,6 +555,11 @@ class PurchaseOrderService
                     $changed = true;
                     $existingLine->forceFill(['updated_by' => auth()->id()])->save();
                 }
+                $changed = app(ProcurementAttachmentService::class)->attachLine(
+                    $existingLine,
+                    $line['attachment_file_doc_nums'] ?? [],
+                    $context['company_id'],
+                ) || $changed;
                 $kept[] = $existingLine->getKey();
 
                 continue;
@@ -562,6 +567,11 @@ class PurchaseOrderService
 
             $changed = true;
             $created = $record->lines()->create([...$values, 'created_by' => auth()->id()]);
+            app(ProcurementAttachmentService::class)->attachLine(
+                $created,
+                $line['attachment_file_doc_nums'] ?? [],
+                $context['company_id'],
+            );
             $kept[] = $created->getKey();
         }
 

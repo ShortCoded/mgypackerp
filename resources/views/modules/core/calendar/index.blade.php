@@ -84,7 +84,7 @@
 @endphp
 
 @push('styles')
-    <link href="{{ asset($calendarCssPath) }}?v={{ filemtime(public_path($calendarCssPath)) }}" rel="stylesheet">
+    <link href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url($calendarCssPath) }}" rel="stylesheet">
 @endpush
 
 @section('content')
@@ -147,5 +147,5 @@
     <script src="{{ asset('vendors/fullcalendar/index.global.min.js') }}"></script>
     <script src="{{ asset('vendors/dayjs/dayjs.min.js') }}"></script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset($calendarJsPath) }}?v={{ filemtime(public_path($calendarJsPath)) }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url($calendarJsPath) }}"></script>
 @endpush

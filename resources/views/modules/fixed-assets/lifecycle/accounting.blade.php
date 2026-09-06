@@ -41,5 +41,5 @@
 
 @push('scripts')
     <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

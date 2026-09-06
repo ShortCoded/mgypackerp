@@ -1,6 +1,3 @@
-<div>
-    <!-- Well begun is half done. - Aristotle -->
-</div>
 @extends('reports.layouts.pdf')
 
 @section('report')
@@ -9,10 +6,52 @@
 
     <div class="report-filter-summary">
         <strong>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</strong>
-        <div>{{ $selected['account'] }} / {{ data_get($result, 'currency.code') }}</div>
+        <div>@unless($type === 'customer_statement'){{ $selected['account'] }} / @endunless{{ data_get($result, 'currency.code') }}</div>
         <div>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }} — {{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</div>
     </div>
 
+    @if($type === 'customer_statement')
+        <table class="report-table customer-statement-table">
+            <thead>
+                <tr>
+                    @foreach(['date', 'document', 'reference', 'description', 'debit', 'credit', 'balance'] as $column)
+                        <th>{{ __('ledger_reports.columns.'.$column) }}</th>
+                    @endforeach
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }}</td>
+                    <td>{{ __('ledger_reports.summary.opening') }}</td>
+                    <td></td>
+                    <td></td>
+                    <td>{{ $numbers->format($result['opening']['debit']) }}</td>
+                    <td>{{ $numbers->format($result['opening']['credit']) }}</td>
+                    <td>{{ $numbers->format((float) $result['opening']['credit'] !== 0.0 ? $result['opening']['credit'] : $result['opening']['debit']) }} {{ __('ledger_reports.balance.'.((float) $result['opening']['credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
+                </tr>
+                @foreach($result['movements'] as $movement)
+                    <tr>
+                        <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
+                        <td>{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
+                        <td>{{ $movement['reference_no'] ?: '—' }}</td>
+                        <td>{{ $movement['description'] }}</td>
+                        <td>{{ $numbers->format($movement['debit']) }}</td>
+                        <td>{{ $numbers->format($movement['credit']) }}</td>
+                        <td>{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td>{{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</td>
+                    <td colspan="3">{{ __('ledger_reports.summary.period') }}</td>
+                    <td>{{ $numbers->format($result['period']['debit']) }}</td>
+                    <td>{{ $numbers->format($result['period']['credit']) }}</td>
+                    <td>{{ $numbers->format((float) $result['ending']['credit'] !== 0.0 ? $result['ending']['credit'] : $result['ending']['debit']) }} {{ __('ledger_reports.balance.'.((float) $result['ending']['credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
+                </tr>
+            </tfoot>
+        </table>
+    @else
     <table class="report-table ledger-report-table">
         <thead>
             <tr>
@@ -59,15 +98,12 @@
             </tr>
         </tfoot>
     </table>
-
-    @if(!empty($result['subledger_events']))
-        <h2>{{ __('Customer Invoice, Payment and Credit History') }}</h2>
-        <table class="report-table"><thead><tr><th>{{ __('Date') }}</th><th>{{ __('Event') }}</th><th>{{ __('Document') }}</th><th>{{ __('Related Document') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Remaining Credit') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($result['subledger_events'] as $event)<tr><td>{{ $event['date'] }}</td><td>{{ __(__(str($event['event'])->replace('_', ' ')->title()->toString())) }}</td><td>{{ $event['document'] }}</td><td>{{ $event['related_document'] }}</td><td>{{ $numbers->format($event['amount']) }}</td><td>{{ $event['remaining_credit'] === null ? '—' : $numbers->format($event['remaining_credit']) }}</td><td>{{ __(str($event['status'])->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table>
     @endif
 
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .ledger-report-table { table-layout: fixed; }
         .ledger-report-table th, .ledger-report-table td { font-size: 6.7px; line-height: 1.25; overflow-wrap: break-word; }
+        .customer-statement-table th, .customer-statement-table td { font-size: 8px; line-height: 1.35; overflow-wrap: break-word; }
     </style>
 @endsection

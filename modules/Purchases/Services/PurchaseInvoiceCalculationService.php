@@ -3,6 +3,8 @@
 namespace Modules\Purchases\Services;
 
 use Modules\Core\Services\NumericFormatService;
+use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 
 class PurchaseInvoiceCalculationService
 {
@@ -144,5 +146,30 @@ class PurchaseInvoiceCalculationService
         $formatted = $whole.'.'.str_pad((string) $fraction, 4, '0', STR_PAD_LEFT);
 
         return ($negative ? '-' : '').(rtrim(rtrim($formatted, '0'), '.') ?: '0');
+    }
+
+    /** @return array<int, string> */
+    public function netAmountsByLine(PurchaseInvoice $invoice): array
+    {
+        $invoice->loadMissing('lines');
+        $lineBaseTotal = $invoice->lines->sum(fn (PurchaseInvoiceLine $line): float => (float) $line->total_before_tax);
+        $headerDiscount = (float) $invoice->header_discount_amount;
+        $allocatedHeaderDiscount = 0.0;
+        $lastIndex = max(0, $invoice->lines->count() - 1);
+        $amounts = [];
+
+        foreach ($invoice->lines->values() as $index => $line) {
+            $lineBase = (float) $line->total_before_tax;
+            $share = $lineBaseTotal > 0 ? $headerDiscount * ($lineBase / $lineBaseTotal) : 0.0;
+
+            if ($index === $lastIndex) {
+                $share = $headerDiscount - $allocatedHeaderDiscount;
+            }
+
+            $allocatedHeaderDiscount += $share;
+            $amounts[$line->getKey()] = number_format(max(0, $lineBase - $share), 4, '.', '');
+        }
+
+        return $amounts;
     }
 }

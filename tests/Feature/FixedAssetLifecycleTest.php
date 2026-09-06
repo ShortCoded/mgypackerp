@@ -271,7 +271,7 @@ test('depreciation posts sequential balanced source journals with effective tran
     $context = lifecycleFixedAssetContext();
     $asset = lifecycleFixedAsset($context, [
         'asset_name' => 'Depreciation Extrusion Line',
-        'source_type' => 'purchase_invoice_line',
+        'source_type' => 'legacy_import',
         'source_id' => 901,
         'source_doc_num' => 'PINV-LINE-901',
     ]);

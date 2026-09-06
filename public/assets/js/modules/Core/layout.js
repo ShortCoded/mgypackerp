@@ -545,8 +545,25 @@
         document.querySelectorAll('[data-erp-top-navigation]').forEach(initHybridTopNavigation);
     }
 
+    function initResponsiveTabs() {
+        document.addEventListener('shown.bs.tab', function (event) {
+            var tab = event.target.closest ? event.target.closest('.nav-tabs .nav-link') : null;
+
+            if (!tab || window.innerWidth >= 768) {
+                return;
+            }
+
+            tab.scrollIntoView({
+                behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+                block: 'nearest',
+                inline: 'center'
+            });
+        });
+    }
+
     $(function () {
         initLanguageSelect();
         initTopNavigation();
+        initResponsiveTabs();
     });
 })(jQuery);

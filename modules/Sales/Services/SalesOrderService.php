@@ -5,7 +5,6 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -51,16 +50,6 @@ class SalesOrderService
                 throw new DomainException(__('The quotation requires a customer, currency, and at least one sales line.'));
             }
 
-            $physicalLines = $revision->lines->reject(fn ($line): bool => $line->product?->item_classification === Product::ClassificationService);
-            $store = $physicalLines->isEmpty() ? null : BranchStore::query()
-                ->where('branch_id', $context['branch_id'])
-                ->orderBy('position')
-                ->orderBy('name')
-                ->first();
-            if ($physicalLines->isNotEmpty() && ! $store instanceof BranchStore) {
-                throw new DomainException(__('The quotation branch needs a finished-goods store before physical lines can be converted.'));
-            }
-
             $requestedDate = $revision->lines->pluck('requested_date')->filter()->max();
             $expectedDeliveryDate = $requestedDate?->toDateString() ?? $locked->valid_until?->toDateString() ?? now()->toDateString();
             if ($expectedDeliveryDate < now()->toDateString()) {
@@ -102,7 +91,7 @@ class SalesOrderService
                 'customer_id' => $locked->customer_id,
                 'business_employee_id' => $locked->business_employee_id,
                 'currency_id' => $locked->currency_id,
-                'branch_store_id' => $store?->getKey(),
+                'branch_store_id' => null,
                 'order_date' => now()->toDateString(),
                 'expected_delivery_date' => $expectedDeliveryDate,
                 'sales_channel' => 'quotation',
@@ -142,8 +131,8 @@ class SalesOrderService
                 ...collect($data)->except(['lines', 'payment_schedules', 'doc_number', 'doc_num'])->all(),
                 ...$numbers,
                 ...$totals,
-                'agreement_snapshot' => $this->creditControl->snapshotFor($agreement, (int) ($data['company_id'] ?? $locked->company_id), (int) $data['customer_id'], isset($data['currency_id']) ? (int) $data['currency_id'] : null),
-                'credit_limit_snapshot' => $this->creditControl->snapshotFor($agreement, (int) ($data['company_id'] ?? $locked->company_id), (int) $data['customer_id'], isset($data['currency_id']) ? (int) $data['currency_id'] : null)['credit_limit'],
+                'agreement_snapshot' => $this->creditControl->snapshotFor($agreement, (int) $data['company_id'], (int) $data['customer_id'], isset($data['currency_id']) ? (int) $data['currency_id'] : null),
+                'credit_limit_snapshot' => $this->creditControl->snapshotFor($agreement, (int) $data['company_id'], (int) $data['customer_id'], isset($data['currency_id']) ? (int) $data['currency_id'] : null)['credit_limit'],
                 'required_advance_amount' => $requiredAdvance,
                 'status' => SalesOrder::StatusDraft,
                 'credit_status' => 'pending',
@@ -222,6 +211,35 @@ class SalesOrderService
             ]);
 
             return $locked->refresh()->load(['lines.product', 'paymentSchedules']);
+        });
+    }
+
+    public function delete(SalesOrder $order): void
+    {
+        DB::transaction(function () use ($order): void {
+            $record = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+            if ($record->status !== SalesOrder::StatusDraft || $record->quotation_id || $record->sales_request_id
+                || $record->invoices()->withTrashed()->exists() || $record->deliveries()->exists()
+                || $record->productionOrders()->exists() || $record->receipts()->withTrashed()->exists()
+                || InventoryReservation::query()->where('sales_order_id', $record->id)->exists()) {
+                throw new DomainException(__('Only unused drafts can be deleted.'));
+            }
+            $record->delete();
+            $this->audit->record($record, 'sales_order.deleted');
+        });
+    }
+
+    public function restore(SalesOrder $order): SalesOrder
+    {
+        return DB::transaction(function () use ($order): SalesOrder {
+            $record = SalesOrder::onlyTrashed()->lockForUpdate()->findOrFail($order->id);
+            if ($record->status !== SalesOrder::StatusDraft) {
+                throw new DomainException(__('Only unused drafts can be restored.'));
+            }
+            $record->restore();
+            $this->audit->record($record, 'sales_order.restored');
+
+            return $record;
         });
     }
 

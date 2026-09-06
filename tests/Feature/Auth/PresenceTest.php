@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Str;
@@ -672,9 +674,10 @@ test('unlock is blocked when same user already has another fresh active session'
         ->exists())->toBeTrue();
 });
 
-test('session status does not refresh activity or create auth log spam', function () {
+test('session status skips duplicate-session rejection without refreshing activity or creating auth log spam', function () {
     $user = User::factory()->create();
     $lastActivityAt = now()->subMinute()->getTimestamp();
+    $otherPresence = presenceCreateFreshSessionFor($user, 'session-status-other-active-session');
 
     $this->actingAs($user)
         ->withSession([InactiveSessionService::LastActivitySessionKey => $lastActivityAt])
@@ -687,7 +690,8 @@ test('session status does not refresh activity or create auth log spam', functio
 
     expect(session(InactiveSessionService::LastActivitySessionKey))->toBe($lastActivityAt)
         ->and(AuthLog::where('user_id', $user->id)->exists())->toBeFalse()
-        ->and(UserPresenceSession::where('user_id', $user->id)->exists())->toBeFalse();
+        ->and(UserPresenceSession::where('user_id', $user->id)->count())->toBe(1)
+        ->and($otherPresence->fresh()->status)->toBe(UserPresenceService::StatusOnline);
 });
 
 test('protected request succeeds when no other fresh presence session exists', function () {
@@ -701,6 +705,110 @@ test('protected request succeeds when no other fresh presence session exists', f
 
     expect(AuthLog::where('user_id', $user->id)->where('event', 'session_blocked_already_online')->exists())
         ->toBeFalse();
+});
+
+test('presence conflict state aggregates forced logout and other active sessions in one query', function () {
+    config(['presence.duplicate_login_active_threshold_seconds' => 120]);
+
+    $user = User::factory()->create();
+    $otherUser = User::factory()->create();
+    $request = Request::create('/dashboard');
+    $session = app('session')->driver();
+    $session->setId(Str::random(40));
+    $session->start();
+    $session->put('auth_presence_session_fingerprints', ['stored-session-fingerprint']);
+    $session->put(LockScreenService::LockTokenSessionKey, 'current-lock-flow-token');
+    $request->setLaravelSession($session);
+
+    $presence = app(UserPresenceService::class);
+    $currentSessionFingerprint = $presence->sessionFingerprint($request);
+    $currentLockFlowFingerprint = $presence->lockFlowFingerprint($request);
+
+    UserPresenceSession::create([
+        'user_id' => $otherUser->id,
+        'session_fingerprint' => $currentSessionFingerprint,
+        'status' => UserPresenceService::StatusOffline,
+        'last_seen_at' => now(),
+        'last_activity_at' => now(),
+        'logout_at' => now(),
+        'expires_at' => now()->addHour(),
+        'offline_reason' => UserPresenceService::ReasonForcedLogout,
+    ]);
+
+    presenceCreateFreshSessionFor($user, 'included-other-active-session');
+    presenceCreateFreshSessionFor($user, 'stored-session-fingerprint');
+    presenceCreateFreshSessionFor($user, 'same-lock-flow-session')->update([
+        'context' => ['lock_flow_fingerprint' => $currentLockFlowFingerprint],
+    ]);
+    presenceCreateFreshSessionFor($user, 'stale-session', now()->subSeconds(121));
+    presenceCreateFreshSessionFor($user, 'expired-session')->update([
+        'expires_at' => now()->subSecond(),
+    ]);
+    presenceCreateFreshSessionFor($user, 'logged-out-session')->update([
+        'logout_at' => now(),
+    ]);
+    presenceCreateFreshSessionFor($user, 'offline-session')->update([
+        'status' => UserPresenceService::StatusOffline,
+    ]);
+    presenceCreateFreshSessionFor($user, 'missing-last-seen-session')->update([
+        'last_seen_at' => null,
+    ]);
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    $sessionConflictState = $presence->sessionConflictStateForRequest($user, $request);
+    $presenceQueries = collect(DB::getQueryLog())
+        ->filter(fn (array $query): bool => str_contains(strtolower($query['query']), 'user_presence_sessions'))
+        ->values();
+
+    DB::disableQueryLog();
+
+    expect($currentSessionFingerprint)->not->toBeNull()
+        ->and($currentLockFlowFingerprint)->not->toBeNull()
+        ->and($sessionConflictState)->toBe([
+            'forced_logout' => true,
+            'other_active_count' => 1,
+        ])
+        ->and($presenceQueries)->toHaveCount(1)
+        ->and(strtolower($presenceQueries->sole()['query']))
+        ->toContain('forced_logout')
+        ->toContain('other_active_count');
+});
+
+test('session status still applies forced logout while duplicate-session checks are skipped', function () {
+    $user = User::factory()->create();
+
+    $this->mock(UserPresenceService::class, function ($presence) use ($user): void {
+        $presence->shouldReceive('sessionConflictStateForRequest')
+            ->once()
+            ->withArgs(fn (User $candidate, Request $request, bool $includeOtherActiveSessions): bool => $candidate->is($user)
+                && $request->routeIs('session.status')
+                && ! $includeOtherActiveSessions)
+            ->andReturn([
+                'forced_logout' => true,
+                'other_active_count' => 0,
+            ]);
+    });
+
+    $this->actingAs($user)
+        ->withSession(['locale' => 'en'])
+        ->getJson('/session/status')
+        ->assertUnauthorized()
+        ->assertJson([
+            'success' => false,
+            'message' => __('auth_sessions.messages.forced_logout'),
+            'redirect' => route('login', [], false),
+            'redirect_url' => route('login', [], false),
+        ]);
+
+    $this->assertGuest();
+
+    expect(AuthLog::query()
+        ->where('user_id', $user->id)
+        ->where('event', 'session_forced_logout_applied')
+        ->where('failure_reason', UserPresenceService::ReasonForcedLogout)
+        ->exists())->toBeTrue();
 });
 
 test('protected request is blocked when another fresh presence session exists', function (string $status) {

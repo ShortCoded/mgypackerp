@@ -30,7 +30,9 @@ use Modules\FixedAssets\Http\Requests\UpdateFixedAssetRequest;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Services\FixedAssetAccessService;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\FixedAssets\Services\FixedAssetService;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 
 class FixedAssetController extends Controller
 {
@@ -39,6 +41,7 @@ class FixedAssetController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
         private readonly BusinessPartnerAccountService $accounts,
         private readonly FixedAssetImageResolver $assetImages,
+        private readonly FixedAssetPurchaseIntegrationService $purchaseIntegration,
     ) {}
 
     public function index(DocumentNumberSettingsService $settings): View
@@ -54,9 +57,18 @@ class FixedAssetController extends Controller
         return $dataTable->json($request);
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
-        return $this->form('create');
+        $input = $request->validate(['purchase_invoice_line' => ['nullable', 'string']]);
+        try {
+            $purchaseSource = filled($input['purchase_invoice_line'] ?? null)
+                ? $this->purchaseIntegration->sourceLine((string) $input['purchase_invoice_line'], true)
+                : null;
+        } catch (DomainException $exception) {
+            abort(422, $exception->getMessage());
+        }
+
+        return $this->form('create', purchaseSource: $purchaseSource);
     }
 
     public function show(Request $request, FixedAsset $fixedAsset): View
@@ -205,9 +217,17 @@ class FixedAssetController extends Controller
         return response()->json(['success' => true, 'message' => __('fixed_assets.document_number_settings.updated_successfully'), 'data' => $result['new']]);
     }
 
-    private function form(string $mode, ?FixedAsset $record = null, ?string $cloneSourceToken = null): View
+    private function form(string $mode, ?FixedAsset $record = null, ?string $cloneSourceToken = null, ?PurchaseInvoiceLine $purchaseSource = null): View
     {
-        $record?->loadMissing(['account', 'assetGroupAccount', 'creditAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file']);
+        $record?->loadMissing([
+            'account', 'assetGroupAccount', 'creditAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file',
+        ]);
+        if ($record?->source_type === FixedAssetPurchaseIntegrationService::SourceType) {
+            $record->loadMissing([
+                'purchaseInvoiceLine.purchaseInvoice.supplier', 'purchaseInvoiceLine.purchaseOrderLine.purchaseOrder',
+                'purchaseInvoiceLine.receiptLine.receipt',
+            ]);
+        }
 
         return view('modules.fixed-assets.assets.form', [
             'mode' => $mode,
@@ -219,7 +239,8 @@ class FixedAssetController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'cloneSourceToken' => $cloneSourceToken,
             'metadata' => $this->metadata($record),
-            'defaults' => $this->defaults($record),
+            'defaults' => $this->defaults($record, $purchaseSource),
+            'purchaseSource' => $purchaseSource,
         ]);
     }
 
@@ -348,7 +369,7 @@ class FixedAssetController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function defaults(?FixedAsset $record): array
+    private function defaults(?FixedAsset $record, ?PurchaseInvoiceLine $purchaseSource = null): array
     {
         $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
         $context = app(OperatingContextService::class)->snapshot(request());
@@ -363,11 +384,19 @@ class FixedAssetController extends Controller
         $mainCurrency = $companyId ? Currency::query()->forCompany($companyId)->active()->where('is_main', true)->first() : null;
         $settings = app(DateFormatService::class);
 
+        $purchaseDefaults = $purchaseSource ? $this->purchaseIntegration->defaults($purchaseSource) : [];
+        foreach (['asset_date', 'purchase_date', 'acquisition_date', 'operation_date'] as $dateField) {
+            if (filled($purchaseDefaults[$dateField] ?? null)) {
+                $purchaseDefaults[$dateField] = $settings->formatDate($purchaseDefaults[$dateField], '');
+            }
+        }
+
         return [
             'asset_date' => $settings->formatDate($record?->asset_date ?? $date, ''),
             'currency_option' => $record?->currency ? $this->currencyOption($record->currency) : ($mainCurrency ? $this->currencyOption($mainCurrency) : null),
             'main_currency_doc_num' => $mainCurrency?->doc_num,
             'exchange_rate' => $record?->exchange_rate ?? ($mainCurrency ? '1' : null),
+            ...$purchaseDefaults,
         ];
     }
 

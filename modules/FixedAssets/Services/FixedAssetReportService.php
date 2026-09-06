@@ -52,7 +52,7 @@ class FixedAssetReportService
     /** @return list<string> */
     public static function visibleTypes(): array
     {
-        return [self::Register, self::Depreciation, self::Schedule, 'capital_additions', 'disposals', 'gain_loss', self::Movements, 'net_book_value', self::Reconciliation, self::Exceptions];
+        return [self::Register, self::Depreciation, self::Schedule, 'capital_additions', 'transfers', 'custody', 'disposals', 'gain_loss', self::Movements, 'net_book_value', self::FullyDepreciated, self::Reconciliation, self::Exceptions];
     }
 
     /** @return array<string, mixed> */
@@ -63,6 +63,14 @@ class FixedAssetReportService
 
         foreach (['from_date', 'to_date'] as $field) {
             $filters[$field] = $this->dates->normalizeForStorage(trim((string) ($filters[$field] ?? '')));
+        }
+
+        if ($filters['type'] !== self::Movements) {
+            unset($filters['movement_type'], $filters['user']);
+        }
+
+        if ($filters['type'] !== self::Depreciation) {
+            unset($filters['posting_status']);
         }
 
         return array_filter($filters, fn (mixed $value): bool => $value !== null && trim((string) $value) !== '');
@@ -116,6 +124,7 @@ class FixedAssetReportService
             $disposed = $asset->isDisposed();
 
             return [
+                '_asset_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset) : null,
                 'asset' => $asset->doc_num,
                 'name' => $asset->asset_name,
                 'classification' => $asset->assetGroupAccount?->codeNameLabel(),
@@ -153,6 +162,8 @@ class FixedAssetReportService
             ->when($filters['posting_status'] ?? null, fn ($query, $status) => $query->where('status', $status));
         $this->depreciationAssetFilters($query, $filters);
         $rows = $query->orderBy('period_end')->orderBy('fixed_asset_id')->get()->map(fn (FixedAssetDepreciation $row): array => [
+            '_asset_url' => $row->asset && auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $row->asset) : null,
+            '_journal_url' => $row->journalEntry && auth()->user()?->can('journal_entries.view') ? route('admin.accounting.journal-entries.show', $row->journalEntry) : null,
             'asset' => trim($row->asset?->doc_num.' / '.$row->asset?->asset_name),
             'currency' => $row->asset?->currency?->code,
             'classification' => $row->asset?->assetGroupAccount?->codeNameLabel(),
@@ -185,6 +196,7 @@ class FixedAssetReportService
                 ->filter(fn (array $row): bool => ! isset($filters['from_date']) || $row['period_end']->toDateString() >= $filters['from_date'])
                 ->filter(fn (array $row): bool => ! isset($filters['to_date']) || $row['period_start']->toDateString() <= $filters['to_date'])
                 ->map(fn (array $row): array => [
+                    '_asset_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset) : null,
                     'asset' => $asset->doc_num.' / '.$asset->asset_name,
                     'currency' => $asset->currency?->code,
                     'period' => $this->dates->formatDate($row['period_start'], '').' - '.$this->dates->formatDate($row['period_end'], ''),
@@ -228,6 +240,9 @@ class FixedAssetReportService
         $this->dateFilters($query, 'movement_date', $filters);
         $rows = $query->get()->filter(fn ($row): bool => $this->entryMatches(['date' => $row->movement_date, 'period_id' => $row->financial_period_id, 'branch_id' => $row->destination_branch_id, 'cost_center_id' => $row->destination_cost_center_id], $filters)
             || $this->entryMatches(['date' => $row->movement_date, 'period_id' => $row->financial_period_id, 'branch_id' => $row->source_branch_id, 'cost_center_id' => $row->source_cost_center_id], $filters))->map(fn ($row): array => [
+                '_url' => $row->asset && auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $row->asset, false).'#movement-'.$row->doc_num : null,
+                '_asset_url' => $row->asset && auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $row->asset) : null,
+                '_journal_url' => $row->journalEntry && auth()->user()?->can('journal_entries.view') ? route('admin.accounting.journal-entries.show', $row->journalEntry) : null,
                 'date' => $row->movement_date, 'document' => $row->doc_num, 'asset' => $row->asset?->doc_num.' / '.$row->asset?->asset_name,
                 'currency' => $row->asset?->currency?->code, 'amount' => $row->amount,
                 'source' => $type === 'custody' ? $row->sourceCustodian?->full_name : implode(' / ', array_filter([$row->sourceBranch?->name, $row->source_location_address, $row->sourceCostCenter?->name])),
@@ -248,7 +263,7 @@ class FixedAssetReportService
                     if (! $this->entryMatches(['date' => $movement->movement_date, 'period_id' => $movement->financial_period_id, 'branch_id' => $movement->source_branch_id, 'cost_center_id' => $movement->source_cost_center_id], $filters)) {
                         continue;
                     }
-                    $rows->push(['date' => $movement->movement_date, 'asset' => $asset->doc_num, 'document' => $movement->doc_num, 'classification' => $asset->assetGroupAccount?->codeNameLabel(), 'currency' => $asset->currency?->code,
+                    $rows->push(['_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset, false).'#movement-'.$movement->doc_num : null, '_asset_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset) : null, '_journal_url' => $movement->journalEntry && auth()->user()?->can('journal_entries.view') ? route('admin.accounting.journal-entries.show', $movement->journalEntry) : null, 'date' => $movement->movement_date, 'asset' => $asset->doc_num, 'document' => $movement->doc_num, 'classification' => $asset->assetGroupAccount?->codeNameLabel(), 'currency' => $asset->currency?->code,
                         'movement_type' => __('fixed_assets.cycle.'.$movement->movement_type), 'addition_value' => $movement->amount, 'disposal_proceeds' => '0', 'disposal_expenses' => '0', 'net_proceeds' => '0', 'net_book_value' => $this->bookValues->position($asset, $movement->movement_date)['net_book_value'], 'gain' => '0', 'loss' => '0', 'status' => __('fixed_assets.lifecycle.statuses.posted')]);
                 }
             }
@@ -257,7 +272,7 @@ class FixedAssetReportService
                 if (! $this->entryMatches(['date' => $disposal->disposal_date, 'period_id' => $disposal->financial_period_id, 'branch_id' => $disposal->branch_id ?: $costLine?->branch_id, 'cost_center_id' => $disposal->cost_center_id ?? $costLine?->cost_center_id], $filters)) {
                     continue;
                 }
-                $rows->push(['date' => $disposal->disposal_date, 'asset' => $asset->doc_num, 'document' => $disposal->doc_num, 'classification' => $asset->assetGroupAccount?->codeNameLabel(), 'currency' => $asset->currency?->code,
+                $rows->push(['_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset, false).'#disposal-'.$disposal->doc_num : null, '_asset_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset) : null, '_journal_url' => $disposal->journalEntry && auth()->user()?->can('journal_entries.view') ? route('admin.accounting.journal-entries.show', $disposal->journalEntry) : null, 'date' => $disposal->disposal_date, 'asset' => $asset->doc_num, 'document' => $disposal->doc_num, 'classification' => $asset->assetGroupAccount?->codeNameLabel(), 'currency' => $asset->currency?->code,
                     'movement_type' => __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type), 'addition_value' => '0', 'disposal_proceeds' => $disposal->proceeds, 'disposal_expenses' => $disposal->disposal_expenses, 'net_proceeds' => $disposal->net_proceeds ?? $disposal->proceeds, 'net_book_value' => $disposal->net_book_value, 'gain' => $disposal->gain_amount, 'loss' => $disposal->loss_amount, 'status' => __('fixed_assets.lifecycle.statuses.posted')]);
             }
         }
@@ -269,7 +284,7 @@ class FixedAssetReportService
     {
         [$columns, $rows] = $this->register($filters);
 
-        return [array_intersect_key($columns, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])), $rows->map(fn (array $row): array => array_intersect_key($row, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])))];
+        return [array_intersect_key($columns, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])), $rows->map(fn (array $row): array => [...array_intersect_key($row, array_flip(['asset', 'name', 'classification', 'branch', 'hall_location', 'cost_center', 'status'])), '_asset_url' => $row['_asset_url'] ?? null])];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>} */
@@ -281,7 +296,7 @@ class FixedAssetReportService
 
         return [
             array_intersect_key($columns, array_flip($keys)),
-            $rows->map(fn (array $row): array => array_intersect_key($row, array_flip($keys))),
+            $rows->map(fn (array $row): array => [...array_intersect_key($row, array_flip($keys)), '_asset_url' => $row['_asset_url'] ?? null]),
         ];
     }
 
@@ -312,7 +327,7 @@ class FixedAssetReportService
                 }
             }
             foreach (array_unique($reasons) as $reason) {
-                $rows->push(['asset' => $asset->doc_num, 'name' => $asset->asset_name, 'reason' => $reason]);
+                $rows->push(['_asset_url' => auth()->user()?->can('fixed_assets.view') ? route('admin.fixed-assets.assets.show', $asset) : null, 'asset' => $asset->doc_num, 'name' => $asset->asset_name, 'reason' => $reason]);
             }
         }
 
@@ -559,6 +574,7 @@ class FixedAssetReportService
         $difference = bcsub($subledger, $gl, 4);
 
         return [
+            '_account_url' => $account && auth()->user()?->can('accounts.view') ? route('admin.accounting.accounts.show', $account) : null,
             'reconciliation_type' => __('fixed_assets.reports.reconciliation_types.'.$type),
             'account' => $account?->codeNameLabel(),
             'subledger' => $subledger,
@@ -634,6 +650,14 @@ class FixedAssetReportService
             $summary[__('fixed_assets.pdf.filters.posting_status')] = __('fixed_assets.lifecycle.statuses.'.$filters['posting_status']);
         }
 
+        if (isset($filters['movement_type'])) {
+            $summary[__('fixed_assets.cycle.type')] = __('fixed_assets.cycle.'.$filters['movement_type']);
+        }
+
+        if (isset($filters['user'])) {
+            $summary[__('fixed_assets.cycle.user')] = $filters['user'];
+        }
+
         return array_filter($summary, fn (string $value): bool => trim($value) !== '');
     }
 
@@ -662,7 +686,7 @@ class FixedAssetReportService
         }
 
         return match ($type) {
-            self::Register, self::FullyDepreciated => [
+            self::Register, self::FullyDepreciated, 'net_book_value' => [
                 __('fixed_assets.pdf.totals.asset_cost') => $this->sumRows($rows, 'cost'),
                 __('fixed_assets.pdf.totals.accumulated_depreciation') => $this->sumRows($rows, 'accumulated_depreciation'),
                 __('fixed_assets.pdf.totals.net_book_value') => $this->sumRows($rows, 'net_book_value'),
@@ -670,9 +694,11 @@ class FixedAssetReportService
             self::Depreciation, self::Schedule => [
                 __('fixed_assets.pdf.totals.period_depreciation') => $this->sumRows($rows, 'period_depreciation'),
             ],
-            self::AdditionsDisposals => [
+            self::AdditionsDisposals, 'capital_additions', 'disposals', 'gain_loss' => [
                 __('fixed_assets.pdf.totals.additions') => $this->sumRows($rows, 'addition_value'),
                 __('fixed_assets.pdf.totals.disposal_proceeds') => $this->sumRows($rows, 'disposal_proceeds'),
+                __('fixed_assets.pdf.totals.disposal_expenses') => $this->sumRows($rows, 'disposal_expenses'),
+                __('fixed_assets.pdf.totals.net_proceeds') => $this->sumRows($rows, 'net_proceeds'),
                 __('fixed_assets.pdf.totals.gains') => $this->sumRows($rows, 'gain'),
                 __('fixed_assets.pdf.totals.losses') => $this->sumRows($rows, 'loss'),
             ],

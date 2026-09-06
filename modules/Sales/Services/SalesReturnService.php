@@ -8,6 +8,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Sales\Models\CustomerInvoice;
@@ -28,19 +29,29 @@ class SalesReturnService
     ) {}
 
     /** @param list<array{customer_invoice_line_id: int, quantity: string|int|float}> $lines */
-    public function create(CustomerInvoice $invoice, string $reasonCode, ?string $reasonDetails, array $lines): SalesReturn
+    public function create(CustomerInvoice $invoice, string $reasonCode, ?string $reasonDetails, array $lines, ?int $branchStoreId = null): SalesReturn
     {
-        return DB::transaction(function () use ($invoice, $reasonCode, $reasonDetails, $lines): SalesReturn {
+        return DB::transaction(function () use ($invoice, $reasonCode, $reasonDetails, $lines, $branchStoreId): SalesReturn {
             if (count(array_unique(array_column($lines, 'customer_invoice_line_id'))) !== count($lines)) {
                 throw new DomainException(__('Select each return invoice line once and enter its total quantity.'));
             }
-            $source = CustomerInvoice::query()->lockForUpdate()->findOrFail($invoice->getKey());
+            $source = CustomerInvoice::query()->with('deliveries')->lockForUpdate()->findOrFail($invoice->getKey());
             $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $source->company_id, now()->toDateString(), lockForUpdate: true);
             if ($source->document_type !== CustomerInvoice::TypeInvoice || $source->posting_status !== 'posted') {
                 throw new DomainException(__('Returns require an original posted sales invoice.'));
             }
             if (! in_array($reasonCode, $this->reasonCodes(), true)) {
                 throw new DomainException(__('Select a controlled sales return reason.'));
+            }
+            $returnStoreId = $branchStoreId;
+            if (! $returnStoreId) {
+                $deliveryStoreIds = $source->deliveries
+                    ->where('status', InventoryDocument::StatusPosted)
+                    ->pluck('branch_store_id')
+                    ->filter()
+                    ->unique()
+                    ->values();
+                $returnStoreId = $deliveryStoreIds->count() === 1 ? (int) $deliveryStoreIds->first() : null;
             }
             $prepared = [];
             foreach ($lines as $input) {
@@ -50,21 +61,56 @@ class SalesReturnService
                 $alreadyReturned = (string) DB::table('sales_return_lines')->join('sales_returns', 'sales_returns.id', '=', 'sales_return_lines.sales_return_id')
                     ->where('sales_return_lines.customer_invoice_line_id', $line->getKey())->where('sales_returns.status', '<>', SalesReturn::StatusCancelled)->whereNull('sales_returns.deleted_at')->sum('sales_return_lines.quantity');
                 $this->amounts->assertNotGreaterThan($quantity, $this->amounts->subtract($line->quantity, $alreadyReturned, 8), __('Return quantity exceeds the quantity still returnable.'));
-                $ratio = bcdiv($quantity, (string) $line->quantity, 12);
-                $tax = $this->amounts->round(bcmul((string) $line->tax_amount, $ratio, 8));
-                $lineTotal = $this->amounts->round(bcmul((string) $line->line_total, $ratio, 8));
-                $prepared[] = compact('line', 'quantity', 'tax', 'lineTotal');
+
+                if ($line->is_service) {
+                    $prepared[] = $this->prepareInvoiceReturnLine($line, $quantity, null);
+
+                    continue;
+                }
+                if (! $returnStoreId) {
+                    throw new DomainException(__('Choose the warehouse that will receive the returned goods.'));
+                }
+
+                $remaining = $quantity;
+                $deliveryLines = InventoryDocumentLine::query()->with('document')
+                    ->whereIn('inventory_document_id', $source->deliveries->modelKeys())
+                    ->where('source_line_type', SalesOrderLine::class)
+                    ->where('source_line_id', $line->sales_order_line_id)
+                    ->whereHas('document', fn ($query) => $query->where('status', InventoryDocument::StatusPosted))
+                    ->oldest('id')
+                    ->lockForUpdate()
+                    ->get();
+                foreach ($deliveryLines as $deliveryLine) {
+                    if (bccomp($remaining, '0', 8) <= 0) {
+                        break;
+                    }
+                    $returnedFromDelivery = (string) SalesReturnLine::query()
+                        ->where('delivery_line_id', $deliveryLine->getKey())
+                        ->whereHas('salesReturn', fn ($query) => $query->where('status', '<>', SalesReturn::StatusCancelled))
+                        ->sum('quantity');
+                    $available = bcsub((string) $deliveryLine->transaction_quantity, $returnedFromDelivery, 8);
+                    if (bccomp($available, '0', 8) <= 0) {
+                        continue;
+                    }
+                    $allocated = bccomp($remaining, $available, 8) > 0 ? $available : $remaining;
+                    $prepared[] = $this->prepareInvoiceReturnLine($line, $allocated, $deliveryLine);
+                    $remaining = bcsub($remaining, $allocated, 8);
+                }
+                if (bccomp($remaining, '0', 8) > 0) {
+                    throw new DomainException(__('Return quantity exceeds the invoiced quantity that was delivered to the customer.'));
+                }
             }
             if ($prepared === []) {
                 throw new DomainException(__('A sales return requires at least one original invoice line.'));
             }
 
             $numbers = $this->documents->nextForCompany('sales_returns', SalesReturn::class, (int) $source->company_id);
+            $firstDeliveryLine = collect($prepared)->pluck('deliveryLine')->filter()->first();
             $return = SalesReturn::query()->create([
                 ...$numbers, 'company_id' => $source->company_id, 'financial_period_id' => $period->getKey(),
-                'branch_id' => $source->branch_id, 'branch_store_id' => $source->order?->branch_store_id,
+                'branch_id' => $source->branch_id, 'branch_store_id' => $returnStoreId,
                 'customer_id' => $source->customer_id, 'sales_order_id' => $source->sales_order_id,
-                'customer_invoice_id' => $source->getKey(), 'delivery_document_id' => $source->delivery_document_id,
+                'customer_invoice_id' => $source->getKey(), 'delivery_document_id' => $firstDeliveryLine?->inventory_document_id,
                 'return_date' => now()->toDateString(), 'reason_code' => $reasonCode,
                 'reason_details' => $reasonDetails, 'status' => SalesReturn::StatusPendingAuthorization,
                 'subtotal_amount' => $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->subtract($row['lineTotal'], $row['tax']), $prepared)),
@@ -76,13 +122,13 @@ class SalesReturnService
                 $line = $row['line'];
                 $return->lines()->create([
                     'line_number' => $index + 1, 'customer_invoice_line_id' => $line->getKey(),
-                    'delivery_line_id' => $line->delivery_line_id, 'sales_order_line_id' => $line->sales_order_line_id,
+                    'delivery_line_id' => $row['deliveryLine']?->getKey(), 'sales_order_line_id' => $line->sales_order_line_id,
                     'product_id' => $line->product_id, 'unit_id' => $line->unit_id,
                     'conversion_factor' => $line->conversion_factor, 'quantity' => $row['quantity'],
                     'base_quantity' => bcmul((string) $row['quantity'], (string) $line->conversion_factor, 8),
                     'unit_price' => $line->unit_price, 'tax_amount' => $row['tax'], 'line_total' => $row['lineTotal'],
                     'is_service' => $line->is_service, 'original_unit_cost' => $line->unit_cost,
-                    'source_snapshot' => ['invoice' => $source->doc_num, 'invoice_line_public_id' => $line->public_id],
+                    'source_snapshot' => ['invoice' => $source->doc_num, 'invoice_line_public_id' => $line->public_id, 'delivery' => $row['deliveryLine']?->document?->doc_num],
                 ]);
             }
             $this->recordStatus($return, null, SalesReturn::StatusPendingAuthorization);
@@ -90,6 +136,20 @@ class SalesReturnService
 
             return $return->load(['lines.invoiceLine', 'invoice']);
         });
+    }
+
+    /** @return array{line: CustomerInvoiceLine, quantity: string, tax: string, lineTotal: string, deliveryLine: InventoryDocumentLine|null} */
+    private function prepareInvoiceReturnLine(CustomerInvoiceLine $line, string $quantity, ?InventoryDocumentLine $deliveryLine): array
+    {
+        $ratio = bcdiv($quantity, (string) $line->quantity, 12);
+
+        return [
+            'line' => $line,
+            'quantity' => $quantity,
+            'tax' => $this->amounts->round(bcmul((string) $line->tax_amount, $ratio, 8)),
+            'lineTotal' => $this->amounts->round(bcmul((string) $line->line_total, $ratio, 8)),
+            'deliveryLine' => $deliveryLine,
+        ];
     }
 
     /** @param list<array{delivery_line_id: int, quantity: string|int|float}> $lines */

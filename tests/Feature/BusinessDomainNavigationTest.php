@@ -206,12 +206,20 @@ test('menu uses the required business domain order and maps representative scree
     expect($subgroupsFor('basic_data'))->toContain('organization_setup', 'users_permissions')
         ->and($leavesFor('basic_data', 'organization_setup'))->toContain('companies', 'branches', 'financial_periods')
         ->and($leavesFor('basic_data', 'users_permissions'))->toContain('users', 'roles')
-        ->and($subgroupsFor('sales'))->toContain('customer_data', 'sales_cycle')
-        ->and($leavesFor('sales', 'customer_data'))->toContain('customers')
-        ->and($leavesFor('sales', 'sales_cycle'))->toContain('quotations')
-        ->and($subgroupsFor('purchases'))->toContain('supplier_data', 'purchase_cycle')
-        ->and($leavesFor('purchases', 'supplier_data'))->toContain('suppliers')
-        ->and($leavesFor('purchases', 'purchase_cycle'))->toContain('purchase_orders', 'purchase_invoices')
+        ->and($subgroupsFor('sales'))->toContain('customers', 'quotations', 'sales_cycle_reports')
+        ->and($subgroupsFor('purchases'))->toContain(
+            'purchase_requisitions',
+            'supplier_quotations',
+            'purchase_orders',
+            'supply_orders',
+            'goods_receipts',
+            'purchase_invoices',
+            'purchase_returns',
+            'supplier_payments',
+            'suppliers',
+            'purchase_reports',
+        )
+        ->and($leavesFor('purchases', 'purchase_reports'))->toContain('suppliers_report', 'report_purchase_requests', 'report_supply_orders')
         ->and($subgroupsFor('inventory'))->toContain('item_data', 'opening_inventory')
         ->and($leavesFor('inventory', 'item_data'))->toContain(
             'products',
@@ -234,9 +242,8 @@ test('menu uses the required business domain order and maps representative scree
         ->and($leavesFor('accounting_costing', 'cost_accounting'))->toContain('cost_centers')
         ->and($leavesFor('fixed_assets', 'asset_data'))->toContain('fixed_assets_register')
         ->and($leavesFor('human_resources', 'employee_data'))->toContain('hr_employees')
-        ->and($subgroupsFor('reports'))->toContain('sales_reports', 'purchase_reports', 'inventory_reports')
+        ->and($subgroupsFor('reports'))->toContain('sales_reports', 'inventory_reports')
         ->and($leavesFor('reports', 'sales_reports'))->toContain('customers_report')
-        ->and($leavesFor('reports', 'purchase_reports'))->toContain('suppliers_report')
         ->and($leavesFor('reports', 'inventory_reports'))->toContain('products_data_report')
         ->and($subgroupsFor('tools'))->toContain('files_documents', 'work_management', 'communication', 'application_tools')
         ->and($leavesFor('tools', 'files_documents'))->toContain('open_documents', 'file_manager')
@@ -258,9 +265,7 @@ test('menu uses the required business domain order and maps representative scree
     if ($phaseMode === 'expanded') {
         $visibleLabels = collect(businessDomainMenuLeaves($menu))->pluck('label');
 
-        expect($visibleLabels)->toContain('sales_orders', 'sales_invoices', 'sales_returns')
-            ->and($leavesFor('sales', 'sales_cycle'))->toContain('quotations')
-            ->and($leavesFor('purchases', 'purchase_cycle'))->toContain('purchase_orders', 'purchase_invoices')
+        expect($visibleLabels)->toContain('sales_orders', 'sales_invoices', 'sales_returns', 'quotations', 'purchase_orders', 'purchase_invoices')
             ->and($visibleLabels)->toContain(
                 'sales_sales_order_change_requests',
                 'purchases_purchase_order_change_requests',
@@ -279,68 +284,37 @@ test('menu uses the required business domain order and maps representative scree
     }
 })->with(['legacy', 'expanded']);
 
-test('inventory item data restores business setup surfaces while keeping embedded product children out of navigation', function (): void {
+test('inventory item data exposes only real persisted screens and keeps product data shells disabled', function (): void {
     config()->set('erp.phase_mode', 'expanded');
 
-    $restoredKeys = [
-        'product_data_product_types',
-        'product_data_raw_material_types',
-        'product_data_semi_finished_product_types',
-        'product_data_finished_product_types',
-        'product_data_packaging_material_types',
-        'product_data_service_types',
-        'product_data_product_families',
-        'product_data_product_brands',
-        'product_data_product_grades',
-        'product_data_product_specifications',
-        'product_data_product_technical_properties',
-        'product_data_product_packaging_definitions',
-        'product_data_product_storage_requirements',
-        'product_data_product_reorder_policies',
-        'product_data_product_safety_stock_policies',
-        'product_data_product_batch_policies',
-        'product_data_product_shelf_life_policies',
-    ];
-    $embeddedChildKeys = [
-        'product_data_product_units',
-        'product_data_product_equivalent_units',
-        'product_data_product_barcodes',
-        'product_data_product_images',
-        'product_data_product_documents',
-    ];
     $menu = app(MenuService::class)->structure();
     $inventory = collect($menu)->firstWhere('label', 'inventory');
     $itemData = collect($inventory['children'])->firstWhere('label', 'item_data');
     $visibleKeys = collect(businessDomainMenuLeaves($menu))->pluck('label')->all();
     $registry = app(ErpUiScreenRegistry::class);
-    $permissionRegistry = app(PermissionRegistryService::class);
+    $productDataShells = collect($registry->screens())
+        ->filter(fn ($screen): bool => $screen->module() === 'product_data');
 
     expect(collect($itemData['children'])->pluck('label'))->toContain(
         'products',
         'raw_materials',
         'packaging_materials',
-        ...$restoredKeys,
-    )->and($visibleKeys)->not->toContain(...$embeddedChildKeys);
+        'item_categories',
+        'item_units',
+        'item_sizes',
+        'item_colors',
+        'item_decals',
+        'item_models',
+        'item_groups',
+        'item_origin_countries',
+    )->and($productDataShells)->not->toBeEmpty()
+        ->and($visibleKeys)->not->toContain(...$productDataShells->map->key()->all());
 
-    collect($restoredKeys)->each(function (string $key) use ($registry, $permissionRegistry): void {
-        $screen = $registry->find($key);
-
-        expect($screen)->not->toBeNull()
-            ->and($screen->get('menu_visible', true))->toBeTrue()
-            ->and(Route::has($screen->route('index')))->toBeTrue()
-            ->and($permissionRegistry->all())->toContain($screen->permission('view'));
+    $productDataShells->each(function ($screen): void {
+        expect($screen->get('menu_visible', true))->toBeFalse()
+            ->and($screen->get('shell_enabled', true))->toBeFalse()
+            ->and(Route::has($screen->route('index')))->toBeFalse();
     });
-
-    collect($embeddedChildKeys)->each(function (string $key) use ($registry): void {
-        expect($registry->find($key)?->get('menu_visible', true))->toBeFalse();
-    });
-
-    $restoredPermissionGroups = $permissionRegistry->groupedForForm([
-        'product_data.product_units.view',
-        'product_data.product_types.view',
-    ]);
-
-    expect($restoredPermissionGroups)->not->toBeEmpty();
 
     app()->setLocale('ar');
     $arabicMenu = app(MenuService::class)->structure();
@@ -362,11 +336,9 @@ test('phase-gated purchase orders keep their route and visibility behavior', fun
 
     config()->set('erp.phase_mode', 'expanded');
     $expandedPurchases = collect(app(MenuService::class)->getMenu($actor))->firstWhere('label', 'purchases');
-    $purchaseCycle = collect($expandedPurchases['children'])->firstWhere('label', 'purchase_cycle');
-    $purchaseOrders = collect($purchaseCycle['children'])->firstWhere('label', 'purchase_orders');
+    $purchaseOrders = collect($expandedPurchases['children'])->firstWhere('label', 'purchase_orders');
 
     expect($expandedPurchases)->not->toBeNull()
-        ->and($purchaseCycle['open'])->toBeFalse()
         ->and($purchaseOrders['route'])->toBe('admin.purchases.purchase-orders.index')
         ->and($purchaseOrders['phase_modes'])->toBe(['expanded']);
 });

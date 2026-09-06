@@ -3,6 +3,7 @@
 namespace Modules\Core\Services;
 
 use App\Models\User;
+use App\Services\EffectivePermissionResolver;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use LogicException;
@@ -15,6 +16,8 @@ class MenuService
         private readonly RequestMemo $memo,
         private readonly MenuConfigFileOrder $menuFiles,
         private readonly ErpUiScreenRegistry $erpUiScreens,
+        private readonly EffectivePermissionResolver $permissions,
+        private readonly NormalizedMenuCache $normalizedMenuCache,
     ) {}
 
     /**
@@ -133,7 +136,7 @@ class MenuService
         return $this->memo->remember(
             "menu.permissions.structure.{$locale}",
             fn (): array => array_map(
-                fn (array $item): array => $this->normalizeItem($item),
+                fn (array $item): array => $this->normalizeItem($item, includeActions: true),
                 $this->domainMenuItems(includeExpanded: true),
             ),
         );
@@ -253,8 +256,14 @@ class MenuService
         }
 
         $parameters = is_array($item['route_params'] ?? null) ? $item['route_params'] : [];
+        $relativeUrl = route($route, $parameters, false);
+        $basePath = $this->configuredBasePath();
 
-        return route($route, $parameters);
+        if ($basePath === '') {
+            return $relativeUrl;
+        }
+
+        return $basePath.'/'.ltrim($relativeUrl, '/');
     }
 
     /**
@@ -265,10 +274,54 @@ class MenuService
         $phaseMode = $this->phaseMode();
         $locale = app()->getLocale();
 
-        return $this->memo->remember("menu.config.normalized.{$locale}.{$phaseMode}", function () use ($phaseMode): array {
-            $items = $this->domainMenuItems(includeExpanded: $phaseMode === 'expanded');
+        return $this->memo->remember(
+            "menu.config.normalized.{$locale}.{$phaseMode}",
+            fn (): array => $this->normalizedMenuCache->remember(
+                locale: $locale,
+                phase: $phaseMode,
+                resolver: function () use ($phaseMode): array {
+                    $items = $this->domainMenuItems(includeExpanded: $phaseMode === 'expanded');
 
-            return array_map(fn (array $item): array => $this->normalizeItem($item), $items);
+                    return array_map(
+                        fn (array $item): array => $this->normalizeItem($item, includeActions: false),
+                        $items,
+                    );
+                },
+            ),
+        );
+    }
+
+    private function configuredBasePath(): string
+    {
+        return $this->memo->remember('menu.configured_base_path', function (): string {
+            $configuredUrl = config('app.url');
+
+            if (! is_string($configuredUrl)) {
+                return '';
+            }
+
+            $configuredUrl = trim($configuredUrl);
+            $parts = parse_url($configuredUrl);
+            $configuredPath = is_array($parts) ? ($parts['path'] ?? '') : '';
+
+            if ($configuredUrl === ''
+                || filter_var($configuredUrl, FILTER_VALIDATE_URL) === false
+                || ! is_array($parts)
+                || ! is_string($parts['scheme'] ?? null)
+                || ! in_array(strtolower($parts['scheme']), ['http', 'https'], true)
+                || ! is_string($parts['host'] ?? null)
+                || $parts['host'] === ''
+                || isset($parts['user'])
+                || isset($parts['pass'])
+                || isset($parts['query'])
+                || isset($parts['fragment'])
+                || ! is_string($configuredPath)) {
+                return '';
+            }
+
+            $basePath = trim($configuredPath, '/');
+
+            return $basePath === '' ? '' : '/'.$basePath;
         });
     }
 
@@ -659,7 +712,7 @@ class MenuService
      * @param  array<string, mixed>  $item
      * @return array<string, mixed>
      */
-    private function normalizeItem(array $item): array
+    private function normalizeItem(array $item, bool $includeActions): array
     {
         $label = (string) ($item['label'] ?? '');
         $key = is_string($item['key'] ?? null) && $item['key'] !== '' ? $item['key'] : $label;
@@ -678,8 +731,15 @@ class MenuService
         $item['visible'] = (bool) ($item['visible'] ?? ! $item['hidden']);
         $item['phase_modes'] = $this->phaseModesFor($item);
         $item['active_patterns'] = is_array($activePatterns) ? $activePatterns : [];
-        $item['actions'] = $item['actions'] ?? [];
-        $item['children'] = is_array($children) ? array_map(fn (array $child): array => $this->normalizeItem($child), $children) : [];
+        if ($includeActions) {
+            $item['actions'] = $item['actions'] ?? [];
+        } else {
+            unset($item['actions']);
+        }
+
+        $item['children'] = is_array($children)
+            ? array_map(fn (array $child): array => $this->normalizeItem($child, $includeActions), $children)
+            : [];
         $item['text'] = $this->labelFor($item);
         $item['title'] = $item['text'];
         $item['active'] = false;
@@ -778,11 +838,7 @@ class MenuService
         try {
             $permissionNames = $this->memo->remember(
                 'menu.user.permissions.'.(string) $user->getKey(),
-                fn (): array => $user->getAllPermissions()
-                    ->pluck('name')
-                    ->filter(fn (mixed $name): bool => is_string($name) && trim($name) !== '')
-                    ->mapWithKeys(fn (string $name): array => [trim($name) => true])
-                    ->all(),
+                fn (): array => $this->permissions->namesFor($user),
             );
 
             if (is_array($permission)) {

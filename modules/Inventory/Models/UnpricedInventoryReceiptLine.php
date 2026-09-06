@@ -14,6 +14,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
 use Modules\Purchases\Models\PurchaseOrderLine;
+use Modules\Purchases\Models\SupplyOrderLine;
 
 class UnpricedInventoryReceiptLine extends Model
 {
@@ -31,6 +32,7 @@ class UnpricedInventoryReceiptLine extends Model
         'product_id',
         'unit_id',
         'purchase_order_line_id',
+        'supply_order_line_id',
         'delivery_schedule_id',
         'product_snapshot',
         'quantity',
@@ -104,6 +106,11 @@ class UnpricedInventoryReceiptLine extends Model
     public function purchaseOrderLine(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrderLine::class);
+    }
+
+    public function supplyOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(SupplyOrderLine::class);
     }
 
     public function deliverySchedule(): BelongsTo

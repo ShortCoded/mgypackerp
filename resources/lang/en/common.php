@@ -169,6 +169,7 @@ return [
     'shortcut_logout' => 'Shortcut: Alt + Q',
     'shortcut_table_search' => 'Shortcut: Alt + /',
     'shortcuts' => [
+        'add_line' => 'Add line (Alt + L)',
         'add_new_record' => 'Add New Record (Alt + N)',
         'back' => 'Back (Alt + 0)',
         'bulk_apply' => 'Apply selected bulk action (Ctrl + Enter)',

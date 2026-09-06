@@ -3,9 +3,10 @@
     const showHashTab = () => {
         const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
         const pane = target?.closest('.tab-pane');
-        if (pane && window.bootstrap) {
+        if (pane) {
             const button = document.querySelector(`[data-bs-target="#${pane.id}"]`);
-            if (button) { window.bootstrap.Tab.getOrCreateInstance(button).show(); }
+            if (button && window.bootstrap) { window.bootstrap.Tab.getOrCreateInstance(button).show(); }
+            else if (button) { button.click(); }
         }
     };
     window.addEventListener('hashchange', showHashTab);
@@ -19,6 +20,16 @@
             row.hidden = type !== '' && !(type === 'reversal' ? row.dataset.movementType.endsWith('_reversal') : row.dataset.movementType === type);
         });
     });
+    if (window.jQuery) {
+        window.jQuery(document)
+            .off('file-picker:selected.fixedAssetDocument', '[data-picker-target-input="#asset-document-file"]')
+            .on('file-picker:selected.fixedAssetDocument', '[data-picker-target-input="#asset-document-file"]', function (event, payload) {
+                const label = document.querySelector('.js-asset-document-selected');
+                if (label) { label.textContent = payload.name || payload.public_id; }
+                const submit = document.querySelector('.js-asset-document-submit');
+                if (submit) { submit.disabled = !payload.public_id; }
+            });
+    }
     document.querySelectorAll('.js-addition-form').forEach((form) => {
         const input = form.querySelector('[name="amount"]');
         const output = form.querySelector('.js-addition-new-cost');
@@ -32,6 +43,28 @@
     document.querySelectorAll('.fixed-asset-360 form, .js-depreciation-post-form').forEach((form) => {
         form.addEventListener('submit', (event) => {
             if (event.defaultPrevented) { return; }
+            if (form.classList.contains('js-depreciation-post-form') && form.dataset.confirmed !== 'true') {
+                event.preventDefault();
+                const submitConfirmed = () => {
+                    form.dataset.confirmed = 'true';
+                    form.requestSubmit();
+                };
+                if (window.Swal) {
+                    window.Swal.fire({
+                        icon: 'warning',
+                        title: form.dataset.confirmTitle,
+                        text: form.dataset.confirmText,
+                        showCancelButton: true,
+                        focusCancel: true,
+                        confirmButtonText: form.dataset.confirmYes,
+                        cancelButtonText: form.dataset.confirmCancel,
+                        confirmButtonColor: '#00a854'
+                    }).then((result) => { if (result.isConfirmed) { submitConfirmed(); } });
+                } else if (window.confirm(form.dataset.confirmText)) {
+                    submitConfirmed();
+                }
+                return;
+            }
             if (form.dataset.submitting === 'true') { event.preventDefault(); return; }
             form.dataset.submitting = 'true';
             form.querySelectorAll('button[type="submit"]').forEach((button) => { button.disabled = true; });
@@ -41,6 +74,16 @@
         const fields = [...form.querySelectorAll('[name^="destination_"], [name="custodian_doc_num"]')];
         const initial = fields.map((field) => field.name === 'custodian_doc_num' ? form.dataset.currentCustodian : field.value);
         const update = () => {
+            const action = form.querySelector('[name="custody_action"]');
+            const employee = form.querySelector('[name="custodian_doc_num"]');
+            if (action) {
+                const returning = action.value === 'return';
+                form.querySelector('.js-custody-employee').hidden = returning;
+                employee.disabled = returning;
+                employee.required = !returning;
+                form.querySelector('button[type="submit"]').disabled = returning ? !form.dataset.currentCustodian : !employee.value || employee.value === form.dataset.currentCustodian;
+                return;
+            }
             const unchanged = fields.every((field, index) => field.value.trim() === String(initial[index] || '').trim());
             form.querySelector('button[type="submit"]').disabled = unchanged;
         };
@@ -58,16 +101,41 @@
     document.querySelectorAll('.js-disposal-form').forEach((form) => {
         const type = form.querySelector('[name="disposition_type"]');
         const settlement = form.querySelector('[name="settlement_path"]');
+        const expenses = form.querySelector('[name="disposal_expenses"]');
+        const clearSelect = (name) => {
+            const select = form.querySelector(`[name="${name}"]`);
+            if (select && window.jQuery) { window.jQuery(select).val(null).trigger('change.select2'); }
+        };
         const updateFields = () => {
             const sale = type.value === 'sale';
+            const hasExpenses = Number(String(expenses.value || '0').replace(/,/g, '')) > 0;
+            if (!sale) {
+                form.querySelector('[name="proceeds"]').value = '0';
+                form.querySelector('[name="tax_rate"]').value = '0';
+                settlement.value = 'direct_settlement';
+                clearSelect('customer_doc_num');
+                clearSelect('proceeds_account_doc_num');
+            } else if (settlement.value === 'customer_invoice') {
+                clearSelect('proceeds_account_doc_num');
+            } else {
+                form.querySelector('[name="tax_rate"]').value = '0';
+                clearSelect('customer_doc_num');
+            }
             form.querySelectorAll('[data-disposal-field]').forEach((field) => {
-                const visible = sale && (field.dataset.disposalField === 'sale' || (field.dataset.disposalField === 'invoice' ? settlement.value === 'customer_invoice' : settlement.value !== 'customer_invoice'));
+                const fieldType = field.dataset.disposalField;
+                const visible = fieldType === 'expenses'
+                    ? hasExpenses
+                    : sale && (fieldType === 'sale' || (fieldType === 'invoice' ? settlement.value === 'customer_invoice' : settlement.value !== 'customer_invoice'));
                 field.hidden = !visible;
-                field.querySelectorAll('input, select').forEach((input) => { input.disabled = !visible; });
+                field.querySelectorAll('input, select').forEach((input) => {
+                    const neutralValueRequired = ['proceeds', 'settlement_path', 'tax_rate'].includes(input.name);
+                    input.disabled = !visible && !neutralValueRequired;
+                });
             });
         };
         type.addEventListener('change', updateFields);
         settlement.addEventListener('change', updateFields);
+        expenses.addEventListener('input', updateFields);
         updateFields();
         const result = form.querySelector('.js-disposal-result');
         const post = form.querySelector('.js-disposal-post');

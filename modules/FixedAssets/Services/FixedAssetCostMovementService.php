@@ -20,6 +20,7 @@ use Modules\Finance\Services\OpeningBalanceService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetMovement;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class FixedAssetCostMovementService
@@ -69,7 +70,10 @@ class FixedAssetCostMovementService
             if ($date->lt($originalDate) || ($isOpening && $asset->is_depreciable && (! $asset->previous_depreciation_until_date || (! $date->isSameDay($asset->previous_depreciation_until_date) && ! $date->isSameDay($asset->previous_depreciation_until_date->copy()->addDay()))))) {
                 throw new DomainException(__('fixed_assets.cycle.recognition_date'));
             }
-            if (! $isOpening && (($asset->depreciation_start_date && $date->gt($asset->depreciation_start_date)) || ($asset->operation_date && $date->lt($asset->operation_date)))) {
+            $isPurchaseInvoiceRecognition = filled($existingJournalDocNum)
+                && $asset->source_type === FixedAssetPurchaseIntegrationService::SourceType;
+            if (! $isOpening && (($asset->depreciation_start_date && $date->gt($asset->depreciation_start_date))
+                || (! $isPurchaseInvoiceRecognition && $asset->operation_date && $date->lt($asset->operation_date)))) {
                 throw new DomainException(__('fixed_assets.cycle.recognition_before_depreciation'));
             }
             $mapping = FixedAssetCategoryMapping::resolveForAsset($asset,
@@ -158,19 +162,28 @@ class FixedAssetCostMovementService
         }, attempts: 3);
     }
 
-    public function addition(FixedAsset $asset, array $data): FixedAssetMovement
+    /** @param array{source_type?: string, source_id?: int, source_doc_num?: string} $source */
+    public function addition(FixedAsset $asset, array $data, ?JournalEntry $existingJournal = null, array $source = []): FixedAssetMovement
     {
-        return DB::transaction(function () use ($asset, $data): FixedAssetMovement {
+        return DB::transaction(function () use ($asset, $data, $existingJournal, $source): FixedAssetMovement {
             $asset = $this->lock($asset);
             if (! Str::isUuid($data['submission_key'] ?? '')) {
                 throw new DomainException(__('fixed_assets.cycle.invalid_submission'));
             }
             ksort($data);
             $submissionHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
-            $existing = $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)
-                ->where('snapshot->submission_key', $data['submission_key'])->first();
+            $existing = filled($source['source_type'] ?? null) && filled($source['source_id'] ?? null)
+                ? FixedAssetMovement::query()
+                    ->where('company_id', $asset->company_id)
+                    ->where('source_type', $source['source_type'])
+                    ->where('source_id', $source['source_id'])
+                    ->lockForUpdate()
+                    ->first()
+                : $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)
+                    ->where('snapshot->submission_key', $data['submission_key'])->first();
             if ($existing) {
-                if (! hash_equals((string) data_get($existing->snapshot, 'submission_hash'), $submissionHash)) {
+                if ((int) $existing->fixed_asset_id !== (int) $asset->getKey()
+                    || ! hash_equals((string) data_get($existing->snapshot, 'submission_hash'), $submissionHash)) {
                     throw new DomainException(__('fixed_assets.cycle.invalid_submission'));
                 }
 
@@ -263,18 +276,23 @@ class FixedAssetCostMovementService
                 $plan['usage_before_effective_date'] = $usageBefore;
             }
             $movement = $this->movement($asset, [
-                'movement_type' => FixedAssetMovement::TypeAddition, 'movement_date' => $date, 'financial_period_id' => $period->getKey(),
+                'movement_type' => FixedAssetMovement::TypeAddition,
+                'source_type' => $source['source_type'] ?? null, 'source_id' => $source['source_id'] ?? null, 'source_doc_num' => $source['source_doc_num'] ?? null,
+                'movement_date' => $date, 'financial_period_id' => $period->getKey(),
                 'counter_account_id' => $counter->getKey(), 'currency_id' => $asset->currency_id, 'exchange_rate' => $rate,
                 'amount' => $amount, 'base_amount' => bcmul($amount, $rate, 4),
                 'reason' => $data['description'], 'notes' => $data['notes'] ?? null,
                 'revised_useful_life' => $data['revised_useful_life'] ?? null, 'revised_residual_value' => $data['revised_residual_value'] ?? null,
                 'snapshot' => ['account_id' => $asset->account_id, 'position_before' => $position, 'plan' => $plan,
-                    'submission_key' => $data['submission_key'], 'submission_hash' => $submissionHash],
+                    'submission_key' => $data['submission_key'], 'submission_hash' => $submissionHash,
+                    'external_journal' => $existingJournal instanceof JournalEntry],
             ]);
-            $journal = $this->journals->createPostedFromSource($this->header($asset, $movement), [
-                $this->line($asset, (int) $asset->account_id, $amount, '0'),
-                $this->line($asset, (int) $counter->getKey(), '0', $amount),
-            ]);
+            $journal = $existingJournal instanceof JournalEntry
+                ? $this->existingAdditionJournal($asset, $movement, $existingJournal)
+                : $this->journals->createPostedFromSource($this->header($asset, $movement), [
+                    $this->line($asset, (int) $asset->account_id, $amount, '0'),
+                    $this->line($asset, (int) $counter->getKey(), '0', $amount),
+                ]);
             $movement->forceFill(['journal_entry_id' => $journal->getKey()])->save();
             $this->audit->saveUpdate($asset, ['net_value' => bcadd($position['net_book_value'], $amount, 4), 'status' => $asset->status === FixedAsset::StatusFullyDepreciated ? FixedAsset::StatusActive : $asset->status]);
             $this->log($asset, $movement, 'post');
@@ -285,7 +303,7 @@ class FixedAssetCostMovementService
 
     public function canReverse(FixedAssetMovement $movement): bool
     {
-        if ($movement->status !== FixedAssetMovement::StatusPosted || ! in_array($movement->movement_type, FixedAssetMovement::costTypes(), true) || data_get($movement->snapshot, 'legacy_link', false)) {
+        if ($movement->status !== FixedAssetMovement::StatusPosted || ! in_array($movement->movement_type, FixedAssetMovement::costTypes(), true) || data_get($movement->snapshot, 'legacy_link', false) || data_get($movement->snapshot, 'external_journal', false)) {
             return false;
         }
         try {
@@ -304,7 +322,7 @@ class FixedAssetCostMovementService
         return DB::transaction(function () use ($movement, $reason): FixedAssetMovement {
             $asset = $this->lock($movement->asset);
             $movement = $asset->movements()->whereKey($movement->getKey())->lockForUpdate()->firstOrFail();
-            if ($movement->status !== FixedAssetMovement::StatusPosted || ! in_array($movement->movement_type, FixedAssetMovement::costTypes(), true) || data_get($movement->snapshot, 'legacy_link', false)) {
+            if ($movement->status !== FixedAssetMovement::StatusPosted || ! in_array($movement->movement_type, FixedAssetMovement::costTypes(), true) || data_get($movement->snapshot, 'legacy_link', false) || data_get($movement->snapshot, 'external_journal', false)) {
                 throw new DomainException(__('fixed_assets.cycle.reversal_blocked'));
             }
             $this->assertChronology($asset, $movement->movement_date, (int) $movement->getKey());
@@ -324,6 +342,53 @@ class FixedAssetCostMovementService
             }
             $position = app(FixedAssetBookValueService::class)->position($asset);
             $this->audit->saveUpdate($asset, ['net_value' => $position['net_book_value'], 'status' => $asset->status === FixedAsset::StatusSuspended ? $asset->status : (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive)]);
+            $this->log($asset, $movement, 'reverse');
+
+            return $movement->refresh();
+        }, attempts: 3);
+    }
+
+    /** @param list<int> $batchMovementIds */
+    public function assertExternalAdditionReversible(FixedAssetMovement $movement, array $batchMovementIds = []): void
+    {
+        $asset = $this->lock($movement->asset);
+        $movement = $asset->movements()->whereKey($movement->getKey())->lockForUpdate()->firstOrFail();
+        if ($movement->status !== FixedAssetMovement::StatusPosted
+            || $movement->movement_type !== FixedAssetMovement::TypeAddition
+            || ! data_get($movement->snapshot, 'external_journal', false)) {
+            throw new DomainException(__('fixed_assets.cycle.reversal_blocked'));
+        }
+
+        $this->assertChronology($asset, $movement->movement_date, (int) $movement->getKey(), $batchMovementIds);
+    }
+
+    public function reverseExternalAddition(FixedAssetMovement $movement, JournalEntry $reversal, string $reason): FixedAssetMovement
+    {
+        return DB::transaction(function () use ($movement, $reversal, $reason): FixedAssetMovement {
+            $this->assertExternalAdditionReversible($movement);
+            $asset = $this->lock($movement->asset);
+            $movement = $asset->movements()->whereKey($movement->getKey())->lockForUpdate()->firstOrFail();
+            $original = JournalEntry::query()->lockForUpdate()->findOrFail($movement->journal_entry_id);
+            $reversal = JournalEntry::query()->where('company_id', $asset->company_id)->whereKey($reversal->getKey())->where('is_posted', true)->firstOrFail();
+            if ((int) $original->reversed_entry_id !== (int) $reversal->getKey()) {
+                throw new DomainException(__('fixed_assets.cycle.reversal_blocked'));
+            }
+
+            $movement->forceFill([
+                'status' => FixedAssetMovement::StatusReversed,
+                'reversal_journal_entry_id' => $reversal->getKey(),
+                'reversal_date' => $reversal->entry_date,
+                'reversed_at' => now(),
+                'reversed_by' => auth()->id(),
+                'reversal_reason' => $reason,
+            ])->save();
+            $position = app(FixedAssetBookValueService::class)->position($asset);
+            $this->audit->saveUpdate($asset, [
+                'net_value' => $position['net_book_value'],
+                'status' => $asset->status === FixedAsset::StatusSuspended
+                    ? $asset->status
+                    : (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0 ? FixedAsset::StatusFullyDepreciated : FixedAsset::StatusActive),
+            ]);
             $this->log($asset, $movement, 'reverse');
 
             return $movement->refresh();
@@ -362,6 +427,51 @@ class FixedAssetCostMovementService
         return $journal;
     }
 
+    private function existingAdditionJournal(FixedAsset $asset, FixedAssetMovement $movement, JournalEntry $journal): JournalEntry
+    {
+        $journal = JournalEntry::query()
+            ->where('company_id', $asset->company_id)
+            ->whereKey($journal->getKey())
+            ->where('source_type', 'purchase_invoice')
+            ->where('is_posted', true)
+            ->whereNull('reversed_entry_id')
+            ->with('lines')
+            ->lockForUpdate()
+            ->firstOrFail();
+        $sourceLine = PurchaseInvoiceLine::query()
+            ->where('company_id', $asset->company_id)
+            ->whereKey($movement->source_id)
+            ->where('target_fixed_asset_id', $asset->getKey())
+            ->first();
+        if ($movement->source_type !== FixedAssetPurchaseIntegrationService::ImprovementSourceType
+            || ! $sourceLine instanceof PurchaseInvoiceLine
+            || (int) $sourceLine->purchase_invoice_id !== (int) $journal->source_id
+            || $journal->entry_date->gt($movement->movement_date)
+            || (int) $journal->currency_id !== (int) $movement->currency_id
+            || bccomp((string) $journal->exchange_rate, (string) $movement->exchange_rate, 6) !== 0) {
+            throw new DomainException(__('fixed_assets.purchase_source.improvement_context_mismatch'));
+        }
+
+        $available = $journal->lines
+            ->where('account_id', $asset->account_id)
+            ->where('branch_id', $movement->source_branch_id)
+            ->where('cost_center_id', $movement->source_cost_center_id)
+            ->reduce(fn (string $sum, $line): string => bcadd($sum, bcsub((string) $line->debit_amount, (string) $line->credit_amount, 4), 4), '0.0000');
+        $allocated = FixedAssetMovement::query()
+            ->where('journal_entry_id', $journal->getKey())
+            ->whereKeyNot($movement->getKey())
+            ->where('status', FixedAssetMovement::StatusPosted)
+            ->where('source_branch_id', $movement->source_branch_id)
+            ->where('source_cost_center_id', $movement->source_cost_center_id)
+            ->where('snapshot->account_id', $asset->account_id)
+            ->sum('amount');
+        if (bccomp(bcadd((string) $allocated, (string) $movement->amount, 4), $available, 4) > 0) {
+            throw new DomainException(__('fixed_assets.purchase_source.improvement_context_mismatch'));
+        }
+
+        return $journal;
+    }
+
     private function lock(FixedAsset $asset): FixedAsset
     {
         $this->access->assertAsset($asset);
@@ -382,16 +492,20 @@ class FixedAssetCostMovementService
         return $account;
     }
 
-    private function assertChronology(FixedAsset $asset, Carbon $date, ?int $exceptMovement = null): void
+    /** @param list<int> $exceptMovementIds */
+    private function assertChronology(FixedAsset $asset, Carbon $date, ?int $exceptMovement = null, array $exceptMovementIds = []): void
     {
         if ($asset->isDisposed() || $date->lt(Carbon::parse($asset->capitalized_at ?: $asset->operation_date ?: $asset->asset_date)->startOfDay())
             || $asset->postedDepreciations()->whereDate('period_end', '>=', $date)->exists()
-            || $asset->movements()->where('status', 'posted')->when($exceptMovement, fn ($query) => $query->whereKeyNot($exceptMovement))->where(function ($query) use ($date, $exceptMovement): void {
-                $query->whereDate('movement_date', '>', $date);
-                if ($exceptMovement) {
-                    $query->orWhere(fn ($sameDay) => $sameDay->whereDate('movement_date', $date)->where('id', '>', $exceptMovement));
-                }
-            })->exists()) {
+            || $asset->movements()->where('status', 'posted')
+                ->when($exceptMovement, fn ($query) => $query->whereKeyNot($exceptMovement))
+                ->when($exceptMovementIds !== [], fn ($query) => $query->whereNotIn('id', $exceptMovementIds))
+                ->where(function ($query) use ($date, $exceptMovement): void {
+                    $query->whereDate('movement_date', '>', $date);
+                    if ($exceptMovement) {
+                        $query->orWhere(fn ($sameDay) => $sameDay->whereDate('movement_date', $date)->where('id', '>', $exceptMovement));
+                    }
+                })->exists()) {
             throw new DomainException(__('fixed_assets.cycle.later_movements'));
         }
     }

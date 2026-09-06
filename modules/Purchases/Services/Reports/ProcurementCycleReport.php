@@ -14,6 +14,9 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Models\FixedAssetMovement;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
@@ -33,6 +36,8 @@ use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Models\SupplierSelection;
+use Modules\Purchases\Models\SupplyOrder;
+use Modules\Purchases\Models\SupplyOrderLine;
 
 class ProcurementCycleReport
 {
@@ -50,6 +55,7 @@ class ProcurementCycleReport
         $definitions = [
             [SupplierQuotation::class, 'Supplier Quotations', 'purchases.supplier_quotation_entry.view', 'admin.purchases.supplier-quotation-entry.show'],
             [PurchaseOrder::class, 'Purchase Orders', 'purchase_orders.view', 'admin.purchases.purchase-orders.show'],
+            [SupplyOrder::class, 'Supply Orders', 'purchases.supply_orders.view', 'admin.purchases.supply-orders.show'],
             [UnpricedInventoryReceipt::class, 'Goods Receipts', 'purchases.goods_receipt_notes.view', 'admin.purchases.goods-receipt-notes.show'],
             [PurchaseInvoice::class, 'Purchase Invoices', 'purchase_invoices.view', 'admin.purchases.purchase-invoices.show'],
             [PurchaseReturn::class, 'Purchase Returns', 'purchases.purchase_returns.view', 'admin.purchases.purchase-returns.show'],
@@ -148,6 +154,8 @@ class ProcurementCycleReport
 
     public const PartiallyReceivedOrders = 'partially_received_orders';
 
+    public const SupplyOrders = 'supply_orders';
+
     public const SupplierDeliveries = 'supplier_deliveries';
 
     public const PurchaseReceipts = 'purchase_receipts';
@@ -165,6 +173,30 @@ class ProcurementCycleReport
     /** @return Collection<int, array<string, mixed>> */
     public function documentChain(Model $document): Collection
     {
+        if ($document instanceof FixedAssetMovement
+            && $document->source_type === FixedAssetPurchaseIntegrationService::ImprovementSourceType) {
+            $invoice = $document->purchaseInvoiceLine()->with('purchaseInvoice')->first()?->purchaseInvoice;
+
+            return $invoice ? $this->documentChain($invoice) : collect();
+        }
+
+        if ($document instanceof FixedAsset) {
+            if ($document->source_type === FixedAssetPurchaseIntegrationService::SourceType) {
+                $invoice = $document->purchaseInvoiceLine()->with('purchaseInvoice')->first()?->purchaseInvoice;
+
+                return $invoice ? $this->documentChain($invoice) : collect();
+            }
+
+            $invoiceIds = PurchaseInvoiceLine::query()
+                ->whereIn('id', $document->movements()->where('source_type', FixedAssetPurchaseIntegrationService::ImprovementSourceType)->pluck('source_id'))
+                ->pluck('purchase_invoice_id');
+
+            return PurchaseInvoice::query()->whereIn('id', $invoiceIds)->get()
+                ->flatMap(fn (PurchaseInvoice $invoice) => $this->documentChain($invoice))
+                ->unique('url')
+                ->values();
+        }
+
         if ($document instanceof CashVoucher || $document instanceof Cheque) {
             $field = $document instanceof CashVoucher ? 'cash_voucher_id' : 'cheque_id';
             $payment = SupplierPaymentContext::query()->where('company_id', $document->company_id)
@@ -181,7 +213,18 @@ class ProcurementCycleReport
         if ($document instanceof RequestForQuotation) {
             $requestIds->push($document->purchase_requisition_id);
             $orderIds = PurchaseOrder::query()->where('request_for_quotation_id', $document->id)->pluck('id');
-        } elseif ($document instanceof SupplierQuotation || $document instanceof SupplierSelection) {
+        } elseif ($document instanceof SupplierQuotation) {
+            if ($document->purchase_requisition_id) {
+                $requestIds->push($document->purchase_requisition_id);
+            }
+            if ($document->purchase_order_id) {
+                $orderIds->push($document->purchase_order_id);
+            }
+            if ($document->request_for_quotation_id) {
+                $requestIds->push($document->requestForQuotation?->purchase_requisition_id);
+                $orderIds = $orderIds->merge(PurchaseOrder::query()->where('request_for_quotation_id', $document->request_for_quotation_id)->pluck('id'));
+            }
+        } elseif ($document instanceof SupplierSelection) {
             $requestIds->push($document->requestForQuotation?->purchase_requisition_id);
             $orderIds = PurchaseOrder::query()->where('request_for_quotation_id', $document->request_for_quotation_id)->pluck('id');
         }
@@ -201,12 +244,37 @@ class ProcurementCycleReport
             ->merge($orders->flatMap(fn ($order) => $order->lines->pluck('requisitionLine.purchase_requisition_id')->filter()))->unique();
         $requests = $scope(PurchaseRequisition::query())->whereIn('id', $requestIds)->get();
         $receipts = $scope(UnpricedInventoryReceipt::query())->whereIn('purchase_order_id', $orders->modelKeys())->with('lines')->get();
+        $supplyOrders = $scope(SupplyOrder::query())->whereIn('purchase_order_id', $orders->modelKeys())->with('lines')->get();
         $invoices = $scope(PurchaseInvoice::query())->where(function ($query) use ($orders, $document): void {
             $query->whereIn('purchase_order_id', $orders->modelKeys());
             if ($document instanceof PurchaseInvoice) {
                 $query->orWhere('id', $document->getKey());
             }
         })->get();
+        $invoiceLineIds = PurchaseInvoiceLine::query()->whereIn('purchase_invoice_id', $invoices->modelKeys())->pluck('id');
+        $fixedAssets = FixedAsset::query()
+            ->forCompany($companyId)
+            ->where('period_id', $periodId)
+            ->where('branch_id', $branchId)
+            ->where('source_type', FixedAssetPurchaseIntegrationService::SourceType)
+            ->whereIn('source_id', $invoiceLineIds)
+            ->get()
+            ->concat(FixedAsset::query()
+                ->forCompany($companyId)
+                ->where('branch_id', $branchId)
+                ->whereIn('id', PurchaseInvoiceLine::query()
+                    ->whereIn('id', $invoiceLineIds)
+                    ->where('asset_treatment', FixedAssetPurchaseIntegrationService::TreatmentCapitalImprovement)
+                    ->whereNotNull('target_fixed_asset_id')
+                    ->pluck('target_fixed_asset_id'))
+                ->get())
+            ->unique('id')
+            ->values();
+        $assetImprovementMovements = FixedAssetMovement::query()
+            ->where('company_id', $companyId)
+            ->where('source_type', FixedAssetPurchaseIntegrationService::ImprovementSourceType)
+            ->whereIn('source_id', $invoiceLineIds)
+            ->get();
         $payments = $scope(SupplierPaymentContext::query())->where(function ($query) use ($orders, $invoices, $document): void {
             $query->whereIn('purchase_order_id', $orders->modelKeys())->orWhereHas('allocations', fn ($query) => $query->whereIn('purchase_invoice_id', $invoices->modelKeys()));
             if ($document instanceof SupplierPaymentContext) {
@@ -215,25 +283,32 @@ class ProcurementCycleReport
         })->with(['cashVoucher', 'cheque'])->get();
         $returns = $scope(PurchaseReturn::query())->whereIn('purchase_order_id', $orders->modelKeys())->get();
         $rfqs = $scope(RequestForQuotation::query())->whereIn('purchase_requisition_id', $requestIds)->get();
-        $quotations = $scope(SupplierQuotation::query())->whereIn('request_for_quotation_id', $rfqs->modelKeys())->get();
-        $allDocuments = $requests->concat($rfqs)->concat($quotations)->concat($orders)->concat($receipts)->concat($invoices)->concat($payments)->concat($returns);
+        $quotations = $scope(SupplierQuotation::query())->where(function ($query) use ($rfqs, $requestIds, $orders): void {
+            $query->whereIn('request_for_quotation_id', $rfqs->modelKeys())
+                ->orWhereIn('purchase_requisition_id', $requestIds)
+                ->orWhereIn('purchase_order_id', $orders->modelKeys());
+        })->get();
+        $allDocuments = $requests->concat($rfqs)->concat($quotations)->concat($orders)->concat($supplyOrders)->concat($receipts)->concat($invoices)->concat($fixedAssets)->concat($assetImprovementMovements)->concat($payments)->concat($returns);
         $users = User::query()->whereIn('id', $allDocuments->flatMap(fn ($record) => [$record->posted_by, $record->approved_by, $record->created_by, $record->requested_by])->filter()->unique())->pluck('name', 'id');
         $nodes = collect();
         $append = function ($records, string $label, string $route, string $permission) use ($nodes, $users): void {
             foreach ($records as $record) {
-                $date = $record->request_date ?? $record->document_date ?? $record->invoice_date ?? $record->payment_date ?? $record->return_date ?? $record->entry_date ?? $record->voucher_date ?? $record->created_at;
+                $date = $record->request_date ?? $record->document_date ?? $record->invoice_date ?? $record->asset_date ?? $record->movement_date ?? $record->payment_date ?? $record->return_date ?? $record->entry_date ?? $record->voucher_date ?? $record->created_at;
                 $nodes->push(['label' => __($label), 'doc_num' => $record->doc_num, 'url' => route($route, $record->doc_num),
                     'permission' => $permission, 'status' => $record instanceof PurchaseOrder ? $record->fulfillmentStatus() : ($record->posting_status ?? $record->status),
                     'date' => $date?->format('Y-m-d'), 'user' => $users[$record->posted_by ?? $record->approved_by ?? $record->created_by ?? $record->requested_by] ?? null,
-                    'amount' => $record->total_amount ?? $record->amount, 'quantity' => $record->total_ordered_quantity]);
+                    'amount' => $record->total_amount ?? $record->amount ?? $record->purchase_value, 'quantity' => $record->total_ordered_quantity]);
             }
         };
         $append($requests, 'Purchase Requisition', 'admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view');
         $append($rfqs, 'Request for Quotation', 'admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view');
         $append($quotations, 'Supplier Quotation', 'admin.purchases.supplier-quotation-entry.show', 'purchases.supplier_quotation_entry.view');
         $append($orders, 'Purchase Order', 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
+        $append($supplyOrders, 'Supply Order', 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $append($receipts, 'Goods Receipt', 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
         $append($invoices, 'Purchase Invoice', 'admin.purchases.purchase-invoices.show', 'purchase_invoices.view');
+        $append($fixedAssets, 'fixed_assets.singular', 'admin.fixed-assets.assets.show', 'fixed_assets.view');
+        $append($assetImprovementMovements, 'fixed_assets.cycle.addition', 'admin.fixed-assets.prints.movement', 'fixed_assets.print');
         $append($payments, 'Supplier Payment', 'admin.purchases.supplier-payments.show', 'supplier_payments.view');
         $append($returns, 'Purchase Return', 'admin.purchases.purchase-returns.show', 'purchases.purchase_returns.view');
         $append($payments->pluck('cashVoucher')->filter(), 'Cash Payment Voucher', 'admin.finance.cash-payment-vouchers.show', 'cash_payment_vouchers.view');
@@ -268,7 +343,7 @@ class ProcurementCycleReport
     {
         return [
             self::SupplierStatement, self::PurchaseLedger, self::PurchaseRequests, self::PendingPurchaseRequests, self::OpenPurchaseOrders,
-            self::PartiallyReceivedOrders, self::SupplierDeliveries, self::PurchaseReceipts,
+            self::PartiallyReceivedOrders, self::SupplyOrders, self::SupplierDeliveries, self::PurchaseReceipts,
             self::PurchaseInvoices, self::ReceivedVsInvoiced, self::PurchasesByCategory,
             self::PurchasesByWarehouse, self::PriceHistory, self::ReceiptQualityStatus,
             self::OpenRequirements,
@@ -308,6 +383,7 @@ class ProcurementCycleReport
             self::PendingPurchaseRequests => $this->requestedVsOrdered($companyId, $financialPeriodId, true)->whereIn('status', ['draft', 'pending_approval', 'approved', 'partially_converted'])->where('outstanding', '>', 0)->values(),
             self::OpenPurchaseOrders => $this->purchaseOrderStatus($companyId, $financialPeriodId, true)->whereIn('status', ['approved', 'sent', 'partially_received'])->where('outstanding', '>', 0)->values(),
             self::PartiallyReceivedOrders => $this->purchaseOrderStatus($companyId, $financialPeriodId, true)->where('status', 'partially_received')->values(),
+            self::SupplyOrders => $this->supplyOrderStatus($companyId, $financialPeriodId),
             self::PurchaseReceipts, self::SupplierDeliveries, self::ReceiptQualityStatus => $this->receiptQualityStatus($companyId, $financialPeriodId),
             self::PurchaseInvoices => $this->supplierPayables($companyId, $financialPeriodId, $filters),
             self::ReceivedVsInvoiced => $this->purchaseOrderStatus($companyId, $financialPeriodId, true)->whereNotIn('status', ['draft', 'cancelled'])->values(),
@@ -339,6 +415,7 @@ class ProcurementCycleReport
             self::PurchaseRequests, self::PendingPurchaseRequests, self::RequestedVsOrdered, self::OpenRequirements, self::ProductionAnalysis => ['admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view'],
             self::RfqQuotationStatus => ['admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view'],
             self::PurchaseOrderStatus, self::OpenPurchaseOrders, self::PartiallyReceivedOrders, self::OrderedVsReceived, self::ReceivedVsInvoiced, self::OverduePoDeliveries, self::DeliverySchedule => ['admin.purchases.purchase-orders.show', 'purchase_orders.view'],
+            self::SupplyOrders => ['admin.purchases.supply-orders.show', 'purchases.supply_orders.view'],
             self::PurchaseReceipts, self::SupplierDeliveries, self::ReceiptQualityStatus, self::IncomingQcPending, self::QcRejection, self::GoodsReceivedNotInvoiced => ['admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view'],
             self::Returns => ['admin.purchases.purchase-returns.show', 'purchases.purchase_returns.view'],
             default => null,
@@ -699,6 +776,39 @@ class ProcurementCycleReport
                 'overdue' => $progress['remaining'] > 0 && $line->required_delivery_date?->isPast(),
             ]);
         });
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function supplyOrderStatus(int $companyId, int $periodId): Collection
+    {
+        return SupplyOrderLine::query()
+            ->with(['supplyOrder.supplier', 'supplyOrder.branch', 'supplyOrder.branchStore', 'supplyOrder.purchaseOrder', 'product'])
+            ->where('company_id', $companyId)
+            ->where('financial_period_id', $periodId)
+            ->get()
+            ->map(function (SupplyOrderLine $line): array {
+                $received = $line->receivedQuantity();
+
+                return $this->row([
+                    'date' => $line->supplyOrder?->issue_date?->toDateString(),
+                    'document' => $line->supplyOrder?->doc_num,
+                    'status' => $line->supplyOrder?->status,
+                    'supplier_doc_num' => $line->supplyOrder?->supplier?->doc_num,
+                    'supplier' => $line->supplyOrder?->supplier?->name,
+                    'product_doc_num' => $line->product?->doc_num,
+                    'product' => $line->product?->name,
+                    'purchase_order' => $line->supplyOrder?->purchaseOrder?->doc_num,
+                    'branch_id' => $line->supplyOrder?->branch_id,
+                    'branch' => $line->supplyOrder?->branch?->name,
+                    'warehouse_uuid' => $line->supplyOrder?->branchStore?->public_uuid,
+                    'warehouse' => $line->supplyOrder?->branchStore?->name,
+                    'quantity' => $line->ordered_quantity,
+                    'received' => $received,
+                    'outstanding' => max(0, (float) $line->ordered_quantity - $received),
+                    'overdue' => $line->supplyOrder?->expected_delivery_date?->isPast()
+                        && $received + 0.00000001 < (float) $line->ordered_quantity,
+                ]);
+            });
     }
 
     /** @return Collection<int, array<string, mixed>> */

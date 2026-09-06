@@ -15,5 +15,12 @@
             @foreach(['source_type', 'source_doc_num', 'source_line_reference', 'required_date', 'specification'] as $field)<input type="hidden" name="lines[{{ $index }}][{{ $field }}]" value="{{ $line[$field] ?? '' }}">@endforeach
         @endif
     </td>
+    <td class="line-card-full">
+        @include('modules.purchases.procurement.line-attachments', [
+            'attachmentLine' => ($record ?? null)?->lines?->firstWhere('public_id', $line['public_id'] ?? null),
+            'attachmentCompanyId' => ($record ?? null)?->company_id ?? ($branch?->company_id ?? 0),
+            'index' => $index,
+        ])
+    </td>
     <td class="line-card-actions">@if(empty($line['source_doc_num']))<button class="btn btn-falcon-default btn-sm" type="button" data-duplicate-procurement-line title="{{ __('Duplicate line') }}" aria-label="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>@endif<button class="btn btn-falcon-default text-danger btn-sm" type="button" data-remove-procurement-line title="{{ __('Remove line') }}" aria-label="{{ __('Remove line') }}"><span class="fas fa-trash-alt"></span></button></td>
 </tr>

@@ -170,6 +170,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
             'lines.*.notes' => ['nullable', 'string'],
+            'lines.*.attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:10'],
+            'lines.*.attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'payment_schedules' => ['nullable', 'array'],
             'payment_schedules.*.public_id' => ['nullable', 'string'],
             'payment_schedules.*.due_date' => ['required', function (string $attribute, mixed $value, \Closure $fail): void {
@@ -512,6 +514,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'discount_value' => $this->decimalValue($line['discount_value'] ?? 0),
                 'tax_rate' => $this->decimalValue($line['tax_rate'] ?? 0),
                 'notes' => trim((string) ($line['notes'] ?? '')) ?: null,
+                'attachment_file_doc_nums' => collect($line['attachment_file_doc_nums'] ?? [])->map(fn (mixed $value): string => trim((string) $value))->filter()->unique()->values()->all(),
             ])
             ->reject(fn (array $line): bool => $line['product_doc_num'] === null && $line['quantity'] === null && $line['unit_price'] === null)
             ->values()

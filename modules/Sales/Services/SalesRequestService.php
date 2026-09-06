@@ -83,6 +83,32 @@ class SalesRequestService
         });
     }
 
+    public function delete(SalesRequest $request): void
+    {
+        DB::transaction(function () use ($request): void {
+            $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->id);
+            if ($record->status !== 'draft' || $record->quotations()->withTrashed()->exists() || $record->orders()->withTrashed()->exists()) {
+                throw new DomainException(__('Only unused drafts can be deleted.'));
+            }
+            $record->delete();
+            $this->audit->record($record, 'sales_request.deleted');
+        });
+    }
+
+    public function restore(SalesRequest $request): SalesRequest
+    {
+        return DB::transaction(function () use ($request): SalesRequest {
+            $record = SalesRequest::onlyTrashed()->lockForUpdate()->findOrFail($request->id);
+            if ($record->status !== 'draft') {
+                throw new DomainException(__('Only unused drafts can be restored.'));
+            }
+            $record->restore();
+            $this->audit->record($record, 'sales_request.restored');
+
+            return $record;
+        });
+    }
+
     public function transition(SalesRequest $request, string $status, ?string $reason = null): SalesRequest
     {
         return DB::transaction(function () use ($request, $status, $reason): SalesRequest {
@@ -100,6 +126,58 @@ class SalesRequestService
             $this->audit->record($record, 'sales_request.'.$status);
 
             return $record->refresh();
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function convertToOrder(SalesRequest $request, array $data): SalesOrder
+    {
+        return DB::transaction(function () use ($request, $data): SalesOrder {
+            $record = SalesRequest::query()->with(['lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($request->getKey());
+            if (! in_array($record->status, ['approved', 'partially_converted'], true) || ! $record->customer_id || ! $record->currency_id) {
+                throw new DomainException(__('Conversion requires an approved request with a customer and currency.'));
+            }
+
+            $preparedLines = [];
+            foreach ($data['lines'] ?? [] as $input) {
+                $sourceLine = $record->lines->firstWhere('public_id', $input['source_request_line_public_id'] ?? null);
+                if (! $sourceLine
+                    || (int) $sourceLine->product_id !== (int) ($input['product_id'] ?? 0)
+                    || (int) $sourceLine->unit_id !== (int) ($input['unit_id'] ?? 0)) {
+                    throw new DomainException(__('Each order line must keep its selected sales request product and unit.'));
+                }
+
+                $quantity = (string) ($input['quantity'] ?? '0');
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $sourceLine->remainingQuantity(), 8) > 0) {
+                    throw new DomainException(__('Converted quantity exceeds the remaining request quantity.'));
+                }
+                $preparedLines[] = [
+                    ...collect($input)->except('source_request_line_public_id')->all(),
+                    'sales_request_line_id' => $sourceLine->getKey(),
+                ];
+            }
+            if ($preparedLines === []) {
+                throw new DomainException(__('Select at least one sales request line.'));
+            }
+
+            $order = app(SalesOrderService::class)->create([
+                ...collect($data)->except(['source_request_doc_num', 'lines', 'customer_id', 'currency_id', 'branch_store_id', 'business_employee_id'])->all(),
+                'customer_id' => $record->customer_id,
+                'currency_id' => $record->currency_id,
+                'exchange_rate' => $record->exchange_rate,
+                'branch_store_id' => null,
+                'business_employee_id' => $record->business_employee_id ?: ($data['business_employee_id'] ?? null),
+                'sales_request_id' => $record->getKey(),
+                'lines' => $preparedLines,
+            ]);
+
+            foreach ($preparedLines as $line) {
+                SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
+            }
+            $record->update(['status' => $record->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+            $this->audit->record($record, 'sales_request.converted', ['target' => 'order', 'document' => $order->doc_num]);
+
+            return $order;
         });
     }
 

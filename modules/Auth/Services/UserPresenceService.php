@@ -19,6 +19,18 @@ class UserPresenceService
 {
     private const SessionFingerprintsSessionKey = 'auth_presence_session_fingerprints';
 
+    /**
+     * @var list<string>
+     */
+    private const OperatingContextColumns = [
+        'branch_id',
+        'branch_doc_num',
+        'branch_name',
+        'financial_period_id',
+        'financial_period_doc_num',
+        'financial_period_name',
+    ];
+
     public const StatusOnline = 'online';
 
     public const StatusIdle = 'idle';
@@ -69,7 +81,7 @@ class UserPresenceService
      */
     public function touch(Request $request, ?User $user = null, bool $activity = true, array $context = []): ?UserPresenceSession
     {
-        if ($this->shouldThrottleTrackedActivityTouch($request, $context)) {
+        if ($this->shouldThrottleActivityTouch($request, $context)) {
             return null;
         }
 
@@ -93,7 +105,7 @@ class UserPresenceService
         $presenceSession = $this->write($request, $user, $status, $context + $timestamps);
 
         if ($presenceSession instanceof UserPresenceSession) {
-            $this->rememberTrackedActivityTouch($request, $context);
+            $this->rememberActivityTouch($request, $context);
         }
 
         return $presenceSession;
@@ -141,11 +153,72 @@ class UserPresenceService
             return false;
         }
 
-        return (bool) $this->memo->remember("presence.forced_logout.{$sessionFingerprint}", fn (): bool => UserPresenceSession::query()
-            ->where('session_fingerprint', $sessionFingerprint)
-            ->where('status', self::StatusOffline)
-            ->where('offline_reason', self::ReasonForcedLogout)
-            ->exists());
+        return (bool) $this->memo->remember(
+            "presence.forced_logout.{$sessionFingerprint}",
+            fn (): bool => $this->forcedLogoutSessionsQuery($sessionFingerprint)->exists()
+        );
+    }
+
+    /**
+     * @return array{forced_logout: bool, other_active_count: int}
+     */
+    public function sessionConflictStateForRequest(
+        User $user,
+        Request $request,
+        bool $includeOtherActiveSessions = true
+    ): array {
+        $sessionFingerprint = $this->sessionFingerprint($request);
+
+        if ($sessionFingerprint === null && ! $includeOtherActiveSessions) {
+            return [
+                'forced_logout' => false,
+                'other_active_count' => 0,
+            ];
+        }
+
+        $summaryQuery = DB::query();
+
+        if ($sessionFingerprint === null) {
+            $summaryQuery->selectRaw('0 AS forced_logout');
+        } else {
+            $summaryQuery->selectSub(
+                $this->forcedLogoutSessionsQuery($sessionFingerprint)
+                    ->selectRaw('1')
+                    ->limit(1),
+                'forced_logout'
+            );
+        }
+
+        if ($includeOtherActiveSessions) {
+            $sessionFingerprints = $this->normalizeFingerprints([
+                $sessionFingerprint,
+                ...$this->storedSessionFingerprints($request),
+            ]);
+
+            $summaryQuery->selectSub(
+                $this->activeSessionsQuery(
+                    $user,
+                    $sessionFingerprints,
+                    Carbon::now(),
+                    $this->lockFlowFingerprint($request)
+                )->selectRaw('COUNT(*)'),
+                'other_active_count'
+            );
+        } else {
+            $summaryQuery->selectRaw('0 AS other_active_count');
+        }
+
+        $summary = $summaryQuery->first();
+        $forcedLogout = (bool) ($summary?->forced_logout ?? false);
+
+        if ($sessionFingerprint !== null) {
+            $this->memo->put("presence.forced_logout.{$sessionFingerprint}", $forcedLogout);
+        }
+
+        return [
+            'forced_logout' => $forcedLogout,
+            'other_active_count' => (int) ($summary?->other_active_count ?? 0),
+        ];
     }
 
     public function deleteDatabaseSessionForFingerprint(?string $sessionFingerprint): bool
@@ -657,6 +730,17 @@ class UserPresenceService
     }
 
     /**
+     * @return Builder<UserPresenceSession>
+     */
+    private function forcedLogoutSessionsQuery(string $sessionFingerprint): Builder
+    {
+        return UserPresenceSession::query()
+            ->where('session_fingerprint', $sessionFingerprint)
+            ->where('status', self::StatusOffline)
+            ->where('offline_reason', self::ReasonForcedLogout);
+    }
+
+    /**
      * @return list<string>
      */
     public function activeStatuses(): array
@@ -738,14 +822,8 @@ class UserPresenceService
      */
     private function operatingContextColumns(Request $request): array
     {
-        if (! Schema::hasTable('user_presence_sessions')) {
-            return [];
-        }
-
-        $columns = $this->memo->remember('schema.columns.user_presence_sessions', fn (): array => Schema::getColumnListing('user_presence_sessions'));
-
         return collect($this->operatingContext->snapshot($request))
-            ->only($columns)
+            ->only(self::OperatingContextColumns)
             ->all();
     }
 
@@ -885,13 +963,13 @@ class UserPresenceService
     /**
      * @param  array<string, mixed>  $context
      */
-    private function shouldThrottleTrackedActivityTouch(Request $request, array $context): bool
+    private function shouldThrottleActivityTouch(Request $request, array $context): bool
     {
-        if (($context['event'] ?? null) !== 'tracked_activity') {
+        if (! in_array($context['event'] ?? null, ['tracked_activity', 'session_touch'], true)) {
             return false;
         }
 
-        $seconds = $this->trackedActivityTouchThrottleSeconds();
+        $seconds = $this->activityTouchThrottleSeconds();
 
         if ($seconds <= 0) {
             return false;
@@ -913,9 +991,9 @@ class UserPresenceService
     /**
      * @param  array<string, mixed>  $context
      */
-    private function rememberTrackedActivityTouch(Request $request, array $context): void
+    private function rememberActivityTouch(Request $request, array $context): void
     {
-        if (($context['event'] ?? null) !== 'tracked_activity') {
+        if (! in_array($context['event'] ?? null, ['tracked_activity', 'session_touch'], true)) {
             return;
         }
 
@@ -928,9 +1006,9 @@ class UserPresenceService
         }
     }
 
-    private function trackedActivityTouchThrottleSeconds(): int
+    private function activityTouchThrottleSeconds(): int
     {
-        return max(0, (int) config('presence.tracked_activity_touch_throttle_seconds', 30));
+        return max(0, (int) config('presence.activity_touch_throttle_seconds', 30));
     }
 
     private function reportFailure(string $message, Throwable $exception): void

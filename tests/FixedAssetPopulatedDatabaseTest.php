@@ -17,6 +17,7 @@ use Modules\FixedAssets\Services\FixedAssetCostMovementService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetLedgerService;
 use Modules\FixedAssets\Services\FixedAssetReportService;
+use Modules\HR\Models\HrEmployee;
 use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
@@ -377,4 +378,15 @@ test('prerequisite browser postings reconcile without overrides or legacy exempt
     } finally {
         DB::rollBack();
     }
+});
+
+test('usability browser employee fixtures stay in the isolated populated copy', function (): void {
+    if (DB::getDriverName() !== 'pgsql' || ! str_starts_with(DB::connection()->getDatabaseName(), 'fa_release_copy_')) {
+        $this->markTestSkipped('Requires the isolated release copy.');
+    }
+    $asset = FixedAsset::query()->where('company_id', 1)->where('doc_num', 'FA-00014')->firstOrFail();
+    foreach ([1 => 'أحمد اختبار العهدة', 2 => 'منى اختبار العهدة'] as $number => $name) {
+        HrEmployee::query()->firstOrCreate(['company_id' => 1, 'doc_num' => 'EMP-9950'.$number], ['branch_id' => $asset->branch_id, 'doc_number' => 99500 + $number, 'full_name' => $name, 'name' => $name, 'status' => 'active']);
+    }
+    expect(HrEmployee::query()->where('company_id', 1)->whereIn('doc_num', ['EMP-99501', 'EMP-99502'])->count())->toBe(2);
 });

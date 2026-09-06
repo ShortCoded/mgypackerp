@@ -30,5 +30,5 @@
 @push('scripts')
 <script>window.dataTableTranslations = @json(__('datatables')); window.procurementIndexMessages = {{ \Illuminate\Support\Js::from(['confirm' => __('Are you sure?'), 'reason' => __('Reason'), 'apply' => __('common.actions.apply'), 'cancel' => __('Cancel'), 'error' => __('Unable to complete the action.')]) }};</script>
 <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-<script src="{{ asset('assets/js/modules/Purchases/procurement-index.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/procurement-index.js')) }}"></script>
+<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Purchases/procurement-index.js') }}"></script>
 @endpush

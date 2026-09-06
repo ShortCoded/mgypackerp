@@ -41,11 +41,11 @@ class SalesRequestWorkflowRequest extends FormRequest
         }
 
         return ['request_date' => ['required', 'date'], 'required_delivery_date' => ['nullable', 'date', 'after_or_equal:request_date'],
-            'customer_doc_num' => ['nullable', 'required_if:request_type,customer', 'string'], 'currency_doc_num' => ['nullable', 'string'], 'branch_store_uuid' => ['nullable', 'uuid'],
-            'sales_employee_doc_num' => ['nullable', 'string', 'exists:hr_employees,doc_num'], 'request_type' => ['nullable', Rule::in(['customer', 'internal'])], 'priority' => ['required', Rule::in(['low', 'normal', 'high', 'urgent'])],
+            'customer_doc_num' => ['nullable', 'required_if:request_type,customer', 'string'], 'currency_doc_num' => ['required', 'string'], 'branch_store_uuid' => ['nullable', 'uuid'],
+            'sales_employee_doc_num' => ['nullable', 'string', 'exists:hr_employees,doc_num'], 'request_type' => ['required', Rule::in(['customer', 'internal'])], 'priority' => ['sometimes', Rule::in(['low', 'normal', 'high', 'urgent'])],
             'customer_reference' => ['nullable', 'string', 'max:160'], 'notes' => ['nullable', 'string', 'max:5000'], 'exchange_rate' => ['required', 'numeric', 'gt:0'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['nullable', 'string'],
-            'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.unit_price' => ['nullable', 'numeric', 'min:0'],
+            'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['required', 'string'],
+            'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
             'lines.*.specifications' => ['nullable', 'array'], 'lines.*.notes' => ['nullable', 'string']];
     }
 }

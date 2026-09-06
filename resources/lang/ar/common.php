@@ -169,6 +169,7 @@ return [
     'shortcut_logout' => 'الاختصار: Alt + Q',
     'shortcut_table_search' => 'الاختصار: Alt + /',
     'shortcuts' => [
+        'add_line' => 'إضافة بند (Alt + L)',
         'add_new_record' => 'إضافة سجل جديد (Alt + N)',
         'back' => 'رجوع (Alt + 0)',
         'bulk_apply' => 'تطبيق الإجراء الجماعي المحدد (Ctrl + Enter)',

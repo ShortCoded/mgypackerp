@@ -484,6 +484,10 @@
         const value = String($(this).attr('data-error-for') || '');
         $(this).attr('data-error-for', value.replace(errorPattern, prefix + '.' + index + '.'));
       });
+      $row.find('[data-input-name]').each(function () {
+        const namePattern = new RegExp(prefix + '\\[\\d+\\]', 'g');
+        this.dataset.inputName = String(this.dataset.inputName || '').replace(namePattern, prefix + '[' + index + ']');
+      });
     });
   }
 
@@ -666,8 +670,12 @@
     $row.find('select.js-purchase-invoice-product').empty();
     $row.find('select.js-purchase-invoice-unit').empty();
     $row.find('[name$="[purchase_order_line_public_id]"], [name$="[receipt_line_public_id]"]').val('');
+    $row.find('.js-purchase-invoice-source-reference').prop('hidden', true).find('a, small').remove();
+    $row.find('.js-purchase-invoice-duplicate-line').prop('hidden', false);
     $row.find('select.js-purchase-invoice-discount-type').val('fixed');
     $row.find('.js-purchase-invoice-line-subtotal, .js-purchase-invoice-line-discount, .js-purchase-invoice-line-tax, .js-purchase-invoice-line-total').text('0');
+    $row.find('.js-procurement-attachment-inputs').empty();
+    $row.find('.js-procurement-selected-attachments').empty().addClass('d-none');
     initRepeaterRow($row);
   }
 
@@ -692,6 +700,9 @@
       resetLineRow($row);
     } else {
       $row.find('input[type="hidden"]').val('');
+      $row.find('.js-procurement-existing-attachments').remove();
+      $row.find('.js-procurement-attachment-inputs').empty();
+      $row.find('.js-procurement-selected-attachments').empty().addClass('d-none');
       initRepeaterRow($row);
     }
     renumberRows($tbody.find('.js-purchase-invoice-line'), 'lines');
@@ -836,9 +847,13 @@
 
     $form.on('click', '.js-purchase-invoice-duplicate-line', function () {
       const $row = $(this).closest('.js-purchase-invoice-line');
+      if ($row.find('[name$="[purchase_order_line_public_id]"]').val()) return;
       const $clone = $row.clone(false, false);
       cleanSelect2($clone);
       $clone.find('input[type="hidden"]').val('');
+      $clone.find('.js-procurement-existing-attachments').remove();
+      $clone.find('.js-procurement-attachment-inputs').empty();
+      $clone.find('.js-procurement-selected-attachments').empty().addClass('d-none');
       $row.after($clone);
       initRepeaterRow($clone);
       renumberRows($form.find('.js-purchase-invoice-line'), 'lines');

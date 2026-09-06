@@ -51,8 +51,18 @@
             @if($record->supplier ?? null)
                 <tr><td><strong>{{ __('procurement.fields.supplier') }}</strong></td><td>{{ $record->supplier?->doc_num }} / {{ $record->supplier?->name }}</td></tr>
             @endif
+            @if($type === 'supplier-quotation' && filled($record->source_doc_num))
+                <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num }}</td></tr>
+            @endif
             @if($record->purchaseOrder ?? null)
                 <tr><td><strong>{{ __('procurement.fields.purchase_order') }}</strong></td><td dir="ltr">{{ $record->purchaseOrder?->doc_num }}</td></tr>
+            @endif
+            @if($record->supplyOrder ?? null)
+                <tr><td><strong>{{ __('Supply Order') }}</strong></td><td dir="ltr">{{ $record->supplyOrder?->doc_num }}</td></tr>
+            @endif
+            @if($type === 'supply-order')
+                <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num }}</td></tr>
+                @if($record->expected_delivery_date)<tr><td><strong>{{ __('Expected delivery date') }}</strong></td><td dir="ltr">{{ $dates->formatDate($record->expected_delivery_date) }}</td></tr>@endif
             @endif
             @if($record->requisition ?? null)
                 <tr><td><strong>{{ __('procurement.fields.purchase_requisition') }}</strong></td><td dir="ltr">{{ $record->requisition?->doc_num }}</td></tr>
@@ -96,16 +106,27 @@
                 @foreach($lines as $index => $line)
                     @php
                         $product = $line->product ?? $line->purchaseOrderLine?->product;
-                        $quantity = $line->requested_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->scheduled_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
-                        $previouslyReceived = $isReceipt ? \Modules\Inventory\Models\UnpricedInventoryReceiptLine::query()->where('purchase_order_line_id', $line->purchase_order_line_id)->where('receipt_id', '<', $record->getKey())->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))->sum('delivered_quantity') : 0;
+                        $quantity = $line->requested_quantity ?? $line->ordered_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->scheduled_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
+                        $previouslyReceived = $isReceipt ? \Modules\Inventory\Models\UnpricedInventoryReceiptLine::query()
+                            ->when($line->supply_order_line_id, fn ($query) => $query->where('supply_order_line_id', $line->supply_order_line_id), fn ($query) => $query->where('purchase_order_line_id', $line->purchase_order_line_id))
+                            ->where('receipt_id', '<', $record->getKey())->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))->sum('delivered_quantity') : 0;
                     @endphp
                     <tr>
                         <td>{{ $index + 1 }}</td>
                         @if($isItemDocument)<td dir="ltr">{{ $product?->doc_num }}</td>@endif
-                        <td>@if($isItemDocument)@include('reports.partials.item-details', ['line' => $line, 'product' => $product, 'showItemCode' => false])@else{{ $line->purchaseInvoice?->doc_num ?? '—' }}@endif@if(filled($line->specification))<div class="document-item-details">{{ $line->specification }}</div>@endif</td>
+                        <td>
+                            @if($isItemDocument)
+                                @include('reports.partials.item-details', ['line' => $line, 'product' => $product, 'showItemCode' => false])
+                            @else
+                                {{ $line->purchaseInvoice?->doc_num ?? '—' }}
+                            @endif
+                            @if(filled($line->specification))
+                                <div class="document-item-details">{{ $line->specification }}</div>
+                            @endif
+                        </td>
                         @if($showUnitOrDueDate)<td>{{ $line->unit?->name ?? $line->paymentSchedule?->due_date?->format('Y-m-d') ?? '—' }}</td>@endif
                         @if($showReceiptReference)<td dir="ltr">{{ $line->receiptLine?->receipt?->doc_num }}</td>@endif
-                        @if($isReceipt)<td dir="ltr">{{ $numbers->format($line->purchaseOrderLine?->ordered_quantity) }}</td><td dir="ltr">{{ $numbers->format($previouslyReceived) }}</td>@endif
+                        @if($isReceipt)<td dir="ltr">{{ $numbers->format($line->supplyOrderLine?->ordered_quantity ?? $line->purchaseOrderLine?->ordered_quantity) }}</td><td dir="ltr">{{ $numbers->format($previouslyReceived) }}</td>@endif
                         @if($isReturn)
                         <td dir="ltr">{{ $numbers->format($line->receiptLine?->accepted_quantity) }}</td>
                         <td dir="ltr">{{ $numbers->format(\Modules\Purchases\Models\PurchaseReturnLine::query()->where('receipt_line_id', $line->receipt_line_id)->where('purchase_return_id', '<', $record->getKey())->whereHas('purchaseReturn', fn ($query) => $query->where('status', 'posted'))->sum('quantity')) }}</td>

@@ -4,7 +4,7 @@
 <form method="POST" action="{{ route('admin.purchases.purchase-order-delivery-schedule.store', $record->doc_num) }}">
     @csrf
         <x-forms.line-item-cards />
-    <div class="card mb-3"><div class="card-header d-flex justify-content-between align-items-center"><h5 class="mb-0">{{ __('Delivery Schedule for :document', ['document' => $record->doc_num]) }}</h5>@can('purchases.purchase_order_delivery_schedule.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.purchases.procurement.print', ['purchase-order-delivery-schedule', $record->doc_num]) }}">{{ __('Print') }}</a>@endcan</div><div class="card-body p-0">
+    <div class="card mb-3"><div class="card-header py-2 d-flex justify-content-between align-items-center"><h5 class="mb-0">{{ __('Delivery Schedule for :document', ['document' => $record->doc_num]) }}</h5>@can('purchases.purchase_order_delivery_schedule.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.purchases.procurement.print', ['purchase-order-delivery-schedule', $record->doc_num]) }}">{{ __('Print') }}</a>@endcan</div><div class="card-body p-0">
         @if($errors->any())<div class="alert alert-danger m-3">{{ $errors->first() }}</div>@endif
         <div class="table-responsive procurement-lines-scroll"><table class="table table-sm align-middle mb-0 procurement-lines-table"><thead class="bg-100"><tr><th>{{ __('Item') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('Already scheduled') }}</th><th>{{ __('New date') }}</th><th>{{ __('New quantity') }}</th><th>{{ __('Notes') }}</th></tr></thead><tbody>
         @foreach($record->lines as $index => $line)

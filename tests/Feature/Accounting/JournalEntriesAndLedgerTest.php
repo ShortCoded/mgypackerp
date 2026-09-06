@@ -15,11 +15,28 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\Process\Process;
+
+function accountingPdfText(string $content): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'accounting-pdf-');
+    file_put_contents($path, $content);
+
+    try {
+        $process = new Process(['pdftotext', '-layout', $path, '-']);
+        $process->mustRun();
+
+        return $process->getOutput();
+    } finally {
+        @unlink($path);
+    }
+}
 
 /**
  * @return array{company: Company, branch: Branch, period: FinancialPeriod, currency: Currency}
@@ -509,8 +526,11 @@ test('customer statement uses only the selected customer linked account movement
         'name' => 'Customer B',
         'status' => 'active',
     ]);
-    journalPostedMovement($context, $customerAccountA, $counterpart, 99211, '2026-02-10', '120.0000', '0.0000');
+    $customerMovement = journalPostedMovement($context, $customerAccountA, $counterpart, 99211, '2026-02-10', '120.0000', '0.0000');
+    $customerMovement->lines()->where('account_id', $customerAccountA->getKey())->update(['description' => 'Customer receivable']);
     journalPostedMovement($context, $customerAccountB, $counterpart, 99212, '2026-02-11', '870.0000', '0.0000');
+    $actor->forceFill(['locale' => 'ar'])->save();
+    app()->setLocale('ar');
 
     $this->actingAs($actor)
         ->get(route('admin.accounting.reports.customer-statement', [
@@ -522,8 +542,85 @@ test('customer statement uses only the selected customer linked account movement
         ->assertOk()
         ->assertSee('Customer A')
         ->assertSee('JE-99211')
-        ->assertDontSee('JE-99212')
-        ->assertDontSee('870');
+        ->assertSee(__('ledger_reports.movement_descriptions.customer_receivable'))
+        ->assertDontSee('Customer receivable')
+        ->assertDontSee('JE-99212');
+});
+
+test('customer statement uses the shared report controls and exports pdf excel and csv', function (): void {
+    app()->setLocale('en');
+    $context = journalEntryContext();
+    [, $counterpart] = journalEntryAccounts($context['company']);
+    $actor = journalEntryActor(['journal_entries.view', 'reports.customer_statement.view', 'reports.customer_statement.export']);
+    $actor->forceFill(['locale' => 'en'])->save();
+    $customerAccount = Account::query()->create([
+        'doc_number' => 99221,
+        'doc_num' => 'ACC-99221',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => 'CUST-99221',
+        'name' => 'Export Customer Account',
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $customer = Customer::query()->create([
+        'doc_number' => 99221,
+        'doc_num' => 'CUS-99221',
+        'company_id' => $context['company']->getKey(),
+        'account_id' => $customerAccount->getKey(),
+        'name' => 'Export Customer',
+        'status' => 'active',
+    ]);
+    journalPostedMovement($context, $customerAccount, $counterpart, 99222, '2026-02-10', '320.0000', '0.0000');
+    $dates = app(DateFormatService::class);
+    $filters = [
+        'run' => 1,
+        'customer_doc_num' => $customer->doc_num,
+        'from_date' => $dates->formatDate('2026-02-01'),
+        'to_date' => $dates->formatDate('2026-02-28'),
+    ];
+
+    $page = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.customer-statement', $filters))
+        ->assertOk()
+        ->assertSee('admin-report-page', false)
+        ->assertSee('js-date-picker js-report-filter-control', false)
+        ->assertSee(__('reports.export_pdf'))
+        ->assertSee(__('reports.export_excel'))
+        ->assertSee(__('reports.export_csv'))
+        ->assertSee(__('ledger_reports.columns.balance'))
+        ->assertDontSee('id="branch_doc_num"', false)
+        ->assertDontSee('id="cost_center_doc_num"', false)
+        ->assertDontSee('>Source type<', false)
+        ->assertDontSee('>Cost center<', false)
+        ->assertDontSee($customerAccount->codeNameLabel())
+        ->assertDontSee('Customer Invoice, Payment and Credit History')
+        ->assertDontSee('window.print()', false);
+
+    expect($page->getContent())->toContain('data-url="'.route('admin.accounting.journal-entries.select2.customers').'"');
+
+    $this->get(route('admin.accounting.reports.customer-statement.export.excel', $filters))
+        ->assertOk()
+        ->assertDownload('customer-statement.xlsx');
+    $this->get(route('admin.accounting.reports.customer-statement.export.csv', $filters))
+        ->assertOk()
+        ->assertDownload('customer-statement.csv');
+    $pdf = $this->get(route('admin.accounting.reports.customer-statement.export.pdf', $filters))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    $pdfText = accountingPdfText($pdf->getContent());
+
+    expect(strlen($pdf->getContent()))->toBeGreaterThan(1000)
+        ->and($pdfText)->toContain('Customer Statement')
+        ->and($pdfText)->toContain('Balance')
+        ->and($pdfText)->not->toContain('Source type')
+        ->and($pdfText)->not->toContain('Cost center')
+        ->and($pdfText)->not->toContain('Export Customer Account')
+        ->and($pdfText)->not->toContain('Customer Invoice, Payment and Credit History');
 });
 
 test('supplier statement uses only the selected supplier linked account movements', function (): void {

@@ -422,6 +422,13 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'supply_orders' => [
+        'prefix' => 'SUP-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company_period',
+    ],
     'purchase_requisitions' => [
         'prefix' => 'PR-',
         'padding' => 5,

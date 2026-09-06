@@ -231,6 +231,11 @@ class PurchaseOrder extends Model
         return $this->hasMany(PurchaseInvoice::class);
     }
 
+    public function supplierQuotations(): HasMany
+    {
+        return $this->hasMany(SupplierQuotation::class);
+    }
+
     public function requisition(): BelongsTo
     {
         return $this->belongsTo(PurchaseRequisition::class, 'purchase_requisition_id');
@@ -259,6 +264,11 @@ class PurchaseOrder extends Model
     public function receipts(): HasMany
     {
         return $this->hasMany(UnpricedInventoryReceipt::class);
+    }
+
+    public function supplyOrders(): HasMany
+    {
+        return $this->hasMany(SupplyOrder::class);
     }
 
     public function purchaseReturns(): HasMany

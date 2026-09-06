@@ -24,8 +24,8 @@ class StoreSalesReturnRequest extends FormRequest
     {
         return [
             'reason_code' => ['required', 'string'], 'reason_details' => ['nullable', 'string'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.invoice_line_public_id' => [$this->route('inventoryDocument') ? 'nullable' : 'required', 'uuid', 'distinct'],
-            'lines.*.delivery_line_public_id' => [$this->route('inventoryDocument') ? 'required' : 'nullable', 'uuid', 'distinct'],
+            'branch_store_uuid' => ['nullable', 'uuid'],
+            'lines' => ['required', 'array', 'min:1'], 'lines.*.invoice_line_public_id' => ['required', 'uuid', 'distinct'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
         ];
     }

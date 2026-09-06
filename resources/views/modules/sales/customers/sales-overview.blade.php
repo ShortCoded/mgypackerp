@@ -1,5 +1,6 @@
 @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
-<section class="card mb-3" id="customer-sales-overview">
+@php($dates = app(\Modules\Core\Services\DateFormatService::class))
+<div class="card mb-3" id="customer-sales-overview">
     <div class="card-header"><h5 class="mb-0">{{ __('Customer sales activity') }}</h5></div>
     <div class="card-body">
         <p>{{ __('Open orders') }}: <strong>{{ $salesOverview['openOrderCount'] }}</strong></p>
@@ -10,7 +11,7 @@
             <div class="col-12 col-md-4">{{ __('Outstanding balance') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format($balance->outstanding) }}</div></div>
             <div class="col-12 col-md-4">{{ __('Available Customer Credit') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format($salesOverview['credits']->get($balance->currency_id)?->available ?? 0) }}</div></div>
             <div class="col-12 col-md-4">{{ __('Overdue') }}<div class="fw-bold">{{ $numbers->format($balance->overdue) }}</div></div>
-            <div class="col-12 col-md-4">{{ __('Last sale date') }}<div class="fw-bold">{{ $balance->last_sale ?: '—' }}</div></div>
+            <div class="col-12 col-md-4">{{ __('Last sale date') }}<div class="fw-bold">{{ $dates->formatDate($balance->last_sale, '—') }}</div></div>
         </div>
         @endforeach
         @endcan
@@ -19,7 +20,7 @@
         @endcan
         @can('customer_invoices.view_prices')
         <details class="mb-3"><summary>{{ __('Price History') }}</summary><div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Invoice') }}</th><th>{{ __('Date') }}</th><th>{{ __('Item') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Price') }}</th><th>{{ __('Currency') }}</th></tr></thead><tbody>
-        @foreach($salesOverview['priceHistory'] as $price)<tr><td><a href="{{ route('admin.sales.sales-invoices.show', $price->invoice) }}">{{ $price->invoice->doc_num }}</a></td><td>{{ $price->invoice->invoice_date?->toDateString() }}</td><td>{{ $price->product?->name }}</td><td>{{ $price->unit?->name }}</td><td>{{ $numbers->format($price->unit_price) }}</td><td>{{ $price->invoice->currency?->code }}</td></tr>@endforeach
+        @foreach($salesOverview['priceHistory'] as $price)<tr><td><a href="{{ route('admin.sales.sales-invoices.show', $price->invoice) }}">{{ $price->invoice->doc_num }}</a></td><td>{{ $dates->formatDate($price->invoice->invoice_date, '') }}</td><td>{{ $price->product?->name }}</td><td>{{ $price->unit?->name }}</td><td>{{ $numbers->format($price->unit_price) }}</td><td>{{ $price->invoice->currency?->code }}</td></tr>@endforeach
         </tbody></table></div></details>
         @endcan
         <div class="accordion" id="customer-sales-activity">
@@ -36,10 +37,18 @@
             <div id="customer-{{ $key }}" class="accordion-collapse collapse"><div class="accordion-body">
                 <div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Document') }}</th><th>{{ __('Date') }}</th><th>{{ __('Status') }}</th><th>{{ __('Source documents') }}</th></tr></thead><tbody>
                 @forelse($salesOverview[$key] as $document)
-                <tr><td><a href="{{ route($route, $document) }}">{{ $document->doc_num }}</a></td><td>{{ $document->{$dateField}?->toDateString() }}</td><td>{{ __(str($document->status)->replace('_', ' ')->title()->toString()) }}</td><td>
+                <tr><td><a href="{{ route($route, $document) }}">{{ $document->doc_num }}</a></td><td>{{ $dates->formatDate($document->{$dateField}, '') }}</td><td>{{ __(str($document->status)->replace('_', ' ')->title()->toString()) }}</td><td>
                     @if($key === 'orders')
-                        @can('production.orders.view')@foreach($document->productionOrders as $production)<a class="d-inline-block me-2" href="{{ route('admin.production.work-orders.show', $production) }}">{{ $production->doc_num }}</a>@endforeach@endcan
-                        @can('sales_deliveries.view')@foreach($document->deliveries as $delivery)<a class="d-inline-block me-2" href="{{ route('admin.sales.delivery-notes.show', $delivery) }}">{{ $delivery->doc_num }}</a>@endforeach@endcan
+                        @can('production.orders.view')
+                            @foreach($document->productionOrders as $production)
+                                <a class="d-inline-block me-2" href="{{ route('admin.production.work-orders.show', $production) }}">{{ $production->doc_num }}</a>
+                            @endforeach
+                        @endcan
+                        @can('sales_deliveries.view')
+                            @foreach($document->deliveries as $delivery)
+                                <a class="d-inline-block me-2" href="{{ route('admin.sales.delivery-notes.show', $delivery) }}">{{ $delivery->doc_num }}</a>
+                            @endforeach
+                        @endcan
                     @elseif($key === 'receipts')
                         {{ $document->cashVoucher?->doc_num ?? $document->cheque?->doc_num ?? '—' }}
                     @endif
@@ -52,7 +61,7 @@
         @endforeach
         </div>
     </div>
-</section>
+</div>
 
 @include('modules.sales.cycle.partials.attachments', ['attachmentRecord' => $record, 'attachmentKind' => 'customer', 'attachmentsReadonly' => !auth()->user()?->can('customers.edit')])
 @pushOnce('scripts', 'customer-sales-actions')@include('modules.sales.cycle.partials.scripts')@endPushOnce

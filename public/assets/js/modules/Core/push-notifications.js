@@ -6,11 +6,151 @@
   const statusElements = Array.from(document.querySelectorAll('[data-push-notification-status]'));
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   const handledPushIds = new Set();
+  const coordinationIdentity = String(config.coordinationIdentity || '');
+  const configuredCoordinationTtlMilliseconds = Number(config.coordinationTtlMs);
+  const coordinationTtlMilliseconds = Number.isFinite(configuredCoordinationTtlMilliseconds)
+    && configuredCoordinationTtlMilliseconds > 0
+    ? configuredCoordinationTtlMilliseconds
+    : 86400000;
+  const coordinationNamespace = `erp-push-notifications:${coordinationIdentity}`;
+  const syncStorageKey = `${coordinationNamespace}:subscription-sync`;
   let subscription = null;
   let busy = false;
+  let coordinationStorage = null;
 
   if (!toggles.length) {
     return;
+  }
+
+  coordinationStorage = availableStorage();
+
+  function availableStorage() {
+    if (!coordinationIdentity) {
+      return null;
+    }
+
+    try {
+      const storage = window.localStorage;
+      const probeKey = `${coordinationNamespace}:probe`;
+
+      storage.setItem(probeKey, coordinationIdentity);
+      storage.removeItem(probeKey);
+
+      return storage;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function readSyncState() {
+    if (!coordinationStorage) {
+      return null;
+    }
+
+    try {
+      const value = coordinationStorage.getItem(syncStorageKey);
+      const state = value ? JSON.parse(value) : null;
+
+      if (!state
+        || state.identity !== coordinationIdentity
+        || typeof state.signature !== 'string'
+        || typeof state.publicKey !== 'string'
+        || typeof state.contentEncoding !== 'string'
+        || !Number.isFinite(Number(state.syncedAt))) {
+        return null;
+      }
+
+      return state;
+    } catch (error) {
+      coordinationStorage = null;
+
+      return null;
+    }
+  }
+
+  function writeSyncState(state) {
+    if (!coordinationStorage) {
+      return;
+    }
+
+    try {
+      coordinationStorage.setItem(syncStorageKey, JSON.stringify({
+        identity: coordinationIdentity,
+        signature: state.signature,
+        publicKey: state.publicKey,
+        contentEncoding: state.contentEncoding,
+        syncedAt: Date.now()
+      }));
+    } catch (error) {
+      coordinationStorage = null;
+    }
+  }
+
+  function clearSyncState() {
+    if (!coordinationStorage) {
+      return;
+    }
+
+    try {
+      coordinationStorage.removeItem(syncStorageKey);
+    } catch (error) {
+      coordinationStorage = null;
+    }
+  }
+
+  function fallbackSignature(value) {
+    let firstHash = 2166136261;
+    let secondHash = 2246822519;
+
+    for (let index = 0; index < value.length; index += 1) {
+      const character = value.charCodeAt(index);
+
+      firstHash = Math.imul(firstHash ^ character, 16777619);
+      secondHash = Math.imul(secondHash ^ (character + index), 3266489917);
+    }
+
+    return `fallback-${(firstHash >>> 0).toString(16).padStart(8, '0')}${(secondHash >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  async function subscriptionSignature(payload) {
+    const keys = payload.keys || {};
+    const value = JSON.stringify([
+      String(payload.endpoint || ''),
+      String(keys.p256dh || ''),
+      String(keys.auth || '')
+    ]);
+
+    if (window.crypto && window.crypto.subtle && typeof window.TextEncoder === 'function') {
+      try {
+        const digest = await window.crypto.subtle.digest(
+          'SHA-256',
+          new window.TextEncoder().encode(value)
+        );
+
+        return Array.from(new Uint8Array(digest), function (byte) {
+          return byte.toString(16).padStart(2, '0');
+        }).join('');
+      } catch (error) {
+        return fallbackSignature(value);
+      }
+    }
+
+    return fallbackSignature(value);
+  }
+
+  function syncStateIsCurrent(state) {
+    const storedState = readSyncState();
+
+    if (!storedState
+      || storedState.signature !== state.signature
+      || storedState.publicKey !== state.publicKey
+      || storedState.contentEncoding !== state.contentEncoding) {
+      return false;
+    }
+
+    const ageMilliseconds = Date.now() - Number(storedState.syncedAt);
+
+    return ageMilliseconds >= 0 && ageMilliseconds < coordinationTtlMilliseconds;
   }
 
   function supported() {
@@ -92,14 +232,32 @@
     return 'aes128gcm';
   }
 
-  function persistSubscription(currentSubscription) {
+  async function persistSubscription(currentSubscription, forceSync) {
     const payload = currentSubscription.toJSON();
+    const encoding = contentEncoding();
+    const state = {
+      signature: await subscriptionSignature(payload),
+      publicKey: String(config.publicKey || ''),
+      contentEncoding: encoding
+    };
 
-    return request(config.storeUrl, 'POST', {
+    if (forceSync !== true && syncStateIsCurrent(state)) {
+      return;
+    }
+
+    clearSyncState();
+
+    const response = await request(config.storeUrl, 'POST', {
       endpoint: payload.endpoint,
       keys: payload.keys,
-      content_encoding: contentEncoding()
+      content_encoding: encoding
     });
+
+    if (!response || response.success !== true) {
+      throw new Error('Push subscription sync failed');
+    }
+
+    writeSyncState(state);
   }
 
   async function enable() {
@@ -117,7 +275,7 @@
     });
 
     try {
-      await persistSubscription(currentSubscription);
+      await persistSubscription(currentSubscription, true);
       subscription = currentSubscription;
       setStatus(config.messages?.enabled, false);
     } catch (error) {
@@ -128,6 +286,8 @@
 
   async function disable() {
     const endpoint = subscription?.endpoint;
+
+    clearSyncState();
 
     if (endpoint) {
       await request(config.destroyUrl, 'DELETE', { endpoint: endpoint });
@@ -161,8 +321,16 @@
   }
 
   async function initialize() {
+    if (busy) {
+      return;
+    }
+
+    busy = true;
+    updateToggles();
+
     if (!supported()) {
       setStatus(config.messages?.unavailable, true);
+      busy = false;
       updateToggles();
       return;
     }
@@ -172,13 +340,16 @@
       subscription = await registration.pushManager.getSubscription();
 
       if (subscription) {
-        await persistSubscription(subscription);
+        await persistSubscription(subscription, false);
+      } else {
+        clearSyncState();
       }
     } catch (error) {
       setStatus(config.messages?.failed, true);
+    } finally {
+      busy = false;
+      updateToggles();
     }
-
-    updateToggles();
   }
 
   toggles.forEach(function (toggleButton) {

@@ -44,6 +44,25 @@ class PwaSettingsController extends Controller
             ->header('Cache-Control', 'no-cache, must-revalidate');
     }
 
+    public function legacyServiceWorker(): Response
+    {
+        $script = <<<'JS'
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.registration.unregister());
+});
+JS;
+
+        return response($script, 200, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Content-Type' => 'application/javascript; charset=UTF-8',
+            'Service-Worker-Allowed' => '/',
+        ]);
+    }
+
     public function serviceWorker(): Response
     {
         $settings = $this->pwaSettings->settings();
@@ -51,6 +70,7 @@ class PwaSettingsController extends Controller
         $cacheName = preg_replace('/[^A-Za-z0-9._-]/', '-', (string) $settings['cache_name']) ?: 'erp-pwa-cache-v1';
         $offlineUrl = route('pwa.offline', [], false);
         $manifestUrl = route('pwa.manifest', [], false);
+        $legacyServiceWorkerUrl = route('pwa.legacy-service-worker', [], false);
         $serviceWorkerUrl = route('pwa.service-worker', [], false);
         $dashboardUrl = route('dashboard', [], false);
         $defaultPushTitle = (string) $settings['app_name'];
@@ -64,6 +84,7 @@ class PwaSettingsController extends Controller
             route('logout', [], false),
             route('session.status', [], false),
             route('session.touch', [], false),
+            $legacyServiceWorkerUrl,
             $serviceWorkerUrl,
         ];
         $navigationBypassExactPaths = [

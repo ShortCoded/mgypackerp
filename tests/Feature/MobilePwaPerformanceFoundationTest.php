@@ -1,8 +1,17 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Models\Company;
+use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\PlasticsDashboardService;
+use Modules\Core\Services\ScreenDataVisibilityService;
 
 test('authenticated layout uses one directional theme and one user stylesheet', function () {
     $response = $this->withSession(['locale' => 'en'])
@@ -90,19 +99,106 @@ test('mobile and pwa assets expose the shared interaction contracts', function (
         ->not->toContain('data-datatables');
 });
 
-test('dashboard schema checks reuse one column listing per table', function () {
+test('dashboard schema checks do not query database metadata at runtime', function () {
     Schema::shouldReceive('getTableListing')
-        ->once()
-        ->andReturn(['public.purchase_orders']);
+        ->never();
     Schema::shouldReceive('getColumnListing')
-        ->once()
-        ->with('purchase_orders')
-        ->andReturn(['id', 'company_id', 'branch_id', 'status']);
+        ->never();
 
     $dashboard = app(PlasticsDashboardService::class);
     $hasColumn = new ReflectionMethod($dashboard, 'hasColumn');
+    $tableExists = new ReflectionMethod($dashboard, 'tableExists');
 
     expect($hasColumn->invoke($dashboard, 'purchase_orders', 'company_id'))->toBeTrue()
         ->and($hasColumn->invoke($dashboard, 'purchase_orders', 'branch_id'))->toBeTrue()
-        ->and($hasColumn->invoke($dashboard, 'purchase_orders', 'financial_period_id'))->toBeFalse();
+        ->and($hasColumn->invoke($dashboard, 'purchase_orders', 'financial_period_id'))->toBeTrue()
+        ->and($hasColumn->invoke($dashboard, 'purchase_orders', 'missing_column'))->toBeFalse()
+        ->and($tableExists->invoke($dashboard, 'products'))->toBeTrue()
+        ->and($tableExists->invoke($dashboard, 'missing_table'))->toBeFalse();
+});
+
+test('dashboard product master data stays within its query budget', function () {
+    $company = Company::factory()->create();
+    $finishedProduct = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'name' => 'Finished product',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'active',
+    ]);
+    $productWithoutComponents = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'name' => 'Product without components',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'active',
+    ]);
+    $rawMaterial = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'name' => 'Raw material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'status' => 'active',
+    ]);
+    Product::query()->create([
+        'company_id' => $company->getKey(),
+        'name' => 'Packaging material',
+        'item_classification' => Product::ClassificationPackaging,
+        'status' => 'active',
+    ]);
+    ProductComponent::query()->create([
+        'company_id' => $company->getKey(),
+        'product_id' => $finishedProduct->getKey(),
+        'component_product_id' => $rawMaterial->getKey(),
+        'quantity' => 1,
+    ]);
+    ProductComponent::query()->create([
+        'company_id' => $company->getKey(),
+        'product_id' => $productWithoutComponents->getKey(),
+        'component_product_id' => $rawMaterial->getKey(),
+        'quantity' => 1,
+    ])->delete();
+
+    $user = new class extends User
+    {
+        public function can($abilities, $arguments = []): bool
+        {
+            return in_array($abilities, ['products.view', 'raw_materials.view', 'packaging_materials.view'], true);
+        }
+    };
+    $visibility = Mockery::mock(ScreenDataVisibilityService::class);
+    $visibility->shouldReceive('applyToEloquent')
+        ->andReturnUsing(fn (Builder $query, User $user, string $screenKey): Builder => $query);
+    $service = new PlasticsDashboardService(
+        Mockery::mock(OperatingContextService::class),
+        Mockery::mock(DateFormatService::class),
+        new NumericFormatService,
+        $visibility,
+    );
+    $dashboard = [
+        'metrics' => [],
+        'charts' => [],
+        'quickActions' => [],
+        'alerts' => [],
+    ];
+    $appendProductMasterData = new ReflectionMethod($service, 'appendProductMasterData');
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $arguments = [&$dashboard, $user, ['company_id' => $company->getKey()]];
+    $appendProductMasterData->invokeArgs($service, $arguments);
+    $queryCount = count(DB::getQueryLog());
+    DB::disableQueryLog();
+    $charts = collect($dashboard['charts'])->keyBy('id');
+    $productTypeData = $charts->get('dashboard-product-types')['options']['series'][0]['data'];
+    $bomCoverageData = $charts->get('dashboard-bom-coverage')['options']['series'][0]['data'];
+
+    expect($queryCount)->toBe(6)
+        ->and($charts->keys()->all())->toContain(
+            'dashboard-product-types',
+            'dashboard-bom-coverage',
+            'dashboard-raw-material-units',
+            'dashboard-packaging-material-units',
+        )
+        ->and($dashboard['metrics'])->toHaveCount(5)
+        ->and(collect($dashboard['metrics'])->pluck('value')->all())->toBe(['2', '1', '1', '1', '1'])
+        ->and(array_sum(array_column($productTypeData, 'value')))->toBe(4)
+        ->and(array_column($bomCoverageData, 'value'))->toBe([1, 1]);
 });

@@ -98,6 +98,36 @@ class SalesOrder extends Model
         return in_array($this->status, [self::StatusApproved, self::StatusPartiallyFulfilled], true);
     }
 
+    public function canReopenSafely(): bool
+    {
+        if (! in_array($this->status, [self::StatusApproved, self::StatusRejected, self::StatusClosed], true)) {
+            return false;
+        }
+
+        return ! $this->lines()->where(function (Builder $query): void {
+            $query->where('reserved_quantity', '>', 0)
+                ->orWhere('production_requested_quantity', '>', 0)
+                ->orWhere('produced_quantity', '>', 0)
+                ->orWhere('delivered_quantity', '>', 0)
+                ->orWhere('invoiced_quantity', '>', 0);
+        })->exists();
+    }
+
+    public function canCancelSafely(): bool
+    {
+        if (in_array($this->status, [self::StatusCancelled, self::StatusClosed], true)) {
+            return false;
+        }
+
+        $hasFulfilledQuantity = $this->lines()->where(function (Builder $query): void {
+            $query->where('delivered_quantity', '>', 0)
+                ->orWhere('invoiced_quantity', '>', 0);
+        })->exists();
+
+        return ! $hasFulfilledQuantity
+            && ! $this->productionOrders()->where('status', '<>', 'cancelled')->exists();
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);

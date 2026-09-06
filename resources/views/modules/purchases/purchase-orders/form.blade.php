@@ -63,7 +63,7 @@
         <input type="hidden" name="submit_action" value="save">
 
         <div class="card mb-3">
-            <div class="card-header">
+            <div class="card-header py-2">
                 <div class="row flex-between-center g-2">
                     <div class="col">
                         <h5 class="mb-0">{{ $title }}</h5>
@@ -77,15 +77,20 @@
                     ])
                     @if($mode === 'view' && $record?->isApproved())
                         <div class="d-flex flex-wrap gap-2 mt-2">
+                            @can('purchases.supplier_quotation_entry.create')
+                            @can('purchases.prices.view')
+                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseOrder, $record->doc_num]) }}">{{ __('Enter supplier quotation') }}</a>
+                            @endcan
+                            @endcan
                             @can('purchase_invoices.create')
                             <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $record->doc_num]) }}">{{ __('Create supplier invoice') }}</a>
                             @endcan
                             @can('purchases.purchase_order_delivery_schedule.create')
                             <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-order-delivery-schedule.create', $record->doc_num) }}">{{ __('Delivery schedule') }}</a>
                             @endcan
-                            @can('purchases.goods_receipt_notes.create')
+                            @can('purchases.supply_orders.create')
                             @if((float) $record->total_remaining_quantity > 0)
-                                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Receive') }}</a>
+                                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.supply-orders.create', ['purchase_order' => $record->doc_num]) }}">{{ __('Create Supply Order') }}</a>
                             @endif
                             @endcan
                             @can('purchases.purchase_order_change_requests.create')
@@ -253,19 +258,6 @@
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
-                    @if(! $isReadonly && ! $record?->purchase_requisition_id && auth()->user()?->can('purchases.direct_procurement.override'))
-                        <div class="col-md-4">
-                            <div class="form-check">
-                                <input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))>
-                                <label class="form-check-label" for="direct_procurement_override">{{ __('purchase_orders.attributes.direct_procurement_override') }}</label>
-                            </div>
-                        </div>
-                        <div class="col-md-8" data-direct-purchase-reason>
-                            <label class="form-label" for="direct_procurement_reason">{{ __('purchase_orders.attributes.direct_procurement_reason') }}</label>
-                            <input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}">
-                            <div class="invalid-feedback d-block" data-error-for="direct_procurement_reason"></div>
-                        </div>
-                    @endif
                 </div>
             </div>
         </div>
@@ -280,7 +272,7 @@
         @endif
 
         <div class="card mb-3">
-            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
                 <h6 class="mb-0">{{ __('purchase_orders.sections.lines') }}</h6>
                 @unless($isReadonly)
                     <button class="btn btn-falcon-primary btn-sm js-purchase-order-add-line" type="button">
@@ -305,6 +297,7 @@
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.received_quantity') }}</th>
                                 <th class="text-end" style="width: 8rem;">{{ __('purchase_orders.attributes.remaining_quantity') }}</th>
                                 <th style="width: 12rem;">{{ __('purchase_orders.attributes.line_notes') }}</th>
+                                <th style="width: 12rem;">{{ __('Attachments') }}</th>
                                 @unless($isReadonly)
                                     <th class="text-center" style="width: 4rem;"></th>
                                 @endunless
@@ -319,6 +312,7 @@
                                     $unitText = $line['unit_text'] ?? $line['unit'] ?? $unitDocNum;
                                     $unitOptions = $line['unit_options'] ?? [];
                                     $imageUrl = $line['product_image_url'] ?? $line['imageUrl'] ?? null;
+                                    $attachmentLine = $record?->lines?->firstWhere('public_id', $line['public_id'] ?? null);
                                 @endphp
                                 <tr class="js-purchase-order-line">
                                     <td class="text-center text-700 js-line-number">{{ $index + 1 }}</td>
@@ -406,6 +400,14 @@
                                             <input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}">
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                         @endif
+                                    </td>
+                                    <td>
+                                        @include('modules.purchases.procurement.line-attachments', [
+                                            'attachmentLine' => $attachmentLine,
+                                            'attachmentCompanyId' => $record?->company_id ?? $context['company_id'],
+                                            'index' => $index,
+                                            'lineAttachmentsReadonly' => $isReadonly,
+                                        ])
                                     </td>
                                     @unless($isReadonly)
                                         <td class="text-center">
@@ -535,6 +537,13 @@
                 <input class="form-control" name="lines[__INDEX__][notes]">
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
             </td>
+            <td>
+                @include('modules.purchases.procurement.line-attachments', [
+                    'attachmentLine' => null,
+                    'attachmentCompanyId' => $record?->company_id ?? $context['company_id'],
+                    'index' => '__INDEX__',
+                ])
+            </td>
             <td class="text-center">
                 <button class="btn btn-falcon-default btn-sm js-purchase-order-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-falcon-danger btn-sm js-purchase-order-remove-line" type="button" aria-label="{{ __('common.actions.delete') }}">
                     <span class="fas fa-trash-alt"></span>
@@ -549,5 +558,5 @@
         window.purchaseOrderMessages = {{ \Illuminate\Support\Js::from([...__('purchase_orders.js'), 'source_loading' => __('procurement.ui.loading_lines'), 'source_loaded' => __('procurement.ui.lines_loaded'), 'rate_source' => __('procurement.ui.previous_rate'), 'rate_required' => __('procurement.ui.enter_rate')]) }};
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-orders.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-orders.js')) }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Purchases/purchase-orders.js') }}"></script>
 @endpush

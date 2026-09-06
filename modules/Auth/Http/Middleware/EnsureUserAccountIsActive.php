@@ -44,15 +44,24 @@ class EnsureUserAccountIsActive
             return $this->logoutAndReject($request, $reason, $freshUser);
         }
 
-        if ($freshUser instanceof User && $this->presence->currentSessionWasForcedLogout($request)) {
-            return $this->logoutAndRejectForcedLogout($request, $freshUser);
-        }
+        if ($freshUser instanceof User) {
+            $shouldCheckOtherActiveSessions = ! $this->shouldSkipDuplicateSessionCheck($request);
+            $sessionConflictState = $this->presence->sessionConflictStateForRequest(
+                $freshUser,
+                $request,
+                $shouldCheckOtherActiveSessions
+            );
 
-        if ($freshUser instanceof User && ! $this->shouldSkipDuplicateSessionCheck($request)) {
-            $activeSessionsCount = $this->presence->anotherFreshActiveSessionCountForRequest($freshUser, $request);
+            if ($sessionConflictState['forced_logout']) {
+                return $this->logoutAndRejectForcedLogout($request, $freshUser);
+            }
 
-            if ($activeSessionsCount > 0) {
-                return $this->logoutAndRejectAlreadyOnline($request, $freshUser, $activeSessionsCount);
+            if ($shouldCheckOtherActiveSessions && $sessionConflictState['other_active_count'] > 0) {
+                return $this->logoutAndRejectAlreadyOnline(
+                    $request,
+                    $freshUser,
+                    $sessionConflictState['other_active_count']
+                );
             }
         }
 
@@ -299,8 +308,10 @@ class EnsureUserAccountIsActive
 
     private function freshAuthenticatedUser(Request $request): ?User
     {
-        if ($request->user() !== null) {
-            return $this->accounts->freshUser($request->user());
+        $authenticatedUser = $request->user();
+
+        if ($authenticatedUser instanceof User) {
+            return $authenticatedUser;
         }
 
         return $this->accounts->freshUserById($this->candidateUserId($request));

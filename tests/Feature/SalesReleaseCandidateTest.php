@@ -118,9 +118,9 @@ test('approved requests convert partially through quotations without losing sour
     $fixture['user']->givePermissionTo($permissions);
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     $response = $this->postJson(route('admin.sales.customer-requests.store'), [
-        'request_date' => now()->toDateString(), 'required_delivery_date' => now()->addWeek()->toDateString(),
+        'request_type' => 'customer', 'request_date' => now()->toDateString(), 'required_delivery_date' => now()->addWeek()->toDateString(),
         'customer_doc_num' => $fixture['customer']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
-        'branch_store_uuid' => $fixture['store']->public_uuid, 'priority' => 'normal', 'exchange_rate' => '1',
+        'exchange_rate' => '1',
         'lines' => [['product_doc_num' => $fixture['finished']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => '100', 'unit_price' => '10']],
     ])->assertSuccessful();
     $request = SalesRequest::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
@@ -249,7 +249,10 @@ test('sales supporting documents reuse the archive with company scope and duplic
     $this->postJson($url, ['attachment_doc_nums' => [$file->doc_num]])->assertOk();
     $this->postJson($url, ['attachment_doc_nums' => [$file->doc_num]])->assertOk();
     expect(ArchiveFileUsage::query()->whereMorphedTo('usable', $order)->count())->toBe(1);
-    $this->get(route('admin.sales.sales-orders.show', $order))->assertOk()->assertSee('sales-po.pdf');
+    $this->get(route('admin.sales.sales-orders.show', $order))->assertOk()
+        ->assertSee('sales-po.pdf')
+        ->assertSee('data-sales-attachments', false)
+        ->assertSee('data-picker-max="20"', false);
     $file->update(['attachable_id' => $fixture['company']->id + 100]);
     $this->postJson($url, ['attachment_doc_nums' => [$file->doc_num]])->assertUnprocessable();
 });

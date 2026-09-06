@@ -25,7 +25,8 @@ for (const readonly of [true, false]) {
         };
     };
     jq.fn = {};
-    vm.runInNewContext(source, { jQuery: jq, document: {}, window: { AppNumbers: { number: value => Number(value) || 0, format: value => String(value) } } });
+    const document = { getElementById: () => null, querySelector: () => null, activeElement: null };
+    vm.runInNewContext(source, { jQuery: jq, document, window: { AppNumbers: { number: value => Number(value) || 0, format: value => String(value) } } });
     if (readonly) {
         assert.equal(rendered['.js-total-amount'], '9,999');
         assert.equal(rendered['.js-line-total'], '9,994');

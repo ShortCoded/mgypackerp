@@ -31,6 +31,10 @@
     $richValue = fn ($field, $snapshot) => old($field, $isCreateLike ? ($snapshot ?? '') : ($snapshot ?? ''));
     $richDisplay = fn ($value) => trim((string) $value) !== '' ? $value : e(__('common.empty_value'));
     $discountType = old('discount_type', $currentRevision?->discount_type);
+    $quotationType = old('quotation_type', $record?->quotation_type ?? Quotation::TypeStandard);
+    $isProjectQuotation = $quotationType === Quotation::TypeProject;
+    $showRevisionMetadata = (int) ($currentRevision?->revision_number ?? 1) > 1;
+    $defaultQuotationDate = $dates->formatDate(now(), '');
     $formatFileSize = static function (int $bytes): string {
         if ($bytes < 1024) {
             return $bytes.' B';
@@ -48,31 +52,6 @@
 
 @push('styles')
     <link href="{{ $asset->url('vendors/summernote/summernote-bs5.min.css') }}" rel="stylesheet">
-    <style>
-        .quotation-lines-table th,
-        .quotation-lines-table td,
-        .quotation-simple-grid th,
-        .quotation-simple-grid td {
-            min-width: 8rem;
-            vertical-align: top;
-        }
-
-        .quotation-lines-table .quotation-product-cell {
-            min-width: 18rem;
-        }
-
-        .quotation-lines-table .quotation-description-cell {
-            min-width: 16rem;
-        }
-
-        .quotation-lines-table {
-            min-width: 2500px;
-        }
-
-        .quotation-total-box {
-            max-width: 24rem;
-        }
-    </style>
 @endpush
 
 @section('content')
@@ -81,6 +60,9 @@
         action="{{ $action }}"
         method="{{ $method }}"
         data-mode="{{ $mode }}"
+        data-main-currency-doc-num="{{ $mainCurrencyOption['id'] ?? '' }}"
+        data-main-currency-label="{{ $mainCurrencyOption['text'] ?? '' }}"
+        data-default-quotation-date="{{ $defaultQuotationDate }}"
         data-primary-focus="quotation_date"
         novalidate>
         @csrf
@@ -137,7 +119,7 @@
                 @endif
                 <ul class="nav nav-tabs" id="quotation-form-tabs" role="tablist">
                     @foreach (['basic', 'lines', 'payments', 'execution', 'terms', 'attachments', 'revisions'] as $tab)
-                        <li class="nav-item" role="presentation">
+                        <li class="nav-item @if($tab === 'execution' && ! $isProjectQuotation) d-none @endif" role="presentation" @if($tab === 'execution') data-quotation-project-only @endif>
                             <button class="nav-link @if($loop->first) active @endif" id="quotation-{{ $tab }}-tab" data-bs-toggle="tab" data-bs-target="#quotation-{{ $tab }}" type="button" role="tab" aria-controls="quotation-{{ $tab }}" aria-selected="{{ $loop->first ? 'true' : 'false' }}">
                                 {{ __("quotations.tabs.{$tab}") }}
                             </button>
@@ -194,11 +176,11 @@
                             </div>
 
                             <div class="col-md-6">
-                                <x-forms.label for="customer_doc_num" :label="__('quotations.attributes.customer')" />
+                                <x-forms.label for="customer_doc_num" :label="__('quotations.attributes.customer')" required />
                                 @if ($isReadonly)
                                     <x-forms.view-field for="customer_doc_num" :value="$customerOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('quotations.placeholders.customer') }}" data-allow-clear="true">
+                                    <select class="form-select js-select2-ajax" id="customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('quotations.placeholders.customer') }}" data-allow-clear="true" required>
                                         @if ($customerOption)
                                             <option value="{{ $customerOption['id'] }}" selected>{{ $customerOption['text'] }}</option>
                                         @endif
@@ -218,15 +200,16 @@
                                         @endforeach
                                     </select>
                                 @endif
+                                @unless($isReadonly)<small class="text-muted">{{ __('sales_ui.quotation_type_help') }}</small>@endunless
                                 <div class="invalid-feedback d-block" data-error-for="quotation_type"></div>
                             </div>
 
                             <div class="col-md-3">
-                                <x-forms.label for="currency_doc_num" :label="__('quotations.attributes.currency')" />
+                                <x-forms.label for="currency_doc_num" :label="__('quotations.attributes.currency')" required />
                                 @if ($isReadonly)
                                     <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('quotations.placeholders.currency') }}" data-allow-clear="true">
+                                    <select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('quotations.placeholders.currency') }}" required>
                                         @if ($currencyOption)
                                             <option value="{{ $currencyOption['id'] }}" selected>{{ $currencyOption['text'] }}</option>
                                         @endif
@@ -255,6 +238,7 @@
                                             <option value="{{ $salesPersonOption['id'] }}" selected>{{ $salesPersonOption['text'] }}</option>
                                         @endif
                                     </select>
+                                    <small class="text-muted">{{ __('sales_ui.employee_hint') }} @can('hr.employees.create')<a href="{{ route('admin.hr.employees.create') }}">{{ __('sales_ui.add_employee') }}</a>@endcan</small>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="sales_person_doc_num"></div>
                             </div>
@@ -269,12 +253,12 @@
                                 <div class="invalid-feedback d-block" data-error-for="subject"></div>
                             </div>
 
-                            <div class="col-md-6">
-                                <x-forms.label for="project_name" :label="__('quotations.attributes.project_name')" />
+                            <div class="col-md-6 @unless($isProjectQuotation) d-none @endunless" data-quotation-project-only>
+                                <x-forms.label for="project_name" :label="__('quotations.attributes.project_name')" required />
                                 @if ($isReadonly)
                                     <x-forms.view-field for="project_name" :value="$record?->project_name" />
                                 @else
-                                    <input class="form-control" id="project_name" name="project_name" type="text" value="{{ old('project_name', $record?->project_name) }}" maxlength="255">
+                                    <input class="form-control" id="project_name" name="project_name" type="text" value="{{ old('project_name', $record?->project_name) }}" maxlength="255" @required($isProjectQuotation)>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="project_name"></div>
                             </div>
@@ -299,6 +283,7 @@
                                 <div class="invalid-feedback d-block" data-error-for="internal_notes"></div>
                             </div>
 
+                            @if($showRevisionMetadata)
                             <div class="col-md-3">
                                 <x-forms.label for="revision_date" :label="__('quotations.attributes.revision_date')" required />
                                 @if ($isReadonly)
@@ -318,13 +303,18 @@
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="change_reason"></div>
                             </div>
+                            @elseif(! $isReadonly)
+                                <input type="hidden" name="revision_date" value="{{ $dateValue('revision_date', $currentRevision?->revision_date ?? now()) }}">
+                                <input type="hidden" name="change_reason" value="">
+                            @endif
                         </div>
                     </div>
 
                     <div class="tab-pane fade" id="quotation-lines" role="tabpanel" aria-labelledby="quotation-lines-tab">
+                        <div class="alert alert-subtle-info py-2 small">{{ __('sales_ui.requested_date_help') }}</div>
                         @unless ($isReadonly)
                             <div class="mb-2 text-end">
-                                <button class="btn btn-falcon-default btn-sm js-quotation-add-line" type="button">
+                                <button class="btn btn-falcon-default btn-sm js-quotation-add-line" type="button" data-shortcut-action="line.add" title="{{ __('common.shortcuts.add_line') }}" data-bs-title="{{ __('common.shortcuts.add_line') }}">
                                     <span class="fas fa-plus me-1"></span>{{ __('quotations.actions.add_line') }}
                                 </button>
                             </div>
@@ -342,10 +332,6 @@
                                         <th class="text-center">{{ __('quotations.attributes.tax_rate') }}</th>
                                         <th class="text-center">{{ __('quotations.attributes.total') }}</th>
                                         <th>{{ __('quotations.attributes.requested_date') }}</th>
-                                        <th>{{ __('quotations.attributes.packaging') }}</th>
-                                        <th>{{ __('quotations.attributes.customer_specification') }}</th>
-                                        <th>{{ __('quotations.attributes.warehouse_notes') }}</th>
-                                        <th>{{ __('quotations.attributes.production_notes') }}</th>
                                         <th>{{ __('quotations.attributes.line_notes') }}</th>
                                         @unless ($isReadonly)
                                             <th class="text-center">{{ __('common.fields.actions') }}</th>
@@ -359,7 +345,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['product_label'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <select class="form-select js-select2-ajax js-quotation-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true">
+                                                    <select class="form-select js-select2-ajax js-quotation-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true" required>
                                                         @if (! empty($line['product_doc_num']))
                                                             <option value="{{ $line['product_doc_num'] }}" data-unit-doc-num="{{ $line['unit_doc_num'] ?? '' }}" data-unit-label="{{ $line['unit_label'] ?? '' }}" selected>{{ $line['product_label'] ?? $line['product_doc_num'] }}</option>
                                                         @endif
@@ -379,7 +365,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['unit_label'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <select class="form-select js-select2-local js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true"><option value=""></option>@foreach($line['units'] ?? [] as $unitOption)<option value="{{ $unitOption['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $unitOption['id'])>{{ $unitOption['text'] }}</option>@endforeach
+                                                    <select class="form-select js-select2-local js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true" required><option value=""></option>@foreach($line['units'] ?? [] as $unitOption)<option value="{{ $unitOption['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $unitOption['id'])>{{ $unitOption['text'] }}</option>@endforeach
                                                         @if (! empty($line['unit_doc_num']) && !collect($line['units'] ?? [])->contains('id', $line['unit_doc_num']))
                                                             <option value="{{ $line['unit_doc_num'] }}" selected>{{ $line['unit_label'] ?? $line['unit_doc_num'] }}</option>
                                                         @endif
@@ -391,7 +377,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                                 @else
-                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="8" min="0" step="0.00000001" />
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="8" min="0.00000001" step="0.00000001" required />
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                                 @endif
                                             </td>
@@ -399,7 +385,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                                 @else
-                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" />
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                                 @endif
                                             </td>
@@ -413,7 +399,7 @@
                                                             <option value="fixed" @selected(($line['discount_type'] ?? null) === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
                                                             <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
                                                         </select>
-                                                        <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" />
+                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" :disabled="blank($line['discount_type'] ?? null)" />
                                                     </div>
                                                 @endif
                                             </td>
@@ -435,22 +421,6 @@
                                                 @endif
                                             </td>
                                             <td>
-                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['specifications']['packaging'] ?? __('common.empty_value') }}</div>
-                                                @else<input class="form-control" name="lines[{{ $index }}][specifications][packaging]" value="{{ $line['specifications']['packaging'] ?? '' }}">@endif
-                                            </td>
-                                            <td>
-                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['specifications']['customer_specification'] ?? __('common.empty_value') }}</div>
-                                                @else<input class="form-control" name="lines[{{ $index }}][specifications][customer_specification]" value="{{ $line['specifications']['customer_specification'] ?? '' }}">@endif
-                                            </td>
-                                            <td>
-                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['warehouse_notes'] ?? __('common.empty_value') }}</div>
-                                                @else<input class="form-control" name="lines[{{ $index }}][warehouse_notes]" value="{{ $line['warehouse_notes'] ?? '' }}">@endif
-                                            </td>
-                                            <td>
-                                                @if ($isReadonly)<div class="form-control-plaintext">{{ $line['production_notes'] ?? __('common.empty_value') }}</div>
-                                                @else<input class="form-control" name="lines[{{ $index }}][production_notes]" value="{{ $line['production_notes'] ?? '' }}">@endif
-                                            </td>
-                                            <td>
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['notes'] ?? __('common.empty_value') }}</div>
                                                 @else
@@ -468,8 +438,9 @@
                                 </tbody>
                             </table>
                         </div>
+                            @unless($isReadonly)<div class="card-footer"><button class="btn btn-falcon-default btn-sm js-quotation-add-line" type="button"><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button></div>@endunless
                         <div class="invalid-feedback d-block" data-error-for="lines"></div>
-                        <div class="mt-3 ms-auto quotation-total-box">
+                        <div class="col-12 col-lg-5 mt-3 ms-auto">
                             <div class="row g-2 align-items-center">
                                 <label class="col-5 col-form-label">{{ __('quotations.attributes.revision_discount') }}</label>
                                 <div class="col-7">
@@ -482,7 +453,7 @@
                                                 <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
                                                 <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
                                             </select>
-                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" />
+                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" :disabled="blank($discountType)" />
                                         </div>
                                     @endif
                                 </div>
@@ -531,7 +502,7 @@
                         </div>
                     </div>
 
-                    <div class="tab-pane fade" id="quotation-execution" role="tabpanel" aria-labelledby="quotation-execution-tab">
+                    <div class="tab-pane fade @unless($isProjectQuotation) d-none @endunless" id="quotation-execution" role="tabpanel" aria-labelledby="quotation-execution-tab" data-quotation-project-only>
                         @unless ($isReadonly)
                             <div class="mb-2 text-end">
                                 <button class="btn btn-falcon-default btn-sm js-quotation-add-schedule" type="button">
@@ -592,7 +563,7 @@
                         @if (! $isReadonly)
                             @can('quotations.attachments.manage')
                                 @can('file_manager.view')
-                                    <div class="p-3 mb-3 border rounded-2 bg-body-tertiary">
+                                    <div class="p-2 mb-3 border rounded-2 bg-body-tertiary">
                                         <div class="flex-wrap gap-2 d-flex align-items-center justify-content-between">
                                             <div>
                                                 <div class="fw-semibold">{{ __('quotations.actions.add_attachment') }}</div>
@@ -602,7 +573,7 @@
                                                 class="btn btn-falcon-primary btn-sm js-quotation-attachment-picker-trigger"
                                                 data-file-picker
                                                 data-picker-accept="document"
-                                                data-picker-max="1"
+                                                data-picker-max="20"
                                                 data-picker-title="{{ __('quotations.actions.choose_files') }}"
                                                 data-picker-collection="quotation_attachments"
                                                 data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
@@ -792,7 +763,6 @@
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ $asset->url('vendors/summernote/summernote-bs5.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Core/select2-ajax.js') }}"></script>
     @unless ($isReadonly)
         @can('quotations.attachments.manage')
             @can('file_manager.view')

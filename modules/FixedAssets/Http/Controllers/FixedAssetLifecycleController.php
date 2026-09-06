@@ -25,12 +25,13 @@ use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\FixedAssets\Services\FixedAssetAccessService;
 use Modules\FixedAssets\Services\FixedAssetBookValueService;
+use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetImageResolver;
 use Modules\FixedAssets\Services\FixedAssetLedgerService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetPdfService;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\FixedAssets\Services\FixedAssetScheduleService;
-use Modules\HR\Models\HrEmployee;
 use Spatie\Activitylog\Models\Activity;
 
 class FixedAssetLifecycleController extends Controller
@@ -47,14 +48,39 @@ class FixedAssetLifecycleController extends Controller
     public function show(FixedAsset $fixedAsset): View
     {
         app(FixedAssetAccessService::class)->assertAsset($fixedAsset);
-        $fixedAsset->load([
+        $relations = [
             'company', 'account', 'assetGroupAccount', 'creditAccount', 'costCenter', 'branch', 'branchHall', 'currency', 'mainImageUsage.file',
             'costMovements.journalEntry', 'categoryMapping.accumulatedDepreciationAccount', 'categoryMapping.depreciationExpenseAccount',
             'postedDepreciations.journalEntry', 'postedDepreciations.costCenter', 'postedDepreciations.branch', 'postedDepreciations.postedBy',
-            'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceBranchHall', 'movements.destinationBranchHall', 'movements.sourceCostCenter', 'movements.destinationCostCenter', 'movements.requestedBy',
+            'depreciations.run', 'depreciations.archiveFileUsages.file',
+            'movements.sourceBranch', 'movements.destinationBranch', 'movements.sourceBranchHall', 'movements.destinationBranchHall', 'movements.sourceCostCenter', 'movements.destinationCostCenter', 'movements.requestedBy', 'movements.archiveFileUsages.file',
             'disposals.customer', 'disposals.proceedsAccount', 'disposals.journalEntry',
             'disposals.customerInvoice', 'disposals.gainLossJournalEntry', 'disposals.reversalJournalEntry', 'disposals.gainLossReversalJournalEntry',
-        ]);
+            'disposals.archiveFileUsages.file', 'archiveFileUsages.file',
+        ];
+        if ($fixedAsset->source_type === FixedAssetPurchaseIntegrationService::SourceType) {
+            $relations = [
+                ...$relations,
+                'purchaseInvoiceLine.product', 'purchaseInvoiceLine.purchaseOrderLine.purchaseOrder', 'purchaseInvoiceLine.receiptLine.receipt',
+                'purchaseInvoiceLine.purchaseInvoice.supplier', 'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.cashVoucher',
+                'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.bankAccount',
+                'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.cheque',
+            ];
+        }
+        $fixedAsset->load($relations);
+        $purchaseImprovements = $fixedAsset->movements()
+            ->where('source_type', FixedAssetPurchaseIntegrationService::ImprovementSourceType)
+            ->with([
+                'purchaseInvoiceLine.purchaseOrderLine.purchaseOrder',
+                'purchaseInvoiceLine.receiptLine.receipt',
+                'purchaseInvoiceLine.purchaseInvoice.supplier',
+                'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.cashVoucher',
+                'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.bankAccount',
+                'purchaseInvoiceLine.purchaseInvoice.paymentAllocations.paymentContext.cheque',
+            ])
+            ->latest('movement_date')
+            ->latest('id')
+            ->get();
 
         $displayMapping = new FixedAssetCategoryMapping(['company_id' => $fixedAsset->company_id]);
         $accountingWarnings = [];
@@ -68,10 +94,25 @@ class FixedAssetLifecycleController extends Controller
                 }
             }
         }
+        $attachmentTargets = $fixedAsset->movements->map(fn (FixedAssetMovement $movement): array => [
+            'type' => 'movement', 'document' => $movement->doc_num, 'date' => $movement->movement_date,
+            'label' => __('fixed_assets.cycle.'.$movement->movement_type), 'usages' => $movement->archiveFileUsages,
+        ])->concat($fixedAsset->depreciations->map(fn ($depreciation): array => [
+            'type' => 'depreciation', 'document' => $depreciation->run->doc_num, 'date' => $depreciation->period_end,
+            'label' => __('fixed_assets.cycle.depreciation'), 'usages' => $depreciation->archiveFileUsages,
+        ]))->concat($fixedAsset->disposals->map(fn (FixedAssetDisposal $disposal): array => [
+            'type' => 'disposal', 'document' => $disposal->doc_num, 'date' => $disposal->disposal_date,
+            'label' => __('fixed_assets.cycle.disposal'), 'usages' => $disposal->archiveFileUsages,
+        ]))->sortByDesc('date')->values()->prepend([
+            'type' => 'asset', 'document' => $fixedAsset->doc_num, 'date' => $fixedAsset->asset_date,
+            'label' => __('fixed_assets.product.asset_documents'), 'usages' => $fixedAsset->archiveFileUsages,
+        ]);
 
         return view('modules.fixed-assets.lifecycle.show', [
             'displayMapping' => $displayMapping, 'accountingWarnings' => $accountingWarnings,
             'asset' => $fixedAsset,
+            'purchaseImprovements' => $purchaseImprovements,
+            'depreciationReadiness' => app(FixedAssetDepreciationService::class)->readiness($fixedAsset),
             'position' => $this->bookValues->position($fixedAsset),
             'schedule' => $this->schedules->schedule($fixedAsset),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.assets.index', [
@@ -79,14 +120,15 @@ class FixedAssetLifecycleController extends Controller
                 ['label' => __('fixed_assets.lifecycle.asset_card')],
             ]),
             'canEditMaster' => $fixedAsset->canEditMaster(),
-            'canRecognize' => ! $fixedAsset->hasPostedRecognition() && ! $fixedAsset->isDisposed(),
+            'canRecognize' => ! $fixedAsset->hasPostedRecognition() && ! $fixedAsset->isDisposed()
+                && $fixedAsset->source_type !== FixedAssetPurchaseIntegrationService::SourceType,
             'today' => app(DateFormatService::class)->formatDate(now(), ''),
             'ledger' => app(FixedAssetLedgerService::class)->history($fixedAsset),
             'journals' => app(FixedAssetLedgerService::class)->journals($fixedAsset),
-            'documents' => $fixedAsset->archiveFileUsages()->with('file')->get()->concat($fixedAsset->movements()->with('archiveFileUsages.file')->get()->flatMap(fn ($row) => $row->archiveFileUsages)),
+            'assetDocuments' => $fixedAsset->archiveFileUsages,
+            'attachmentTargets' => $attachmentTargets,
             'activities' => Activity::query()->with('causer')->where('subject_type', $fixedAsset->getMorphClass())->where('subject_id', $fixedAsset->getKey())->latest()->limit(100)->get(),
             'custody' => $fixedAsset->movements()->where('movement_type', 'custody')->where('status', 'posted')->with('destinationCustodian')->first(),
-            'custodians' => auth()->user()?->can('fixed_assets.custody.post') ? HrEmployee::query()->where('company_id', $fixedAsset->company_id)->where('status', 'active')->whereIn('branch_id', app(FixedAssetAccessService::class)->branchIds())->orderBy('full_name')->get(['id', 'doc_num', 'full_name']) : collect(),
         ]);
     }
 

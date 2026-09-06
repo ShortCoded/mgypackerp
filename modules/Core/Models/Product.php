@@ -231,7 +231,6 @@ class Product extends Model
             self::ClassificationSemiFinished,
             self::ClassificationPackaging,
             self::ClassificationOther,
-            self::ClassificationService,
         ];
     }
 

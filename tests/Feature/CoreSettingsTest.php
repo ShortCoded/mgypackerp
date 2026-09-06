@@ -392,6 +392,39 @@ test('pwa orientation automatic labels are translated in arabic and english', fu
         ->and(trans('pwa.orientations.any', [], 'en'))->toBe('Automatic');
 });
 
+test('legacy service worker endpoint retires stale root registrations without reloading clients', function () {
+    $staticScript = file_get_contents(public_path('service-worker.js'));
+    $response = $this->get(route('pwa.legacy-service-worker'));
+
+    expect($staticScript)->toBeString();
+
+    $response
+        ->assertOk()
+        ->assertHeader('Service-Worker-Allowed', '/');
+
+    expect($response->headers->get('Content-Type'))
+        ->toContain('application/javascript');
+
+    expect($response->headers->get('Cache-Control'))
+        ->toContain('no-store')
+        ->toContain('no-cache')
+        ->toContain('must-revalidate')
+        ->toContain('max-age=0');
+
+    expect($staticScript)
+        ->toContain('self.skipWaiting()')
+        ->toContain('self.registration.unregister()')
+        ->not->toContain('clients.claim()')
+        ->not->toContain('location.reload');
+
+    expect(trim($response->getContent()))
+        ->toBe(trim($staticScript))
+        ->toContain('self.skipWaiting()')
+        ->toContain('self.registration.unregister()')
+        ->not->toContain('clients.claim()')
+        ->not->toContain('location.reload');
+});
+
 test('pwa manifest and service worker stay public and bypass lock redirects', function () {
     app(SettingService::class)->set(PwaSettingsService::EnabledKey, '1');
     app(SettingService::class)->set(PwaSettingsService::ServiceWorkerEnabledKey, '1');
@@ -406,6 +439,9 @@ test('pwa manifest and service worker stay public and bypass lock redirects', fu
     expect($serviceWorkerResponse->headers->get('Content-Type'))
         ->toContain('application/javascript');
 
+    $this->get(route('pwa.legacy-service-worker'))
+        ->assertOk();
+
     $serviceWorkerScript = str_replace('\\/', '/', $serviceWorkerResponse->getContent());
 
     expect($serviceWorkerScript)
@@ -415,6 +451,7 @@ test('pwa manifest and service worker stay public and bypass lock redirects', fu
         ->toContain('/auth/csrf-token')
         ->toContain('/lock-screen/unlock')
         ->toContain('/manifest.webmanifest')
+        ->toContain('/service-worker.js')
         ->toContain('/pwa-service-worker.js')
         ->toContain('/admin/notifications/')
         ->toContain('isNetworkOnlyPath')
@@ -446,6 +483,11 @@ test('pwa manifest and service worker stay public and bypass lock redirects', fu
             LockScreenService::ReturnUrlSessionKey => '/dashboard',
         ])
         ->get(route('pwa.service-worker'))
+        ->assertOk()
+        ->assertSessionHas(LockScreenService::ReturnUrlSessionKey, '/dashboard');
+
+    $this->actingAs($user)
+        ->get(route('pwa.legacy-service-worker'))
         ->assertOk()
         ->assertSessionHas(LockScreenService::ReturnUrlSessionKey, '/dashboard');
 

@@ -5,6 +5,7 @@
     'showFilters' => true,
     'showRefresh' => true,
     'refreshLabel' => __('reports.refresh'),
+    'refreshUrl' => null,
     'exportLabel' => __('reports.export'),
     'exportOptions' => [],
 ])
@@ -26,9 +27,15 @@
     @endisset
 
     @if ($showRefresh)
-        <button class="btn btn-falcon-default btn-sm js-report-refresh" type="button">
-            <span class="fas fa-sync-alt me-1"></span>{{ $refreshLabel }}
-        </button>
+        @if ($refreshUrl)
+            <a class="btn btn-falcon-default btn-sm" href="{{ $refreshUrl }}">
+                <span class="fas fa-sync-alt me-1"></span>{{ $refreshLabel }}
+            </a>
+        @else
+            <button class="btn btn-falcon-default btn-sm js-report-refresh" type="button">
+                <span class="fas fa-sync-alt me-1"></span>{{ $refreshLabel }}
+            </button>
+        @endif
     @endif
 
     @if ($visibleExportOptions->isNotEmpty())

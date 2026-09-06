@@ -10,6 +10,7 @@ use Modules\Auth\Services\AuthLogService;
 use Modules\Auth\Services\LockScreenService;
 use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Services\InactiveSessionService;
+use Modules\Core\Services\SessionIdentityService;
 
 class SessionController extends Controller
 {
@@ -18,7 +19,8 @@ class SessionController extends Controller
         InactiveSessionService $inactiveSession,
         LockScreenService $lockScreen,
         AuthLogService $authLogs,
-        UserPresenceService $presence
+        UserPresenceService $presence,
+        SessionIdentityService $sessionIdentity,
     ): JsonResponse {
         $serverTime = now()->getTimestamp();
         $lifetimeSeconds = $inactiveSession->lifetimeSeconds();
@@ -55,6 +57,7 @@ class SessionController extends Controller
                 'lifetime_seconds' => $lifetimeSeconds,
                 'server_time' => $serverTime,
                 'seconds_remaining' => 0,
+                'session_identity' => $sessionIdentity->for($request),
             ]);
         }
 
@@ -79,6 +82,7 @@ class SessionController extends Controller
                 'lifetime_seconds' => $lifetimeSeconds,
                 'server_time' => $serverTime,
                 'seconds_remaining' => 0,
+                'session_identity' => $sessionIdentity->for($request),
             ]);
         }
 
@@ -89,6 +93,7 @@ class SessionController extends Controller
             'server_time' => $serverTime,
             'last_activity_at' => $inactiveSession->lastActivityAt($request) ?? $serverTime,
             'seconds_remaining' => $inactiveSession->secondsRemaining($request),
+            'session_identity' => $sessionIdentity->for($request),
         ]);
     }
 

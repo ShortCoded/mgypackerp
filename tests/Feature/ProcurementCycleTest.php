@@ -36,6 +36,7 @@ use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Purchases\Services\ProcurementAttachmentService;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSettlementService;
 use Modules\Purchases\Services\ProcurementSourcingService;
@@ -122,9 +123,8 @@ test('purchasable classifications and production demand lineage are explicit', f
         Product::ClassificationSemiFinished,
         Product::ClassificationPackaging,
         Product::ClassificationOther,
-        Product::ClassificationService,
     ])->and($fixture['raw']->isPurchasable())->toBeTrue()
-        ->and($fixture['service']->isPurchasable())->toBeTrue()
+        ->and($fixture['service']->isPurchasable())->toBeFalse()
         ->and($fixture['finished']->isPurchasable())->toBeFalse();
 
     $requisition = app(ProcurementSourcingService::class)->createRequisition([
@@ -1459,8 +1459,8 @@ test('purchase order stores span active company branches while remaining company
         ->assertOk()
         ->assertSee('شروط الدفع المحفوظة')
         ->assertSee('تُستخدم شروط المورد الافتراضية عند ترك الحقل فارغًا')
-        ->assertSee('سبب الشراء المباشر')
-        ->assertSee('سماح معتمد بالشراء المباشر')
+        ->assertDontSee('سبب الشراء المباشر')
+        ->assertDontSee('سماح معتمد بالشراء المباشر')
         ->assertSee('نوع الخصم')
         ->assertDontSee('Payment Terms Snapshot')
         ->assertDontSee('Authorized Direct Procurement Override');
@@ -1471,10 +1471,8 @@ test('purchase order stores span active company branches while remaining company
         ->json('results');
 
     expect(collect($storeResults)->pluck('id')->all())
-        ->toContain($fixture['store']->public_uuid, $factoryStore->public_uuid)
-        ->not->toContain($finishedStore->public_uuid, $serviceStore->public_uuid, $inactiveStore->public_uuid, $otherStore->public_uuid)
-        ->and(collect($storeResults)->firstWhere('id', $factoryStore->public_uuid)['text'])
-        ->toBe('Raw Materials Warehouse — Main Factory');
+        ->toContain($fixture['store']->public_uuid)
+        ->not->toContain($factoryStore->public_uuid, $finishedStore->public_uuid, $serviceStore->public_uuid, $inactiveStore->public_uuid, $otherStore->public_uuid);
 
     $productResults = $this->getJson(route('admin.purchases.select2.products'))->assertOk()->json('results');
     $historicalService = $this->getJson(route('admin.purchases.select2.products', [
@@ -1600,6 +1598,7 @@ test('procurement reports filter, print, and export without leaking confidential
     expect(ProcurementCycleReport::types())->toBe([
         'supplier_statement', 'purchase_ledger',
         'purchase_requests', 'pending_purchase_requests', 'open_purchase_orders', 'partially_received_orders',
+        'supply_orders',
         'supplier_deliveries', 'purchase_receipts', 'purchase_invoices', 'received_vs_invoiced',
         'purchases_by_category', 'purchases_by_warehouse', 'price_history', 'receipt_quality_status',
         'open_requirements',
@@ -1767,6 +1766,8 @@ test('goods receipt drafts post once and reverse quantities and grni without tru
 });
 
 test('warehouse procurement acceptance completes ten thousand units through receipts invoice payments return and reversal', function (): void {
+    $this->withoutExceptionHandling();
+    Storage::fake('public');
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
@@ -1784,25 +1785,32 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     $receiving = app(ProcurementReceivingService::class);
     $invoices = app(PurchaseInvoiceService::class);
     $settlement = app(ProcurementSettlementService::class);
+    $attachment = procurementDocumentAttachment($fixture['company']);
+    $attachments = app(ProcurementAttachmentService::class);
     $request = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 10000)));
     $order = $orders->approve($orders->create([
         'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
         'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(), 'exchange_rate' => 1,
         'lines' => [['purchase_requisition_line_id' => $request->lines->first()->getKey(),
             'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
-            'ordered_quantity' => 10000, 'unit_price' => 2]],
+            'ordered_quantity' => 10000, 'unit_price' => 2, 'attachment_file_doc_nums' => [$attachment->doc_num]]],
     ])['record']);
     expect(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0);
     $orderLine = $order->lines->first();
+    expect($attachments->documents($orderLine, ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
     $receipts = collect();
     foreach ([4000, 6000] as $quantity) {
         $receipt = $receiving->createReceipt($order, ['document_date' => now()->toDateString(),
-            'lines' => [['purchase_order_line_public_id' => $orderLine->public_id, 'delivered_quantity' => $quantity]],
+            'lines' => [['purchase_order_line_public_id' => $orderLine->public_id, 'delivered_quantity' => $quantity,
+                'attachment_file_doc_nums' => [$attachment->doc_num]]],
         ]);
+        expect($attachments->documents($receipt->lines->first(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
         $receipt = $receiving->postReceipt($receipt);
         if ($receipt->qc_status === 'pending_inspection') {
-            $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
-                'accepted_quantity' => $quantity, 'rejected_quantity' => 0]]]);
+            $inspection = $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
+                'accepted_quantity' => $quantity, 'rejected_quantity' => 0,
+                'attachment_file_doc_nums' => [$attachment->doc_num]]]]);
+            expect($attachments->documents($inspection->lines->first(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
         }
         $receiving->postReceipt($receipt->fresh());
         $receipts->push($receipt->fresh()->load('lines'));
@@ -1817,11 +1825,15 @@ test('warehouse procurement acceptance completes ten thousand units through rece
             'product_doc_num' => $fixture['raw']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num,
             'purchase_order_line_public_id' => $orderLine->public_id, 'receipt_line_public_id' => $receipt->lines->first()->public_id,
             'quantity' => $receipt->lines->first()->accepted_quantity, 'unit_price' => 2,
+            'attachment_file_doc_nums' => [$attachment->doc_num],
         ])->all(),
     ];
     $this->get(route('admin.purchases.purchase-invoices.create', ['purchase_order' => $order->doc_num]))->assertOk()
         ->assertSee($receipts->first()->lines->first()->public_id)->assertSee($receipts->last()->lines->first()->public_id);
     $invoice = $invoices->approve($invoices->create($invoicePayload)['record']);
+    foreach ($invoice->lines as $invoiceLine) {
+        expect($attachments->documents($invoiceLine, ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
+    }
     $invoices->approve($invoice->fresh());
     expect((float) $invoice->total_amount)->toBe(20000.0)
         ->and(InventoryTransaction::query()->count())->toBe(2)
@@ -1844,8 +1856,10 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     $return = $settlement->createPurchaseReturn([
         'purchase_order_doc_num' => $order->doc_num, 'purchase_invoice_doc_num' => $invoice->doc_num,
         'return_date' => now()->toDateString(), 'reason_code' => 'latent_defect',
-        'lines' => [['receipt_line_public_id' => $receipts->first()->lines->first()->public_id, 'quantity' => 500, 'from_quarantine' => false]],
+        'lines' => [['receipt_line_public_id' => $receipts->first()->lines->first()->public_id, 'quantity' => 500,
+            'from_quarantine' => false, 'attachment_file_doc_nums' => [$attachment->doc_num]]],
     ]);
+    expect($attachments->documents($return->lines->first(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
     $return = $settlement->approvePurchaseReturn($return);
     $settlement->approvePurchaseReturn($return);
     expect((float) InventoryTransaction::query()->sum('quantity_in') - (float) InventoryTransaction::query()->sum('quantity_out'))->toBe(9500.0)
@@ -2073,6 +2087,7 @@ test('procurement workflow and shared print labels have Arabic translations with
         'modules/Purchases/Services/ProcurementReceivingService.php',
         'modules/Purchases/Services/ProcurementSourcingService.php',
         'modules/Purchases/Services/ProcurementSettlementService.php',
+        'modules/Purchases/Services/SupplyOrderService.php',
         'modules/Purchases/Services/PurchaseInvoiceService.php',
         'modules/Purchases/Services/PurchaseOrderService.php',
         'modules/Purchases/Services/Reports/ProcurementCycleReport.php',
@@ -2084,6 +2099,9 @@ test('procurement workflow and shared print labels have Arabic translations with
         'resources/views/modules/purchases/procurement/document-cycle.blade.php',
         'resources/views/modules/purchases/procurement/line-progress.blade.php',
         'resources/views/modules/purchases/procurement/print.blade.php',
+        'resources/views/modules/purchases/procurement/supply-order-form.blade.php',
+        'resources/views/modules/purchases/procurement/supply-order-source.blade.php',
+        'resources/views/modules/purchases/procurement/supply-receipt-form.blade.php',
         'resources/views/reports/partials/document-signatures.blade.php',
         'resources/views/reports/sales/quotation.blade.php',
     ];

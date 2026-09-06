@@ -10,7 +10,7 @@
     $progressColumns = ['requested' => 'Requested', 'approved' => 'Approved', 'ordered' => 'Ordered', 'received' => 'Received', 'returned' => 'Returned', 'net_received' => 'Net received', 'invoiced' => 'Invoiced', 'remaining' => 'Remaining to receive', 'remaining_to_invoice' => 'Remaining to invoice'];
 @endphp
 @if($progressLines->isNotEmpty())
-<div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Quantity progress') }}</h6></div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('Item') }}</th>@foreach($progressColumns as $label)<th class="text-end">{{ __($label) }}</th>@endforeach</tr></thead><tbody>
+<div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Quantity progress') }}</h6></div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('Item') }}</th>@foreach($progressColumns as $label)<th class="text-end">{{ __($label) }}</th>@endforeach</tr></thead><tbody>
 @foreach($progressLines as $progressLine)
     @php
         $progress = $progressLine->quantityProgress();

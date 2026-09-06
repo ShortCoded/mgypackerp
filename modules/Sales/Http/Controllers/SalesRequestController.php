@@ -55,7 +55,7 @@ class SalesRequestController extends Controller
 
         return view('modules.sales.requests.show', ['record' => $salesRequest->load(['company', 'branch', 'branchStore', 'customer', 'currency', 'lines.product.color', 'lines.unit', 'quotations', 'orders']),
             'customers' => collect([$salesRequest->customer])->filter(),
-            'currencies' => Currency::query()->forCompany($salesRequest->company_id)->active()->get(),
+            'currencies' => Currency::query()->forCompany($salesRequest->company_id)->active()->where('is_main', true)->get(),
             'stores' => collect([$salesRequest->branchStore])->filter()]);
     }
 
@@ -69,6 +69,24 @@ class SalesRequestController extends Controller
         $this->assertBranch($request, $salesRequest);
 
         return $this->saved($this->service->save($this->payload($request), $salesRequest));
+    }
+
+    public function destroy(Request $request, SalesRequest $salesRequest): JsonResponse
+    {
+        $this->assertBranch($request, $salesRequest);
+        $this->service->delete($salesRequest);
+
+        return response()->json(['message' => __('Saved successfully.')]);
+    }
+
+    public function restore(Request $request, string $document): JsonResponse
+    {
+        $context = $this->context->snapshot($request);
+        $record = SalesRequest::onlyTrashed()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->where('doc_num', $document)->firstOrFail();
+        $this->service->restore($record);
+
+        return response()->json(['message' => __('Saved successfully.')]);
     }
 
     public function transition(SalesRequestWorkflowRequest $request, SalesRequest $salesRequest): JsonResponse

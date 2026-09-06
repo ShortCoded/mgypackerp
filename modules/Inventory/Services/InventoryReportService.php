@@ -3,6 +3,7 @@
 namespace Modules\Inventory\Services;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Modules\Core\Models\BranchStore;
@@ -135,6 +136,172 @@ class InventoryReportService
             $ageDays <= 365 => '181–365',
             default => '365+',
         };
+    }
+
+    /**
+     * @param  list<int>  $allowedBranchIds
+     * @param  array<string, mixed>  $filters
+     * @return array{rows: Collection, totals: array<string, string|int>, reservations_are_hall_scoped: bool}
+     */
+    public function stockBalanceInquiry(int $companyId, array $allowedBranchIds, array $filters = []): array
+    {
+        if ($allowedBranchIds === []) {
+            return [
+                'rows' => new Collection,
+                'totals' => $this->stockBalanceTotals(new Collection, '0.00000000'),
+                'reservations_are_hall_scoped' => true,
+            ];
+        }
+
+        $rows = InventoryTransaction::query()
+            ->selectRaw('company_id, branch_id, branch_store_id, branch_hall_id, warehouse_location_id, product_id')
+            ->selectRaw('sum(quantity_in - quantity_out) as on_hand')
+            ->selectRaw('sum(case when stock_status = ? then quantity_in - quantity_out else 0 end) as available_stock', [InventoryTransaction::StatusAvailable])
+            ->selectRaw('sum(case when stock_status <> ? then quantity_in - quantity_out else 0 end) as held_stock', [InventoryTransaction::StatusAvailable])
+            ->selectRaw('sum(case when quantity_out > 0 and quantity_in = 0 then -coalesce(total_cost, quantity_out * unit_cost, 0) else coalesce(total_cost, (quantity_in - quantity_out) * unit_cost, 0) end) as inventory_value')
+            ->where('company_id', $companyId)
+            ->whereIn('branch_id', $allowedBranchIds)
+            ->whereDate('transaction_date', '<=', $filters['as_of'] ?? today()->toDateString())
+            ->when($filters['branch_id'] ?? null, fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
+            ->when($filters['branch_store_id'] ?? null, fn (Builder $query, int $storeId) => $query->where('branch_store_id', $storeId))
+            ->when($filters['branch_hall_id'] ?? null, fn (Builder $query, int $hallId) => $query->where('branch_hall_id', $hallId))
+            ->when($filters['warehouse_location_id'] ?? null, fn (Builder $query, int $locationId) => $query->where('warehouse_location_id', $locationId))
+            ->when($filters['stock_status'] ?? null, fn (Builder $query, string $status) => $query->where('stock_status', $status))
+            ->whereHas('product', fn (Builder $query) => $this->applyStockBalanceProductFilters($query, $companyId, $filters))
+            ->with([
+                'branch:id,doc_num,name,type',
+                'branchStore:id,branch_id,name,classification',
+                'branchHall:id,branch_id,name',
+                'warehouseLocation:id,branch_store_id,code,name,zone_code',
+                'product' => fn ($query) => $query->withTrashed()->with(['unit', 'category', 'group', 'itemModel', 'size', 'color', 'decal', 'originCountry']),
+            ])
+            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id', 'product_id'])
+            ->havingRaw('sum(quantity_in - quantity_out) <> 0')
+            ->orderBy('branch_id')
+            ->orderBy('branch_store_id')
+            ->orderBy('product_id')
+            ->get();
+
+        $reservationsAreHallScoped = empty($filters['branch_hall_id']);
+        $reservationRows = $reservationsAreHallScoped
+            ? InventoryReservation::query()
+                ->selectRaw('branch_store_id, warehouse_location_id, product_id, stock_status, batch_lot')
+                ->selectRaw('sum(quantity - consumed_quantity - released_quantity) as reserved_quantity')
+                ->where('company_id', $companyId)
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->where('status', InventoryReservation::StatusActive)
+                ->when($filters['branch_id'] ?? null, fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
+                ->when($filters['branch_store_id'] ?? null, fn (Builder $query, int $storeId) => $query->where('branch_store_id', $storeId))
+                ->when($filters['warehouse_location_id'] ?? null, fn (Builder $query, int $locationId) => $query->where('warehouse_location_id', $locationId))
+                ->when($filters['stock_status'] ?? null, fn (Builder $query, string $status) => $query->where('stock_status', $status))
+                ->whereHas('product', fn (Builder $query) => $this->applyStockBalanceProductFilters($query, $companyId, $filters))
+                ->groupBy(['branch_store_id', 'warehouse_location_id', 'product_id', 'stock_status', 'batch_lot'])
+                ->havingRaw('sum(quantity - consumed_quantity - released_quantity) > 0')
+                ->get()
+            : new Collection;
+
+        $reservedByPosition = $reservationRows->groupBy(fn ($row): string => $this->stockPositionKey(
+            (int) $row->branch_store_id,
+            $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+            (int) $row->product_id,
+        ))->map(fn (SupportCollection $positionRows): string => $this->decimalTotal($positionRows, 'reserved_quantity'));
+
+        $rows->each(function (InventoryTransaction $row) use ($reservedByPosition): void {
+            $key = $this->stockPositionKey(
+                (int) $row->branch_store_id,
+                $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+                (int) $row->product_id,
+            );
+            $reserved = $row->branch_hall_id === null
+                ? (string) ($reservedByPosition->get($key) ?? '0.00000000')
+                : '0.00000000';
+            $available = bcsub((string) $row->available_stock, $reserved, 8);
+
+            $row->setAttribute('reserved', $reserved);
+            $row->setAttribute('available', bccomp($available, '0', 8) < 0 ? '0.00000000' : $available);
+        });
+
+        $rows = $this->filterStockBalanceQuantityState($rows, $filters['quantity_state'] ?? null);
+        $visiblePositionKeys = $rows->map(fn (InventoryTransaction $row): string => $this->stockPositionKey(
+            (int) $row->branch_store_id,
+            $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+            (int) $row->product_id,
+        ))->unique();
+        $reservedTotal = $reservationsAreHallScoped
+            ? $this->decimalTotal($reservationRows->filter(fn ($row): bool => $visiblePositionKeys->contains($this->stockPositionKey(
+                (int) $row->branch_store_id,
+                $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+                (int) $row->product_id,
+            ))), 'reserved_quantity')
+            : '0.00000000';
+
+        return [
+            'rows' => $rows->values(),
+            'totals' => $this->stockBalanceTotals($rows, $reservedTotal),
+            'reservations_are_hall_scoped' => $reservationsAreHallScoped,
+        ];
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function applyStockBalanceProductFilters(Builder $query, int $companyId, array $filters): Builder
+    {
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        return $query
+            ->where('company_id', $companyId)
+            ->whereIn('item_classification', Product::stockableItemClassifications())
+            ->when($filters['product_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->where('doc_num', $docNum))
+            ->when($filters['item_classification'] ?? null, fn (Builder $productQuery, string $classification) => $productQuery->where('item_classification', $classification))
+            ->when($search !== '', function (Builder $productQuery) use ($search): void {
+                $term = '%'.addcslashes($search, '%_\\').'%';
+                $productQuery->where(function (Builder $searchQuery) use ($term): void {
+                    $searchQuery->where('doc_num', 'like', $term)
+                        ->orWhere('name', 'like', $term)
+                        ->orWhere('barcode', 'like', $term);
+                });
+            })
+            ->when($filters['item_category_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('category', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_group_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('group', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_model_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('itemModel', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_size_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('size', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_color_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('color', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_decal_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('decal', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_unit_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('unit', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)))
+            ->when($filters['item_origin_country_doc_num'] ?? null, fn (Builder $productQuery, string $docNum) => $productQuery->whereHas('originCountry', fn (Builder $lookupQuery) => $lookupQuery->where('doc_num', $docNum)));
+    }
+
+    private function stockPositionKey(int $storeId, ?int $locationId, int $productId): string
+    {
+        return implode('|', [$storeId, $locationId ?? 0, $productId]);
+    }
+
+    private function filterStockBalanceQuantityState(Collection $rows, mixed $quantityState): Collection
+    {
+        return match ($quantityState) {
+            'positive' => $rows->filter(fn ($row): bool => bccomp((string) $row->on_hand, '0', 8) > 0),
+            'negative' => $rows->filter(fn ($row): bool => bccomp((string) $row->on_hand, '0', 8) < 0),
+            'held' => $rows->filter(fn ($row): bool => bccomp((string) $row->held_stock, '0', 8) > 0),
+            'below_reorder' => $rows->filter(fn ($row): bool => bccomp((string) $row->available, (string) ($row->product?->reorder_point ?? 0), 8) < 0),
+            default => $rows,
+        };
+    }
+
+    /** @return array<string, string|int> */
+    private function stockBalanceTotals(Collection $rows, string $reservedTotal): array
+    {
+        $availableStock = $this->decimalTotal($rows, 'available_stock');
+        $netAvailable = bcsub($availableStock, $reservedTotal, 8);
+
+        return [
+            'positions' => $rows->count(),
+            'products' => $rows->pluck('product_id')->unique()->count(),
+            'on_hand' => $this->decimalTotal($rows, 'on_hand'),
+            'available_stock' => $availableStock,
+            'reserved' => $reservedTotal,
+            'available' => bccomp($netAvailable, '0', 8) < 0 ? '0.00000000' : $netAvailable,
+            'held_stock' => $this->decimalTotal($rows, 'held_stock'),
+            'inventory_value' => $this->decimalTotal($rows, 'inventory_value'),
+        ];
     }
 
     /** @param array<string, mixed> $filters */

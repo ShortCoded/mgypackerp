@@ -6,14 +6,25 @@
         <tr>@foreach($reportColumns as $key => $label)
             @php($value = $row[$key] ?? null)
             <td @if(is_numeric($value)) class="text-end" dir="ltr" @endif>
-                @if(in_array($key, ['status', 'payment_status']) && filled($value)){{ __('procurement.statuses.'.$value) }}
-                @elseif($key === 'document' && filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission'] ?? 'reports.purchases.view'))<a href="{{ $row['document_url'] }}">{{ $value }}</a>
-                @elseif($key === 'reference' && filled($row['reference_url'] ?? null) && auth()->user()?->can($row['reference_permission']))<a href="{{ $row['reference_url'] }}">{{ $value }}</a>
-                @elseif($key === 'purchase_order' && filled($value) && auth()->user()?->can('purchase_orders.view'))<a href="{{ route('admin.purchases.purchase-orders.show', $value) }}">{{ $value }}</a>
-                @elseif($key === 'receipt' && !empty($row['receipt_references']) && auth()->user()?->can('purchases.goods_receipt_notes.view'))@foreach($row['receipt_references'] as $reference)<a href="{{ route('admin.purchases.goods-receipt-notes.show', $reference) }}">{{ $reference }}</a>@unless($loop->last) / @endunless@endforeach
-                @elseif($key === 'category' && filled($value)){{ $value }}
-                @elseif(is_numeric($value)){{ $numbers->format($value) }}
-                @else{{ $value ?: '—' }}@endif
+                @if(in_array($key, ['status', 'payment_status']) && filled($value))
+                    {{ __('procurement.statuses.'.$value) }}
+                @elseif($key === 'document' && filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission'] ?? 'reports.purchases.view'))
+                    <a href="{{ $row['document_url'] }}">{{ $value }}</a>
+                @elseif($key === 'reference' && filled($row['reference_url'] ?? null) && auth()->user()?->can($row['reference_permission']))
+                    <a href="{{ $row['reference_url'] }}">{{ $value }}</a>
+                @elseif($key === 'purchase_order' && filled($value) && auth()->user()?->can('purchase_orders.view'))
+                    <a href="{{ route('admin.purchases.purchase-orders.show', $value) }}">{{ $value }}</a>
+                @elseif($key === 'receipt' && !empty($row['receipt_references']) && auth()->user()?->can('purchases.goods_receipt_notes.view'))
+                    @foreach($row['receipt_references'] as $reference)
+                        <a href="{{ route('admin.purchases.goods-receipt-notes.show', $reference) }}">{{ $reference }}</a>@unless($loop->last) / @endunless
+                    @endforeach
+                @elseif($key === 'category' && filled($value))
+                    {{ $value }}
+                @elseif(is_numeric($value))
+                    {{ $numbers->format($value) }}
+                @else
+                    {{ $value ?: '—' }}
+                @endif
             </td>
         @endforeach</tr>
     @empty

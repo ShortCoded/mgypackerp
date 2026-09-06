@@ -16,12 +16,22 @@ class ProcurementAttachmentService
 
     public const OperationalCollection = 'procurement_documents';
 
-    public function documents(Model $record): Collection
+    public const LineCollection = 'procurement_document_lines';
+
+    public function documents(Model $record, string $collection = self::OperationalCollection, ?int $companyId = null): Collection
     {
+        $companyId ??= (int) $record->getAttribute('company_id');
+
         return ArchiveFileUsage::query()->whereMorphedTo('usable', $record)
-            ->where('collection', self::OperationalCollection)
-            ->whereHas('file', fn ($query) => $query->where('attachable_type', (new Company)->getMorphClass())->where('attachable_id', $record->company_id))
+            ->where('collection', $collection)
+            ->whereHas('file', fn ($query) => $query->where('attachable_type', (new Company)->getMorphClass())->where('attachable_id', $companyId))
             ->with('file')->orderBy('sort_order')->get();
+    }
+
+    /** @param list<string> $fileDocNums */
+    public function attachLine(Model $line, array $fileDocNums, int $companyId): bool
+    {
+        return $this->attach($line, $fileDocNums, self::LineCollection, $companyId);
     }
 
     /** @param list<string> $fileDocNums */

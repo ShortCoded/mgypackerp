@@ -65,7 +65,7 @@ test('eligibility reports the actual state before recognition requirements', fun
     expect($preview['eligible'])->toBeEmpty()->and($preview['excluded'][0]['reason'])->toBe(__($reason));
 })->with([
     'land' => [['is_depreciable' => false], 'fixed_assets.lifecycle.exclusions.non_depreciable'],
-    'draft' => [['status' => 'draft'], 'fixed_assets.prerequisites.draft'],
+    'draft' => [['status' => 'draft'], 'fixed_assets.cycle.recognition_required'],
     'disposed' => [['status' => 'disposed'], 'fixed_assets.lifecycle.exclusions.disposed'],
     'fully depreciated' => [['status' => 'fully_depreciated', 'purchase_value' => '120000', 'previous_depreciation' => '100000', 'salvage_value' => '20000'], 'fixed_assets.lifecycle.exclusions.fully_depreciated'],
     'future start' => [['depreciation_start_date' => '2035-01-01'], 'fixed_assets.lifecycle.exclusions.not_in_service'],

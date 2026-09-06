@@ -11,13 +11,20 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
     /**
      * @param  array<string, mixed>  $result
      */
-    public function __construct(private readonly array $result) {}
+    public function __construct(
+        private readonly array $result,
+        private readonly string $type = 'account_ledger',
+    ) {}
 
     /**
      * @return list<list<string>>
      */
     public function array(): array
     {
+        if ($this->type === 'customer_statement') {
+            return $this->customerStatementRows();
+        }
+
         $rows = [[
             (string) data_get($this->result, 'filters.from_date'),
             __('ledger_reports.summary.opening'),
@@ -48,15 +55,6 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
             ];
         }
 
-        foreach ($this->result['subledger_events'] ?? [] as $event) {
-            $rows[] = [
-                $event['date'], __(str($event['event'])->replace('_', ' ')->title()->toString()),
-                $event['document'], $event['related_document'],
-                __('Amount: :amount; Remaining credit: :remaining', ['amount' => $event['amount'], 'remaining' => $event['remaining_credit'] ?? '—']),
-                '', '', '', '', '', '',
-            ];
-        }
-
         $rows[] = [
             (string) data_get($this->result, 'filters.to_date'),
             __('ledger_reports.summary.period'),
@@ -79,6 +77,18 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
      */
     public function headings(): array
     {
+        if ($this->type === 'customer_statement') {
+            return [
+                __('ledger_reports.columns.date'),
+                __('ledger_reports.columns.document'),
+                __('ledger_reports.columns.reference'),
+                __('ledger_reports.columns.description'),
+                __('ledger_reports.columns.debit'),
+                __('ledger_reports.columns.credit'),
+                __('ledger_reports.columns.balance'),
+            ];
+        }
+
         return [
             __('ledger_reports.columns.date'),
             __('ledger_reports.columns.source_type'),
@@ -92,5 +102,60 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
             __('ledger_reports.columns.running_debit'),
             __('ledger_reports.columns.running_credit'),
         ];
+    }
+
+    /**
+     * @return list<list<string>>
+     */
+    private function customerStatementRows(): array
+    {
+        $rows = [[
+            (string) data_get($this->result, 'filters.from_date'),
+            __('ledger_reports.summary.opening'),
+            '',
+            '',
+            (string) data_get($this->result, 'opening.debit'),
+            (string) data_get($this->result, 'opening.credit'),
+            $this->balanceLabel(
+                (string) data_get($this->result, 'opening.debit', '0'),
+                (string) data_get($this->result, 'opening.credit', '0'),
+            ),
+        ]];
+
+        foreach ($this->result['movements'] as $movement) {
+            $rows[] = [
+                $movement['entry_date'],
+                $movement['source_doc_num'] ?: $movement['doc_num'],
+                $movement['reference_no'] ?: '',
+                $movement['description'],
+                $movement['debit'],
+                $movement['credit'],
+                $this->balanceLabel($movement['running_debit'], $movement['running_credit']),
+            ];
+        }
+
+        $rows[] = [
+            (string) data_get($this->result, 'filters.to_date'),
+            __('ledger_reports.summary.period'),
+            '',
+            '',
+            (string) data_get($this->result, 'period.debit'),
+            (string) data_get($this->result, 'period.credit'),
+            $this->balanceLabel(
+                (string) data_get($this->result, 'ending.debit', '0'),
+                (string) data_get($this->result, 'ending.credit', '0'),
+            ),
+        ];
+
+        return $rows;
+    }
+
+    private function balanceLabel(string $debit, string $credit): string
+    {
+        if ((float) $credit !== 0.0) {
+            return $credit.' '.__('ledger_reports.balance.credit');
+        }
+
+        return $debit.' '.__('ledger_reports.balance.debit');
     }
 }

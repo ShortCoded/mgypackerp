@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
@@ -20,12 +21,14 @@ use Modules\Core\Services\DocumentNumberSettingsService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
 use Modules\Purchases\Http\Requests\BulkDeletePurchaseInvoicesRequest;
 use Modules\Purchases\Http\Requests\CancelPurchaseInvoiceRequest;
 use Modules\Purchases\Http\Requests\StorePurchaseInvoiceRequest;
+use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceAssetTreatmentRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceDocumentNumberSettingsRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -268,6 +271,18 @@ class PurchaseInvoiceController extends Controller
         ]);
     }
 
+    public function updateAssetTreatment(UpdatePurchaseInvoiceAssetTreatmentRequest $request, PurchaseInvoice $purchaseInvoice): RedirectResponse
+    {
+        try {
+            app(FixedAssetPurchaseIntegrationService::class)
+                ->configureTreatment($purchaseInvoice, $request->validated());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['asset_treatment' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', __('fixed_assets.purchase_source.treatment_saved'));
+    }
+
     public function print(PurchaseInvoice $purchaseInvoice, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
         $this->assertDocumentContext($purchaseInvoice);
@@ -334,7 +349,13 @@ class PurchaseInvoiceController extends Controller
             ->where('company_id', $companyId)
             ->where('branch_id', $context['branch_id'])
             ->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))
-            ->where('inventory_posted_quantity', '>', 0)
+            ->where(function ($query): void {
+                $query->where('inventory_posted_quantity', '>', 0)
+                    ->orWhere(function ($nonInventory): void {
+                        $nonInventory->where('accepted_quantity', '>', 0)
+                            ->whereHas('product', fn ($product) => $product->where('cost_as_inventory', false));
+                    });
+            })
             ->whereNotNull('purchase_order_line_id')
             ->latest('id')
             ->limit(500)
@@ -351,6 +372,7 @@ class PurchaseInvoiceController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'cloneSourceToken' => $cloneSourceToken,
             'metadata' => $this->metadata($record),
+            'context' => $context,
             'procurementPurchaseOrders' => $purchaseOrders,
             'eligibleReceiptLines' => $eligibleReceiptLines,
         ]);

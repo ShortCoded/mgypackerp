@@ -40,9 +40,15 @@ class FixedAssetDepreciationController extends Controller
             'preview' => null,
             'selectedAssets' => $this->selectedAssets(),
             'financialPeriod' => $period,
-            'postingDate' => app(DateFormatService::class)->formatDate(now()->endOfMonth(), ''),
+            'postingDate' => app(DateFormatService::class)->formatDate(app(DateFormatService::class)->normalizeForStorage(request('posting_date')) ?: now()->endOfMonth(), ''),
+            'recentRuns' => $this->recentRuns($context['company_id'] ? (int) $context['company_id'] : null),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.depreciation.index'),
         ]);
+    }
+
+    public function openPreview(): RedirectResponse
+    {
+        return to_route('admin.fixed-assets.depreciation.index');
     }
 
     public function preview(FixedAssetDepreciationRunRequest $request): View|RedirectResponse|JsonResponse
@@ -66,6 +72,7 @@ class FixedAssetDepreciationController extends Controller
             'selectedAssets' => $this->selectedAssets(),
             'financialPeriod' => $preview['financialPeriod'],
             'postingDate' => $request->input('posting_date'),
+            'recentRuns' => $this->recentRuns((int) $preview['financialPeriod']->company_id),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.depreciation.index'),
         ]);
     }
@@ -74,6 +81,28 @@ class FixedAssetDepreciationController extends Controller
     {
         return app(FixedAssetAccessService::class)->scopeAssets(FixedAsset::query())
             ->whereIn('doc_num', (array) request('asset_doc_nums', []))->get(['id', 'doc_num', 'asset_name']);
+    }
+
+    private function recentRuns(?int $companyId): Collection
+    {
+        $branchIds = app(FixedAssetAccessService::class)->branchIds();
+
+        if (! $companyId || $branchIds === []) {
+            return new Collection;
+        }
+
+        return FixedAssetDepreciationRun::query()
+            ->where('company_id', $companyId)
+            ->whereHas('lines')
+            ->whereDoesntHave('lines', fn ($query) => $query->where(fn ($query) => $query
+                ->whereNull('branch_id')
+                ->orWhereNotIn('branch_id', $branchIds)))
+            ->with(['financialPeriod', 'journalEntry', 'postedBy'])
+            ->withCount('lines')
+            ->latest('posting_date')
+            ->latest('id')
+            ->limit(10)
+            ->get();
     }
 
     public function post(FixedAssetDepreciationRunRequest $request): RedirectResponse

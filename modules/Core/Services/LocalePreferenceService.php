@@ -19,8 +19,7 @@ class LocalePreferenceService
         $locale = $this->resolve($request);
 
         App::setLocale($locale);
-        $request->session()->put('locale', $locale);
-        $this->queueCookie($locale);
+        $this->syncRequestPreference($request, $locale);
 
         return $locale;
     }
@@ -52,9 +51,8 @@ class LocalePreferenceService
     {
         $locale = $this->normalize($locale);
 
-        $request->session()->put('locale', $locale);
         App::setLocale($locale);
-        $this->queueCookie($locale);
+        $this->syncRequestPreference($request, $locale);
 
         if ($saveAuthenticatedUser && $request->user()?->locale !== $locale) {
             $request->user()?->forceFill(['locale' => $locale])->save();
@@ -95,5 +93,16 @@ class LocalePreferenceService
     private function secureCookie(): bool
     {
         return (bool) (config('session.secure') ?? app()->isProduction());
+    }
+
+    private function syncRequestPreference(Request $request, string $locale): void
+    {
+        if ($request->session()->get('locale') !== $locale) {
+            $request->session()->put('locale', $locale);
+        }
+
+        if ($request->cookie(self::CookieName) !== $locale) {
+            $this->queueCookie($locale);
+        }
     }
 }

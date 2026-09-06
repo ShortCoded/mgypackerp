@@ -227,7 +227,7 @@
     @endif
 
     <div class="card mb-3">
-        <div class="card-header">
+        <div class="card-header py-2">
             <div class="row flex-between-center g-2">
                 <div class="col">
                     <h5 class="mb-0">{{ $title }}</h5>
@@ -254,7 +254,7 @@
                 @include('modules.purchases.procurement.document-cycle', ['record' => $record])
             @php $matchingNotes = json_decode($record->matching_notes ?? '', true) ?: []; @endphp
             @if(!empty($matchingNotes['line_variances']))
-            <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('Quantity variance') }}</th><th>{{ __('Unit price variance') }}</th></tr></thead><tbody>
+            <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('Quantity variance') }}</th><th>{{ __('Unit price variance') }}</th></tr></thead><tbody>
             @foreach($matchingNotes['line_variances'] as $variance)
                 @php $matchedLine = $record->lines->firstWhere('public_id', $variance['line']); @endphp
                 <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td></tr>
@@ -265,7 +265,8 @@
             @endif
 
             <ul class="nav nav-tabs" id="purchase-invoice-form-tabs" role="tablist">
-                @foreach(['basic', 'lines', 'payments', 'audit'] as $tab)
+                @php $invoiceTabs = $record?->exists ? ['basic', 'lines', 'assets', 'payments', 'audit'] : ['basic', 'lines', 'payments', 'audit']; @endphp
+                @foreach($invoiceTabs as $tab)
                     <li class="nav-item" role="presentation">
                         <button class="nav-link @if($loop->first) active @endif" id="purchase-invoice-{{ $tab }}-tab" data-bs-toggle="tab" data-bs-target="#purchase-invoice-{{ $tab }}" type="button" role="tab" aria-controls="purchase-invoice-{{ $tab }}" aria-selected="{{ $loop->first ? 'true' : 'false' }}">
                             {{ __('purchase_invoices.tabs.'.$tab) }}
@@ -350,7 +351,7 @@
                                 <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
                             @else
                                 <select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders') }}" data-placeholder="{{ __('Select') }}">
-                                    <option value="">{{ __('Authorized direct procurement only') }}</option>
+                                    <option value="">{{ __('Select') }}</option>
                                     @foreach($procurementPurchaseOrders as $purchaseOrder)
                                         <option value="{{ $purchaseOrder->doc_num }}"
                                             data-approved-freight="{{ $purchaseOrder->freight_amount }}"
@@ -361,15 +362,10 @@
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
                             @if($mode === 'create')
-                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }}</label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-placeholder="{{ __('Select') }}"></select>
+                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }}</label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
                             <button class="btn btn-falcon-primary btn-sm mt-2" type="button" data-load-invoice-source="{{ route('admin.purchases.purchase-invoices.create') }}">{{ __('procurement.ui.load_received_lines') }}</button>
                             @endif
                         </div>
-
-                        @if(! $isReadonly && auth()->user()?->can('purchases.direct_procurement.override'))
-                            <div class="col-md-4"><div class="form-check mt-4"><input class="form-check-input" id="direct_procurement_override" name="direct_procurement_override" type="checkbox" value="1" @checked(old('direct_procurement_override', $record?->direct_procurement_override))><label class="form-check-label" for="direct_procurement_override">{{ __('purchase_invoices.attributes.direct_procurement_override') }}</label></div></div>
-                            <div class="col-md-8"><label class="form-label" for="direct_procurement_reason">{{ __('purchase_invoices.attributes.direct_procurement_reason') }}</label><input class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" value="{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}"></div>
-                        @endif
 
                         <div class="col-md-3">
                             <label class="form-label" for="supplier_invoice_number">{{ __('purchase_invoices.attributes.supplier_invoice_number') }}</label>
@@ -568,6 +564,7 @@
                                     <th>{{ __('purchase_invoices.attributes.line_tax_amount') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.line_total') }}</th>
                                     <th class="purchase-invoice-notes-cell">{{ __('purchase_invoices.attributes.notes') }}</th>
+                                    <th>{{ __('Attachments') }}</th>
                                     @unless($isReadonly)
                                         <th class="text-center" style="width: 80px">{{ __('common.fields.actions') }}</th>
                                     @endunless
@@ -579,14 +576,15 @@
                                         @php
                                             $sourceOrderLine = $procurementPurchaseOrders->flatMap->lines->firstWhere('public_id', $line['purchase_order_line_public_id'] ?? '');
                                             $sourceReceiptLine = $eligibleReceiptLines->firstWhere('public_id', $line['receipt_line_public_id'] ?? '');
+                                            $attachmentLine = $isCreateLike ? null : $record?->lines?->firstWhere('public_id', $line['public_id'] ?? null);
                                         @endphp
-                                        <td @if(!$sourceOrderLine) hidden @endif class="line-card-info">
+                                        <td @if(!$sourceOrderLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceOrderLine)<a href="{{ route('admin.purchases.purchase-orders.show', $sourceOrderLine->purchaseOrder->doc_num) }}">{{ $sourceOrderLine->purchaseOrder->doc_num }}</a>@endif
                                             <input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line['purchase_order_line_public_id'] ?? '' }}">
                                         </td>
-                                        <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info">
+                                        <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceReceiptLine)<a href="{{ route('admin.purchases.goods-receipt-notes.show', $sourceReceiptLine->receipt->doc_num) }}">{{ $sourceReceiptLine->receipt->doc_num }}</a>
-                                                <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->inventory_posted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceipt($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
+                                                <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->product?->cost_as_inventory ? $sourceReceiptLine->inventory_posted_quantity : $sourceReceiptLine->accepted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceipt($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
                                             @endif
                                             <input type="hidden" name="lines[{{ $index }}][receipt_line_public_id]" value="{{ $line['receipt_line_public_id'] ?? '' }}">
                                         </td>
@@ -673,9 +671,17 @@
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                             @endif
                                         </td>
+                                        <td>
+                                            @include('modules.purchases.procurement.line-attachments', [
+                                                'attachmentLine' => $attachmentLine,
+                                                'attachmentCompanyId' => $record?->company_id ?? $context['company_id'],
+                                                'index' => $index,
+                                                'lineAttachmentsReadonly' => $isReadonly,
+                                            ])
+                                        </td>
                                         @unless($isReadonly)
                                             <td class="text-center">
-                                                <button class="btn btn-link text-600 p-0 me-2 js-purchase-invoice-duplicate-line" type="button" title="{{ __('purchase_invoices.js.duplicate_line_title') }}" data-bs-title="{{ __('purchase_invoices.js.duplicate_line_title') }}">
+                                                <button class="btn btn-link text-600 p-0 me-2 js-purchase-invoice-duplicate-line" @if(!empty($line['purchase_order_line_public_id'])) hidden @endif type="button" title="{{ __('purchase_invoices.js.duplicate_line_title') }}" data-bs-title="{{ __('purchase_invoices.js.duplicate_line_title') }}">
                                                     <span class="fas fa-copy"></span>
                                                 </button>
                                                 <button class="btn btn-link text-danger p-0 js-purchase-invoice-remove-line" type="button" title="{{ __('purchase_invoices.js.delete_line_title') }}" data-bs-title="{{ __('purchase_invoices.js.delete_line_title') }}">
@@ -686,7 +692,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="{{ $isReadonly ? 14 : 15 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_lines') }}</td>
+                                        <td colspan="{{ $isReadonly ? 15 : 16 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_lines') }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -746,7 +752,141 @@
                     </div>
                 </div>
 
+                @if($record?->exists)
+                    <div class="tab-pane fade" id="purchase-invoice-assets" role="tabpanel" aria-labelledby="purchase-invoice-assets-tab">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                            <div>
+                                <h6 class="mb-1">{{ __('fixed_assets.purchase_source.invoice_section') }}</h6>
+                                <div class="text-600 small">{{ __('fixed_assets.purchase_source.invoice_section_help') }}</div>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="bg-200">
+                                    <tr>
+                                        <th>{{ __('purchase_invoices.attributes.product') }}</th>
+                                        <th>{{ __('fixed_assets.purchase_source.line_value') }}</th>
+                                        <th>{{ __('fixed_assets.purchase_source.allocated') }}</th>
+                                        <th>{{ __('fixed_assets.purchase_source.linked_assets') }}</th>
+                                        <th class="text-end">{{ __('common.fields.actions') }}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @php $assetIntegration = app(\Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService::class); @endphp
+                                    @forelse($record->lines as $invoiceLine)
+                                        @php
+                                            $lineValue = $assetIntegration->lineNetAmount($invoiceLine);
+                                            $allocatedValue = $assetIntegration->allocatedAmount($invoiceLine);
+                                            $assetEligible = $invoiceLine->product && !$invoiceLine->product->isService() && !$invoiceLine->product->cost_as_inventory;
+                                            $assetTreatment = $invoiceLine->asset_treatment ?: ($invoiceLine->fixedAssets->isNotEmpty()
+                                                ? \Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService::TreatmentNewAsset
+                                                : \Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService::TreatmentNone);
+                                            $targetAsset = $invoiceLine->targetFixedAsset;
+                                        @endphp
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold">{{ $invoiceLine->product?->name }}</div>
+                                                <div class="text-600 small" dir="ltr">{{ $invoiceLine->product?->doc_num }}</div>
+                                            </td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($lineValue) }}</td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($allocatedValue) }}</td>
+                                            <td>
+                                                @forelse($invoiceLine->fixedAssets as $asset)
+                                                    @can('fixed_assets.view')
+                                                        <a class="d-inline-block me-2 fw-semibold" href="{{ route('admin.fixed-assets.assets.show', $asset->doc_num) }}">{{ $asset->doc_num }} · {{ $asset->asset_name }}</a>
+                                                    @else
+                                                        <span class="d-inline-block me-2 text-700">{{ $asset->doc_num }} · {{ $asset->asset_name }}</span>
+                                                    @endcan
+                                                @empty
+                                                    @if($targetAsset)
+                                                        @can('fixed_assets.view')
+                                                            <a class="d-inline-block me-2 fw-semibold" href="{{ route('admin.fixed-assets.lifecycle.show', $targetAsset) }}">{{ $targetAsset->doc_num }} · {{ $targetAsset->asset_name }}</a>
+                                                        @else
+                                                            <span class="d-inline-block me-2 text-700">{{ $targetAsset->doc_num }} · {{ $targetAsset->asset_name }}</span>
+                                                        @endcan
+                                                        @if($invoiceLine->assetImprovementMovement)
+                                                            <div class="small text-600 mt-1">{{ $invoiceLine->assetImprovementMovement->doc_num }} · {{ __('fixed_assets.cycle.'.$invoiceLine->assetImprovementMovement->movement_type) }}</div>
+                                                        @endif
+                                                    @else
+                                                        <span class="text-600">{{ __('common.empty_value') }}</span>
+                                                    @endif
+                                                @endforelse
+                                            </td>
+                                            <td class="text-end">
+                                                @if($record->isDraft() && $assetEligible)
+                                                    <div class="js-asset-treatment-editor text-start" data-endpoint="{{ route('admin.purchases.purchase-invoices.asset-treatment', $record->doc_num) }}" data-line-public-id="{{ $invoiceLine->public_id }}">
+                                                        <label class="form-label small mb-1">{{ __('fixed_assets.purchase_source.treatment') }}</label>
+                                                        <select class="form-select form-select-sm js-asset-treatment mb-2">
+                                                            <option value="none" @selected($assetTreatment === 'none')>{{ __('fixed_assets.purchase_source.treatment_none') }}</option>
+                                                            @can('fixed_assets.create')<option value="new_asset" @selected($assetTreatment === 'new_asset')>{{ __('fixed_assets.purchase_source.treatment_new_asset') }}</option>@endcan
+                                                            @can('fixed_assets.improvement.post')<option value="capital_improvement" @selected($assetTreatment === 'capital_improvement')>{{ __('fixed_assets.purchase_source.treatment_improvement') }}</option>@endcan
+                                                        </select>
+                                                        <div class="js-asset-improvement-fields {{ $assetTreatment === 'capital_improvement' ? '' : 'd-none' }}">
+                                                            <select class="form-select form-select-sm js-select2-ajax js-asset-improvement-target mb-2" data-url="{{ route('admin.fixed-assets.select2.assets', ['purchasable_improvement' => 1, 'branch_doc_num' => $record->branch?->doc_num]) }}" data-placeholder="{{ __('fixed_assets.purchase_source.select_existing_asset') }}" data-allow-clear="true">
+                                                                @if($targetAsset)<option value="{{ $targetAsset->doc_num }}" selected>{{ $targetAsset->doc_num }} / {{ $targetAsset->asset_name }}</option>@endif
+                                                            </select>
+                                                            <input class="form-control form-control-sm js-date-picker js-asset-improvement-date mb-2" type="text" value="{{ $plainDate($invoiceLine->asset_effective_date ?: $record->invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" placeholder="{{ __('fixed_assets.purchase_source.effective_date') }}">
+                                                        </div>
+                                                        <div class="d-flex flex-wrap justify-content-end gap-1">
+                                                            <button class="btn btn-falcon-default btn-sm js-save-asset-treatment" type="button"><span class="fas fa-save me-1"></span>{{ __('common.actions.save') }}</button>
+                                                            @if($assetTreatment === 'new_asset' && bccomp($allocatedValue, $lineValue, 4) < 0)
+                                                                @can('fixed_assets.create')
+                                                                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.create', ['purchase_invoice_line' => $invoiceLine->public_id]) }}">
+                                                                        <span class="fas fa-plus me-1"></span>{{ __('fixed_assets.purchase_source.register_asset') }}
+                                                                    </a>
+                                                                @endcan
+                                                            @endif
+                                                        </div>
+                                                    </div>
+                                                @elseif(!$assetEligible)
+                                                    <span class="text-600 small">{{ __('fixed_assets.purchase_source.non_inventory_only') }}</span>
+                                                @elseif($assetTreatment !== 'none')
+                                                    <x-status-indicator :status="$assetTreatment" :label="__('fixed_assets.purchase_source.treatments.'.$assetTreatment)" tone="primary" />
+                                                @endif
+                                            </td>
+                                        </tr>
+                                    @empty
+                                        <tr><td colspan="5" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_lines') }}</td></tr>
+                                    @endforelse
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                @endif
+
                 <div class="tab-pane fade" id="purchase-invoice-payments" role="tabpanel" aria-labelledby="purchase-invoice-payments-tab">
+                    @php
+                        $actualPayments = $record?->paymentAllocations?->pluck('paymentContext')->filter()->unique('id') ?? collect();
+                    @endphp
+                    @if($actualPayments->isNotEmpty())
+                        <div class="card border mb-3">
+                            <div class="card-header bg-light py-2"><h6 class="mb-0">{{ __('fixed_assets.purchase_source.actual_payments') }}</h6></div>
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead><tr><th>{{ __('Document number') }}</th><th>{{ __('Payment method') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Status') }}</th><th class="text-end">{{ __('common.fields.actions') }}</th></tr></thead>
+                                    <tbody>
+                                        @foreach($actualPayments as $payment)
+                                            @php
+                                                $paymentPrintUrl = route('admin.purchases.procurement.print', ['supplier-payment', $payment->doc_num]);
+                                                if ($payment->payment_method === \Modules\Purchases\Models\SupplierPaymentContext::MethodCash && $payment->cashVoucher) {
+                                                    $paymentPrintUrl = route('admin.finance.cash-payment-vouchers.print', $payment->cashVoucher->doc_num);
+                                                } elseif ($payment->payment_method === \Modules\Purchases\Models\SupplierPaymentContext::MethodCheque && $payment->cheque) {
+                                                    $paymentPrintUrl = route('admin.finance.cheques.print', $payment->cheque->doc_num);
+                                                }
+                                            @endphp
+                                            <tr>
+                                                <td><a href="{{ route('admin.purchases.supplier-payments.show', $payment->doc_num) }}">{{ $payment->doc_num }}</a></td>
+                                                <td>{{ __('procurement.statuses.'.$payment->payment_method) }}</td>
+                                                <td class="text-end" dir="ltr">{{ $numbers->format($payment->amount) }}</td>
+                                                <td>{{ __('procurement.statuses.'.$payment->status) }}</td>
+                                                <td class="text-end"><a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ $paymentPrintUrl }}"><span class="fas fa-print me-1"></span>{{ __('fixed_assets.purchase_source.print_payment_document') }}</a></td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    @endif
                     <div class="row flex-between-center g-2 mb-3">
                         <div class="col">
                             <h6 class="mb-0">{{ __('purchase_invoices.sections.payment_schedule') }}</h6>
@@ -933,10 +1073,8 @@
                 </div>
             </div>
         </div>
-        <div class="card-footer">
-            @include('modules.purchases.purchase-invoices.partials.form-actions', compact('mode', 'record'))
-        </div>
     </div>
+    @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => $isReadonly])
 </form>
 @endsection
 
@@ -945,5 +1083,35 @@
         window.purchaseInvoiceMessages = @json(__('purchase_invoices.js'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Purchases/purchase-invoices.js').'?v='.filemtime(public_path('assets/js/modules/Purchases/purchase-invoices.js')) }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Purchases/purchase-invoices.js') }}"></script>
+    <script>
+        document.addEventListener('change', function (event) {
+            const treatment = event.target.closest('.js-asset-treatment');
+            if (!treatment) return;
+            treatment.closest('.js-asset-treatment-editor')?.querySelector('.js-asset-improvement-fields')?.classList.toggle('d-none', treatment.value !== 'capital_improvement');
+        });
+        document.addEventListener('click', function (event) {
+            const button = event.target.closest('.js-save-asset-treatment');
+            if (!button) return;
+            const editor = button.closest('.js-asset-treatment-editor');
+            const treatment = editor.querySelector('.js-asset-treatment').value;
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = editor.dataset.endpoint;
+            const values = {
+                _token: @json(csrf_token()),
+                line_public_id: editor.dataset.linePublicId,
+                asset_treatment: treatment,
+                target_fixed_asset_doc_num: treatment === 'capital_improvement' ? (editor.querySelector('.js-asset-improvement-target')?.value || '') : '',
+                asset_effective_date: treatment === 'capital_improvement' ? (editor.querySelector('.js-asset-improvement-date')?.value || '') : ''
+            };
+            Object.entries(values).forEach(([name, value]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden'; input.name = name; input.value = value;
+                form.appendChild(input);
+            });
+            document.body.appendChild(form);
+            form.submit();
+        });
+    </script>
 @endpush

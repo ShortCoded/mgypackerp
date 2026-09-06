@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Modules\Auth\Models\AuthLog;
 use Modules\Core\Services\OperatingContextService;
 use Throwable;
@@ -209,10 +208,6 @@ class AuthLogService
      */
     private function operatingContextColumns(Request $request): array
     {
-        if (! Schema::hasTable('auth_logs') || ! Schema::hasColumn('auth_logs', 'branch_id')) {
-            return [];
-        }
-
         return $this->operatingContext->snapshot($request);
     }
 

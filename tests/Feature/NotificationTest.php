@@ -2,6 +2,8 @@
 
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Modules\Auth\Models\AuthLog;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Models\UserPresenceSession;
@@ -77,6 +79,111 @@ test('notification poll returns only authenticated users delivered notifications
         ->assertJsonPath('data.unread_count', 1)
         ->assertSee('Mine')
         ->assertDontSee('Other');
+
+    UserNotification::query()->where('user_id', $actor->getKey())->delete();
+
+    $this->getJson(route('admin.notifications.poll'))
+        ->assertOk()
+        ->assertJsonPath('data.unread_count', 0)
+        ->assertJsonPath('data.notifications', []);
+});
+
+test('notification poll keeps its contract and ordering within its database budget', function () {
+    $actor = notificationActor();
+    $other = User::factory()->create();
+    $referenceTime = now();
+
+    foreach (range(1, 11) as $position) {
+        UserNotification::query()->create([
+            'user_id' => $actor->getKey(),
+            'type' => 'task.assigned',
+            'category' => 'task',
+            'title' => "Unread {$position}",
+            'body' => "Unread body {$position}",
+            'url' => "/tasks/unread-{$position}",
+            'delivered_at' => $referenceTime->copy()->subMinutes($position),
+            'metadata' => ['unused' => str_repeat('x', 100)],
+        ]);
+    }
+
+    foreach (range(1, 3) as $position) {
+        UserNotification::query()->create([
+            'user_id' => $actor->getKey(),
+            'type' => 'calendar.event_reminder',
+            'category' => 'calendar',
+            'title' => "Read {$position}",
+            'body' => null,
+            'url' => null,
+            'delivered_at' => $referenceTime->copy()->subMinutes($position),
+            'read_at' => $referenceTime,
+            'metadata' => ['unused' => str_repeat('x', 100)],
+        ]);
+    }
+
+    UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Not delivered',
+        'scheduled_for' => $referenceTime->copy()->addMinute(),
+    ]);
+    UserNotification::query()->create([
+        'user_id' => $other->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Other user',
+        'delivered_at' => $referenceTime,
+    ]);
+
+    $retrievedNotifications = 0;
+    Event::listen('eloquent.retrieved: '.UserNotification::class, function () use (&$retrievedNotifications): void {
+        $retrievedNotifications++;
+    });
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    try {
+        $response = $this->actingAs($actor)->getJson(route('admin.notifications.poll'));
+        $queries = DB::getQueryLog();
+    } finally {
+        DB::disableQueryLog();
+    }
+
+    $notificationQueries = collect($queries)
+        ->filter(fn (array $query): bool => str_contains($query['query'], 'user_notifications'));
+    $pollQuery = $notificationQueries->sole()['query'];
+    $payload = $response->assertOk()->json('data');
+
+    expect($notificationQueries)->toHaveCount(1)
+        ->and($retrievedNotifications)->toBe(0)
+        ->and($pollQuery)->not->toContain('metadata', 'dedupe_key', 'scheduled_for', 'updated_at')
+        ->and(strtolower($pollQuery))->toContain('select count(*)')
+        ->and(strtolower($pollQuery))->not->toContain(' over ')
+        ->and($payload['unread_count'])->toBe(11)
+        ->and($payload['session_identity'])->toBeString()->toHaveLength(64)
+        ->and($payload['notifications'])->toHaveCount(10)
+        ->and(array_keys($payload['notifications'][0]))->toBe([
+            'id',
+            'type',
+            'category',
+            'title',
+            'body',
+            'url',
+            'is_read',
+            'time',
+        ])
+        ->and(collect($payload['notifications'])->pluck('title')->all())->toBe([
+            'Unread 1',
+            'Unread 2',
+            'Unread 3',
+            'Unread 4',
+            'Unread 5',
+            'Unread 6',
+            'Unread 7',
+            'Unread 8',
+            'Unread 9',
+            'Unread 10',
+        ]);
 });
 
 test('notification poll is passive and does not touch presence or activity logs', function () {

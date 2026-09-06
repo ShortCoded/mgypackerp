@@ -15,14 +15,22 @@
         @can('purchases.purchase_requisition_approvals.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.approve', $record->doc_num) }}">{{ __('Approve') }}</button>@endcan
         @can('purchases.purchase_requisition_approvals.reject')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.reject', $record->doc_num) }}" data-reason-field="rejection_reason">{{ __('Reject') }}</button>@endcan
     @endif
-    @if(in_array($record->status, ['approved','partially_converted']))
-        @can('purchase_orders.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.purchase-orders.create', ['purchase_requisition_doc_nums' => [$record->doc_num]]) }}">{{ __('Create Purchase Order') }}</a>@endcan @endcan
-        @can('purchases.request_for_quotations.create')<a class="dropdown-item" href="{{ route('admin.purchases.request-for-quotations.create', $record->doc_num) }}">{{ __('Create Request for Quotation') }}</a>@endcan
+    @if(in_array($record->status, ['approved','partially_converted','fully_converted']))
+        @can('purchases.supplier_quotation_entry.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseRequisition, $record->doc_num]) }}">{{ __('Enter supplier quotation') }}</a>@endcan @endcan
+        @if($record->status !== 'fully_converted') @can('purchase_orders.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.purchase-orders.create', ['purchase_requisition_doc_nums' => [$record->doc_num]]) }}">{{ __('Create Purchase Order') }}</a>@endcan @endcan @endif
     @endif
     @if($record->status === 'approved') @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
 @endif
 @if($screen === 'request_for_quotations' && $draft) @can($permission.'.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.issue', $record->doc_num) }}">{{ __('Issue RFQ') }}</button>@endcan @endif
 @if($screen === 'supplier_quotations' && $draft) @can($permission.'.edit')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.submit', $record->doc_num) }}">{{ __('Submit') }}</button>@endcan @endif
+@if($screen === 'supply_orders')
+    @if($draft)
+        @can($permission.'.issue')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.issue', $record->doc_num) }}">{{ __('Issue Supply Order') }}</button>@endcan
+    @elseif(in_array($record->status, ['issued', 'partially_received'], true))
+        @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>@endcan
+        @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan
+    @endif
+@endif
 @if(($screen === 'goods_receipts' && $record->posting_status === 'posted') || ($screen === 'purchase_returns' && $record->status === 'posted')) @can($permission.'.reverse')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.reverse', $record->doc_num) }}" data-reason-field="reversal_reason">{{ __('Reverse') }}</button>@endcan @endif
 @if($screen === 'goods_receipts' && $draft) @can($permission.'.post')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.post', $record->doc_num) }}">{{ __('Post') }}</button>@endcan @endif
 @if($screen === 'purchase_returns' && $draft) @can($permission.'.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.approve', $record->doc_num) }}">{{ __('Post') }}</button>@endcan @endif

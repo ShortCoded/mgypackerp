@@ -9,27 +9,30 @@ use Illuminate\Routing\Controller;
 use Modules\Core\Models\UserNotification;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NotificationService;
+use Modules\Core\Services\SessionIdentityService;
+use stdClass;
 
 class NotificationController extends Controller
 {
     public function __construct(
         private readonly NotificationService $notifications,
         private readonly DateFormatService $dates,
+        private readonly SessionIdentityService $sessionIdentity,
     ) {}
 
     public function poll(Request $request): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
+        $poll = $this->notifications->pollData($user);
+        $poll['session_identity'] = $this->sessionIdentity->for($request);
+        $poll['notifications'] = $poll['notifications']
+            ->map(fn (stdClass $notification): array => $this->payload($notification))
+            ->values();
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'unread_count' => $this->notifications->unreadCount($user),
-                'notifications' => $this->notifications->latestFor($user)
-                    ->map(fn (UserNotification $notification): array => $this->payload($notification))
-                    ->values(),
-            ],
+            'data' => $poll,
         ]);
     }
 
@@ -76,7 +79,7 @@ class NotificationController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function payload(UserNotification $notification): array
+    private function payload(UserNotification|stdClass $notification): array
     {
         return [
             'id' => $notification->public_uuid,

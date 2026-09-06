@@ -27,11 +27,16 @@ class BusinessPartnerAccountService
 
     public function rootAccount(string $type): Account
     {
+        return $this->rootAccountForCompany($type, $this->companies->requireCompanyId());
+    }
+
+    public function rootAccountForCompany(string $type, int $companyId): Account
+    {
         $spec = $this->spec($type);
 
         if ($type !== self::FixedAsset) {
             return $this->foundationalAccounts->resolveConfiguredCode(
-                $this->companies->requireCompanyId(),
+                $companyId,
                 $spec['classification_code'],
                 $spec['root_code'],
                 $spec['messages']['root_missing'],
@@ -40,7 +45,7 @@ class BusinessPartnerAccountService
         }
 
         return $this->foundationalAccounts->resolve(
-            $this->companies->requireCompanyId(),
+            $companyId,
             $spec['classification_code'],
             $spec['messages']['root_missing'],
             $spec['messages']['root_ambiguous'],
@@ -176,7 +181,7 @@ class BusinessPartnerAccountService
 
     public function isSelectableGroup(string $type, Account $account): bool
     {
-        return in_array((int) $account->getKey(), $this->selectableGroupIds($type), true);
+        return in_array((int) $account->getKey(), $this->selectableGroupIdsForCompany($type, (int) $account->company_id), true);
     }
 
     /**
@@ -184,7 +189,15 @@ class BusinessPartnerAccountService
      */
     public function selectableGroupIds(string $type): array
     {
-        $root = $this->rootAccount($type);
+        return $this->selectableGroupIdsForCompany($type, $this->companies->requireCompanyId());
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function selectableGroupIdsForCompany(string $type, int $companyId): array
+    {
+        $root = $this->rootAccountForCompany($type, $companyId);
         $directGroups = Account::query()
             ->with('classification')
             ->forCompany((int) $root->company_id)
@@ -234,7 +247,7 @@ class BusinessPartnerAccountService
         return ! $account->is_group
             && $account->is_postable
             && $this->isPartnerAccount($type, $account)
-            && $this->isDescendantOf($account, $this->rootAccount($type));
+            && $this->isDescendantOf($account, $this->rootAccountForCompany($type, (int) $account->company_id));
     }
 
     public function linkedAccountGroup(string $type, ?Account $account): ?Account
@@ -252,7 +265,7 @@ class BusinessPartnerAccountService
             return null;
         }
 
-        if ((int) $parent->getKey() === (int) $this->rootAccount($type)->getKey()) {
+        if ((int) $parent->getKey() === (int) $this->rootAccountForCompany($type, (int) $account->company_id)->getKey()) {
             return null;
         }
 
@@ -384,7 +397,7 @@ class BusinessPartnerAccountService
 
     private function isAllowedLinkedAccountParent(string $type, Account $parent): bool
     {
-        $root = $this->rootAccount($type);
+        $root = $this->rootAccountForCompany($type, (int) $parent->company_id);
 
         return (int) $parent->getKey() === (int) $root->getKey()
             || $this->isSelectableGroup($type, $parent);

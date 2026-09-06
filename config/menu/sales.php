@@ -1,5 +1,24 @@
 <?php
 
+$salesReport = static function (string $label, string $title, string $reportType, string $icon = 'chart-bar'): array {
+    return [
+        'label' => $label,
+        'title' => $title,
+        'icon' => $icon,
+        'route' => 'admin.reports.sales.sales-orders.index',
+        'route_params' => ['report' => $reportType],
+        'permission' => 'reports.sales.sales_orders.view',
+        'subgroup' => 'sales_cycle_reports',
+        'actions' => [
+            'view' => 'reports.sales.sales_orders.view',
+            'export' => 'reports.sales.sales_orders.export',
+            'print' => 'reports.sales.sales_orders.print',
+        ],
+        'active' => ['admin.reports.sales.*'],
+        'children' => [],
+    ];
+};
+
 return [
     [
         'label' => 'sales',
@@ -79,16 +98,6 @@ return [
                 'children' => [],
             ],
             [
-                'label' => 'deliveries',
-                'title' => 'Deliveries',
-                'icon' => 'truck-loading',
-                'route' => 'admin.sales.delivery-notes.index',
-                'permission' => 'sales_deliveries.view',
-                'keywords' => ['delivery notes', 'deliveries', 'أذون التسليم', 'التسليم'],
-                'active' => ['admin.sales.delivery-notes.*', 'admin.sales.sales-deliveries.*'],
-                'children' => [],
-            ],
-            [
                 'label' => 'sales_invoices',
                 'title' => 'Sales Invoices',
                 'icon' => 'file-invoice-dollar',
@@ -104,6 +113,17 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'deliveries',
+                'title' => 'Deliveries',
+                'icon' => 'truck-loading',
+                'route' => 'admin.sales.delivery-notes.index',
+                'permission' => 'sales_deliveries.view',
+                'keywords' => ['delivery notes', 'deliveries', 'أذون التسليم', 'التسليم'],
+                'active' => ['admin.sales.delivery-notes.*', 'admin.sales.sales-deliveries.*'],
+                'children' => [],
+            ],
+            ['label' => 'customer_collections', 'title' => 'Customer Collections', 'icon' => 'hand-holding-usd', 'route' => 'admin.sales.customer-receipts.index', 'permission' => 'customer_receipts.view', 'children' => []],
+            [
                 'label' => 'sales_returns',
                 'title' => 'Sales Returns',
                 'icon' => 'undo-alt',
@@ -113,17 +133,37 @@ return [
                 'active' => ['admin.sales.sales-returns.*'],
                 'children' => [],
             ],
-            ['label' => 'customer_collections', 'title' => 'Customer Collections', 'icon' => 'hand-holding-usd', 'route' => 'admin.sales.customer-receipts.index', 'permission' => 'customer_receipts.view', 'children' => []],
-            ['label' => 'customer_statement', 'title' => 'Customer Statement', 'icon' => 'file-invoice', 'route' => 'admin.accounting.reports.customer-statement', 'permission' => 'reports.customer_statement.view', 'children' => []],
             [
-                'label' => 'reports_sales_sales_orders',
-                'title' => 'Sales Orders',
-                'icon' => 'chart-line',
-                'route' => 'admin.reports.sales.sales-orders.index',
-                'permission' => 'reports.sales.sales_orders.view',
+                'label' => 'sales_reports',
+                'title' => 'Sales Reports',
+                'icon' => 'chart-pie',
+                'route' => null,
+                'permission' => null,
                 'keywords' => ['sales reports', 'fulfillment', 'aging', 'تقارير المبيعات', 'التنفيذ', 'الأعمار'],
-                'active' => ['admin.reports.sales.*'],
-                'children' => [],
+                'active' => ['admin.reports.sales.*', 'admin.accounting.reports.customer-statement*'],
+                'children' => [
+                    [
+                        'label' => 'customer_statement',
+                        'title' => 'Customer Statement',
+                        'icon' => 'file-invoice',
+                        'route' => 'admin.accounting.reports.customer-statement',
+                        'permission' => 'reports.customer_statement.view',
+                        'subgroup' => 'sales_cycle_reports',
+                        'active' => ['admin.accounting.reports.customer-statement*'],
+                        'children' => [],
+                    ],
+                    $salesReport('sales_report_financial', 'Sales Financial Analysis', 'financial', 'coins'),
+                    $salesReport('sales_report_period', 'Sales by Period', 'period', 'calendar-alt'),
+                    $salesReport('sales_report_customer', 'Sales by Customer', 'customers', 'user-chart'),
+                    $salesReport('sales_report_product', 'Sales by Product', 'products', 'boxes'),
+                    $salesReport('sales_report_invoices', 'Sales Invoices Report', 'invoices', 'file-invoice-dollar'),
+                    $salesReport('sales_report_receivables', 'Customer Receivables and Aging', 'receivables', 'hourglass-half'),
+                    $salesReport('sales_report_collections', 'Collections Forecast', 'collections', 'hand-holding-usd'),
+                    $salesReport('sales_report_returns', 'Sales Returns Analysis', 'returns', 'undo-alt'),
+                    $salesReport('sales_report_quotations', 'Quotation Pipeline', 'quotations', 'file-signature'),
+                    $salesReport('sales_report_fulfillment', 'Sales Order Fulfillment', 'fulfillment', 'shipping-fast'),
+                    $salesReport('sales_report_operational', 'Sales Operational Overview', 'operational', 'chart-line'),
+                ],
             ],
         ],
     ],

@@ -1,10 +1,10 @@
 @php
     $status = (string) $record->payment_status;
     $class = match ($status) {
-        'paid' => 'badge-subtle-success text-success',
-        'partially_paid' => 'badge-subtle-warning text-warning',
-        default => 'badge-subtle-secondary text-secondary',
+        'paid' => 'success',
+        'partially_paid' => 'warning',
+        default => 'secondary',
     };
 @endphp
 
-<span class="badge rounded-pill {{ $class }}">{{ __('purchase_invoices.payment_statuses.'.$status) }}</span>
+<x-status-indicator :status="$status" :label="__('purchase_invoices.payment_statuses.'.$status)" :tone="$class" />

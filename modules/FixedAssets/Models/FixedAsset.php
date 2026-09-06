@@ -22,6 +22,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 
 class FixedAsset extends Model
 {
@@ -270,6 +271,11 @@ class FixedAsset extends Model
     public function currency(): BelongsTo
     {
         return $this->belongsTo(Currency::class)->withTrashed();
+    }
+
+    public function purchaseInvoiceLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseInvoiceLine::class, 'source_id');
     }
 
     public function categoryMapping(): HasOne

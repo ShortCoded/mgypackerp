@@ -7,7 +7,12 @@
 
   window.__pageCacheGuardLoaded = true;
 
-  var reloadKey = 'erp.page_cache_guard.reloaded_url';
+  var pageRoot = document.documentElement;
+  var previousPointerEvents = '';
+  var previousVisibility = '';
+  var isNavigating = false;
+  var restoreClaimed = false;
+  var restoreLocked = false;
 
   function navigationEntry() {
     if (!window.performance || typeof window.performance.getEntriesByType !== 'function') {
@@ -31,44 +36,82 @@
     });
   }
 
-  function reloadedUrl() {
-    try {
-      return window.sessionStorage.getItem(reloadKey);
-    } catch (error) {
-      return null;
+  function lockRestoredPage() {
+    if (restoreLocked) {
+      return;
+    }
+
+    restoreLocked = true;
+
+    if (!pageRoot || !pageRoot.style) {
+      return;
+    }
+
+    previousPointerEvents = pageRoot.style.pointerEvents;
+    previousVisibility = pageRoot.style.visibility;
+    pageRoot.style.pointerEvents = 'none';
+    pageRoot.style.visibility = 'hidden';
+
+    if (typeof pageRoot.setAttribute === 'function') {
+      pageRoot.setAttribute('data-erp-bfcache-locked', 'true');
     }
   }
 
-  function rememberReloadUrl() {
-    try {
-      window.sessionStorage.setItem(reloadKey, window.location.href);
-    } catch (error) {
-      // sessionStorage can be disabled; the reload is still safe without it.
+  function unlockRestoredPage() {
+    if (!restoreLocked) {
+      return;
     }
+
+    if (pageRoot && pageRoot.style) {
+      pageRoot.style.pointerEvents = previousPointerEvents;
+      pageRoot.style.visibility = previousVisibility;
+
+      if (typeof pageRoot.removeAttribute === 'function') {
+        pageRoot.removeAttribute('data-erp-bfcache-locked');
+      }
+    }
+
+    restoreClaimed = false;
+    restoreLocked = false;
   }
 
-  function clearReloadUrl() {
-    try {
-      window.sessionStorage.removeItem(reloadKey);
-    } catch (error) {
-      // Nothing to clear when sessionStorage is unavailable.
+  function navigateToCurrentPage() {
+    if (isNavigating || !window.location) {
+      return;
     }
+
+    isNavigating = true;
+    window.location.href = window.location.href;
   }
+
+  window.AppPageCacheGuard = {
+    claimRestore: function () {
+      restoreClaimed = true;
+    },
+    isLocked: function () {
+      return restoreLocked;
+    },
+    unlock: unlockRestoredPage
+  };
+
+  window.addEventListener('pagehide', function (event) {
+    if (event.persisted) {
+      lockRestoredPage();
+    }
+  });
 
   window.addEventListener('pageshow', function (event) {
     if (!isBackForwardRestore(event)) {
-      clearReloadUrl();
-
       return;
     }
 
+    restoreClaimed = false;
+    lockRestoredPage();
     clearPasswordFields();
+    window.dispatchEvent(new Event('erp:bfcache-restore'));
 
-    if (reloadedUrl() === window.location.href) {
-      return;
+    if (!restoreClaimed) {
+      navigateToCurrentPage();
     }
-
-    rememberReloadUrl();
-    window.location.reload();
   });
 })(window, document);

@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Modules\Auth\Enums\ScreenDataVisibilityDurationUnit;
 use Modules\Auth\Enums\ScreenDataVisibilityRecordScope;
 use Modules\Auth\Models\ScreenDataVisibilityRule;
@@ -29,7 +28,7 @@ class ScreenDataVisibilityService
         }
 
         $companyId = $this->operatingContext->selectedCompanyId(request());
-        if ($companyId === null || ! $this->rulesTableExists()) {
+        if ($companyId === null) {
             return null;
         }
 
@@ -284,11 +283,6 @@ class ScreenDataVisibilityService
             ScreenDataVisibilityDurationUnit::Months => $now->subMonthsNoOverflow($value),
             ScreenDataVisibilityDurationUnit::Years => $now->subYearsNoOverflow($value),
         };
-    }
-
-    private function rulesTableExists(): bool
-    {
-        return $this->memo->remember('screen_visibility.table_exists', fn (): bool => Schema::hasTable('screen_data_visibility_rules'));
     }
 
     private function alreadyApplied(QueryBuilder $query, string $screenKey): bool

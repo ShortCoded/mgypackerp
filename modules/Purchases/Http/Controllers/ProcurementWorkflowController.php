@@ -47,11 +47,13 @@ use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Models\SupplierSelection;
+use Modules\Purchases\Models\SupplyOrder;
 use Modules\Purchases\Services\ProcurementAuditService;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSettlementService;
 use Modules\Purchases\Services\ProcurementSourcingService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
+use Modules\Purchases\Services\SupplyOrderService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ProcurementWorkflowController extends Controller
@@ -62,6 +64,7 @@ class ProcurementWorkflowController extends Controller
         private readonly ProcurementSettlementService $settlement,
         private readonly OperatingContextService $operatingContext,
         private readonly ProcurementCycleReport $procurementReport,
+        private readonly SupplyOrderService $supplyOrders,
     ) {}
 
     public function requisitionsIndex(): View
@@ -171,7 +174,7 @@ class ProcurementWorkflowController extends Controller
     public function showRequisition(PurchaseRequisition $purchaseRequisition): View
     {
         $this->assertCurrent($purchaseRequisition);
-        $purchaseRequisition->load(['lines.product', 'lines.unit', 'branch', 'branchStore', 'requestsForQuotation', 'suggestedSupplier', 'requesterEmployee', 'requestedBy', 'submittedBy', 'approvedBy', 'rejectedBy']);
+        $purchaseRequisition->load(['lines.product', 'lines.unit', 'branch', 'branchStore', 'requestsForQuotation', 'supplierQuotations', 'suggestedSupplier', 'requesterEmployee', 'requestedBy', 'submittedBy', 'approvedBy', 'rejectedBy']);
 
         return $this->showView('purchase_requisition', $purchaseRequisition, false);
     }
@@ -217,7 +220,8 @@ class ProcurementWorkflowController extends Controller
         abort_unless($record->status === 'draft', 403);
         $record->loadMissing('lines');
         $view = $this->createRfq($record->requisition);
-        return $view instanceof \Illuminate\Contracts\View\View ? $view->with(['draft' => $record, 'suppliers' => $record->suppliers,]) : $view;
+
+        return $view instanceof View ? $view->with(['draft' => $record, 'suppliers' => $record->suppliers]) : $view;
     }
 
     public function updateRfq(ProcurementWorkflowRequest $request, RequestForQuotation $record): JsonResponse|RedirectResponse
@@ -229,6 +233,7 @@ class ProcurementWorkflowController extends Controller
     {
         return $this->execute($request, function () use ($record) {
             $this->sourcing->deleteSourcingDraft($record);
+
             return $record;
         }, 'admin.purchases.request-for-quotations.index');
     }
@@ -256,6 +261,11 @@ class ProcurementWorkflowController extends Controller
         return $this->documentIndex('supplier_quotations');
     }
 
+    public function chooseQuotationSource(): View
+    {
+        return view('modules.purchases.procurement.quotation-source-picker');
+    }
+
     public function quotationLinesIndex(): RedirectResponse
     {
         return to_route('admin.purchases.supplier-quotation-entry.index');
@@ -263,23 +273,24 @@ class ProcurementWorkflowController extends Controller
 
     public function createQuotation(RequestForQuotation $requestForQuotation): View
     {
-        $this->assertCurrent($requestForQuotation);
-        $requestForQuotation->load(['lines.product', 'lines.unit', 'suppliers']);
+        return $this->quotationForm($requestForQuotation);
+    }
 
-        return view('modules.purchases.procurement.quotation-form', [
-            'record' => $requestForQuotation,
-            'currencies' => Currency::query()->forCompany($this->context()['company_id'])->where('doc_num', old('currency_doc_num', ''))->get(),
-            'selectedSuppliers' => $requestForQuotation->suppliers()->where('suppliers.doc_num', old('supplier_doc_num', ''))->get(),
-        ]);
+    public function createQuotationFromSource(string $sourceType, string $sourceDocument): View
+    {
+        return $this->quotationForm($this->supplierQuotationSource($sourceType, $sourceDocument));
     }
 
     public function editQuotation(SupplierQuotation $record): View|RedirectResponse
     {
         $this->assertCurrent($record);
         abort_unless($record->status === 'draft', 403);
-        $record->loadMissing('lines');
-        $view = $this->createQuotation($record->requestForQuotation);
-        return $view instanceof \Illuminate\Contracts\View\View ? $view->with(['draft' => $record, 'selectedSuppliers' => collect([$record->supplier]), 'currencies' => collect([$record->currency])->filter(),]) : $view;
+        $record->loadMissing(['lines', 'requestForQuotation', 'purchaseRequisition', 'purchaseOrder']);
+        $source = $record->sourceDocument();
+        abort_unless($source, 404);
+        $view = $this->quotationForm($source, $record);
+
+        return $view instanceof View ? $view : abort(404);
     }
 
     public function updateQuotation(ProcurementWorkflowRequest $request, SupplierQuotation $record): JsonResponse|RedirectResponse
@@ -291,6 +302,7 @@ class ProcurementWorkflowController extends Controller
     {
         return $this->execute($request, function () use ($record) {
             $this->sourcing->deleteSourcingDraft($record);
+
             return $record;
         }, 'admin.purchases.supplier-quotation-entry.index');
     }
@@ -300,10 +312,17 @@ class ProcurementWorkflowController extends Controller
         return $this->execute($request, fn () => $this->sourcing->createSupplierQuotation($requestForQuotation, $request->validated()), 'admin.purchases.supplier-quotation-entry.show');
     }
 
+    public function storeQuotationFromSource(ProcurementWorkflowRequest $request, string $sourceType, string $sourceDocument): JsonResponse|RedirectResponse
+    {
+        $source = $this->supplierQuotationSource($sourceType, $sourceDocument);
+
+        return $this->execute($request, fn () => $this->sourcing->createSupplierQuotation($source, $request->validated()), 'admin.purchases.supplier-quotation-entry.show');
+    }
+
     public function showQuotation(SupplierQuotation $supplierQuotation): View
     {
         $this->assertCurrent($supplierQuotation);
-        $supplierQuotation->load(['supplier', 'currency', 'requestForQuotation', 'lines.product', 'lines.unit', 'attachmentUsages.file']);
+        $supplierQuotation->load(['supplier', 'currency', 'requestForQuotation', 'purchaseRequisition', 'purchaseOrder', 'lines.product', 'lines.unit', 'attachmentUsages.file']);
 
         return $this->showView('supplier_quotation', $supplierQuotation, true);
     }
@@ -428,6 +447,92 @@ class ProcurementWorkflowController extends Controller
         return $this->execute($request, fn () => $this->receiving->createDeliverySchedules($purchaseOrder, $request->validated()), 'admin.purchases.purchase-orders.show');
     }
 
+    public function supplyOrdersIndex(): View
+    {
+        return $this->documentIndex('supply_orders');
+    }
+
+    public function createSupplyOrder(Request $request): View
+    {
+        $context = $this->context();
+        $sourceType = $request->filled('purchase_invoice') ? SupplyOrder::SourcePurchaseInvoice : SupplyOrder::SourcePurchaseOrder;
+        $sourceDocNum = $request->string($sourceType === SupplyOrder::SourcePurchaseInvoice ? 'purchase_invoice' : 'purchase_order')->trim()->toString();
+        if ($sourceDocNum === '') {
+            return view('modules.purchases.procurement.supply-order-source');
+        }
+        $source = $sourceType === SupplyOrder::SourcePurchaseOrder
+            ? PurchaseOrder::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $sourceDocNum)->firstOrFail()
+            : PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $sourceDocNum)->firstOrFail();
+
+        return $this->supplyOrderForm($source);
+    }
+
+    public function editSupplyOrder(SupplyOrder $supplyOrder): View
+    {
+        abort_unless($supplyOrder->status === SupplyOrder::StatusDraft, 403);
+        $source = $supplyOrder->source_type === SupplyOrder::SourcePurchaseInvoice
+            ? $supplyOrder->purchaseInvoice
+            : $supplyOrder->purchaseOrder;
+
+        return $this->supplyOrderForm($source, $supplyOrder);
+    }
+
+    private function supplyOrderForm(PurchaseOrder|PurchaseInvoice $source, ?SupplyOrder $record = null): View
+    {
+        $source->loadMissing(['supplier', 'lines.product', 'lines.unit']);
+        if ($source instanceof PurchaseInvoice) {
+            $source->loadMissing('purchaseOrder.branchStore');
+        } else {
+            $source->loadMissing('branchStore');
+        }
+        $sourceLines = $this->supplyOrders->sourceLines($source, $record);
+        $record?->load(['lines', 'supplier', 'branchStore']);
+
+        return view('modules.purchases.procurement.supply-order-form', compact('source', 'sourceLines', 'record'));
+    }
+
+    public function storeSupplyOrder(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->supplyOrders->create($request->validated()), 'admin.purchases.supply-orders.show');
+    }
+
+    public function updateSupplyOrder(ProcurementWorkflowRequest $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->supplyOrders->update($supplyOrder, $request->validated()), 'admin.purchases.supply-orders.show');
+    }
+
+    public function showSupplyOrder(SupplyOrder $supplyOrder): View
+    {
+        $supplyOrder->load(['supplier', 'branchStore', 'purchaseOrder', 'purchaseInvoice', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'receipts']);
+
+        return $this->showView('supply_order', $supplyOrder, false);
+    }
+
+    public function issueSupplyOrder(Request $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->supplyOrders->issue($supplyOrder), 'admin.purchases.supply-orders.show');
+    }
+
+    public function cancelSupplyOrder(ProcurementWorkflowRequest $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->supplyOrders->cancel($supplyOrder, $request->validated('cancel_reason')), 'admin.purchases.supply-orders.show');
+    }
+
+    public function destroySupplyOrder(Request $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
+    {
+        try {
+            $this->supplyOrders->deleteDraft($supplyOrder);
+        } catch (DomainException $exception) {
+            return $request->expectsJson()
+                ? response()->json(['success' => false, 'message' => $exception->getMessage()], 422)
+                : back()->withErrors(['document' => $exception->getMessage()]);
+        }
+
+        return $request->expectsJson()
+            ? response()->json(['success' => true])
+            : to_route('admin.purchases.supply-orders.index');
+    }
+
     public function receiptsIndex(): View
     {
         return $this->documentIndex('goods_receipts');
@@ -438,23 +543,72 @@ class ProcurementWorkflowController extends Controller
         return to_route('admin.purchases.goods-receipt-notes.index');
     }
 
-    public function createReceipt(PurchaseOrder $purchaseOrder): View
+    public function createReceipt(string $sourceDocument): View
     {
-        $this->assertCurrent($purchaseOrder);
+        $context = $this->context();
+        $supplyOrder = SupplyOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('doc_num', $sourceDocument)
+            ->first();
+
+        if ($supplyOrder instanceof SupplyOrder) {
+            abort_unless(in_array($supplyOrder->status, [SupplyOrder::StatusIssued, SupplyOrder::StatusPartiallyReceived], true), 422);
+            $supplyOrder->load([
+                'supplier', 'branchStore', 'purchaseOrder',
+                'lines' => fn ($query) => $query->with(['product', 'unit', 'purchaseOrderLine.deliverySchedules']),
+            ]);
+
+            return view('modules.purchases.procurement.supply-receipt-form', ['record' => $supplyOrder]);
+        }
+
+        $purchaseOrder = PurchaseOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('doc_num', $sourceDocument)
+            ->firstOrFail();
         $purchaseOrder->load(['supplier', 'branchStore', 'lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
 
         return view('modules.purchases.procurement.receipt-form', ['record' => $purchaseOrder]);
     }
 
-    public function storeReceipt(ProcurementWorkflowRequest $request, PurchaseOrder $purchaseOrder): JsonResponse|RedirectResponse
+    public function storeReceipt(ProcurementWorkflowRequest $request, string $sourceDocument): JsonResponse|RedirectResponse
     {
+        $context = $this->context();
+        $supplyOrder = SupplyOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('doc_num', $sourceDocument)
+            ->first();
+        if ($supplyOrder instanceof SupplyOrder) {
+            return $this->execute($request, fn () => $this->receiving->createReceiptFromSupplyOrder($supplyOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
+        }
+
+        $purchaseOrder = PurchaseOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('doc_num', $sourceDocument)
+            ->firstOrFail();
+
         return $this->execute($request, fn () => $this->receiving->createReceipt($purchaseOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
     }
 
     public function editReceipt(string $goodsReceiptNote): View
     {
-        $draft = $this->receipt($goodsReceiptNote)->load(['lines.deliverySchedule', 'purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
+        $draft = $this->receipt($goodsReceiptNote)->load([
+            'lines.deliverySchedule', 'lines.supplyOrderLine',
+            'purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules']),
+            'supplyOrder.lines' => fn ($query) => $query->with(['product', 'unit', 'purchaseOrderLine.deliverySchedules']),
+        ]);
         abort_unless($draft->status === 'draft' && $draft->posting_status === 'unposted', 403);
+
+        if ($draft->supplyOrder instanceof SupplyOrder) {
+            return view('modules.purchases.procurement.supply-receipt-form', ['record' => $draft->supplyOrder, 'draft' => $draft]);
+        }
 
         return view('modules.purchases.procurement.receipt-form', ['record' => $draft->purchaseOrder, 'draft' => $draft]);
     }
@@ -481,7 +635,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showReceipt(string $goodsReceiptNote): View
     {
-        $receipt = $this->receipt($goodsReceiptNote)->load(['purchaseOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'inspection']);
+        $receipt = $this->receipt($goodsReceiptNote)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.supplyOrderLine', 'inspection']);
 
         return $this->showView('goods_receipt', $receipt, false);
     }
@@ -637,16 +791,19 @@ class ProcurementWorkflowController extends Controller
         return $this->indexView('supplier_advances', __('Supplier Advances'), $records, true);
     }
 
-    public function createSupplierPayment(): View
+    public function createSupplierPayment(Request $request): View
     {
         $context = $this->context();
+        $invoices = PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'currency', 'paymentSchedules'])->get();
+        $selectedInvoice = $invoices->firstWhere('doc_num', $request->string('invoice')->trim()->toString());
 
         return view('modules.purchases.procurement.payment-form', [
             'suppliers' => $this->suppliers(),
             'cashboxes' => Cashbox::query()->forCompany($context['company_id'])->active()->get(),
             'bankAccounts' => BankAccount::query()->forCompany($context['company_id'])->active()->with(['bank', 'account', 'currency'])->get(),
             'currencies' => $this->currencies(),
-            'invoices' => PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'paymentSchedules'])->get(),
+            'invoices' => $invoices,
+            'selectedInvoice' => $selectedInvoice,
             'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->get(),
         ]);
     }
@@ -827,11 +984,12 @@ class ProcurementWorkflowController extends Controller
             'purchase-requisition' => PurchaseRequisition::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['lines.product', 'lines.unit', 'branch', 'branchStore'])->firstOrFail(),
             'request-for-quotation' => RequestForQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['requisition', 'suppliers', 'lines.product', 'lines.unit'])->firstOrFail(),
             'quotation-comparison' => RequestForQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['requisition', 'quotations.supplier', 'quotations.currency', 'quotations.lines.product', 'quotations.lines.unit'])->firstOrFail(),
-            'supplier-quotation' => SupplierQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'currency', 'lines.product', 'lines.unit', 'attachmentUsages.file'])->firstOrFail(),
+            'supplier-quotation' => SupplierQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'currency', 'requestForQuotation', 'purchaseRequisition', 'purchaseOrder', 'lines.product', 'lines.unit', 'attachmentUsages.file'])->firstOrFail(),
             'supplier-selection' => SupplierSelection::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['requestForQuotation', 'lines.supplier', 'lines.product', 'lines.unit'])->firstOrFail(),
             'purchase-order-change-request' => PurchaseOrderChangeRequest::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with('purchaseOrder.supplier')->firstOrFail(),
             'purchase-order-delivery-schedule' => PurchaseOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'lines.deliverySchedules.purchaseOrderLine.product'])->firstOrFail(),
-            'goods-receipt' => $this->receipt($docNum)->load(['purchaseOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit']),
+            'supply-order' => SupplyOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['purchaseOrder', 'purchaseInvoice', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'receipts'])->firstOrFail(),
+            'goods-receipt' => $this->receipt($docNum)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine']),
             'goods-receipt-inspection' => GoodsReceiptInspection::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['receipt.supplier', 'lines.product', 'lines.receiptLine', 'attachmentUsages.file'])->firstOrFail(),
             'purchase-return' => PurchaseReturn::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'purchaseOrder', 'purchaseInvoice', 'lines.product', 'lines.unit'])->firstOrFail(),
             'supplier-payment' => SupplierPaymentContext::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'currency', 'supplier', 'purchaseOrder', 'allocations.purchaseInvoice'])->firstOrFail(),
@@ -841,7 +999,7 @@ class ProcurementWorkflowController extends Controller
 
     private function pricesVisibleFor(string $type, Request $request): bool
     {
-        if (in_array($type, ['goods-receipt', 'goods-receipt-inspection', 'purchase-requisition', 'request-for-quotation', 'purchase-order-delivery-schedule'], true)) {
+        if (in_array($type, ['supply-order', 'goods-receipt', 'goods-receipt-inspection', 'purchase-requisition', 'request-for-quotation', 'purchase-order-delivery-schedule'], true)) {
             return false;
         }
 
@@ -858,6 +1016,7 @@ class ProcurementWorkflowController extends Controller
             'supplier-selection' => 'purchases.supplier_selection.print',
             'purchase-order-change-request' => 'purchases.purchase_order_change_requests.print',
             'purchase-order-delivery-schedule' => 'purchases.purchase_order_delivery_schedule.print',
+            'supply-order' => 'purchases.supply_orders.print',
             'goods-receipt' => 'purchases.goods_receipt_notes.print',
             'goods-receipt-inspection' => 'purchases.goods_receipt_inspection.print',
             'purchase-return' => 'purchases.purchase_returns.print',
@@ -872,7 +1031,7 @@ class ProcurementWorkflowController extends Controller
         [$title, $lookup, $destination] = match ($screen) {
             'request_for_quotations' => [__('Create Request for Quotation'), 'requisitions', 'request-for-quotations'],
             'supplier_quotations' => [__('Supplier Quotation Entry'), 'rfqs', 'supplier-quotation-entry'],
-            'goods_receipts' => [__('Goods Receipt Note'), 'purchase-orders', 'goods-receipt-notes'],
+            'goods_receipts' => [__('Goods Receipt Note'), 'supply-orders', 'goods-receipt-notes'],
             default => abort(404),
         };
 
@@ -882,7 +1041,7 @@ class ProcurementWorkflowController extends Controller
     private function documentIndex(string $screen): View
     {
         $definition = ProcurementDocumentsDataTable::definition($screen);
-        $createUrl = route('admin.purchases.'.$definition['route'].(in_array($screen, ['purchase_requisitions', 'purchase_returns'], true) ? '.create' : '.choose-source'));
+        $createUrl = route('admin.purchases.'.$definition['route'].(in_array($screen, ['purchase_requisitions', 'purchase_returns', 'supply_orders'], true) ? '.create' : '.choose-source'));
         if ($screen === 'purchase_requisitions') {
             try {
                 $this->sourcing->requisitionStore($this->context());
@@ -894,6 +1053,7 @@ class ProcurementWorkflowController extends Controller
             'purchase_requisitions' => ['draft', 'pending_approval', 'approved', 'rejected', 'partially_converted', 'fully_converted', 'closed', 'cancelled'],
             'goods_receipts' => ['unposted', 'posted', 'reversed'],
             'purchase_returns' => ['draft', 'posted', 'reversed'],
+            'supply_orders' => ['draft', 'issued', 'partially_received', 'fully_received', 'closed', 'cancelled'],
             default => ['draft', 'issued', 'submitted', 'approved', 'cancelled'],
         };
 
@@ -985,6 +1145,44 @@ class ProcurementWorkflowController extends Controller
     private function products(): Collection
     {
         return Product::query()->active()->purchasable()->forCompany($this->context()['company_id'])->with('unit')->orderBy('name')->get();
+    }
+
+    private function quotationForm(RequestForQuotation|PurchaseRequisition|PurchaseOrder $source, ?SupplierQuotation $draft = null): View
+    {
+        $this->assertCurrent($source);
+        $source->loadMissing($source instanceof RequestForQuotation ? ['lines.product', 'lines.unit', 'suppliers'] : ['lines.product', 'lines.unit']);
+        $context = $this->context();
+        $selectedSupplier = $draft?->supplier
+            ?? ($source instanceof PurchaseOrder ? $source->supplier : ($source instanceof PurchaseRequisition ? $source->suggestedSupplier : null));
+        $selectedCurrency = $draft?->currency
+            ?? ($source instanceof PurchaseOrder ? $source->currency : null)
+            ?? Currency::query()->forCompany($context['company_id'])->where('is_main', true)->first();
+
+        return view('modules.purchases.procurement.quotation-form', [
+            'record' => $source,
+            'draft' => $draft,
+            'sourceType' => match (true) {
+                $source instanceof PurchaseRequisition => SupplierQuotation::SourcePurchaseRequisition,
+                $source instanceof PurchaseOrder => SupplierQuotation::SourcePurchaseOrder,
+                default => SupplierQuotation::SourceRequestForQuotation,
+            },
+            'currencies' => collect([$selectedCurrency])->filter(),
+            'selectedSuppliers' => collect([$selectedSupplier])->filter(),
+        ]);
+    }
+
+    private function supplierQuotationSource(string $sourceType, string $sourceDocument): RequestForQuotation|PurchaseRequisition|PurchaseOrder
+    {
+        $context = $this->context();
+        $model = match ($sourceType) {
+            SupplierQuotation::SourcePurchaseRequisition => PurchaseRequisition::class,
+            SupplierQuotation::SourcePurchaseOrder => PurchaseOrder::class,
+            SupplierQuotation::SourceRequestForQuotation => RequestForQuotation::class,
+            default => abort(404),
+        };
+
+        return $model::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+            ->where('financial_period_id', $context['financial_period_id'])->where('doc_num', $sourceDocument)->firstOrFail();
     }
 
     /** @return Collection<int, Supplier> */

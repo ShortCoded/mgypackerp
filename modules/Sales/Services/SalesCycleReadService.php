@@ -75,7 +75,9 @@ class SalesCycleReadService
             ->when($filters['invoice_id'] ?? null, fn ($query, $id) => $query->whereKey($id))
             ->when($filters['order_id'] ?? null, fn ($query, $id) => $query->where('sales_order_id', $id))
             ->when($filters['sales_person_id'] ?? null, fn ($query, $id) => $query->whereHas('order', fn ($order) => $order->where('business_employee_id', $id)))
-            ->when($filters['branch_store_id'] ?? null, fn ($query, $id) => $query->whereHas('order', fn ($order) => $order->where('branch_store_id', $id)))
+            ->when($filters['branch_store_id'] ?? null, fn ($query, $id) => $query->whereHas('deliveries', fn ($delivery) => $delivery
+                ->where('branch_store_id', $id)
+                ->where('status', 'posted')))
             ->when($filters['category_id'] ?? null, fn ($query, $id) => $query->whereHas('lines.product', fn ($product) => $product->where('item_category_id', $id)))
             ->when(($filters['payment_state'] ?? null) === 'outstanding', fn ($query) => $query->where('remaining_amount', '>', 0))
             ->when(($filters['payment_state'] ?? null) === 'settled', fn ($query) => $query->where('remaining_amount', '<=', 0))

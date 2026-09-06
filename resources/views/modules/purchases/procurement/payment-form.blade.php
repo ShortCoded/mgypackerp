@@ -2,11 +2,12 @@
 @section('title', __('Supplier Payment'))
 
 @section('content')
+@php($selectedInvoice = $selectedInvoice ?? null)
 <form method="POST" action="{{ route('admin.purchases.supplier-payments.store') }}" class="js-supplier-payment-form">
     @csrf
         <x-forms.line-item-cards />
     <div class="card mb-3">
-        <div class="card-header"><h5 class="mb-0">{{ __('Supplier Payment / Advance') }}</h5></div>
+        <div class="card-header py-2"><h5 class="mb-0">{{ __('Supplier Payment / Advance') }}</h5></div>
         <div class="card-body">
             @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
             <div class="row g-3">
@@ -15,7 +16,7 @@
                     <select class="form-select js-payment-supplier" id="supplier_doc_num" name="supplier_doc_num" required>
                         <option value="">{{ __('Select') }}</option>
                         @foreach($suppliers as $supplier)
-                            <option value="{{ $supplier->doc_num }}" @selected(old('supplier_doc_num') === $supplier->doc_num)>{{ $supplier->doc_num }} / {{ $supplier->name }}</option>
+                            <option value="{{ $supplier->doc_num }}" @selected(old('supplier_doc_num', $selectedInvoice?->supplier?->doc_num) === $supplier->doc_num)>{{ $supplier->doc_num }} / {{ $supplier->name }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -35,13 +36,13 @@
                     <label class="form-label" for="currency_doc_num">{{ __('Currency') }}</label>
                     <select class="form-select" id="currency_doc_num" name="currency_doc_num" required>
                         @foreach($currencies as $currency)
-                            <option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num') === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>
+                            <option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num', $selectedInvoice?->currency?->doc_num) === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>
                         @endforeach
                     </select>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label" for="amount">{{ __('Amount') }}</label>
-                    <x-forms.numeric-input id="amount" name="amount" :value="old('amount')" :scale="4" min="0.0001" step="0.0001" required />
+                    <x-forms.numeric-input id="amount" name="amount" :value="old('amount', $selectedInvoice?->remaining_amount)" :scale="4" min="0.0001" step="0.0001" required />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label" for="exchange_rate">{{ __('Exchange rate') }}</label>
@@ -82,17 +83,18 @@
     </div>
 
     <div class="card mb-3">
-        <div class="card-header"><h6 class="mb-0">{{ __('Invoice / installment allocations') }}</h6></div>
+        <div class="card-header py-2"><h6 class="mb-0">{{ __('Invoice / installment allocations') }}</h6></div>
         <div class="card-body p-0"><div class="table-responsive procurement-lines-scroll"><table class="table table-sm align-middle mb-0 procurement-lines-table">
             <thead class="bg-100"><tr><th>{{ __('Supplier') }}</th><th>{{ __('Invoice') }}</th><th>{{ __('Installment') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Allocate') }}</th></tr></thead>
             <tbody>
                 @php $allocationIndex = 0; @endphp
                 @foreach($invoices as $invoice)
                     @forelse($invoice->paymentSchedules as $schedule)
-                        <tr class="js-allocation-row" data-supplier="{{ $invoice->supplier?->doc_num }}"><td>{{ $invoice->supplier?->name }}</td><td dir="ltr">{{ $invoice->doc_num }}<input type="hidden" name="allocations[{{ $allocationIndex }}][purchase_invoice_doc_num]" value="{{ $invoice->doc_num }}"></td><td>{{ $schedule->due_date?->format('Y-m-d') }}<input type="hidden" name="allocations[{{ $allocationIndex }}][payment_schedule_public_id]" value="{{ $schedule->public_id }}"></td><td class="text-end" dir="ltr">{{ max(0, (float) $schedule->amount - (float) $schedule->paid_amount - (float) $schedule->credited_amount) }}</td><td><x-forms.numeric-input name="allocations[{{ $allocationIndex }}][amount]" :value="old('allocations.'.$allocationIndex.'.amount')" :scale="4" min="0.0001" step="0.0001" /></td></tr>
+                        @php($scheduleOutstanding = max(0, (float) $schedule->amount - (float) $schedule->paid_amount - (float) $schedule->credited_amount))
+                        <tr class="js-allocation-row" data-supplier="{{ $invoice->supplier?->doc_num }}"><td>{{ $invoice->supplier?->name }}</td><td dir="ltr">{{ $invoice->doc_num }}<input type="hidden" name="allocations[{{ $allocationIndex }}][purchase_invoice_doc_num]" value="{{ $invoice->doc_num }}"></td><td>{{ $schedule->due_date?->format('Y-m-d') }}<input type="hidden" name="allocations[{{ $allocationIndex }}][payment_schedule_public_id]" value="{{ $schedule->public_id }}"></td><td class="text-end" dir="ltr">{{ $scheduleOutstanding }}</td><td><x-forms.numeric-input name="allocations[{{ $allocationIndex }}][amount]" :value="old('allocations.'.$allocationIndex.'.amount', $selectedInvoice?->is($invoice) ? $scheduleOutstanding : null)" :scale="4" min="0.0001" step="0.0001" /></td></tr>
                         @php $allocationIndex++; @endphp
                     @empty
-                        <tr class="js-allocation-row" data-supplier="{{ $invoice->supplier?->doc_num }}"><td>{{ $invoice->supplier?->name }}</td><td dir="ltr">{{ $invoice->doc_num }}<input type="hidden" name="allocations[{{ $allocationIndex }}][purchase_invoice_doc_num]" value="{{ $invoice->doc_num }}"></td><td>—</td><td class="text-end" dir="ltr">{{ $invoice->remaining_amount }}</td><td><x-forms.numeric-input name="allocations[{{ $allocationIndex }}][amount]" :value="old('allocations.'.$allocationIndex.'.amount')" :scale="4" min="0.0001" step="0.0001" /></td></tr>
+                        <tr class="js-allocation-row" data-supplier="{{ $invoice->supplier?->doc_num }}"><td>{{ $invoice->supplier?->name }}</td><td dir="ltr">{{ $invoice->doc_num }}<input type="hidden" name="allocations[{{ $allocationIndex }}][purchase_invoice_doc_num]" value="{{ $invoice->doc_num }}"></td><td>—</td><td class="text-end" dir="ltr">{{ $invoice->remaining_amount }}</td><td><x-forms.numeric-input name="allocations[{{ $allocationIndex }}][amount]" :value="old('allocations.'.$allocationIndex.'.amount', $selectedInvoice?->is($invoice) ? $invoice->remaining_amount : null)" :scale="4" min="0.0001" step="0.0001" /></td></tr>
                         @php $allocationIndex++; @endphp
                     @endforelse
                 @endforeach

@@ -5,8 +5,10 @@ namespace Modules\FixedAssets\Models;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\ArchiveFileUsage;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
@@ -104,6 +106,11 @@ class FixedAssetDepreciation extends Model
     public function journalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class)->withTrashed();
+    }
+
+    public function archiveFileUsages(): MorphMany
+    {
+        return $this->morphMany(ArchiveFileUsage::class, 'usable');
     }
 
     public function postedBy(): BelongsTo

@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
@@ -31,6 +32,13 @@ class LedgerReportRequest extends FormRequest
         foreach (['account_doc_num', 'customer_doc_num', 'supplier_doc_num', 'branch_doc_num', 'cost_center_doc_num'] as $field) {
             $value = trim((string) $this->input($field));
             $this->merge([$field => $value === '' ? null : $value]);
+        }
+
+        $dates = app(DateFormatService::class);
+        foreach (['from_date', 'to_date'] as $field) {
+            if ($this->filled($field) && $dates->isValidDate((string) $this->input($field))) {
+                $this->merge([$field => $dates->normalizeForStorage((string) $this->input($field))]);
+            }
         }
     }
 

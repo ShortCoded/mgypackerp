@@ -4,6 +4,7 @@ namespace Modules\Inventory\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Accounting\Models\JournalEntry;
@@ -14,6 +15,7 @@ use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionRun;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
 
 class InventoryDocument extends Model
@@ -108,6 +110,11 @@ class InventoryDocument extends Model
     public function salesOrder(): BelongsTo
     {
         return $this->belongsTo(SalesOrder::class, 'source_document_id');
+    }
+
+    public function customerInvoices(): BelongsToMany
+    {
+        return $this->belongsToMany(CustomerInvoice::class, 'customer_invoice_deliveries')->withTimestamps();
     }
 
     public function productionOrder(): BelongsTo

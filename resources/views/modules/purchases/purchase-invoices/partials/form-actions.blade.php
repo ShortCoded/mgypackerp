@@ -33,23 +33,51 @@
                     <span class="fas fa-check me-1"></span>{{ __('purchase_invoices.actions.approve') }}
                 </button>
             @endcan
-            @can('purchase_invoices.cancel')
+            @can('purchase_invoices.reverse')
                 <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.cancel', $record->doc_num) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-ban me-1"></span>{{ __('purchase_invoices.actions.cancel') }}
                 </button>
             @endcan
         @elseif($record->isApproved())
+            @if($record->purchaseOrder)
+                @can('purchases.supply_orders.create')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.supply-orders.create', ['purchase_invoice' => $record->doc_num]) }}">
+                        <span class="fas fa-truck-loading me-1"></span>{{ __('Create Supply Order') }}
+                    </a>
+                @endcan
+            @endif
+            @if((float) $record->remaining_amount > 0)
+                @can('supplier_payments.create')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.supplier-payments.create', ['invoice' => $record->doc_num]) }}">
+                        <span class="fas fa-money-bill-wave me-1"></span>{{ __('Create Supplier payment') }}
+                    </a>
+                @endcan
+            @endif
             @can('purchase_invoices.close')
                 <button class="btn btn-falcon-primary btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.close', $record->doc_num) }}" data-method="POST" data-action="close">
                     <span class="fas fa-lock me-1"></span>{{ __('purchase_invoices.actions.close') }}
                 </button>
             @endcan
-            @can('purchase_invoices.cancel')
+            @can('purchase_invoices.reverse')
                 <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.reverse', $record->doc_num) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-undo me-1"></span>{{ __('Reverse posted Invoice') }}
                 </button>
             @endcan
         @elseif($record->isClosed())
+            @if($record->purchaseOrder)
+                @can('purchases.supply_orders.create')
+                    <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supply-orders.create', ['purchase_invoice' => $record->doc_num]) }}">
+                        <span class="fas fa-truck-loading me-1"></span>{{ __('Create Supply Order') }}
+                    </a>
+                @endcan
+            @endif
+            @if((float) $record->remaining_amount > 0)
+                @can('supplier_payments.create')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.supplier-payments.create', ['invoice' => $record->doc_num]) }}">
+                        <span class="fas fa-money-bill-wave me-1"></span>{{ __('Create Supplier payment') }}
+                    </a>
+                @endcan
+            @endif
             @can('purchase_invoices.cancel')
                 <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.reverse', $record->doc_num) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-undo me-1"></span>{{ __('Reverse posted Invoice') }}
@@ -68,22 +96,16 @@
 
     @unless($isView || $isTrashed)
         <div class="btn-group">
-            <button class="btn btn-falcon-primary btn-sm js-purchase-invoice-save" type="submit" data-submit-action="{{ $isCreateLike ? 'save_new' : 'save' }}">
+            <button class="btn btn-falcon-primary btn-sm js-purchase-invoice-save" type="submit" data-submit-action="save">
                 <span class="fas fa-save me-1"></span>{{ __('common.actions.save') }}
             </button>
-            <button class="btn btn-falcon-primary btn-sm dropdown-toggle dropdown-caret-none" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <button class="btn btn-falcon-primary btn-sm dropdown-toggle dropdown-caret-none" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}">
                 <span class="fas fa-caret-down"></span>
             </button>
             <div class="dropdown-menu dropdown-menu-end py-2">
                 <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_back">{{ __('common.actions.save_and_back') }}</button>
                 <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_view">{{ __('purchase_invoices.actions.save_view') }}</button>
-                @unless($isCreateLike)
-                    <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_edit">{{ __('purchase_invoices.actions.save_edit') }}</button>
-                    <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_clone">{{ __('purchase_invoices.actions.save_clone') }}</button>
-                @endunless
-                @if($isCreateLike)
-                    <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_new">{{ __('common.actions.save_and_new') }}</button>
-                @endif
+                <button class="dropdown-item js-purchase-invoice-save" type="submit" data-submit-action="save_edit">{{ __('purchase_invoices.actions.save_edit') }}</button>
             </div>
         </div>
     @endunless

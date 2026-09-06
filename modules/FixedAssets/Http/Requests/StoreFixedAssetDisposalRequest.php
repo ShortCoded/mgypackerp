@@ -69,7 +69,7 @@ class StoreFixedAssetDisposalRequest extends FormRequest
             }
 
             if ($this->input('settlement_path') === FixedAssetDisposal::SettlementCustomerInvoice && ! $this->filled('customer_doc_num')) {
-                $validator->errors()->add('customer_doc_num', __('A Customer is required for an invoiced Fixed Asset sale.'));
+                $validator->errors()->add('customer_doc_num', __('fixed_assets.lifecycle.errors.invoiced_sale_customer_required'));
             }
 
             if ($this->input('disposition_type') === FixedAssetDisposal::TypeSale && bccomp((string) $proceeds, '0', 4) <= 0) {

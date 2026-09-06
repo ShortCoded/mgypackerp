@@ -47,7 +47,7 @@
             @foreach($record->lines as $line)
                 <tr>
                     <td>{{ $line->line_number }}</td>
-                    <td>@include('reports.partials.item-details', ['line' => $line])@if($line->receiptLine?->receipt)<div class="document-item-details">{{ __('Goods Receipt') }}: <span dir="ltr">{{ $line->receiptLine->receipt->doc_num }}</span></div>@endif</td>
+                    <td>@include('reports.partials.item-details', ['line' => $line])@if($line->receiptLine?->receipt)<div class="document-item-details">{{ __('Goods Receipt') }}: <span dir="ltr">{{ $line->receiptLine->receipt->doc_num }}</span></div>@endif @if($line->fixedAssets->isNotEmpty())<div class="document-item-details">{{ __('fixed_assets.purchase_source.linked_assets') }}: <span dir="ltr">{{ $line->fixedAssets->pluck('doc_num')->join(' / ') }}</span></div>@elseif($line->targetFixedAsset)<div class="document-item-details">{{ __('fixed_assets.purchase_source.treatment_improvement') }}: <span dir="ltr">{{ $line->targetFixedAsset->doc_num }}</span></div>@endif</td>
                     <td>{{ $line->unit?->name }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->quantity) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>

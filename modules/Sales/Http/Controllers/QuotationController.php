@@ -355,6 +355,7 @@ class QuotationController extends Controller
         $revision = $selectedRevision ?: $record?->currentRevision;
         $revision?->loadMissing(['lines.product', 'lines.unit', 'paymentMilestones', 'executionScheduleLines']);
         $isCreateLike = in_array($mode, ['create', 'clone'], true);
+        $mainCurrencyOption = $this->mainCurrencyOption();
 
         return view('modules.sales.quotations.form', [
             'mode' => $mode,
@@ -367,7 +368,8 @@ class QuotationController extends Controller
             'cloneSourceToken' => $cloneSourceToken,
             'isRevisionLocked' => $record instanceof Quotation && ! $record->canEditCurrentRevision(),
             'customerOption' => $this->customerOption($record),
-            'currencyOption' => $this->currencyOption($record),
+            'currencyOption' => $this->currencyOption($record) ?? $mainCurrencyOption,
+            'mainCurrencyOption' => $mainCurrencyOption,
             'salesPersonOption' => $this->salesPersonOption($record),
             'lines' => $this->lines($revision, $mode),
             'paymentMilestones' => $this->paymentMilestones($revision),
@@ -516,6 +518,22 @@ class QuotationController extends Controller
     {
         return $record?->currency instanceof Currency
             ? ['id' => (string) $record->currency->doc_num, 'text' => trim(implode(' / ', array_filter([$record->currency->code, $record->currency->name])))]
+            : null;
+    }
+
+    /**
+     * @return array{id: string, text: string}|null
+     */
+    private function mainCurrencyOption(): ?array
+    {
+        $currency = Currency::query()
+            ->forCompany(app(OperatingCompanyContextService::class)->requireCompanyId())
+            ->active()
+            ->where('is_main', true)
+            ->first();
+
+        return $currency instanceof Currency
+            ? ['id' => (string) $currency->doc_num, 'text' => trim(implode(' / ', array_filter([$currency->code, $currency->name])))]
             : null;
     }
 
@@ -699,7 +717,7 @@ class QuotationController extends Controller
         return (bool) $user?->can('quotations.view')
             || (bool) $user?->can('quotations.create')
             || (bool) $user?->can('quotations.edit')
-            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create']);
+            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create', 'reports.sales.sales_orders.view']);
     }
 
     /**

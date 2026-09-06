@@ -14,11 +14,18 @@ Route::middleware('auth')
     ->prefix('admin/fixed-assets')
     ->as('admin.fixed-assets.')
     ->group(function (): void {
+        Route::get('/select2/custodians', function (Request $request, FixedAssetsSelect2Service $select2) {
+            abort_unless((bool) $request->user()?->can('fixed_assets.custody.post'), 403);
+
+            return response()->json($select2->custodians($request));
+        })->name('select2.custodians');
+
         Route::get('/select2/assets', function (Request $request, FixedAssetsSelect2Service $select2) {
             abort_unless(
                 (bool) $request->user()?->can('fixed_assets.view')
                 || (bool) $request->user()?->can('fixed_assets.depreciation.preview')
-                || (bool) $request->user()?->can('fixed_assets.reports'),
+                || (bool) $request->user()?->can('fixed_assets.reports')
+                || ((bool) $request->user()?->can('purchase_invoices.edit') && (bool) $request->user()?->can('fixed_assets.improvement.post')),
                 403
             );
 
@@ -113,6 +120,9 @@ Route::middleware('auth')
 
         Route::prefix('depreciation')->name('depreciation.')->controller(FixedAssetDepreciationController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:fixed_assets.depreciation.preview')->name('index');
+            Route::get('/preview', 'openPreview')
+                ->middleware('can:fixed_assets.depreciation.preview')
+                ->name('preview.open');
             Route::post('/preview', 'preview')->name('preview');
             Route::post('/post', 'post')->name('post');
             Route::get('/runs/{run}', 'show')->middleware('can:fixed_assets.depreciation.preview')->name('show');

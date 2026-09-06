@@ -4,13 +4,20 @@
     var config = window.AppSession || {};
     var statusUrl = config.statusUrl || '/session/status';
     var touchUrl = config.touchUrl || '/session/touch';
+    var sessionIdentity = String(config.identity || '');
     var lifetimeSeconds = parseInt(config.lifetimeSeconds, 10) || 7200;
     var warningBeforeSeconds = parseInt(config.warningBeforeSeconds, 10) || 0;
     var touchThrottleMilliseconds = Math.min(60000, Math.max(10000, lifetimeSeconds * 500));
     var timeoutId = null;
-    var lastTouchAttemptAt = 0;
+    var lastTouchAttemptAt = Date.now();
     var isReloading = false;
     var isTouching = false;
+    var isCheckingStatus = false;
+    var shouldTouchAfterStatus = false;
+    var statusCheckDebounceId = null;
+    var statusCheckDebounceMilliseconds = 1000;
+    var statusRequest = null;
+    var statusRequestVersion = 0;
 
     function reloadCurrentPage() {
         if (isReloading) {
@@ -100,12 +107,63 @@
         return $.Deferred().reject({ status: 419 }).promise();
     }
 
-    function checkStatus(thenTouch) {
+    function invalidateStatusRequest() {
+        var pendingRequest = statusRequest;
+
+        statusRequestVersion += 1;
+        statusRequest = null;
+        isCheckingStatus = false;
+
+        if (pendingRequest && typeof pendingRequest.abort === 'function') {
+            pendingRequest.abort();
+        }
+    }
+
+    function unlockBackForwardCacheRestore() {
+        var guard = window.AppPageCacheGuard;
+
+        if (guard && typeof guard.unlock === 'function') {
+            guard.unlock();
+        }
+    }
+
+    function isConfirmedActiveStatus(response) {
+        return response
+            && sessionIdentity !== ''
+            && response.session_identity === sessionIdentity
+            && response.authenticated === true
+            && response.expired === false
+            && response.locked !== true
+            && response.action !== 'lock'
+            && response.action !== 'login';
+    }
+
+    function checkStatus(thenTouch, options) {
+        var isBackForwardCacheRestore = Boolean(options && options.backForwardCacheRestore);
+
+        if (thenTouch === true) {
+            shouldTouchAfterStatus = true;
+        }
+
+        window.clearTimeout(statusCheckDebounceId);
+        statusCheckDebounceId = null;
+
         if (isReloading) {
             return;
         }
 
-        $.ajax({
+        if (isCheckingStatus) {
+            if (!isBackForwardCacheRestore) {
+                return;
+            }
+
+            invalidateStatusRequest();
+        }
+
+        isCheckingStatus = true;
+        var requestVersion = ++statusRequestVersion;
+
+        statusRequest = $.ajax({
             url: statusUrl,
             method: 'GET',
             cache: false,
@@ -113,24 +171,65 @@
                 Accept: 'application/json',
                 'X-Current-Path': currentPath()
             }
-        }).done(function (response) {
-            if (!handleStatusResponse(response)) {
+        });
+
+        statusRequest.done(function (response) {
+            if (requestVersion !== statusRequestVersion) {
                 return;
             }
 
-            if (thenTouch === true) {
+            if (!handleStatusResponse(response)) {
+                shouldTouchAfterStatus = false;
+
+                return;
+            }
+
+            if (isBackForwardCacheRestore) {
+                if (!isConfirmedActiveStatus(response)) {
+                    shouldTouchAfterStatus = false;
+                    reloadCurrentPage();
+
+                    return;
+                }
+
+                unlockBackForwardCacheRestore();
+            }
+
+            if (shouldTouchAfterStatus) {
+                shouldTouchAfterStatus = false;
                 touchSession();
             }
         }).fail(function (response) {
-            if (response.status === 423 && response.responseJSON && response.responseJSON.lock_screen_url) {
+            var responseStatus = response ? response.status : 0;
+
+            if (requestVersion !== statusRequestVersion) {
+                return;
+            }
+
+            shouldTouchAfterStatus = false;
+
+            if (responseStatus === 423 && response.responseJSON && response.responseJSON.lock_screen_url) {
                 redirectToLockScreen(response.responseJSON.lock_screen_url);
 
                 return;
             }
 
-            if (response.status === 401 || response.status === 419) {
+            if (responseStatus === 401 || responseStatus === 419) {
                 handleAuthenticationFailure(response);
+
+                return;
             }
+
+            if (isBackForwardCacheRestore) {
+                reloadCurrentPage();
+            }
+        }).always(function () {
+            if (requestVersion !== statusRequestVersion) {
+                return;
+            }
+
+            isCheckingStatus = false;
+            statusRequest = null;
         });
     }
 
@@ -194,13 +293,39 @@
         touchSession();
     }
 
+    function scheduleStatusCheck(thenTouch) {
+        if (thenTouch === true) {
+            shouldTouchAfterStatus = true;
+        }
+
+        if (isReloading || isCheckingStatus) {
+            return;
+        }
+
+        window.clearTimeout(statusCheckDebounceId);
+        statusCheckDebounceId = window.setTimeout(function () {
+            statusCheckDebounceId = null;
+            checkStatus(false);
+        }, statusCheckDebounceMilliseconds);
+    }
+
     function handleFocusOrVisibility() {
-        checkStatus(true);
+        scheduleStatusCheck(false);
+    }
+
+    function handleBackForwardCacheRestore() {
+        var guard = window.AppPageCacheGuard;
+
+        if (guard && typeof guard.claimRestore === 'function') {
+            guard.claimRestore();
+        }
+
+        checkStatus(true, { backForwardCacheRestore: true });
     }
 
     scheduleTimeout(lifetimeSeconds);
 
-    $(document).on('mousemove mousedown click keydown scroll touchstart', handleActivity);
+    $(document).on('pointerdown keydown scroll touchstart', handleActivity);
 
     window.addEventListener('focus', function () {
         handleFocusOrVisibility();
@@ -211,6 +336,8 @@
             handleFocusOrVisibility();
         }
     });
+
+    window.addEventListener('erp:bfcache-restore', handleBackForwardCacheRestore);
 
     $(document).ajaxError(function (event, response, settings) {
         if (response.status === 423 && response.responseJSON && response.responseJSON.lock_screen_url) {

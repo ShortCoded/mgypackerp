@@ -14,6 +14,8 @@ use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Models\FixedAssetMovement;
+use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Models\Customer;
 
 class FixedAssetsSelect2Service
@@ -56,6 +58,22 @@ class FixedAssetsSelect2Service
         ]);
     }
 
+    public function custodians(Request $request): array
+    {
+        $companyId = $this->companyId($request);
+        if ($companyId === null) {
+            return $this->empty();
+        }
+        $query = HrEmployee::query()->where('company_id', $companyId)->where('status', 'active')
+            ->whereIn('branch_id', app(FixedAssetAccessService::class)->branchIds())
+            ->select(['id', 'doc_num', 'full_name'])->orderBy('full_name')->orderBy('id');
+        $this->applyTerms($query, $request, ['doc_num', 'full_name']);
+
+        return $this->select2->paginated($query, $request, fn (HrEmployee $employee): array => [
+            'id' => $employee->doc_num, 'text' => $employee->doc_num.' / '.$employee->full_name,
+        ]);
+    }
+
     public function assets(Request $request): array
     {
         $companyId = $this->companyId($request);
@@ -67,6 +85,13 @@ class FixedAssetsSelect2Service
         $query = FixedAsset::query()
             ->whereIn('branch_id', app(FixedAssetAccessService::class)->branchIds())
             ->where('company_id', $companyId)
+            ->when($request->boolean('purchasable_improvement'), fn ($query) => $query
+                ->whereIn('status', [FixedAsset::StatusActive, FixedAsset::StatusSuspended])
+                ->whereHas('costMovements', fn ($movements) => $movements
+                    ->where('status', FixedAssetMovement::StatusPosted)
+                    ->whereIn('movement_type', [FixedAssetMovement::TypeCapitalization, FixedAssetMovement::TypeOpening])))
+            ->when($request->filled('branch_doc_num'), fn ($query) => $query
+                ->whereHas('branch', fn ($branch) => $branch->where('doc_num', $request->string('branch_doc_num')->trim()->toString())))
             ->select(['doc_num', 'doc_number', 'asset_name', 'serial_number', 'status'])
             ->orderBy('doc_number');
 

@@ -1,5 +1,5 @@
 <td>
-    <select class="form-select js-select2-ajax js-quotation-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true"></select>
+    <select class="form-select js-select2-ajax js-quotation-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true" required></select>
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.product_doc_num"></div>
 </td>
 <td>
@@ -7,15 +7,15 @@
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.description"></div>
 </td>
 <td>
-    <select class="form-select js-select2-local js-quotation-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true"></select>
+    <select class="form-select js-select2-local js-quotation-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true" required></select>
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
 </td>
 <td>
-    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][quantity]" value="1" :scale="4" min="0" step="0.0001" />
+    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][quantity]" value="1" :scale="4" min="0.0001" step="0.0001" required />
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
 </td>
 <td>
-    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][unit_price]" value="" :scale="4" min="0" step="0.0001" />
+    <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][unit_price]" value="" :scale="4" min="0.0001" step="0.0001" required />
     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
 </td>
 <td>
@@ -25,7 +25,7 @@
             <option value="fixed">{{ __('quotations.discount_types.fixed') }}</option>
             <option value="percentage">{{ __('quotations.discount_types.percentage') }}</option>
         </select>
-        <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][discount_value]" value="0" :scale="4" min="0" step="0.0001" />
+        <x-forms.numeric-input class="text-center js-quotation-calc" name="lines[__INDEX__][discount_value]" value="0" :scale="4" min="0" step="0.0001" disabled />
     </div>
 </td>
 <td>
@@ -37,18 +37,10 @@
 <td>
     <input class="form-control js-date-picker" name="lines[__INDEX__][requested_date]" data-date-format="{{ app(\Modules\Core\Services\DateFormatService::class)->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off">
 </td>
-<td>
-    <input class="form-control" name="lines[__INDEX__][specifications][packaging]">
-</td>
-<td>
-    <input class="form-control" name="lines[__INDEX__][specifications][customer_specification]">
-</td>
-<td>
-    <input class="form-control" name="lines[__INDEX__][warehouse_notes]">
-</td>
-<td>
-    <input class="form-control" name="lines[__INDEX__][production_notes]">
-</td>
+
+
+
+
 <td>
     <input class="form-control" name="lines[__INDEX__][notes]" type="text" value="">
 </td>

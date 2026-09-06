@@ -189,7 +189,7 @@
         <div class="card">
             <div class="card-header py-2 d-flex justify-content-between align-items-center">
                 <h6 class="mb-0">{{ __('procurement.reports.types.'.$reportType) }}</h6>
-                <span class="badge badge-subtle-secondary">{{ $rows->count() }}</span>
+                <span class="text-600 fs-10">{{ __('Records') }}: <span dir="ltr">{{ $rows->count() }}</span></span>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive procurement-lines-scroll">

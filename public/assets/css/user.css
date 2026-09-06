@@ -30,6 +30,30 @@
   min-width: 18rem !important;
 }
 
+.erp-status-indicator {
+  align-items: center;
+  color: var(--falcon-gray-700);
+  display: inline-flex;
+  font-size: .75rem;
+  font-weight: 600;
+  gap: .4rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.erp-status-indicator__dot {
+  background: var(--falcon-primary);
+  border-radius: 50%;
+  block-size: .45rem;
+  flex: 0 0 .45rem;
+  inline-size: .45rem;
+}
+
+.erp-status-indicator--success .erp-status-indicator__dot { background: var(--falcon-success); }
+.erp-status-indicator--warning .erp-status-indicator__dot { background: var(--falcon-warning); }
+.erp-status-indicator--danger .erp-status-indicator__dot { background: var(--falcon-danger); }
+.erp-status-indicator--secondary .erp-status-indicator__dot { background: var(--falcon-secondary); }
+
 html[dir="rtl"] .procurement-lines-table .text-end {
   text-align: left !important;
 }
@@ -2034,6 +2058,11 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
 /* Shared mobile and PWA interaction foundation. */
 @media screen {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   html,
   body {
     max-inline-size: 100%;
@@ -2070,8 +2099,29 @@ html[dir="rtl"] .erp-date-picker-calendar {
   .procurement-lines-scroll,
   [data-erp-table-scroll] {
     max-inline-size: 100%;
+    overflow-x: auto;
     overscroll-behavior-inline: contain;
+    scrollbar-color: var(--falcon-gray-400) transparent;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .table-responsive::-webkit-scrollbar,
+  .erp-datatable-scroll::-webkit-scrollbar,
+  .procurement-lines-scroll::-webkit-scrollbar,
+  [data-erp-table-scroll]::-webkit-scrollbar {
+    block-size: .5rem;
+  }
+
+  .table-responsive::-webkit-scrollbar-thumb,
+  .erp-datatable-scroll::-webkit-scrollbar-thumb,
+  .procurement-lines-scroll::-webkit-scrollbar-thumb,
+  [data-erp-table-scroll]::-webkit-scrollbar-thumb {
+    background-color: var(--falcon-gray-400);
+    border: .125rem solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
   }
 
   .select2-container {
@@ -2134,8 +2184,11 @@ html[dir="rtl"] .erp-date-picker-calendar {
   }
 
   .fs-10,
+  .fs-11,
   small,
-  .small {
+  .small,
+  .form-text,
+  .dashboard-kpi-category {
     font-size: .8125rem !important;
   }
 
@@ -2189,6 +2242,8 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
   .btn.btn-icon-only,
   .btn-reveal,
+  .btn-group > .dropdown-toggle-split,
+  .btn-group > .dropdown-caret-none,
   .navbar-toggler,
   .navbar-vertical-toggle,
   .navbar-nav-icons > .nav-item > .nav-link {
@@ -2196,6 +2251,12 @@ html[dir="rtl"] .erp-date-picker-calendar {
     display: inline-flex;
     justify-content: center;
     min-inline-size: 2.75rem;
+  }
+
+  .navbar-nav-icons .theme-control-dropdown > .nav-link {
+    justify-content: center;
+    min-inline-size: 2.75rem;
+    padding-inline: .5rem !important;
   }
 
   .form-check-input {
@@ -2207,6 +2268,37 @@ html[dir="rtl"] .erp-date-picker-calendar {
     align-items: center;
     display: inline-flex;
     min-block-size: 2.75rem;
+  }
+
+  .nav-tabs {
+    flex-wrap: nowrap;
+    max-inline-size: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-color: var(--falcon-gray-400) transparent;
+    scrollbar-width: thin;
+    scroll-snap-type: inline proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav-tabs > .nav-item {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .nav-tabs .nav-link {
+    min-block-size: 2.75rem;
+    white-space: nowrap;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    block-size: .375rem;
+  }
+
+  .nav-tabs::-webkit-scrollbar-thumb {
+    background-color: var(--falcon-gray-400);
+    border-radius: 999px;
   }
 
   .crud-index-toolbar .row,
@@ -2226,6 +2318,15 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
   .erp-datatable-card .falcon-data-table {
     padding: .75rem;
+  }
+
+  .erp-datatable-card th.dt-select {
+    cursor: pointer;
+    min-inline-size: 2.75rem;
+  }
+
+  .erp-datatable-card .table.table-sm > :not(caption) > * > * {
+    padding-block: .625rem;
   }
 
   .erp-datatable-card div.dataTables_wrapper > .row:first-child > [class*="col-"],
@@ -2331,6 +2432,49 @@ html[dir="rtl"] .erp-date-picker-calendar {
 }
 
 @media screen and (max-width: 575.98px) {
+  .card > .card-header {
+    padding-inline: 1rem;
+  }
+
+  .card-header > .row.flex-between-center > .col,
+  .card-header > .row.flex-between-center > .col-auto {
+    flex: 0 0 100%;
+    max-inline-size: 100%;
+    width: 100%;
+  }
+
+  .card-header > .row.flex-between-center > .col-auto > .d-flex,
+  .card-header > .row.flex-between-center > .col-auto > [class*="form-actions"] {
+    justify-content: flex-start !important;
+  }
+
+  .card > .card-body:not(.p-0) {
+    padding-inline: 1rem;
+  }
+
+  .crud-index-toolbar-actions,
+  .report-actions-toolbar,
+  .report-filter-buttons {
+    width: 100%;
+  }
+
+  .crud-index-toolbar-actions > .btn,
+  .crud-index-toolbar-actions > .dropdown,
+  .report-actions-toolbar > .btn,
+  .report-actions-toolbar > .dropdown,
+  .report-filter-buttons > .btn {
+    flex: 1 1 auto;
+  }
+
+  .crud-index-toolbar-actions > .dropdown > .btn,
+  .report-actions-toolbar > .dropdown > .btn {
+    width: 100%;
+  }
+
+  .pagination {
+    flex-wrap: nowrap;
+  }
+
   .modal-dialog:not(.modal-fullscreen) {
     margin: .5rem;
     max-inline-size: calc(100vw - 1rem);
@@ -2359,6 +2503,18 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
   .erp-operating-context-trigger {
     max-inline-size: min(48vw, 11rem);
+  }
+}
+
+@media screen and (max-width: 389.98px) {
+  .navbar-top .erp-theme-switch-item {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 339.98px) {
+  .navbar-top .erp-operating-context-trigger {
+    max-inline-size: calc(100vw - 11rem);
   }
 }
 

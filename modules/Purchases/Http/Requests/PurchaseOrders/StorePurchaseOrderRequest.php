@@ -129,6 +129,8 @@ class StorePurchaseOrderRequest extends FormRequest
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'between:0,100'],
             'lines.*.notes' => ['nullable', 'string'],
+            'lines.*.attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:10'],
+            'lines.*.attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             'submit_action' => ['nullable', 'string'],
         ];
     }
@@ -379,6 +381,7 @@ class StorePurchaseOrderRequest extends FormRequest
                 'discount_value' => $this->decimalValue($line['discount_value'] ?? 0),
                 'tax_rate' => $this->decimalValue($line['tax_rate'] ?? 0),
                 'notes' => trim((string) ($line['notes'] ?? '')) ?: null,
+                'attachment_file_doc_nums' => collect($line['attachment_file_doc_nums'] ?? [])->map(fn (mixed $value): string => trim((string) $value))->filter()->unique()->values()->all(),
             ])
             ->reject(fn (array $line): bool => $line['product_doc_num'] === null && $line['ordered_quantity'] === null && $line['unit_price'] === null)
             ->values()

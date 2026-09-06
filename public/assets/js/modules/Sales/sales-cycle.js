@@ -163,16 +163,45 @@
       - number('.js-sales-discount') + number('.js-sales-tax');
     const output = row.querySelector('[data-sales-line-total]');
     if (output) output.textContent = window.AppNumbers.format(total);
+    calculateDocumentSummary(row.closest('form'));
+  }
+
+  function calculateDocumentSummary(form) {
+    if (!form?.matches('[data-sales-document-summary], [data-sales-request-form]')) return;
+    const rows = Array.from(form.querySelectorAll('[data-sales-lines] [data-sales-line]'));
+    const products = new Set();
+    let quantity = 0;
+    let total = 0;
+    rows.forEach((row) => {
+      const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
+      const rowQuantity = window.AppNumbers.number(row.querySelector('.js-sales-quantity')?.value || '0', 0);
+      const rowPrice = window.AppNumbers.number(row.querySelector('.js-sales-price')?.value || '0', 0);
+      const rowDiscount = window.AppNumbers.number(row.querySelector('.js-sales-discount')?.value || '0', 0);
+      const rowTax = window.AppNumbers.number(row.querySelector('.js-sales-tax')?.value || '0', 0);
+      if (product) products.add(product);
+      quantity += rowQuantity;
+      total += (rowQuantity * rowPrice) - rowDiscount + rowTax;
+    });
+    const set = (selector, value) => {
+      const element = form.querySelector(selector);
+      if (element) element.textContent = value;
+    };
+    set('[data-sales-summary-lines]', String(rows.length));
+    set('[data-sales-summary-products]', String(products.size));
+    set('[data-sales-summary-quantity]', window.AppNumbers.format(quantity));
+    set('[data-sales-summary-total]', window.AppNumbers.format(total));
+    const currency = form.querySelector('[name="currency_doc_num"]');
+    set('[data-sales-summary-currency]', currency?.selectedOptions?.[0]?.textContent?.trim() || '');
   }
 
   function bindOrderGrid() {
     const lines = document.querySelector('[data-sales-lines]');
     const schedules = document.querySelector('[data-sales-schedules]');
-    document.querySelector('[data-sales-add-line]')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-sales-add-line]').forEach(button => button.addEventListener('click', () => {
       const row = window.AppLineItemCards.append(lines, document.querySelector('#sales-order-line-template'), 'lines');
       initializeWidgets(row);
       calculateLineTotal(row);
-    });
+    }));
     document.querySelector('[data-sales-add-schedule]')?.addEventListener('click', () => {
       const index = schedules.querySelectorAll('tr').length;
       schedules.insertAdjacentHTML('beforeend', document.querySelector('#sales-schedule-template').innerHTML.replaceAll('__INDEX__', String(index)));
@@ -193,8 +222,20 @@
     document.addEventListener('change', (event) => {
       if (event.target.matches('.js-sales-product') && !event.target.matches('.js-select2-ajax')) populateUnits(event.target.closest('tr'));
       if (event.target.matches('.js-sales-unit, .js-sales-product:not(.js-select2-ajax)')) suggestPrice(event.target.closest('tr'));
-      if (event.target.matches('[name="customer_doc_num"], [name="currency_doc_num"]')) lines?.querySelectorAll('[data-sales-line]').forEach(suggestPrice);
+      if (event.target.matches('[name="customer_doc_num"], [name="currency_doc_num"]')) {
+        lines?.querySelectorAll('[data-sales-line]').forEach(suggestPrice);
+        calculateDocumentSummary(event.target.closest('form'));
+      }
     });
+    const source = document.querySelector('[data-sales-order-source]');
+    const openSource = () => {
+      if (!source?.dataset.createUrl) return;
+      const url = new URL(source.dataset.createUrl, window.location.origin);
+      if (source.value) url.searchParams.set('source_request_doc_num', source.value);
+      window.location.assign(url.toString());
+    };
+    $(source).off('.salesOrderSource')
+      .on('select2:select.salesOrderSource select2:clear.salesOrderSource', openSource);
     document.addEventListener('input', (event) => {
       if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-tax')) {
         calculateLineTotal(event.target.closest('tr'));
@@ -213,15 +254,21 @@
       if (!button) return;
       const row = button.closest('tr');
       const body = row.parentElement;
+      const form = row.closest('form');
       if (body === lines && lines.querySelectorAll('tr').length === 1) return;
       window.AppLineItemCards.remove(row, body === lines ? 'lines' : 'payment_schedules', body === lines ? 1 : 0);
-    });
+      calculateDocumentSummary(form);
+      });
     lines?.querySelectorAll('[data-sales-line]').forEach(calculateLineTotal);
+    calculateDocumentSummary(lines?.closest('form'));
   }
 
   function setPaymentMethod() {
     const method = document.querySelector('[data-sales-payment-method]')?.value;
     if (!method) return;
+    const referenceLabel = document.querySelector('[data-payment-reference-label]');
+    if (referenceLabel) referenceLabel.textContent = method === 'cheque' ? referenceLabel.dataset.chequeLabel || 'Cheque number' : referenceLabel.dataset.bankLabel || 'Bank reference';
+    document.querySelector('[data-reference-required]')?.classList.toggle('d-none', method !== 'cheque');
     document.querySelectorAll('[data-payment-source]').forEach((container) => {
       const source = container.dataset.paymentSource;
       const show = source === 'reference'
@@ -230,7 +277,11 @@
           ? ['bank', 'transfer', 'cheque'].includes(method)
           : source === method;
       container.classList.toggle('d-none', !show);
-      container.querySelectorAll('input, select').forEach((field) => { field.disabled = !show; });
+      container.querySelectorAll('input, select').forEach((field) => {
+        field.disabled = !show;
+        const requiredFor = (field.dataset.requiredFor || '').split(',').filter(Boolean);
+        field.required = show && requiredFor.includes(method);
+      });
     });
   }
 
@@ -259,11 +310,32 @@
     });
   }
 
+  function bindInvoiceFromOrder() {
+    document.querySelectorAll('[data-sales-invoice-from-order]').forEach((form) => {
+      const calculate = () => {
+        let total = 0;
+        form.querySelectorAll('[data-invoice-source-line]').forEach((row) => {
+          const sourceQuantity = window.AppNumbers.number(row.dataset.sourceQuantity || '0', 0);
+          const sourceTotal = window.AppNumbers.number(row.dataset.sourceTotal || '0', 0);
+          const quantity = window.AppNumbers.number(row.querySelector('.js-invoice-quantity')?.value || '0', 0);
+          if (sourceQuantity > 0) total += sourceTotal * (quantity / sourceQuantity);
+        });
+        const schedule = form.querySelector('[data-invoice-schedule-total]');
+        if (schedule) schedule.value = total.toFixed(4);
+      };
+      form.addEventListener('input', (event) => {
+        if (event.target.matches('.js-invoice-quantity')) calculate();
+      });
+      calculate();
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     bindForms();
     bindOrderGrid();
     bindReceipt();
     bindReturnLines();
+    bindInvoiceFromOrder();
     initializeWidgets(document);
   });
 })(window.jQuery, window, document);

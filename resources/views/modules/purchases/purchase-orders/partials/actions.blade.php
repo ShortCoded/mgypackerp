@@ -37,7 +37,8 @@
             @can('purchase_orders.reject')<button class="dropdown-item text-danger js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.reject', $docNum) }}" data-action="reject">{{ __('Reject') }}</button>@endcan
         @endif
         @if(!$isTrashed && $record->isApproved())
-            @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $docNum) }}">{{ __('Create goods receipt') }}</a>@endcan
+            @can('purchases.supplier_quotation_entry.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseOrder, $docNum]) }}">{{ __('Enter supplier quotation') }}</a>@endcan @endcan
+            @can('purchases.supply_orders.create')<a class="dropdown-item" href="{{ route('admin.purchases.supply-orders.create', ['purchase_order' => $docNum]) }}">{{ __('Create Supply Order') }}</a>@endcan
             @can('purchase_invoices.create')<a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $docNum]) }}">{{ __('Create supplier invoice') }}</a>@endcan
             @if(!$record->sent_at) @can('purchase_orders.send')<button class="dropdown-item js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.sent', $docNum) }}" data-action="send">{{ __('Mark as sent') }}</button>@endcan @endif
         @endif

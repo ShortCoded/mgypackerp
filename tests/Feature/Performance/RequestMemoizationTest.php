@@ -13,6 +13,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\BrandingService;
+use Modules\Core\Services\RequestMemo;
 use Modules\Core\Services\SettingService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -72,6 +73,17 @@ function memoizationWithRoutedRequest(callable $callback): mixed
         app()->instance('request', $originalRequest);
     }
 }
+
+test('request memo is shared by every service resolution in the request scope', function (): void {
+    memoizationWithRoutedRequest(function (): void {
+        $first = app(RequestMemo::class);
+        $second = app(RequestMemo::class);
+        $first->put('shared-resolution-proof', 'shared');
+
+        expect($second)->toBe($first)
+            ->and($second->get('shared-resolution-proof'))->toBe('shared');
+    });
+});
 
 test('BrandingService resolves main company once per request', function () {
     Company::factory()->main()->create(['name' => 'Memo Company']);

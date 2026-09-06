@@ -34,12 +34,21 @@ use Modules\Sales\Models\Quotation;
 
 class ScreenDataVisibilityRegistry
 {
+    /** @var array<string, array<string, mixed>>|null */
+    private ?array $definitions = null;
+
+    /** @var array<string, array<string, mixed>>|null */
+    private ?array $unsupportedDefinitions = null;
+
+    /** @var array<class-string<Model>, array<string, list<string>>>|null */
+    private ?array $routePatternsByModel = null;
+
     /**
      * @return array<string, array<string, mixed>>
      */
     public function all(): array
     {
-        return [
+        return $this->definitions ??= [
             'customers' => $this->makeDefinition(Customer::class, 'customers', 'Sales', 'المبيعات', 'Customers', 'العملاء', 'customers', 'admin.sales.customers.*', [
                 'admin.sales.select2.customers',
                 'admin.sales.quotations.*',
@@ -115,7 +124,7 @@ class ScreenDataVisibilityRegistry
     /** @return array<string, array<string, mixed>> */
     public function unsupported(): array
     {
-        return [
+        return $this->unsupportedDefinitions ??= [
             'accounts' => $this->unsupportedDefinition('Accounting', 'الحسابات', 'Accounts Tree', 'شجرة الحسابات', 'accounts', 'hierarchical'),
             'cost_centers' => $this->unsupportedDefinition('Accounting', 'الحسابات', 'Cost Centers Tree', 'شجرة مراكز التكلفة', 'cost_centers', 'hierarchical'),
             'item_categories' => $this->unsupportedDefinition('Core', 'البيانات الأساسية', 'Item Categories Tree', 'شجرة فئات الأصناف', 'item_categories', 'hierarchical'),
@@ -170,12 +179,8 @@ class ScreenDataVisibilityRegistry
             return null;
         }
 
-        foreach ($this->all() as $screenKey => $definition) {
-            if ($definition['model'] !== $modelClass) {
-                continue;
-            }
-
-            foreach ($definition['route_patterns'] as $pattern) {
+        foreach ($this->routePatternsByModel()[$modelClass] ?? [] as $screenKey => $patterns) {
+            foreach ($patterns as $pattern) {
                 if (Str::is($pattern, $routeName)) {
                     return $screenKey;
                 }
@@ -183,6 +188,25 @@ class ScreenDataVisibilityRegistry
         }
 
         return null;
+    }
+
+    /**
+     * @return array<class-string<Model>, array<string, list<string>>>
+     */
+    private function routePatternsByModel(): array
+    {
+        if ($this->routePatternsByModel !== null) {
+            return $this->routePatternsByModel;
+        }
+
+        $index = [];
+
+        foreach ($this->all() as $screenKey => $definition) {
+            $modelClass = $definition['model'];
+            $index[$modelClass][$screenKey] = $definition['route_patterns'];
+        }
+
+        return $this->routePatternsByModel = $index;
     }
 
     /** @return list<class-string<Model>> */

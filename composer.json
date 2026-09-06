@@ -89,7 +89,11 @@
     },
     "extra": {
         "laravel": {
-            "dont-discover": []
+            "dont-discover": [
+                "laravel/telescope",
+                "livewire/livewire",
+                "yajra/laravel-datatables-export"
+            ]
         }
     },
     "config": {

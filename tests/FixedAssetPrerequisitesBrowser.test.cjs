@@ -68,7 +68,7 @@ test('legacy and chart-resolved asset prerequisites work through authenticated s
    }
    await go('/admin/fixed-assets/assets/'+results[type]);
    if(await page.locator('#recognition-modal').count()){
-    await preview(results[type]);assert.equal(await page.locator('[data-asset="'+results[type]+'"]').count(),0);assert.match(await page.locator('main').innerText(),/مسودة/);
+    await preview(results[type]);assert.equal(await page.locator('[data-asset="'+results[type]+'"]').count(),0);assert.match(await page.locator('main').innerText(),/الأصل لم يتم إثباته بعد/);
     await go('/admin/fixed-assets/assets/'+results[type]);await page.locator('[data-bs-target="#recognition-modal"]').click();
     await page.locator('#recognition-modal [name="activation_date"]').fill('01/01/2026');
     await page.locator('#recognition-modal button[type=submit]').click();await page.locator('#recognition-modal').waitFor({state:'detached'});

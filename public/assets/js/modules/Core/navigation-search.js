@@ -15,9 +15,12 @@
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   let debounceTimer = null;
   let abortController = null;
+  let activeQuery = null;
   let results = [];
   let activeIndex = -1;
   let open = false;
+  const responseCache = new Map();
+  const responseCacheMilliseconds = Math.max(1000, Number(config.cacheMs || 30000));
 
   function escapeHtml(value) {
     const element = document.createElement('div');
@@ -203,15 +206,33 @@
 
   function fetchResults() {
     const query = input.value.trim();
+    const cached = responseCache.get(query);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+        activeQuery = null;
+      }
+
+      renderResults(cached.section, cached.results);
+      return;
+    }
+
+    if (activeQuery === query && abortController) {
+      return;
+    }
 
     if (abortController) {
       abortController.abort();
     }
 
-    abortController = new AbortController();
+    const currentController = new AbortController();
+    abortController = currentController;
+    activeQuery = query;
     renderLoading();
 
-    request(queryUrl(query), { signal: abortController.signal })
+    request(queryUrl(query), { signal: currentController.signal })
       .then(function (response) {
         if (!response.ok) {
           throw new Error('Search failed');
@@ -221,7 +242,18 @@
       })
       .then(function (payload) {
         const data = payload.data || {};
-        renderResults(data.section || (query ? 'results' : 'recent'), data.results || []);
+        const section = data.section || (query ? 'results' : 'recent');
+        const items = data.results || [];
+
+        responseCache.set(query, {
+          expiresAt: Date.now() + responseCacheMilliseconds,
+          results: items,
+          section: section
+        });
+
+        if (input.value.trim() === query) {
+          renderResults(section, items);
+        }
       })
       .catch(function (error) {
         if (error.name === 'AbortError') {
@@ -229,6 +261,12 @@
         }
 
         renderNoResults();
+      })
+      .finally(function () {
+        if (abortController === currentController) {
+          abortController = null;
+          activeQuery = null;
+        }
       });
   }
 
@@ -239,8 +277,14 @@
 
   function clearRecent() {
     request(config.recentClearUrl, { method: 'DELETE' })
-      .then(fetchResults)
-      .catch(fetchResults);
+      .then(function () {
+        responseCache.delete('');
+        fetchResults();
+      })
+      .catch(function () {
+        responseCache.delete('');
+        fetchResults();
+      });
   }
 
   input.addEventListener('focus', fetchResults);

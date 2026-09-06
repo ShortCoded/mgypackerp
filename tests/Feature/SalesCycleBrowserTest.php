@@ -25,11 +25,17 @@ test('sales navigation exposes only canonical operational screens and no child s
         'admin.sales.customer-requests.index',
         'admin.sales.quotations.index',
         'admin.sales.sales-orders.index',
-        'admin.sales.delivery-notes.index',
         'admin.sales.sales-invoices.index',
+        'admin.sales.delivery-notes.index',
+        'admin.sales.customer-receipts.index',
         'admin.sales.sales-returns.index',
-        'admin.reports.sales.sales-orders.index',
+        null,
     ]);
+
+    $reportRoutes = collect($menu[0]['children'][8]['children'])->pluck('route')->all();
+    expect($reportRoutes)->toHaveCount(12)
+        ->and($reportRoutes[0])->toBe('admin.accounting.reports.customer-statement')
+        ->and(collect($reportRoutes)->slice(1)->every(fn (?string $route): bool => $route === 'admin.reports.sales.sales-orders.index'))->toBeTrue();
 
     foreach ([
         'admin.sales.sales-order-lines.index',

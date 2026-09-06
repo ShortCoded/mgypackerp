@@ -14,6 +14,7 @@ use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Models\HrEmployee;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 
 class FixedAssetMovement extends Model
 {
@@ -37,7 +38,7 @@ class FixedAssetMovement extends Model
     }
 
     protected $fillable = [
-        'movement_type', 'financial_period_id', 'journal_entry_id', 'reversal_journal_entry_id',
+        'movement_type', 'source_type', 'source_id', 'source_doc_num', 'financial_period_id', 'journal_entry_id', 'reversal_journal_entry_id',
         'opening_balance_id', 'counter_account_id', 'currency_id', 'exchange_rate', 'amount', 'base_amount',
         'opening_accumulated', 'base_opening_accumulated', 'revised_useful_life', 'revised_residual_value',
         'snapshot', 'source_custodian_id', 'destination_custodian_id', 'reversal_date', 'reversed_at', 'reversed_by', 'reversal_reason',
@@ -100,6 +101,11 @@ class FixedAssetMovement extends Model
     public function journalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class)->withTrashed();
+    }
+
+    public function purchaseInvoiceLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseInvoiceLine::class, 'source_id');
     }
 
     public function reversalJournalEntry(): BelongsTo
