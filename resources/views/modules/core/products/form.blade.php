@@ -37,7 +37,9 @@
     $fieldValue = fn (string $field, mixed $default = '') => $useOldInput ? old($field, $record?->{$field} ?? $default) : ($record?->{$field} ?? $default);
     $documentNumberValue = $useOldInput ? old('doc_number', ! $isCreate ? $record?->doc_number : '') : (! $isCreate ? $record?->doc_number : '');
     $contextClassification = Product::classificationForContext($productContext ?? Product::ContextProducts);
-    $classificationValue = $contextClassification ?? $fieldValue('item_classification', Product::ClassificationFinishedProduct);
+    $createDefaults = $createDefaults ?? [];
+    $purchaseAssetSetup = $isCreate && ($createDefaults['item_classification'] ?? null) === Product::ClassificationOther && ! ($createDefaults['cost_as_inventory'] ?? true);
+    $classificationValue = $contextClassification ?? $fieldValue('item_classification', $createDefaults['item_classification'] ?? Product::ClassificationFinishedProduct);
     $classificationOptions = $contextClassification === null
         ? Product::productItemClassifications()
         : [$contextClassification];
@@ -165,6 +167,15 @@
 @endpush
 
 @section('content')
+    @if($purchaseAssetSetup)
+        <div class="alert alert-info d-flex align-items-start gap-2">
+            <span class="fas fa-industry mt-1"></span>
+            <div>
+                <div class="fw-semibold">{{ __('fixed_assets.purchase_source.purchase_item_setup_title') }}</div>
+                <div class="small">{{ __('fixed_assets.purchase_source.purchase_item_setup_help') }}</div>
+            </div>
+        </div>
+    @endif
     <form id="product-form" action="{{ $action }}" method="POST" data-mode="{{ $mode }}" data-product-context="{{ $productContext ?? Product::ContextProducts }}" data-default-classification="{{ $classificationValue }}" novalidate>
         @csrf
         @if ($method !== 'POST')
@@ -489,7 +500,7 @@
                                             @php
                                                 $booleanDefault = $record
                                                     ? (bool) $record->{$booleanField}
-                                                    : true;
+                                                    : (bool) ($createDefaults[$booleanField] ?? true);
                                                 $booleanChecked = $useOldInput
                                                     ? filter_var(old($booleanField, $booleanDefault), FILTER_VALIDATE_BOOL)
                                                     : $booleanDefault;

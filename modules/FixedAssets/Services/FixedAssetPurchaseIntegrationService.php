@@ -109,13 +109,22 @@ class FixedAssetPurchaseIntegrationService
     {
         $invoice = $line->purchaseInvoice;
         $remaining = bcsub($this->lineNetAmount($line), $this->allocatedAmount($line), 4);
+        $existingAssetCount = $line->fixedAssets->count();
+        $remainingAssetCount = max(1, $this->suggestedAssetCardCount($line) - $existingAssetCount);
+        $suggestedPurchaseValue = bccomp($remaining, '0', 4) > 0
+            ? bcdiv($remaining, (string) $remainingAssetCount, 4)
+            : null;
         $date = $invoice->invoice_date?->toDateString();
+        $assetName = $line->product?->name;
+        if ($this->suggestedAssetCardCount($line) > 1) {
+            $assetName = trim($assetName.' '.($existingAssetCount + 1));
+        }
 
         return [
             'source_type' => self::SourceType,
             'source_id' => $line->getKey(),
             'source_doc_num' => $invoice->doc_num,
-            'asset_name' => $line->product?->name,
+            'asset_name' => $assetName,
             'description' => __('fixed_assets.purchase_source.description', [
                 'item' => $line->product?->name,
                 'invoice' => $invoice->doc_num,
@@ -124,7 +133,7 @@ class FixedAssetPurchaseIntegrationService
             'purchase_date' => $date,
             'acquisition_date' => $date,
             'operation_date' => $date,
-            'purchase_value' => bccomp($remaining, '0', 4) > 0 ? $remaining : null,
+            'purchase_value' => $suggestedPurchaseValue,
             'status' => FixedAsset::StatusDraft,
             'branch_option' => $invoice->branch ? [
                 'id' => $invoice->branch->doc_num,
@@ -144,6 +153,18 @@ class FixedAssetPurchaseIntegrationService
             ] : null,
             'exchange_rate' => $invoice->exchange_rate,
         ];
+    }
+
+    public function suggestedAssetCardCount(PurchaseInvoiceLine $line): int
+    {
+        $quantity = (float) $line->quantity;
+        $rounded = round($quantity);
+
+        if ($quantity >= 1 && $quantity <= 100 && abs($quantity - $rounded) < 0.00000001) {
+            return (int) $rounded;
+        }
+
+        return 1;
     }
 
     /** @param array<string, mixed> $data */

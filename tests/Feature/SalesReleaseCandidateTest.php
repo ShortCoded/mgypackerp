@@ -172,6 +172,19 @@ test('credit limits fall back to customer currency settings and drafts retain or
     expect($unchanged->lines->first()->public_id)->toBe($second->lines->first()->public_id);
 });
 
+test('missing credit configuration does not create a zero limit hold', function (): void {
+    $fixture = salesCycleFixture();
+    CustomerCommercialAgreement::query()->where('customer_id', $fixture['customer']->id)->delete();
+    CustomerCreditLimit::query()->where('customer_id', $fixture['customer']->id)->delete();
+    $orders = app(SalesOrderService::class);
+    $order = $orders->create(salesCycleOrderPayload($fixture));
+    $evaluation = app(CreditControlService::class)->evaluate($order);
+
+    expect($evaluation['credit_limit_configured'])->toBeFalse()
+        ->and($evaluation['blocked'])->toBeFalse()
+        ->and($orders->approve($order)->status)->toBe(SalesOrder::StatusApproved);
+});
+
 test('backorders share free stock once and remain visible after their source period closes', function (): void {
     $fixture = salesCycleFixture();
     $orders = app(SalesOrderService::class);

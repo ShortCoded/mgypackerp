@@ -228,7 +228,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
             $this->validateLines($validator, $this->currentRecord());
             $this->validateDiscountsAndSchedule($validator);
             $this->validatePaymentSources($validator);
-            $this->validateProcurementSource($validator);
+            $this->validateDirectProcurementOverride($validator);
         });
     }
 
@@ -480,15 +480,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
         return $current instanceof PurchaseInvoice ? $rule->ignore($current->getKey()) : $rule;
     }
 
-    private function validateProcurementSource(Validator $validator): void
+    private function validateDirectProcurementOverride(Validator $validator): void
     {
-        $hasPurchaseOrder = filled($this->input('purchase_order_doc_num'));
         $isAuthorizedDirect = $this->boolean('direct_procurement_override')
             && (bool) $this->user()?->can('purchases.direct_procurement.override');
-
-        if (! $hasPurchaseOrder && ! $isAuthorizedDirect) {
-            $validator->errors()->add('purchase_order_doc_num', __('purchase_invoices.messages.purchase_order_required_without_override'));
-        }
 
         if ($this->boolean('direct_procurement_override') && ! $isAuthorizedDirect) {
             $validator->errors()->add('direct_procurement_override', __('purchase_invoices.messages.direct_procurement_override_forbidden'));

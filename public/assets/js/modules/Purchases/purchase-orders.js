@@ -279,6 +279,20 @@
         syncBulkUi();
       }
     }));
+
+    $table.off('dblclick.purchaseOrderEditRow', 'tbody tr:not(.child)').on('dblclick.purchaseOrderEditRow', 'tbody tr:not(.child)', function (event) {
+      if ($(event.target).closest('a, button, input, select, textarea, label, .dropdown-menu').length) {
+        return;
+      }
+
+      const row = purchaseOrderTable.row(this).data();
+      const destination = row && row.can_edit ? row.edit_url : (row && row.view_url);
+
+      if (destination) {
+        window.location.assign(destination);
+      }
+    });
+
     $('#purchase-document-filters form').on('submit', function(event) {event.preventDefault(); purchaseOrderTable.ajax.reload();});
     $('#purchase-document-filters .js-report-reset').on('click', function() {const form=this.closest('form'); form.reset(); $(form).find('.js-select2-ajax').val(null).trigger('change'); purchaseOrderTable.ajax.reload();});
   }

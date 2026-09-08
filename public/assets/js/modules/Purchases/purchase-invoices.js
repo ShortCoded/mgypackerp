@@ -311,6 +311,20 @@
         restoreSelectionState(purchaseInvoiceTable);
       }
     }));
+
+    $table.off('dblclick.purchaseInvoiceEditRow', 'tbody tr:not(.child)').on('dblclick.purchaseInvoiceEditRow', 'tbody tr:not(.child)', function (event) {
+      if ($(event.target).closest('a, button, input, select, textarea, label, .dropdown-menu').length) {
+        return;
+      }
+
+      const row = purchaseInvoiceTable.row(this).data();
+      const destination = row && row.can_edit ? row.edit_url : (row && row.view_url);
+
+      if (destination) {
+        window.location.assign(destination);
+      }
+    });
+
     $('#purchase-document-filters form').on('submit', function(event) {event.preventDefault(); purchaseInvoiceTable.ajax.reload();});
     $('#purchase-document-filters .js-report-reset').on('click', function() {const form=this.closest('form'); form.reset(); $(form).find('.js-select2-ajax').val(null).trigger('change'); purchaseInvoiceTable.ajax.reload();});
 
@@ -529,6 +543,52 @@
 
     if (!$unit.val() && options && options.length) {
       $unit.val(options[0].id);
+    }
+  }
+
+  function detachLineFromProcurementSource($row) {
+    $row.find('[name$="[purchase_order_line_public_id]"], [name$="[receipt_line_public_id]"]').val('');
+    $row.find('.js-purchase-invoice-source-reference').prop('hidden', true).find('a, small').remove();
+    $row.find('.js-purchase-invoice-duplicate-line').prop('hidden', false);
+  }
+
+  function replaceSelectValue($select, value, text) {
+    if (!value || $select.length === 0) {
+      return;
+    }
+
+    const hasOption = $select.find('option').filter(function () {
+      return String(this.value) === String(value);
+    }).length > 0;
+    if (!hasOption) {
+      $select.append(new Option(text || value, value, true, true));
+    }
+    $select.val(value).trigger('change');
+  }
+
+  function purchaseOrderSelection($field) {
+    const select2Data = $field.hasClass('select2-hidden-accessible') ? $field.select2('data')[0] : null;
+    const $option = $field.find('option:selected');
+
+    return {
+      supplierDocNum: select2Data && select2Data.supplier_doc_num ? select2Data.supplier_doc_num : $option.data('supplierDocNum'),
+      supplierText: select2Data && select2Data.supplier_text ? select2Data.supplier_text : $option.data('supplierText'),
+      currencyDocNum: select2Data && select2Data.currency_doc_num ? select2Data.currency_doc_num : $option.data('currencyDocNum'),
+      currencyText: select2Data && select2Data.currency_text ? select2Data.currency_text : $option.data('currencyText'),
+      exchangeRate: select2Data && select2Data.exchange_rate ? select2Data.exchange_rate : $option.data('exchangeRate')
+    };
+  }
+
+  function syncPurchaseOrderContext($form, $field) {
+    if (!$field.val()) {
+      return;
+    }
+
+    const source = purchaseOrderSelection($field);
+    replaceSelectValue($form.find('#supplier_doc_num'), source.supplierDocNum, source.supplierText);
+    replaceSelectValue($form.find('#currency_doc_num'), source.currencyDocNum, source.currencyText);
+    if (source.exchangeRate) {
+      $form.find('#exchange_rate').val(source.exchangeRate);
     }
   }
 
@@ -813,7 +873,12 @@
       const $row = $(this).closest('.js-purchase-invoice-line');
       const options = parseUnitOptions(data);
 
+      detachLineFromProcurementSource($row);
       populateUnitSelect($row, options);
+    });
+
+    $form.on('change', '.js-purchase-invoice-unit', function () {
+      detachLineFromProcurementSource($(this).closest('.js-purchase-invoice-line'));
     });
 
     $form.on('change input', '.js-purchase-invoice-line-number, .js-purchase-invoice-discount-type, .js-purchase-invoice-header-discount-type, .js-purchase-invoice-header-discount-value, .js-purchase-invoice-freight, .js-purchase-invoice-freight-tax-rate, .js-purchase-invoice-schedule-amount', function () {
@@ -829,6 +894,16 @@
     });
 
     $form.on('change', '#purchase_order_doc_num', function () {
+      const nextPurchaseOrder = String($(this).val() || '');
+      const currentPurchaseOrder = String($form.attr('data-current-purchase-order') || '');
+      if (nextPurchaseOrder !== currentPurchaseOrder) {
+        $form.find('.js-purchase-invoice-line').each(function () {
+          detachLineFromProcurementSource($(this));
+        });
+        $form.find('#source_receipts').val(null).trigger('change');
+        $form.attr('data-current-purchase-order', nextPurchaseOrder);
+      }
+      syncPurchaseOrderContext($form, $(this));
       updateFreightMatch($form, true);
       calculateTotals($form);
     });
@@ -845,7 +920,9 @@
       addLine($form, false);
     });
 
-    $form.on('click', '.js-purchase-invoice-duplicate-line', function () {
+    $form.on('click', '.js-purchase-invoice-duplicate-line', function (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const $row = $(this).closest('.js-purchase-invoice-line');
       if ($row.find('[name$="[purchase_order_line_public_id]"]').val()) return;
       const $clone = $row.clone(false, false);
@@ -860,7 +937,9 @@
       calculateTotals($form);
     });
 
-    $form.on('click', '.js-purchase-invoice-remove-line', function () {
+    $form.on('click', '.js-purchase-invoice-remove-line', function (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       removeLine($form, $(this).closest('.js-purchase-invoice-line'));
     });
 
@@ -868,7 +947,9 @@
       addSchedule($form, false);
     });
 
-    $form.on('click', '.js-purchase-invoice-duplicate-schedule', function () {
+    $form.on('click', '.js-purchase-invoice-duplicate-schedule', function (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const $row = $(this).closest('.js-purchase-invoice-schedule');
       const $clone = $row.clone(false, false);
       cleanSelect2($clone);
@@ -880,7 +961,9 @@
       calculateTotals($form);
     });
 
-    $form.on('click', '.js-purchase-invoice-remove-schedule', function () {
+    $form.on('click', '.js-purchase-invoice-remove-schedule', function (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       removeSchedule($form, $(this).closest('.js-purchase-invoice-schedule'));
     });
 

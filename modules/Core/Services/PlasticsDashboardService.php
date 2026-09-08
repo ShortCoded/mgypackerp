@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Models\UserTask;
@@ -22,6 +23,7 @@ class PlasticsDashboardService
      */
     private const DASHBOARD_SCHEMA = [
         'branch_stores' => ['deleted_at' => true],
+        'branches' => ['company_id' => true, 'type' => true],
         'customers' => ['company_id' => true, 'deleted_at' => true, 'status' => true],
         'financial_periods' => [],
         'inventory_opening_stocks' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
@@ -30,6 +32,7 @@ class PlasticsDashboardService
         'products' => [],
         'purchase_invoices' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
         'purchase_orders' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
+        'purchase_requisitions' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true, 'status' => true],
         'quotations' => ['company_id' => true, 'deleted_at' => true],
         'suppliers' => ['company_id' => true, 'deleted_at' => true, 'status' => true],
         'unpriced_inventory_receipts' => ['branch_id' => true, 'company_id' => true, 'deleted_at' => true, 'financial_period_id' => true],
@@ -326,6 +329,24 @@ class PlasticsDashboardService
     {
         $items = [];
 
+        if ($this->can($user, 'purchases.purchase_requisitions.view') && $this->tableExists('purchase_requisitions')) {
+            $query = $this->contextQuery(
+                'purchase_requisitions',
+                $context,
+                branch: ! $this->isAdministrativeBranchContext($context),
+            )->whereBetween('request_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
+            [$count, $pendingApproval] = $this->countWithValues($query, 'status', ['pending_approval']);
+
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.purchase_requisitions.title'),
+                $count,
+                __('dashboard.plastics.metrics.purchase_requisitions.meta', ['count' => $this->formatCount($pendingApproval)]),
+                'clipboard-check',
+                $pendingApproval > 0 ? 'warning' : 'primary',
+                $this->routeUrl('admin.purchases.purchase-requisitions.index'),
+            );
+        }
+
         if ($this->can($user, 'suppliers.view') && $this->tableExists('suppliers')) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.suppliers.title'),
@@ -605,11 +626,24 @@ class PlasticsDashboardService
         bool $branch = true,
         bool $financialPeriod = true,
     ): QueryBuilder {
+        if ($branch && $this->isAdministrativeBranchContext($context)) {
+            $branch = false;
+        }
+
         return $this->visibility->applyToQuery(
             $this->contextQuery($table, $context, $branch, $financialPeriod),
             $user,
             $screenKey,
         );
+    }
+
+    private function isAdministrativeBranchContext(array $context): bool
+    {
+        return DB::table('branches')
+            ->where('id', $context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 
     private function taskQueryForUser(User $user): QueryBuilder

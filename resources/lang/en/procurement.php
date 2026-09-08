@@ -5,6 +5,7 @@ return [
         'inventory_context_required' => 'Purchase requests require a factory or warehouse context.',
         'administrative_context_required' => 'This purchasing action requires an administrative branch context.',
         'request_origin' => 'Request origin',
+        'receiving_location' => 'Receiving branch and warehouse',
         'employee_unavailable' => 'The employee is not available in the current company.',
         'requester_employee' => 'Requesting employee',
         'order_selected' => 'Create order from selected',

@@ -34,11 +34,20 @@ class PurchaseInvoiceMatchingService
         $invoice->loadMissing(['purchaseOrder', 'lines.product', 'lines.purchaseOrderLine', 'lines.receiptLine.receipt']);
 
         if (! $invoice->purchaseOrder instanceof PurchaseOrder) {
-            if (! $invoice->direct_procurement_override || blank($invoice->direct_procurement_reason)) {
-                throw new DomainException(__('A purchase invoice requires a purchase order or an authorized direct-procurement reason.'));
-            }
-            $invoice->forceFill(['matching_status' => 'authorized_direct', 'matching_notes' => $invoice->direct_procurement_reason])->save();
-            $this->audit->record($invoice, 'purchase_invoice.direct_procurement_authorized');
+            $matchingStatus = $invoice->direct_procurement_override && filled($invoice->direct_procurement_reason)
+                ? 'authorized_direct'
+                : 'direct_invoice';
+            $invoice->forceFill([
+                'matching_status' => $matchingStatus,
+                'matching_notes' => json_encode([
+                    'direct_invoice' => true,
+                    'reason' => $invoice->direct_procurement_reason,
+                    'line_variances' => $invoice->lines->map(fn (PurchaseInvoiceLine $line): array => $this->unmatchedVariance($line))->all(),
+                ], JSON_THROW_ON_ERROR),
+            ])->save();
+            $this->audit->record($invoice, $matchingStatus === 'authorized_direct'
+                ? 'purchase_invoice.direct_procurement_authorized'
+                : 'purchase_invoice.direct_recorded');
 
             return;
         }
@@ -49,11 +58,21 @@ class PurchaseInvoiceMatchingService
             || (int) $order->branch_id !== (int) $invoice->branch_id
             || (int) $order->currency_id !== (int) $invoice->currency_id
             || ! in_array($order->status, [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed], true)) {
-            throw new DomainException(__('Purchase order, supplier, and invoice context do not match.'));
+            throw new DomainException(__('purchase_invoices.messages.purchase_order_context_mismatch'));
         }
 
         $variances = [];
         foreach ($invoice->lines as $invoiceLine) {
+            $source = $invoiceLine->purchaseOrderLine;
+            if (! $source instanceof PurchaseOrderLine
+                || (int) $source->purchase_order_id !== (int) $order->getKey()
+                || (int) $source->product_id !== (int) $invoiceLine->product_id
+                || (int) $source->unit_id !== (int) $invoiceLine->unit_id) {
+                $variances[] = $this->unmatchedVariance($invoiceLine);
+
+                continue;
+            }
+
             $this->matchLine($invoiceLine, $order);
             $invoiceLine->refresh()->load(['purchaseOrderLine', 'receiptLine']);
             $source = $invoiceLine->purchaseOrderLine;
@@ -68,14 +87,17 @@ class PurchaseInvoiceMatchingService
                 'quantity_variance' => number_format((float) $invoiceLine->quantity - $baselineQuantity, 8, '.', ''),
                 'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 4),
                 'tax_rate_variance' => bcsub((string) $invoiceLine->tax_rate, (string) $source->tax_rate, 4),
+                'match_type' => 'linked',
             ];
         }
 
         $freightMatch = $this->matchFreight($invoice, $order);
 
-        $hasVariance = collect($variances)->contains(fn (array $variance): bool => abs((float) $variance['quantity_variance']) > 0.00000001
+        $hasVariance = collect($variances)->contains(fn (array $variance): bool => ($variance['match_type'] ?? null) === 'unlinked'
+            || abs((float) $variance['quantity_variance']) > 0.00000001
             || abs((float) $variance['unit_price_variance']) > 0.0001
-            || abs((float) $variance['tax_rate_variance']) > 0.0001);
+            || abs((float) $variance['tax_rate_variance']) > 0.0001)
+            || abs((float) $freightMatch['variance']) > 0.0001;
         $invoice->forceFill([
             'matching_status' => $hasVariance ? 'approved_with_variance' : 'matched',
             'matching_notes' => json_encode([...$freightMatch, 'line_variances' => $variances], JSON_THROW_ON_ERROR),
@@ -101,10 +123,6 @@ class PurchaseInvoiceMatchingService
         $current = (float) $invoice->freight_amount;
         $availableBeforeCurrent = max(0, $approved - $previouslyInvoiced);
 
-        if ($current > $availableBeforeCurrent + 0.0001) {
-            throw new DomainException(__('Invoice freight exceeds the remaining approved Purchase Order freight.'));
-        }
-
         $remaining = max(0, $availableBeforeCurrent - $current);
 
         return [
@@ -113,6 +131,21 @@ class PurchaseInvoiceMatchingService
             'current' => number_format($current, 4, '.', ''),
             'remaining' => number_format($remaining, 4, '.', ''),
             'variance' => number_format($current - $availableBeforeCurrent, 4, '.', ''),
+        ];
+    }
+
+    /** @return array{line: string, order_line: null, ordered_quantity: string, received_quantity: string, quantity_variance: string, unit_price_variance: string, tax_rate_variance: string, match_type: string} */
+    private function unmatchedVariance(PurchaseInvoiceLine $invoiceLine): array
+    {
+        return [
+            'line' => $invoiceLine->public_id,
+            'order_line' => null,
+            'ordered_quantity' => '0.00000000',
+            'received_quantity' => '0.00000000',
+            'quantity_variance' => number_format((float) $invoiceLine->quantity, 8, '.', ''),
+            'unit_price_variance' => number_format((float) $invoiceLine->unit_price, 4, '.', ''),
+            'tax_rate_variance' => number_format((float) $invoiceLine->tax_rate, 4, '.', ''),
+            'match_type' => 'unlinked',
         ];
     }
 

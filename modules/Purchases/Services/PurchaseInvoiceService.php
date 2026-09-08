@@ -467,7 +467,7 @@ class PurchaseInvoiceService
         $purchaseOrder = $this->purchaseOrder($context['company_id'], $data['purchase_order_doc_num'] ?? null);
         $documentBranchId = $purchaseOrder?->branch_id ?? $record?->branch_id ?? $context['branch_id'];
         if ($purchaseOrder && (int) $purchaseOrder->supplier_id !== (int) $supplier?->getKey()) {
-            throw new DomainException(__('Purchase order, supplier, and invoice context do not match.'));
+            throw new DomainException(__('purchase_invoices.messages.purchase_order_supplier_mismatch'));
         }
         $supplierNumber = trim((string) ($data['supplier_invoice_number'] ?? ''));
         if ($supplier && $supplierNumber !== '') {
@@ -486,7 +486,7 @@ class PurchaseInvoiceService
             'branch_id' => $documentBranchId,
             'supplier_id' => $supplier?->getKey(),
             'purchase_order_id' => $purchaseOrder?->getKey(),
-            'purchase_type' => $data['purchase_type'] ?? 'standard',
+            'purchase_type' => $purchaseOrder ? ($data['purchase_type'] ?? 'standard') : 'direct',
             'matching_status' => 'not_matched',
             'matching_notes' => null,
             'direct_procurement_override' => (bool) ($data['direct_procurement_override'] ?? false),
@@ -541,7 +541,7 @@ class PurchaseInvoiceService
             if (! $purchaseOrderLine instanceof PurchaseOrderLine
                 || (int) $purchaseOrderLine->product_id !== (int) $product->getKey()
                 || (int) $purchaseOrderLine->unit_id !== (int) $unit?->getKey()) {
-                $purchaseOrderLine = $this->purchaseOrderLineForProduct($record, $product, $unit);
+                $purchaseOrderLine = null;
             }
             $receiptLine = $this->receiptLine($purchaseOrderLine, $line['receipt_line_public_id'] ?? null);
             $isSourceLinked = $purchaseOrderLine instanceof PurchaseOrderLine
@@ -1249,22 +1249,6 @@ class PurchaseInvoiceService
             ->where('purchase_order_line_id', $purchaseOrderLine->getKey())
             ->where('public_id', $publicId)
             ->first();
-    }
-
-    private function purchaseOrderLineForProduct(PurchaseInvoice $invoice, Product $product, ?ItemUnit $unit): ?PurchaseOrderLine
-    {
-        if ($invoice->purchase_order_id === null || $unit === null) {
-            return null;
-        }
-
-        $lines = PurchaseOrderLine::query()
-            ->where('purchase_order_id', $invoice->purchase_order_id)
-            ->where('product_id', $product->getKey())
-            ->where('unit_id', $unit->getKey())
-            ->limit(2)
-            ->get();
-
-        return $lines->count() === 1 ? $lines->first() : null;
     }
 
     /**

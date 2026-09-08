@@ -6,6 +6,7 @@ use Closure;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -1211,7 +1212,35 @@ class ProcurementWorkflowController extends Controller
             $createUrl = null;
         }
 
-        return view('modules.purchases.procurement.document-index', compact('screen', 'definition', 'createUrl', 'statuses', 'isAdministrativeBranch'));
+        $filterBranches = collect();
+        $filterStores = collect();
+        if ($screen === 'goods_receipt_inspections') {
+            $context = $this->context();
+            $filterBranches = Branch::query()
+                ->where('company_id', $context['company_id'])
+                ->when(! $isAdministrativeBranch, fn (Builder $query) => $query->whereKey($context['branch_id']))
+                ->active()
+                ->orderBy('name')
+                ->get();
+            $filterStores = BranchStore::query()
+                ->with('branch')
+                ->whereHas('branch', fn (Builder $query) => $query
+                    ->where('company_id', $context['company_id'])
+                    ->when(! $isAdministrativeBranch, fn (Builder $branches) => $branches->whereKey($context['branch_id'])))
+                ->whereNull('deleted_at')
+                ->orderBy('name')
+                ->get();
+        }
+
+        return view('modules.purchases.procurement.document-index', compact(
+            'screen',
+            'definition',
+            'createUrl',
+            'statuses',
+            'isAdministrativeBranch',
+            'filterBranches',
+            'filterStores',
+        ));
     }
 
     public function documentData(Request $request, string $screen, ProcurementDocumentsDataTable $table): JsonResponse

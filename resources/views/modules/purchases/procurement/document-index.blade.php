@@ -15,6 +15,26 @@
         <div class="col-md-3"><label class="form-label">{{ __('Status') }}</label><select class="form-select" name="status"><option value="">{{ __('All') }}</option>@foreach($statuses as $status)<option value="{{ $status }}">{{ __('procurement.ui.statuses.'.$status) }}</option>@endforeach</select></div>
         @foreach(['date_from' => __('From date'), 'date_to' => __('To date')] as $field => $label)<div class="col-md-3"><label class="form-label" for="{{ $field }}">{{ $label }}</label><input class="form-control js-date-picker" name="{{ $field }}" id="{{ $field }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr"></div>@endforeach
         @if(in_array($screen, ['supplier_quotations', 'goods_receipt_inspections', 'goods_receipts', 'purchase_returns']))<div class="col-md-3"><label class="form-label">{{ __('Supplier') }}</label><select class="form-select js-select2-ajax" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('Select') }}"></select></div>@endif
+        @if($screen === 'goods_receipt_inspections')
+            @if($isAdministrativeBranch)
+                <div class="col-md-3">
+                    <label class="form-label" for="inspection_branch">{{ __('Branch') }}</label>
+                    <select class="form-select js-select2-local" name="branch_doc_num" id="inspection_branch" data-allow-clear="true" data-placeholder="{{ __('All') }}">
+                        <option value=""></option>
+                        @foreach($filterBranches as $filterBranch)<option value="{{ $filterBranch->doc_num }}">{{ $filterBranch->name }}</option>@endforeach
+                    </select>
+                </div>
+            @endif
+            <div class="col-md-3">
+                <label class="form-label" for="inspection_store">{{ __('Warehouse') }}</label>
+                <select class="form-select js-select2-local" name="branch_store_uuid" id="inspection_store" data-allow-clear="true" data-placeholder="{{ __('All') }}">
+                    <option value=""></option>
+                    @foreach($filterStores as $filterStore)
+                        <option value="{{ $filterStore->public_uuid }}">{{ $isAdministrativeBranch ? $filterStore->branch?->name.' — ' : '' }}{{ $filterStore->name }}</option>
+                    @endforeach
+                </select>
+            </div>
+        @endif
         <div class="col-12 d-flex gap-2"><button type="submit" class="btn btn-primary btn-sm">{{ __('common.actions.apply') }}</button><button type="reset" class="btn btn-falcon-default btn-sm">{{ __('Reset') }}</button></div>
     </form></div>
 </div>

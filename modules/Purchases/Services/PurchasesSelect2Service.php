@@ -121,7 +121,7 @@ class PurchasesSelect2Service
                 fn (Builder $query) => $query->when(! $isAdministrativeBranch, fn (Builder $orders) => $orders->where('branch_id', $context['branch_id'])),
             )
             ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
-            ->with('supplier')->orderByDesc('id');
+            ->with(['supplier', 'currency', 'branchStore.branch'])->orderByDesc('id');
         if (in_array($request->input('purpose'), ['receipt', 'inspection', 'supply_order'], true)) {
             $query->where('status', PurchaseOrder::StatusApproved)->whereHas('lines', function ($lines) use ($request): void {
                 $received = UnpricedInventoryReceiptLine::query()->selectRaw('COALESCE(SUM(accepted_quantity), 0)')
@@ -153,7 +153,15 @@ class PurchasesSelect2Service
         }
         $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num', 'supplier_reference']]);
 
-        return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num.' / '.$record->supplier?->name]);
+        return $this->select2->paginated($query, $request, fn ($record): array => [
+            'id' => $record->doc_num,
+            'text' => collect([$record->doc_num, $record->supplier?->name, $record->branchStore?->branch?->name, $record->branchStore?->name])->filter()->join(' / '),
+            'supplier_doc_num' => $record->supplier?->doc_num,
+            'supplier_text' => $record->supplier ? collect([$record->supplier->doc_num, $record->supplier->name, $record->supplier->phone ?: $record->supplier->mobile])->filter()->join(' / ') : null,
+            'currency_doc_num' => $record->currency?->doc_num,
+            'currency_text' => $record->currency ? collect([$record->currency->code, $record->currency->name])->filter()->join(' / ') : null,
+            'exchange_rate' => $record->exchange_rate,
+        ]);
     }
 
     public function invoices(Request $request): array
@@ -192,7 +200,7 @@ class PurchasesSelect2Service
                 fn (Builder $query) => $query->where('branch_id', $context['branch_id']),
             )
             ->whereIn('status', [SupplyOrder::StatusIssued, SupplyOrder::StatusPartiallyReceived])
-            ->with('supplier')->orderByDesc('id');
+            ->with(['supplier', 'branchStore.branch'])->orderByDesc('id');
         if ($request->input('purpose') === 'inspection') {
             $query->whereHas('lines', function (Builder $lines): void {
                 $received = UnpricedInventoryReceiptLine::query()
@@ -212,7 +220,7 @@ class PurchasesSelect2Service
 
         return $this->select2->paginated($query, $request, fn (SupplyOrder $record): array => [
             'id' => $record->doc_num,
-            'text' => $record->doc_num.' / '.$record->supplier?->name.' / '.$record->source_doc_num,
+            'text' => collect([$record->doc_num, $record->supplier?->name, $record->source_doc_num, $record->branchStore?->branch?->name, $record->branchStore?->name])->filter()->join(' / '),
         ]);
     }
 
@@ -590,6 +598,7 @@ class PurchasesSelect2Service
                 'products.image_path',
                 'products.barcode',
                 'products.item_classification',
+                'products.cost_as_inventory',
                 'products.item_unit_id',
                 'products.equivalent_unit_id',
                 'item_units.doc_num as unit_doc_num',
@@ -611,10 +620,17 @@ class PurchasesSelect2Service
     {
         $unitLabel = trim(implode(' / ', array_filter([$product->unit_doc_num, $product->unit_name])));
         $barcode = trim((string) $product->barcode);
+        $isAssetPurchaseCandidate = ! $product->isService() && ! $product->cost_as_inventory;
 
         return [
             'id' => (string) $product->doc_num,
-            'text' => trim(implode(' / ', array_filter([$product->doc_num, $product->name, $barcode === '' ? null : $barcode, $unitLabel]))),
+            'text' => trim(implode(' / ', array_filter([
+                $product->doc_num,
+                $product->name,
+                $barcode === '' ? null : $barcode,
+                $unitLabel,
+                $isAssetPurchaseCandidate ? __('fixed_assets.purchase_source.purchase_item_asset_candidate') : null,
+            ]))),
             'unitDocNum' => $product->unit_doc_num,
             'unitLabel' => $unitLabel,
             'unit_options' => $this->unitOptions->options($product),
@@ -624,6 +640,8 @@ class PurchasesSelect2Service
                 'name' => (string) $product->name,
                 'barcode' => $barcode === '' ? null : $barcode,
                 'item_classification' => (string) $product->item_classification,
+                'cost_as_inventory' => (bool) $product->cost_as_inventory,
+                'is_asset_purchase_candidate' => $isAssetPurchaseCandidate,
                 'unit' => $unitLabel,
                 'unit_doc_num' => $product->unit_doc_num,
                 'category' => $product->category_name,

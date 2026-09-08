@@ -6,7 +6,10 @@
     $showRequestedDate = $showRequestedDate ?? true;
 @endphp
 <tr data-sales-line>
-    <td data-row-number>{{ is_numeric($index) ? $index + 1 : '' }}</td>
+    <td data-row-number>
+        {{ is_numeric($index) ? $index + 1 : '' }}
+        @if(! $showRequestedDate && filled($line['requested_date'] ?? null))<input type="hidden" name="lines[{{ $index }}][requested_date]" value="{{ $line['requested_date'] }}">@endif
+    </td>
     <td>
         @if($sourceRequestLine)<input type="hidden" name="lines[{{ $index }}][source_request_line_public_id]" value="{{ $sourceRequestLine }}"><input type="hidden" name="lines[{{ $index }}][product_doc_num]" value="{{ $selectedProduct }}">@endif
         <select class="form-select form-select-sm js-sales-product {{ $sourceRequestLine ? 'js-select2-local' : 'js-select2-ajax' }}" @unless($sourceRequestLine) data-url="{{ route('admin.sales.select2.quotation-products') }}" data-allow-clear="true" name="lines[{{ $index }}][product_doc_num]" @endunless @disabled($sourceRequestLine) required><option value="">{{ __('Select product') }}</option>@foreach($products as $product)<option value="{{ $product->doc_num }}" @selected($selectedProduct === $product->doc_num)>{{ $product->doc_num }} / {{ $product->name }}</option>@endforeach</select>

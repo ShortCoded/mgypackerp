@@ -2,7 +2,10 @@
     $prefix = 'admin.purchases.'.$definition['route'];
     $permission = 'purchases.'.$definition['permission'];
     $draft = $record->status === 'draft' && ($screen !== 'goods_receipts' || $record->posting_status === 'unposted');
-    $editableDraft = $draft && ($screen !== 'goods_receipts' || in_array($record->qc_status, ['pending_inspection', 'not_required'], true));
+    $editableDraft = $draft && ($screen !== 'goods_receipts' || (
+        in_array($record->qc_status, ['pending_inspection', 'not_required'], true)
+        && $record->inspection === null
+    ));
     $isOwnBranch = (int) ($record->branch_id ?? 0) === (int) ($activeBranchId ?? 0);
     $isDestinationBranch = (int) ($record->branchStore?->branch_id ?? 0) === (int) ($activeBranchId ?? 0);
 @endphp

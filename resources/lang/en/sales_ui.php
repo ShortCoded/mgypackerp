@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'continue_sales_cycle' => 'Continue sales cycle',
+    'create_quotation' => 'Create quotation',
     'direct_quotation' => 'Direct quotation',
     'source_quotation_request_help' => 'Choose an approved sales request to load its customer, currency, sales employee, and remaining lines.',
     'choose_invoice_source' => 'Choose invoice source',
@@ -13,7 +15,7 @@ return [
     'create_direct_invoice' => 'Create direct invoice',
     'add_employee' => 'Add employee',
     'create_invoice' => 'Create Sales Invoice',
-    'invoice_source_help' => 'Select an approved sales order with quantities available to invoice.',
+    'invoice_source_help' => 'Start from an approved sales order, an approved sales request, or create a standalone invoice.',
     'continue_invoice' => 'Continue to invoice',
     'employee_hint' => 'Active HR employees in the current company and branch appear here.',
     'collection_details' => 'Collection details',

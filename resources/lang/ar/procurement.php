@@ -5,6 +5,7 @@ return [
         'inventory_context_required' => 'طلبات الشراء متاحة من سياق مصنع أو مخزن فقط.',
         'administrative_context_required' => 'هذا الإجراء في المشتريات متاح من فرع إداري فقط.',
         'request_origin' => 'جهة الطلب والمخزن',
+        'receiving_location' => 'الفرع والمخزن المستلم',
         'employee_unavailable' => 'الموظف المحدد غير متاح في الشركة الحالية.',
         'requester_employee' => 'مقدم الطلب',
         'order_selected' => 'إنشاء أمر شراء من المحدد',

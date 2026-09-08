@@ -4,7 +4,11 @@
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $title = __(str($kind)->replace('_', ' ')->title()->toString());
-    $salesEmployee = $record->salesEmployee ?? $record->salesOrder?->salesEmployee ?? $record->order?->salesEmployee;
+    $sourceSalesOrder = $record->relationLoaded('salesOrder') ? $record->salesOrder : null;
+    $sourceOrder = $record->relationLoaded('order') ? $record->order : null;
+    $salesEmployee = ($record->relationLoaded('salesEmployee') ? $record->salesEmployee : null)
+        ?? $sourceSalesOrder?->salesEmployee
+        ?? $sourceOrder?->salesEmployee;
     $lines = $record->relationLoaded('lines') ? $record->lines : collect();
     $printRoutes = [
         'sales_order' => 'admin.sales.sales-orders.print', 'invoice' => 'admin.sales.sales-invoices.print',
@@ -69,7 +73,8 @@
                 @if($record->expected_delivery_date ?? null)<div class="col-md-4"><strong>{{ __('Required date') }}</strong><div>{{ $dates->formatDate($record->expected_delivery_date, '') }}</div></div>@endif
                 @if($salesEmployee)<div class="col-md-4"><strong>{{ __('Sales representative') }}</strong><div>{{ $salesEmployee->doc_num }} / {{ $salesEmployee->full_name ?: $salesEmployee->name }}</div></div>@endif
                 @if($record->quotation ?? null)<div class="col-md-4"><strong>{{ __('Source Quotation') }}</strong><div>@can('quotations.view')<a href="{{ route('admin.sales.quotations.show', $record->quotation) }}">{{ $quotationReference($record->quotation, $record->quotationRevision) }}</a>@else{{ $quotationReference($record->quotation, $record->quotationRevision) }}@endcan</div></div>@endif
-                @if($record->salesOrder ?? $record->order ?? null)<div class="col-md-4"><strong>{{ __('Sales Order') }}</strong><div>{{ ($record->salesOrder ?? $record->order)->doc_num }}</div></div>@endif
+                @if($sourceSalesOrder ?? $sourceOrder)<div class="col-md-4"><strong>{{ __('Sales Order') }}</strong><div>{{ ($sourceSalesOrder ?? $sourceOrder)->doc_num }}</div></div>@endif
+                @if($kind === 'sales_delivery' && !($sourceSalesOrder ?? $sourceOrder) && filled($record->source_doc_num))<div class="col-md-4"><strong>{{ __('Sales Invoice') }}</strong><div>{{ $record->source_doc_num }}</div></div>@endif
                 @if($record->invoice ?? null)<div class="col-md-4"><strong>{{ __('Original Invoice') }}</strong><div>{{ $record->invoice->doc_num }}</div></div>@endif
                 @if($record->relationLoaded('customerInvoices') && $record->customerInvoices->isNotEmpty())<div class="col-md-4"><strong>{{ __('Sales Invoice') }}</strong><div>@foreach($record->customerInvoices as $invoice)<a class="d-block" href="{{ route('admin.sales.sales-invoices.show', $invoice) }}">{{ $invoice->doc_num }}</a>@endforeach</div></div>@endif
                 @if($record->relationLoaded('deliveries') && $record->deliveries->isNotEmpty())<div class="col-md-4"><strong>{{ __('Deliveries') }}</strong><div>{{ $record->deliveries->pluck('doc_num')->join(' / ') }}</div></div>

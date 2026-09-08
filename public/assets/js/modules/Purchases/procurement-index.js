@@ -21,6 +21,12 @@
         $('[data-procurement-filters]').on('submit', function (event) {event.preventDefault(); table.ajax.reload();});
         $('[data-procurement-filters]').on('reset', function () {setTimeout(() => {$(this).find('.js-select2-ajax').val(null).trigger('change'); table.ajax.reload();},0);});
         $('#trash_filter').on('change', () => table.ajax.reload());
+        $(element).off('dblclick.procurementEditRow', 'tbody tr:not(.child)').on('dblclick.procurementEditRow', 'tbody tr:not(.child)', function (event) {
+            if ($(event.target).closest('a, button, input, select, textarea, label, .dropdown-menu').length) return;
+            const row = table.row(this).data();
+            const destination = row?.can_edit ? row.edit_url : row?.view_url;
+            if (destination) window.location.assign(destination);
+        });
         $(element).on('change', '.js-procurement-select', function () {this.checked ? selected.add(this.value) : selected.delete(this.value); sync();});
         $('[data-procurement-select-all]').on('change', function () {$(element).find('.js-procurement-select').prop('checked', this.checked).trigger('change');});
         bulk?.addEventListener('click', () => {const url = new URL(bulk.dataset.bulkCreateOrder, location.href); selected.forEach(value => url.searchParams.append('purchase_requisition_doc_nums[]',value)); location.href = url.href;});

@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'continue_sales_cycle' => 'متابعة دورة المبيعات',
+    'create_quotation' => 'إنشاء عرض سعر',
     'direct_quotation' => 'عرض سعر مباشر',
     'source_quotation_request_help' => 'اختر طلب مبيعات معتمدًا لتحميل العميل والعملة ومندوب المبيعات والبنود المتبقية.',
     'choose_invoice_source' => 'اختر مصدر فاتورة المبيعات',
@@ -13,7 +15,7 @@ return [
     'create_direct_invoice' => 'إنشاء فاتورة مباشرة',
     'add_employee' => 'إضافة موظف',
     'create_invoice' => 'إضافة فاتورة مبيعات',
-    'invoice_source_help' => 'اختر أمر البيع المعتمد الذي يحتوي كميات قابلة للفوترة.',
+    'invoice_source_help' => 'ابدأ من أمر بيع معتمد أو طلب مبيعات معتمد، أو أنشئ فاتورة مستقلة مباشرة.',
     'continue_invoice' => 'متابعة إنشاء الفاتورة',
     'employee_hint' => 'القائمة تعرض الموظفين النشطين المسجلين في الموارد البشرية للشركة والفرع الحاليين.',
     'collection_details' => 'تفاصيل تحصيل العميل',

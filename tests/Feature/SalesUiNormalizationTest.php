@@ -7,6 +7,8 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\MenuService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Exports\SalesCycleReportExport;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesRequest;
@@ -14,6 +16,8 @@ use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\QuotationService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
+use Modules\Sales\Services\SalesReturnService;
 use Modules\Sales\Services\SalesSelect2Service;
 use Spatie\Permission\Models\Permission;
 
@@ -195,7 +199,8 @@ test('sales request customer type requires customer and internal type uses separ
     expect(substr_count($requestForm->getContent(), 'data-sales-add-line'))->toBe(2);
 
     $printText = salesPdfText($this->get(route('admin.sales.customer-requests.print', $request))->assertOk()->getContent());
-    expect(substr_count($printText, __('Sales Request').' — '.$request->doc_num))->toBe(1)
+    expect(substr_count($printText, __('Sales Request')))->toBe(1)
+        ->and(substr_count($printText, $request->doc_num))->toBe(1)
         ->and($printText)->not->toContain(__('Unit price'), __('Classification'));
 });
 
@@ -234,7 +239,8 @@ test('sales order and quotation omit production packing fields and expose a seco
         ->assertDontSee('[specifications][packaging]', false)
         ->assertDontSee('[specifications][customer_specification]', false)
         ->assertDontSee('[warehouse_notes]', false)
-        ->assertDontSee('[production_notes]', false);
+        ->assertDontSee('[production_notes]', false)
+        ->assertDontSee('[requested_date]', false);
     expect(substr_count($order->getContent(), 'data-sales-add-line'))->toBe(2);
 
     $quotation = $this->get(route('admin.sales.quotations.create'))->assertOk()
@@ -255,7 +261,116 @@ test('sales invoice creation starts from an invoiceable sales order without dupl
     $this->get(route('admin.sales.sales-invoices.create'))->assertOk()
         ->assertSee('js-select2-ajax')
         ->assertSee(route('admin.sales.select2.invoiceable-orders'), false)
+        ->assertSee(route('admin.sales.select2.convertible-requests'), false)
+        ->assertSee(route('admin.sales.sales-invoices.create', ['direct' => 1]), false)
         ->assertSee(__('sales_ui.invoice_source_help'));
+
+    $this->get(route('admin.sales.sales-invoices.create', ['direct' => 1]))->assertOk()
+        ->assertSee(route('admin.sales.select2.customers'), false)
+        ->assertSee(route('admin.select2.currencies'), false)
+        ->assertSee(route('admin.sales.select2.quotation-products'), false)
+        ->assertDontSee('[requested_date]', false)
+        ->assertDontSee('[description]', false);
+});
+
+test('approved sales request can prefill quotation order and invoice forms', function () {
+    $f = salesUiFixture();
+    $request = app(SalesRequestService::class)->save([
+        'company_id' => $f['company']->id,
+        'branch_id' => $f['branch']->id,
+        'customer_id' => $f['customer']->id,
+        'currency_id' => $f['currency']->id,
+        'request_date' => now()->toDateString(),
+        'required_delivery_date' => now()->addWeek()->toDateString(),
+        'exchange_rate' => '1',
+        'lines' => [[
+            'product_id' => $f['finished']->id,
+            'unit_id' => $f['unit']->id,
+            'quantity' => '3',
+            'unit_price' => null,
+        ]],
+    ]);
+    $request = app(SalesRequestService::class)->transition($request, 'submitted');
+    $request = app(SalesRequestService::class)->transition($request, 'approved');
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $show = $this->get(route('admin.sales.customer-requests.show', $request))->assertOk();
+    foreach ([
+        route('admin.sales.quotations.create', ['source_request_doc_num' => $request->doc_num]),
+        route('admin.sales.sales-orders.create', ['source_request_doc_num' => $request->doc_num]),
+        route('admin.sales.sales-invoices.create', ['source_request_doc_num' => $request->doc_num]),
+    ] as $url) {
+        $show->assertSee($url, false);
+    }
+
+    $quotation = $this->get(route('admin.sales.quotations.create', ['source_request_doc_num' => $request->doc_num]))->assertOk();
+    $quotation->assertSee($request->doc_num)
+        ->assertSee($request->lines->sole()->public_id, false)
+        ->assertSee($f['finished']->doc_num);
+    $this->get(route('admin.sales.sales-orders.create', ['source_request_doc_num' => $request->doc_num]))->assertOk()
+        ->assertSee($request->lines->sole()->public_id, false)
+        ->assertSee($f['finished']->doc_num);
+    $this->get(route('admin.sales.sales-invoices.create', ['source_request_doc_num' => $request->doc_num]))->assertOk()
+        ->assertSee($request->lines->sole()->public_id, false)
+        ->assertSee($f['finished']->doc_num);
+});
+
+test('direct sales invoice can be posted delivered and returned without a sales order', function () {
+    $f = salesUiFixture();
+    foreach (['customer_invoices.view', 'customer_invoices.post', 'sales_deliveries.create', 'sales_deliveries.view', 'sales_returns.create'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $f['user']->givePermissionTo($permission);
+    }
+    $this->actingAs($f['user'])->withSession(salesCycleSession($f));
+
+    $invoice = app(CustomerInvoiceService::class)->createDirect([
+        'company_id' => $f['company']->id,
+        'financial_period_id' => $f['period']->id,
+        'branch_id' => $f['branch']->id,
+        'customer_doc_num' => $f['customer']->doc_num,
+        'currency_doc_num' => $f['currency']->doc_num,
+        'invoice_date' => now()->toDateString(),
+        'due_date' => now()->addWeek()->toDateString(),
+        'exchange_rate' => '1',
+        'lines' => [[
+            'product_doc_num' => $f['finished']->doc_num,
+            'unit_doc_num' => $f['unit']->doc_num,
+            'quantity' => '2',
+            'unit_price' => '50',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+    ]);
+    expect($invoice->sales_order_id)->toBeNull()
+        ->and($invoice->source_type)->toBe('direct')
+        ->and($invoice->total_amount)->toBe('100.0000');
+
+    $invoice = app(CustomerInvoiceService::class)->post($invoice);
+    $this->getJson(route('admin.sales.select2.deliverable-invoices', ['q' => $invoice->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $invoice->doc_num);
+    $delivery = app(SalesFulfillmentService::class)->deliverInvoice($invoice, [[
+        'customer_invoice_line_id' => $invoice->lines->sole()->id,
+        'quantity' => '2',
+    ]], [
+        'branch_store_uuid' => $f['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+        'recipient_name' => 'Direct Invoice Recipient',
+    ]);
+    expect($delivery->source_document_type)->toBe(CustomerInvoice::class)
+        ->and($delivery->source_document_id)->toBe($invoice->id)
+        ->and($delivery->lines->sole()->source_line_type)->toBe(CustomerInvoiceLine::class);
+
+    $return = app(SalesReturnService::class)->create(
+        $invoice->fresh(),
+        'other',
+        'Direct invoice return',
+        [['customer_invoice_line_id' => $invoice->lines->sole()->id, 'quantity' => '1']],
+        $f['store']->id,
+    );
+    expect($return->sales_order_id)->toBeNull()
+        ->and($return->delivery_document_id)->toBe($delivery->id)
+        ->and($return->lines->sole()->quantity)->toBe('1.00000000');
 });
 
 test('delivery creation starts from a posted deliverable invoice and uses delivery permission', function () {

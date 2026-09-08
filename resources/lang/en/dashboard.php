@@ -54,6 +54,10 @@ return [
                 'title' => 'Purchase Invoices',
                 'meta' => ':count unpaid or partially paid this period',
             ],
+            'purchase_requisitions' => [
+                'title' => 'Purchase Requests',
+                'meta' => ':count awaiting approval this period',
+            ],
             'purchase_orders' => [
                 'title' => 'Purchase Orders',
                 'meta' => ':count draft this period',

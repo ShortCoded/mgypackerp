@@ -11,6 +11,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Sales\DataTables\SalesCycleDataTable;
@@ -117,7 +118,7 @@ class SalesRequestController extends Controller
 
         return $pdf->stream('reports.sales.request', ['record' => $salesRequest->load('company', 'customer', 'branchStore', 'lines.product.color', 'lines.unit'),
             'title' => __('Sales Request').' — '.$salesRequest->doc_num, 'documentHeaderTitle' => __('Sales Request'),
-            'printIdentityPolicy' => 'operational', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot,
+            'printIdentityPolicy' => 'report', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot ?: app(CompanyPrintIdentityService::class)->forCompany($salesRequest->company),
             'showPrices' => $request->user()->can('sales_orders.view_prices'), 'customerFacing' => true], 'sales-request-'.$salesRequest->doc_num.'.pdf');
     }
 

@@ -78,9 +78,7 @@
             @if($type === 'goods-receipt-inspection')
                 @php
                     $inspectionStore = $record->purchaseOrder?->branchStore ?? $record->supplyOrder?->branchStore;
-                    $inspectionBranch = $record->branch ?? $inspectionStore?->branch;
                 @endphp
-                <tr><td><strong>{{ __('Branch') }}</strong></td><td>{{ $inspectionBranch?->name ?: '—' }}</td></tr>
                 <tr><td><strong>{{ __('Warehouse') }}</strong></td><td>{{ $inspectionStore?->name ?: '—' }}</td></tr>
                 <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num ?: '—' }}</td></tr>
                 <tr><td><strong>{{ __('Inspection result') }}</strong></td><td>{{ __(str($record->result)->replace('_', ' ')->title()->toString()) }}</td></tr>

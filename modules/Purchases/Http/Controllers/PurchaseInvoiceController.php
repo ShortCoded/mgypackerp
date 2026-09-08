@@ -388,7 +388,7 @@ class PurchaseInvoiceController extends Controller
         $purchaseOrders = PurchaseOrder::query()->forCompany($companyId)->where('doc_num', old('purchase_order_doc_num', $record?->purchaseOrder?->doc_num ?? ''))
             ->where('branch_id', $documentBranchId)
             ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
-            ->with(['supplier', 'lines.product', 'lines.unit'])
+            ->with(['supplier', 'currency', 'lines.product', 'lines.unit'])
             ->withSum([
                 'purchaseInvoices as invoiced_freight_amount' => fn ($query) => $query
                     ->where('status', '<>', PurchaseInvoice::StatusCancelled)

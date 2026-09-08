@@ -119,10 +119,10 @@
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle sales-order-grid mb-0">
-                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th>{{ __('Required date') }}</th><th></th></tr></thead>
+                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
                 <tbody data-sales-lines>
                     @foreach($lineRows as $index => $line)
-                        @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits])
+                        @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])
                     @endforeach
                 </tbody>
             </table>
@@ -150,7 +150,7 @@
 </form>
 
 <template id="sales-order-line-template">
-    @include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits])
+    @include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])
 </template>
 <template id="sales-schedule-template"><tr><td data-row-number></td><td><input class="form-control form-control-sm" name="payment_schedules[__INDEX__][title]"></td><td><input class="form-control form-control-sm js-date-picker" name="payment_schedules[__INDEX__][due_date]"></td><td><input class="form-control form-control-sm text-end" name="payment_schedules[__INDEX__][amount]" inputmode="decimal"></td><td><button class="btn btn-link text-danger p-1" type="button" data-sales-remove-row>&times;</button></td></tr></template>
 @endsection

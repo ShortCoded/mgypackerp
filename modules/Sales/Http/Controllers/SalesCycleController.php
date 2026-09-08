@@ -40,8 +40,8 @@ use Modules\Sales\Http\Requests\ReleaseSalesStockRequest;
 use Modules\Sales\Http\Requests\ReserveSalesStockRequest;
 use Modules\Sales\Http\Requests\SalesOrderActionRequest;
 use Modules\Sales\Http\Requests\StoreCustomerInvoiceRequest;
-use Modules\Sales\Http\Requests\StoreDirectCustomerInvoiceRequest;
 use Modules\Sales\Http\Requests\StoreCustomerReceiptRequest;
+use Modules\Sales\Http\Requests\StoreDirectCustomerInvoiceRequest;
 use Modules\Sales\Http\Requests\StoreSalesOrderRequest;
 use Modules\Sales\Http\Requests\StoreSalesReturnRequest;
 use Modules\Sales\Http\Requests\UpdateSalesOrderRequest;
@@ -893,7 +893,9 @@ class SalesCycleController extends Controller
         $copy = request()->validate(['copy' => ['nullable', Rule::in(['operational', 'legal'])]])['copy'] ?? 'operational';
 
         return $this->pdf->stream('reports.sales.document', [
-            'printIdentityPolicy' => in_array($kind, ['invoice', 'credit_note'], true) ? $copy : 'operational',
+            'printIdentityPolicy' => in_array($kind, ['sales_order', 'invoice', 'credit_note', 'customer_receipt', 'sales_return', 'sales_delivery', 'payment_schedule'], true)
+                ? 'report'
+                : ($copy === 'legal' ? 'legal' : 'operational'),
             'title' => $title.' — '.$record->doc_num,
             'documentHeaderTitle' => $title,
             'kind' => $kind,

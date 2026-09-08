@@ -65,7 +65,14 @@ class ProductController extends Controller
 
     public function create(Request $request): View
     {
-        return $this->formView('create', context: $this->productContext($request));
+        $createDefaults = $request->boolean('purchase_asset') ? [
+            'item_classification' => Product::ClassificationOther,
+            'cost_as_inventory' => false,
+            'is_displayable' => false,
+            'tracks_expiry' => false,
+        ] : [];
+
+        return $this->formView('create', context: $this->productContext($request), createDefaults: $createDefaults);
     }
 
     public function show(Request $request, string $product): View
@@ -264,7 +271,8 @@ class ProductController extends Controller
         string $mode,
         ?Product $record = null,
         ?string $cloneSourceToken = null,
-        string $context = Product::ContextProducts
+        string $context = Product::ContextProducts,
+        array $createDefaults = [],
     ): View {
         $settings = app(ProductDocumentNumberSettingsService::class)->current($this->documentNumberKey($context));
         $relationships = ['unit', 'equivalentUnit', 'size', 'color', 'decal', 'itemModel', 'originCountry', 'category', 'group', 'mainImageUsage.file'];
@@ -313,6 +321,7 @@ class ProductController extends Controller
             ),
             'recordNavigation' => $this->recordNavigation($mode, $record, $context),
             'routes' => $this->resourceRoutes($context),
+            'createDefaults' => $createDefaults,
         ]);
     }
 

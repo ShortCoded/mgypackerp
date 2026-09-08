@@ -5,6 +5,7 @@ namespace Modules\Purchases\DataTables;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
@@ -90,6 +91,17 @@ class ProcurementDocumentsDataTable
                 $query->whereHas('supplier', fn ($supplier) => $supplier->where('doc_num', $request->input('supplier_doc_num')));
             }
         }
+        if ($screen === 'goods_receipt_inspections' && $request->filled('branch_doc_num')) {
+            $query->whereHas('branch', fn (Builder $branches) => $branches->where('doc_num', $request->string('branch_doc_num')->toString()));
+        }
+        if ($screen === 'goods_receipt_inspections' && $request->filled('branch_store_uuid')) {
+            $storeUuid = $request->string('branch_store_uuid')->toString();
+            $query->where(function (Builder $inspections) use ($storeUuid): void {
+                $inspections
+                    ->whereHas('purchaseOrder.branchStore', fn (Builder $stores) => $stores->where('public_uuid', $storeUuid))
+                    ->orWhereHas('supplyOrder.branchStore', fn (Builder $stores) => $stores->where('public_uuid', $storeUuid));
+            });
+        }
 
         return $query;
     }
@@ -118,7 +130,7 @@ class ProcurementDocumentsDataTable
                 'supplyOrder.supplier',
                 'supplyOrder.branchStore.branch',
             ],
-            'goods_receipts' => ['supplier', 'purchaseOrder'],
+            'goods_receipts' => ['supplier', 'purchaseOrder', 'inspection'],
             default => ['supplier', 'receipt'],
         };
         $query->with($relations);
@@ -175,6 +187,11 @@ class ProcurementDocumentsDataTable
                 'isAdministrativeBranch' => $isAdministrativeBranch,
                 'activeBranchId' => (int) $context['branch_id'],
             ])->render())
+            ->addColumn('view_url', fn ($record): string => route('admin.purchases.'.$definition['route'].'.show', $record->doc_num))
+            ->addColumn('edit_url', fn ($record): ?string => Route::has('admin.purchases.'.$definition['route'].'.edit')
+                ? route('admin.purchases.'.$definition['route'].'.edit', $record->doc_num)
+                : null)
+            ->addColumn('can_edit', fn ($record): bool => $this->canEditDocument($request, $record, $screen, $definition, (int) $context['branch_id']))
             ->orderColumn('status', match ($screen) {
                 'goods_receipts' => 'posting_status $1',
                 'goods_receipt_inspections' => 'result $1',
@@ -182,7 +199,22 @@ class ProcurementDocumentsDataTable
             })
             ->orderColumn('date', $definition['date'].' $1')
             ->orderColumn('doc_num', 'doc_number $1')
-            ->only(['checkbox', 'doc_num', 'date', 'party', 'source', 'location', 'lines_count', 'status', 'created_at', 'updated_at', 'actions'])
+            ->only(['checkbox', 'doc_num', 'date', 'party', 'source', 'location', 'lines_count', 'status', 'created_at', 'updated_at', 'actions', 'view_url', 'edit_url', 'can_edit'])
             ->rawColumns(['checkbox', 'doc_num', 'status', 'actions'])->toJson();
+    }
+
+    /** @param array<string, string> $definition */
+    private function canEditDocument(Request $request, mixed $record, string $screen, array $definition, int $activeBranchId): bool
+    {
+        $editableDraft = $record->status === 'draft'
+            && ($screen !== 'goods_receipts' || ($record->posting_status === 'unposted'
+                && in_array($record->qc_status, ['pending_inspection', 'not_required'], true)
+                && $record->inspection === null));
+
+        return ! $record->trashed()
+            && $editableDraft
+            && (int) ($record->branch_id ?? 0) === $activeBranchId
+            && Route::has('admin.purchases.'.$definition['route'].'.edit')
+            && (bool) $request->user()?->can('purchases.'.$definition['permission'].'.edit');
     }
 }

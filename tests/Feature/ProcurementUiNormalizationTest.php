@@ -15,6 +15,7 @@ use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Services\ProcurementAttachmentService;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSourcingService;
+use Modules\Purchases\Services\PurchaseInvoiceService;
 use Modules\Purchases\Services\PurchaseOrderService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 use Spatie\Permission\Models\Permission;
@@ -58,6 +59,45 @@ test('administrative branches cannot create inventory requests and multiple stor
     $fixture['branch']->update(['type' => Branch::TypeAdministrative]);
     $this->get(route('admin.purchases.purchase-requisitions.create'))->assertForbidden();
     expect(fn () => procurementManualRequisition($fixture))->toThrow(DomainException::class);
+});
+
+test('dashboard purchase request count follows the same branch visibility as the purchasing cycle', function (): void {
+    $fixture = procurementUiFixture();
+    procurementManualRequisition($fixture, 10);
+    $otherBranch = Branch::query()->create([
+        'company_id' => $fixture['company']->id,
+        'doc_number' => 9202,
+        'doc_num' => 'Branch-PROC-OTHER',
+        'name' => 'Other Factory',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $otherStore = BranchStore::query()->create([
+        'branch_id' => $otherBranch->id,
+        'name' => 'Other Factory Store',
+        'position' => 1,
+    ]);
+    PurchaseRequisition::query()->create([
+        'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id,
+        'branch_id' => $otherBranch->id,
+        'branch_store_id' => $otherStore->id,
+        'doc_number' => 9202,
+        'doc_num' => 'PR-OTHER-BRANCH',
+        'request_date' => now()->toDateString(),
+        'status' => PurchaseRequisition::StatusSubmitted,
+    ]);
+
+    $this->get(route('dashboard'))->assertOk()->assertSeeInOrder([
+        __('dashboard.plastics.metrics.purchase_requisitions.title'),
+        '<div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">1</div>',
+    ], false);
+
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+    $this->get(route('dashboard'))->assertOk()->assertSeeInOrder([
+        __('dashboard.plastics.metrics.purchase_requisitions.title'),
+        '<div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">2</div>',
+    ], false);
 });
 
 test('administrative branches manage legacy purchasing documents while factory branches remain read only', function (): void {
@@ -145,13 +185,145 @@ test('administrative branches manage legacy purchasing documents while factory b
         ->assertSee(__('Attachments'));
 });
 
+test('purchase invoices allow an optional order and preserve deliberately unlinked variance lines', function (): void {
+    $fixture = procurementUiFixture();
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+    $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111097', 'Direct Invoice Supplier Payable');
+    $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->getKey()])->save();
+
+    $response = $this->postJson(route('admin.purchases.purchase-invoices.store'), [
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 2,
+            'unit_price' => 10,
+        ]],
+    ])->assertOk()->assertJsonPath('success', true);
+
+    $directInvoice = PurchaseInvoice::query()->where('doc_num', $response->json('data.doc_num'))->sole();
+    expect($directInvoice->purchase_order_id)->toBeNull()
+        ->and($directInvoice->purchase_type)->toBe('direct');
+    $directInvoice = app(PurchaseInvoiceService::class)->approve($directInvoice);
+    expect($directInvoice->matching_status)->toBe('direct_invoice')
+        ->and($directInvoice->journal_entry_id)->not->toBeNull();
+
+    $order = app(PurchaseOrderService::class)->create([
+        'document_date' => now()->toDateString(),
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Invoice variance regression fixture.',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 10,
+            'unit_price' => 5,
+        ]],
+    ])['record'];
+    $order->forceFill(['status' => 'approved'])->save();
+    $orderLine = $order->lines()->sole();
+    procurementUseBranch($fixture, $fixture['branch']);
+    $inspection = app(ProcurementReceivingService::class)->inspectPurchaseSource($order->fresh(), [
+        'inspection_at' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $orderLine->public_id,
+            'delivered_quantity' => 7,
+            'accepted_quantity' => 7,
+            'rejected_quantity' => 0,
+        ]],
+    ]);
+    $receipt = app(ProcurementReceivingService::class)->postReceipt(
+        app(ProcurementReceivingService::class)->createReceiptFromInspection($inspection, [
+            'document_date' => now()->toDateString(),
+            'lines' => [['inspection_line_public_id' => $inspection->lines()->sole()->public_id]],
+        ]),
+    );
+    $receiptLine = $receipt->lines()->sole();
+    procurementUseBranch($fixture, $administrativeBranch);
+
+    $invoice = app(PurchaseInvoiceService::class)->create([
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'purchase_order_doc_num' => $order->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'lines' => [
+            [
+                'product_doc_num' => $fixture['raw']->doc_num,
+                'unit_doc_num' => $fixture['unit']->doc_num,
+                'purchase_order_line_public_id' => $orderLine->public_id,
+                'receipt_line_public_id' => $receiptLine->public_id,
+                'quantity' => 7,
+                'unit_price' => 6,
+            ],
+            [
+                'product_doc_num' => $fixture['raw']->doc_num,
+                'unit_doc_num' => $fixture['unit']->doc_num,
+                'quantity' => 1,
+                'unit_price' => 9,
+            ],
+        ],
+    ])['record'];
+
+    expect($invoice->lines)->toHaveCount(2)
+        ->and($invoice->lines->first()->purchase_order_line_id)->toBe($orderLine->getKey())
+        ->and($invoice->lines->last()->purchase_order_line_id)->toBeNull();
+    $invoice = app(PurchaseInvoiceService::class)->approve($invoice);
+    $matchingNotes = json_decode((string) $invoice->matching_notes, true, flags: JSON_THROW_ON_ERROR);
+    expect($invoice->matching_status)->toBe('approved_with_variance')
+        ->and(collect($matchingNotes['line_variances'])->pluck('match_type')->all())->toBe(['linked', 'unlinked']);
+
+    $orderLinkedDraft = app(PurchaseInvoiceService::class)->create([
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 1,
+            'unit_price' => 1,
+        ]],
+    ])['record'];
+    $invoiceData = $this->getJson(route('admin.purchases.purchase-invoices.data').'?draw=1&start=0&length=10')->assertOk();
+    $draftRow = collect($invoiceData->json('data'))->first(fn (array $row): bool => str_contains($row['doc_num'], $orderLinkedDraft->doc_num));
+    expect($draftRow)->not->toBeNull()
+        ->and($draftRow['can_edit'])->toBeTrue()
+        ->and($draftRow['edit_url'])->toBe(route('admin.purchases.purchase-invoices.edit', $orderLinkedDraft))
+        ->and($draftRow['view_url'])->toBe(route('admin.purchases.purchase-invoices.show', $orderLinkedDraft));
+    $approvedRow = collect($invoiceData->json('data'))->first(fn (array $row): bool => str_contains($row['doc_num'], $directInvoice->doc_num));
+    expect($approvedRow['can_edit'])->toBeFalse();
+
+    $this->get(route('admin.purchases.purchase-invoices.create'))->assertOk()
+        ->assertSee(__('purchase_invoices.messages.purchase_order_source_help'))
+        ->assertSee(__('purchase_invoices.actions.duplicate_line'))
+        ->assertSee(__('purchase_invoices.actions.delete_line'));
+});
+
 test('request datatable exposes state actions and draft restore without resurrecting removed lines', function (): void {
     $fixture = procurementUiFixture();
     $request = procurementManualRequisition($fixture);
     $lineId = $request->lines->sole()->id;
     $this->get(route('admin.purchases.purchase-requisitions.index'))->assertOk()->assertSee('procurement-documents-table')->assertDontSee('Combine approved purchase requests');
     $data = $this->getJson(route('admin.purchases.procurement.data', 'purchase_requisitions').'?draw=1&start=0&length=10')->assertOk();
-    expect($data->json('recordsFiltered'))->toBe(1, $data->getContent())->and($data->json('data.0.actions'))->toContain('/submit');
+    expect($data->json('recordsFiltered'))->toBe(1, $data->getContent())
+        ->and($data->json('data.0.actions'))->toContain('/submit')
+        ->and($data->json('data.0.can_edit'))->toBeTrue()
+        ->and($data->json('data.0.edit_url'))->toBe(route('admin.purchases.purchase-requisitions.edit', $request))
+        ->and($data->json('data.0.view_url'))->toBe(route('admin.purchases.purchase-requisitions.show', $request));
     $this->deleteJson(route('admin.purchases.purchase-requisitions.destroy', $request))->assertOk();
     $this->getJson(route('admin.purchases.procurement.data', 'purchase_requisitions').'?draw=2&start=0&length=10&trash_filter=trashed')->assertOk()->assertJsonPath('recordsFiltered', 1);
     $this->patchJson(route('admin.purchases.procurement.restore', ['purchase_requisitions', $request->doc_num]))->assertOk();
@@ -320,13 +492,22 @@ test('purchase inspection precedes receipt and accepted quantities feed the ware
         ->and((float) $inspection->lines->sole()->accepted_quantity)->toBe(40.0);
     $this->get(route('admin.purchases.goods-receipt-inspection.index'))->assertOk()
         ->assertSee('procurement-documents-table', false)
+        ->assertSee('name="branch_store_uuid"', false)
         ->assertSee(route('admin.purchases.procurement.data', 'goods_receipt_inspections'), false);
     $inspectionData = $this->getJson(route('admin.purchases.procurement.data', 'goods_receipt_inspections').'?draw=1&start=0&length=10&search[value]='.$order->doc_num)->assertOk();
     expect($inspectionData->json('recordsFiltered'))->toBe(1)
         ->and($inspectionData->json('data.0.doc_num'))->toContain($inspection->doc_num)
         ->and($inspectionData->json('data.0.source'))->toBe($order->doc_num)
+        ->and($inspectionData->json('data.0.location'))->toContain($fixture['branch']->name, $fixture['store']->name)
         ->and($inspectionData->json('data.0.status'))->not->toContain('procurement.ui.statuses')
         ->and($inspectionData->json('data.0.actions'))->toContain('/goods-receipt-notes/create/'.$inspection->doc_num);
+    $this->getJson(route('admin.purchases.procurement.data', 'goods_receipt_inspections').'?draw=2&start=0&length=10&branch_store_uuid='.$fixture['store']->public_uuid)
+        ->assertOk()
+        ->assertJsonPath('recordsFiltered', 1);
+    $this->get(route('admin.purchases.goods-receipt-inspection.show', $inspection))
+        ->assertOk()
+        ->assertSee($fixture['branch']->name)
+        ->assertSee($fixture['store']->name);
     $rejectionRows = app(ProcurementCycleReport::class)->rows(
         ProcurementCycleReport::QcRejection,
         ['branch_id' => $fixture['branch']->id],
@@ -463,4 +644,21 @@ test('purchase navigation follows the operational document sequence', function (
 
     app()->setLocale('ar');
     expect(__('menu.purchase_inspections'))->toBe('فحوص المشتريات');
+});
+
+test('purchase cycle tables consistently support permission aware double click editing', function (): void {
+    $invoiceScript = file_get_contents(public_path('assets/js/modules/Purchases/purchase-invoices.js'));
+    $orderScript = file_get_contents(public_path('assets/js/modules/Purchases/purchase-orders.js'));
+    $procurementScript = file_get_contents(public_path('assets/js/modules/Purchases/procurement-index.js'));
+
+    expect($invoiceScript)
+        ->toContain('dblclick.purchaseInvoiceEditRow')
+        ->toContain('row && row.can_edit ? row.edit_url : (row && row.view_url)')
+        ->toContain('event.stopImmediatePropagation();')
+        ->and($orderScript)
+        ->toContain('dblclick.purchaseOrderEditRow')
+        ->toContain('row && row.can_edit ? row.edit_url : (row && row.view_url)')
+        ->and($procurementScript)
+        ->toContain('dblclick.procurementEditRow')
+        ->toContain('row?.can_edit ? row.edit_url : row?.view_url');
 });

@@ -30,6 +30,13 @@
 @foreach($actions as $status => $permission)@can('sales_requests.'.$permission)<form data-sales-ui class="js-sales-cycle-action" action="{{ route('admin.sales.customer-requests.transition', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><input type="hidden" name="status" value="{{ $status }}"><div class="alert alert-danger d-none js-sales-form-alert"></div>@if(in_array($status, ['rejected','cancelled','closed']))<input class="form-control form-control-sm mb-2" name="reason" placeholder="{{ __('Reason') }}" required>@endif<button class="btn btn-falcon-primary btn-sm" type="submit">{{ $actionLabel($status) }}</button></form>@endcan @endforeach
 </div></div>
 @endif
+@if(in_array($record->status, ['approved', 'partially_converted'], true) && $record->customer_id && $record->currency_id)
+<div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('sales_ui.continue_sales_cycle') }}</h6></div><div class="card-body py-3 d-flex flex-wrap gap-2">
+    @can('quotations.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.quotations.create', ['source_request_doc_num' => $record->doc_num]) }}">{{ __('sales_ui.create_quotation') }}</a>@endcan
+    @can('sales_orders.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.sales-orders.create', ['source_request_doc_num' => $record->doc_num]) }}">{{ __('Create Sales Order') }}</a>@endcan
+    @can('customer_invoices.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.sales-invoices.create', ['source_request_doc_num' => $record->doc_num]) }}">{{ __('sales_ui.create_invoice') }}</a>@endcan
+</div></div>
+@endif
 <form data-sales-ui class="js-sales-cycle-action" method="POST" action="{{ route('admin.sales.customer-requests.convert', $record) }}">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><div class="alert alert-danger d-none js-sales-form-alert"></div>
 @if($record->status === 'approved')
 <div class="row g-3 mb-3">

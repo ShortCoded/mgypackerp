@@ -5,10 +5,12 @@ namespace Modules\Purchases\DataTables;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
+use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Yajra\DataTables\Facades\DataTables;
@@ -27,6 +29,12 @@ class PurchaseInvoicesDataTable
     {
         $dateFormat = app(SettingService::class)->dateFormat();
         $dateTimeFormat = app(SettingService::class)->dateTimeFormat();
+        $context = app(OperatingContextService::class)->snapshot($request);
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
         $query = match ($this->trashFilter($request)) {
             'trashed' => PurchaseInvoice::onlyTrashed(),
             'all' => PurchaseInvoice::withTrashed(),
@@ -105,8 +113,9 @@ class PurchaseInvoicesDataTable
             ->addColumn('approved_by', fn (PurchaseInvoice $record): string => $this->ellipsisText($record->approved_by_name ?: __('common.empty_value')))
             ->editColumn('approved_at', fn (PurchaseInvoice $record): string => $this->plainText($record->approved_at?->format($dateTimeFormat) ?? ''))
             ->addColumn('actions', fn (PurchaseInvoice $record): string => view('modules.purchases.purchase-invoices.partials.actions', ['record' => $record])->render())
+            ->addColumn('view_url', fn (PurchaseInvoice $record): string => route('admin.purchases.purchase-invoices.show', $record->doc_num))
             ->addColumn('edit_url', fn (PurchaseInvoice $record): string => route('admin.purchases.purchase-invoices.edit', $record->doc_num))
-            ->addColumn('can_edit', fn (PurchaseInvoice $record): bool => ! $record->trashed() && ! $record->isLockedForEditing() && (bool) $request->user()?->can('purchase_invoices.edit'))
+            ->addColumn('can_edit', fn (PurchaseInvoice $record): bool => $isAdministrativeBranch && ! $record->trashed() && ! $record->isLockedForEditing() && (bool) $request->user()?->can('purchase_invoices.edit'))
             ->orderColumn('doc_num', 'purchase_invoices.doc_number $1')
             ->orderColumn('invoice_date', 'purchase_invoices.invoice_date $1')
             ->orderColumn('supplier', 'suppliers.name $1')

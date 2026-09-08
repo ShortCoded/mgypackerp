@@ -81,6 +81,16 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         'cost_as_inventory' => false,
         'status' => 'active',
     ]);
+    $this->getJson(route('admin.purchases.select2.products', ['q' => 'Factory Cutting Machine']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $assetProduct->doc_num)
+        ->assertJsonPath('results.0.productData.is_asset_purchase_candidate', true);
+    $this->get(route('admin.products.create', ['purchase_asset' => 1]))
+        ->assertOk()
+        ->assertSee(__('fixed_assets.purchase_source.purchase_item_setup_title'))
+        ->assertSee('option value="other" selected', false)
+        ->assertSee('id="cost_as_inventory"', false)
+        ->assertDontSee('id="cost_as_inventory" name="cost_as_inventory" type="checkbox" value="1" aria-label="'.__('products.attributes.cost_as_inventory').'" checked', false);
     $assetCategory = app(BusinessPartnerAccountService::class)->createGroup(
         BusinessPartnerAccountService::FixedAsset,
         'Purchased Production Machines',
@@ -102,8 +112,8 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         'lines' => [[
             'product_doc_num' => $assetProduct->doc_num,
             'unit_doc_num' => $fixture['unit']->doc_num,
-            'ordered_quantity' => 1,
-            'unit_price' => 1000,
+            'ordered_quantity' => 2,
+            'unit_price' => 500,
         ]],
     ])['record']);
     $orderLine = $order->lines->sole();
@@ -112,12 +122,12 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         'supplier_delivery_note' => 'ASSET-DELIVERY-1',
         'lines' => [[
             'purchase_order_line_public_id' => $orderLine->public_id,
-            'delivered_quantity' => 1,
+            'delivered_quantity' => 2,
         ]],
     ]));
     $receiptLine = $receipt->lines()->firstOrFail();
 
-    expect($receiptLine->accepted_quantity)->toBe('1.00000000')
+    expect($receiptLine->accepted_quantity)->toBe('2.00000000')
         ->and($receiptLine->inventory_posted_quantity)->toBe('0.00000000')
         ->and(InventoryTransaction::query()->count())->toBe(0)
         ->and(JournalEntry::query()->count())->toBe(0);
@@ -143,8 +153,8 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
             'unit_doc_num' => $fixture['unit']->doc_num,
             'purchase_order_line_public_id' => $orderLine->public_id,
             'receipt_line_public_id' => $receiptLine->public_id,
-            'quantity' => 1,
-            'unit_price' => 1000,
+            'quantity' => 2,
+            'unit_price' => 500,
         ]],
     ])['record'];
     $invoiceLine = $invoice->lines->sole();
@@ -155,7 +165,8 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         ->get(route('admin.fixed-assets.assets.create', ['purchase_invoice_line' => $invoiceLine->public_id]))
         ->assertOk()
         ->assertSee($invoice->doc_num)
-        ->assertSee($assetProduct->name);
+        ->assertSee($assetProduct->name.' 1')
+        ->assertSee('500');
     $this->postJson(route('admin.fixed-assets.assets.store'), [
         'entry_type' => FixedAsset::EntryTypeNewAsset,
         'source_type' => 'purchase_invoice_line',
@@ -172,7 +183,7 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         'acquisition_date' => now()->toDateString(),
         'operation_date' => $readyForUseDate,
         'depreciation_start_date' => $depreciationStartDate,
-        'purchase_value' => 1000,
+        'purchase_value' => 500,
         'exchange_rate' => 1,
         'salvage_value' => 0,
         'previous_depreciation' => 0,
@@ -183,19 +194,56 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         'submit_action' => 'save_view',
     ])->assertOk();
 
-    $asset = FixedAsset::query()
+    $this->get(route('admin.fixed-assets.assets.create', ['purchase_invoice_line' => $invoiceLine->public_id]))
+        ->assertOk()
+        ->assertSee($assetProduct->name.' 2')
+        ->assertSee('500');
+    $this->postJson(route('admin.fixed-assets.assets.store'), [
+        'entry_type' => FixedAsset::EntryTypeNewAsset,
+        'source_type' => 'purchase_invoice_line',
+        'source_id' => $invoiceLine->getKey(),
+        'source_doc_num' => $invoice->doc_num,
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Factory Cutting Machine Asset 2',
+        'asset_group_account_doc_num' => $assetCategory->doc_num,
+        'credit_account_doc_num' => $supplierAccount->doc_num,
+        'branch_doc_num' => $fixture['branch']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'description' => 'Second machine purchased through '.$invoice->doc_num,
+        'purchase_date' => now()->toDateString(),
+        'acquisition_date' => now()->toDateString(),
+        'operation_date' => $readyForUseDate,
+        'depreciation_start_date' => $depreciationStartDate,
+        'purchase_value' => 500,
+        'exchange_rate' => 1,
+        'salvage_value' => 0,
+        'previous_depreciation' => 0,
+        'depreciation_method' => FixedAsset::DepreciationMethodStraightLine,
+        'useful_life' => 5,
+        'is_depreciable' => true,
+        'status' => FixedAsset::StatusDraft,
+        'submit_action' => 'save_view',
+    ])->assertOk();
+
+    $assets = FixedAsset::query()
         ->where('source_type', 'purchase_invoice_line')
         ->where('source_id', $invoiceLine->getKey())
-        ->firstOrFail();
+        ->orderBy('id')
+        ->get();
+    expect($assets)->toHaveCount(2);
+    $asset = $assets->firstOrFail();
+    $secondAsset = $assets->last();
     $invoice = $invoices->approve($invoice);
     $journal = $invoice->journalEntry()->with('lines')->firstOrFail();
     $recognition = $asset->costMovements()->sole();
 
     expect($invoice->status)->toBe(PurchaseInvoice::StatusApproved)
         ->and($asset->fresh()->status)->toBe(FixedAsset::StatusActive)
+        ->and($secondAsset->fresh()->status)->toBe(FixedAsset::StatusActive)
         ->and($recognition->movement_type)->toBe(FixedAssetMovement::TypeCapitalization)
         ->and($recognition->journal_entry_id)->toBe($journal->getKey())
-        ->and((float) $journal->lines->firstWhere('account_id', $asset->account_id)?->debit_amount)->toBe(1000.0)
+        ->and((float) $journal->lines->firstWhere('account_id', $asset->account_id)?->debit_amount)->toBe(500.0)
+        ->and((float) $journal->lines->firstWhere('account_id', $secondAsset->account_id)?->debit_amount)->toBe(500.0)
         ->and((float) $journal->lines->firstWhere('account_id', $supplierAccount->getKey())?->credit_amount)->toBe(1000.0)
         ->and(InventoryTransaction::query()->count())->toBe(0)
         ->and(JournalEntry::query()->count())->toBe(1);

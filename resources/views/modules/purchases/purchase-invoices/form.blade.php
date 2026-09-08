@@ -199,6 +199,21 @@
             min-width: 14rem;
         }
 
+        .purchase-invoice-line-actions {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: nowrap;
+            gap: .375rem;
+        }
+
+        .purchase-invoice-line-actions .btn {
+            margin: 0 !important;
+            min-height: 2.25rem;
+            min-width: 2.25rem;
+            position: relative;
+            z-index: 1;
+        }
+
         .purchase-invoice-total-box {
             max-width: 30rem;
         }
@@ -214,6 +229,7 @@
     data-product-url="{{ route('admin.purchases.select2.products') }}"
     data-cashbox-url="{{ route('admin.purchases.select2.cashboxes') }}"
     data-bank-url="{{ route('admin.purchases.select2.bank-accounts') }}"
+    data-current-purchase-order="{{ $selectedPurchaseOrder }}"
     data-primary-focus="invoice_date"
     novalidate>
     @csrf
@@ -254,10 +270,10 @@
                 @include('modules.purchases.procurement.document-cycle', ['record' => $record])
             @php $matchingNotes = json_decode($record->matching_notes ?? '', true) ?: []; @endphp
             @if(!empty($matchingNotes['line_variances']))
-            <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('purchase_invoices.attributes.ordered_quantity') }}</th><th>{{ __('purchase_invoices.attributes.received_quantity') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('purchase_invoices.attributes.quantity_variance') }}</th><th>{{ __('purchase_invoices.attributes.unit_price_variance') }}</th><th>{{ __('purchase_invoices.attributes.tax_rate_variance') }}</th></tr></thead><tbody>
+            <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('purchase_invoices.sections.matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('purchase_invoices.attributes.match_state') }}</th><th>{{ __('purchase_invoices.attributes.ordered_quantity') }}</th><th>{{ __('purchase_invoices.attributes.received_quantity') }}</th><th>{{ __('purchase_invoices.attributes.invoice_quantity') }}</th><th>{{ __('purchase_invoices.attributes.quantity_variance') }}</th><th>{{ __('purchase_invoices.attributes.unit_price_variance') }}</th><th>{{ __('purchase_invoices.attributes.tax_rate_variance') }}</th></tr></thead><tbody>
             @foreach($matchingNotes['line_variances'] as $variance)
                 @php $matchedLine = $record->lines->firstWhere('public_id', $variance['line']); @endphp
-                <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ $numbers->format($variance['ordered_quantity'] ?? 0) }}</td><td>{{ $numbers->format($variance['received_quantity'] ?? 0) }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td><td>{{ $numbers->format($variance['tax_rate_variance'] ?? 0) }}</td></tr>
+                <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ ($variance['match_type'] ?? 'linked') === 'unlinked' ? __('purchase_invoices.messages.unlinked_order_line') : __('purchase_invoices.messages.linked_order_line') }}</td><td>{{ $numbers->format($variance['ordered_quantity'] ?? 0) }}</td><td>{{ $numbers->format($variance['received_quantity'] ?? 0) }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td><td>{{ $numbers->format($variance['tax_rate_variance'] ?? 0) }}</td></tr>
             @endforeach
             </tbody></table></div></div>
             @endif
@@ -346,7 +362,7 @@
                         </div>
 
                         <div class="col-md-6">
-                            <label class="form-label" for="purchase_order_doc_num">{{ __('Purchase Order / three-way match source') }}</label>
+                            <label class="form-label" for="purchase_order_doc_num">{{ __('purchase_invoices.attributes.purchase_order_source') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label>
                             @if($isReadonly)
                                 <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
                             @else
@@ -356,13 +372,19 @@
                                         <option value="{{ $purchaseOrder->doc_num }}"
                                             data-approved-freight="{{ $purchaseOrder->freight_amount }}"
                                             data-invoiced-freight="{{ $purchaseOrder->invoiced_freight_amount ?? 0 }}"
+                                            data-supplier-doc-num="{{ $purchaseOrder->supplier?->doc_num }}"
+                                            data-supplier-text="{{ collect([$purchaseOrder->supplier?->doc_num, $purchaseOrder->supplier?->name, $purchaseOrder->supplier?->phone ?: $purchaseOrder->supplier?->mobile])->filter()->join(' / ') }}"
+                                            data-currency-doc-num="{{ $purchaseOrder->currency?->doc_num }}"
+                                            data-currency-text="{{ collect([$purchaseOrder->currency?->code, $purchaseOrder->currency?->name])->filter()->join(' / ') }}"
+                                            data-exchange-rate="{{ $purchaseOrder->exchange_rate }}"
                                             @selected($selectedPurchaseOrder === $purchaseOrder->doc_num)>{{ $purchaseOrder->doc_num }} / {{ $purchaseOrder->supplier?->name }}</option>
                                     @endforeach
                                 </select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
+                            <div class="form-text">{{ __('purchase_invoices.messages.purchase_order_source_help') }}</div>
                             @if($mode === 'create')
-                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-disable-when-dependency-empty="true" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
+                            <label class="form-label mt-2" for="source_receipts">{{ __('purchase_invoices.attributes.goods_receipt_source') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-disable-when-dependency-empty="true" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
                             <div class="form-text">{{ __('purchase_invoices.messages.receipt_filter_optional') }}</div>
                             <button class="btn btn-falcon-primary btn-sm mt-2" type="button" data-load-invoice-source="{{ route('admin.purchases.purchase-invoices.create') }}">{{ __('procurement.ui.load_received_lines') }}</button>
                             @endif
@@ -537,9 +559,15 @@
                     <div class="row flex-between-center g-2 mb-3">
                         <div class="col">
                             <h6 class="mb-0">{{ __('purchase_invoices.sections.lines') }}</h6>
+                            <div class="text-600 small mt-1">{{ __('fixed_assets.purchase_source.invoice_purchase_item_help') }}</div>
                         </div>
                         @unless($isReadonly)
                             <div class="col-auto d-flex gap-2">
+                                @can('products.create')
+                                    <a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.products.create', ['purchase_asset' => 1]) }}">
+                                        <span class="fas fa-industry me-1"></span>{{ __('fixed_assets.purchase_source.create_purchase_asset_item') }}
+                                    </a>
+                                @endcan
                                 <button class="btn btn-falcon-default btn-sm js-purchase-invoice-add-line" type="button">
                                     <span class="fas fa-plus me-1"></span>{{ __('purchase_invoices.actions.add_line') }}
                                 </button>
@@ -551,8 +579,8 @@
                         <table class="table table-sm table-hover align-middle mb-0 purchase-invoice-lines js-purchase-invoice-lines">
                             <thead class="bg-200">
                                 <tr>
-                                    <th>{{ __('PO line') }}</th>
-                                    <th>{{ __('Accepted receipt line') }}</th>
+                                    <th>{{ __('purchase_invoices.attributes.purchase_order_line_source') }}</th>
+                                    <th>{{ __('purchase_invoices.attributes.goods_receipt_source') }}</th>
                                     <th class="purchase-invoice-product-cell">{{ __('purchase_invoices.attributes.product') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.unit') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.quantity') }}</th>
@@ -681,13 +709,15 @@
                                             ])
                                         </td>
                                         @unless($isReadonly)
-                                            <td class="text-center">
-                                                <button class="btn btn-link text-600 p-0 me-2 js-purchase-invoice-duplicate-line" @if(!empty($line['purchase_order_line_public_id'])) hidden @endif type="button" title="{{ __('purchase_invoices.js.duplicate_line_title') }}" data-bs-title="{{ __('purchase_invoices.js.duplicate_line_title') }}">
-                                                    <span class="fas fa-copy"></span>
+                                            <td class="text-center purchase-invoice-actions-cell">
+                                                <div class="purchase-invoice-line-actions">
+                                                <button class="btn btn-falcon-default btn-sm js-purchase-invoice-duplicate-line" @if(!empty($line['purchase_order_line_public_id'])) hidden @endif type="button" title="{{ __('purchase_invoices.js.duplicate_line_title') }}" aria-label="{{ __('purchase_invoices.js.duplicate_line_title') }}">
+                                                    <span class="fas fa-copy" aria-hidden="true"></span><span class="ms-1">{{ __('purchase_invoices.actions.duplicate_line') }}</span>
                                                 </button>
-                                                <button class="btn btn-link text-danger p-0 js-purchase-invoice-remove-line" type="button" title="{{ __('purchase_invoices.js.delete_line_title') }}" data-bs-title="{{ __('purchase_invoices.js.delete_line_title') }}">
-                                                    <span class="fas fa-trash-alt"></span>
+                                                <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-remove-line" type="button" title="{{ __('purchase_invoices.js.delete_line_title') }}" aria-label="{{ __('purchase_invoices.js.delete_line_title') }}">
+                                                    <span class="fas fa-trash-alt" aria-hidden="true"></span><span class="ms-1">{{ __('purchase_invoices.actions.delete_line') }}</span>
                                                 </button>
+                                                </div>
                                             </td>
                                         @endunless
                                     </tr>
@@ -792,6 +822,12 @@
                                             <td class="text-end" dir="ltr">{{ $numbers->format($lineValue) }}</td>
                                             <td class="text-end" dir="ltr">{{ $numbers->format($allocatedValue) }}</td>
                                             <td>
+                                                @if($assetEligible && $assetTreatment === 'new_asset')
+                                                    <div class="small text-600 mb-1">{{ __('fixed_assets.purchase_source.asset_cards_progress', [
+                                                        'created' => $invoiceLine->fixedAssets->count(),
+                                                        'expected' => $assetIntegration->suggestedAssetCardCount($invoiceLine),
+                                                    ]) }}</div>
+                                                @endif
                                                 @forelse($invoiceLine->fixedAssets as $asset)
                                                     @can('fixed_assets.view')
                                                         <a class="d-inline-block me-2 fw-semibold" href="{{ route('admin.fixed-assets.assets.show', $asset->doc_num) }}">{{ $asset->doc_num }} · {{ $asset->asset_name }}</a>
@@ -833,7 +869,10 @@
                                                             @if($assetTreatment === 'new_asset' && bccomp($allocatedValue, $lineValue, 4) < 0)
                                                                 @can('fixed_assets.create')
                                                                     <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.assets.create', ['purchase_invoice_line' => $invoiceLine->public_id]) }}">
-                                                                        <span class="fas fa-plus me-1"></span>{{ __('fixed_assets.purchase_source.register_asset') }}
+                                                                        <span class="fas fa-plus me-1"></span>{{ __('fixed_assets.purchase_source.register_next_asset', [
+                                                                            'current' => $invoiceLine->fixedAssets->count() + 1,
+                                                                            'expected' => $assetIntegration->suggestedAssetCardCount($invoiceLine),
+                                                                        ]) }}
                                                                     </a>
                                                                 @endcan
                                                             @endif
@@ -1014,12 +1053,14 @@
                                         </td>
                                         @unless($isReadonly)
                                             <td class="text-center purchase-invoice-actions-cell">
-                                                <button class="btn btn-link text-600 p-0 me-2 js-purchase-invoice-duplicate-schedule" type="button" title="{{ __('purchase_invoices.js.duplicate_payment_title') }}" data-bs-title="{{ __('purchase_invoices.js.duplicate_payment_title') }}">
-                                                    <span class="fas fa-copy"></span>
+                                                <div class="purchase-invoice-line-actions">
+                                                <button class="btn btn-falcon-default btn-sm js-purchase-invoice-duplicate-schedule" type="button" title="{{ __('purchase_invoices.js.duplicate_payment_title') }}" aria-label="{{ __('purchase_invoices.js.duplicate_payment_title') }}">
+                                                    <span class="fas fa-copy" aria-hidden="true"></span><span class="ms-1">{{ __('purchase_invoices.actions.duplicate_payment') }}</span>
                                                 </button>
-                                                <button class="btn btn-link text-danger p-0 js-purchase-invoice-remove-schedule" type="button" title="{{ __('purchase_invoices.js.delete_payment_title') }}" data-bs-title="{{ __('purchase_invoices.js.delete_payment_title') }}">
-                                                    <span class="fas fa-trash-alt"></span>
+                                                <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-remove-schedule" type="button" title="{{ __('purchase_invoices.js.delete_payment_title') }}" aria-label="{{ __('purchase_invoices.js.delete_payment_title') }}">
+                                                    <span class="fas fa-trash-alt" aria-hidden="true"></span><span class="ms-1">{{ __('purchase_invoices.actions.delete_payment') }}</span>
                                                 </button>
+                                                </div>
                                             </td>
                                         @endunless
                                     </tr>

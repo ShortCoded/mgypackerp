@@ -5,6 +5,7 @@ namespace Modules\Purchases\DataTables;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
+use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
@@ -28,6 +29,11 @@ class PurchaseOrdersDataTable
         $dateFormat = app(SettingService::class)->dateFormat();
         $dateTimeFormat = app(SettingService::class)->dateTimeFormat();
         $context = $this->operatingContext->snapshot($request);
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
         $query = match ($this->trashFilter($request)) {
             'trashed' => PurchaseOrder::onlyTrashed(),
             'all' => PurchaseOrder::withTrashed(),
@@ -113,8 +119,9 @@ class PurchaseOrdersDataTable
             ->addColumn('approved_by', fn (PurchaseOrder $record): string => $this->ellipsisText($record->approved_by_name ?: __('common.empty_value')))
             ->editColumn('approved_at', fn (PurchaseOrder $record): string => $this->plainText($record->approved_at?->format($dateTimeFormat) ?? ''))
             ->addColumn('actions', fn (PurchaseOrder $record): string => view('modules.purchases.purchase-orders.partials.actions', ['record' => $record])->render())
+            ->addColumn('view_url', fn (PurchaseOrder $record): string => route('admin.purchases.purchase-orders.show', $record->doc_num))
             ->addColumn('edit_url', fn (PurchaseOrder $record): string => route('admin.purchases.purchase-orders.edit', $record->doc_num))
-            ->addColumn('can_edit', fn (PurchaseOrder $record): bool => ! $record->trashed() && ! $record->isLockedForEditing() && (bool) $request->user()?->can('purchase_orders.edit'))
+            ->addColumn('can_edit', fn (PurchaseOrder $record): bool => $isAdministrativeBranch && ! $record->trashed() && ! $record->isLockedForEditing() && (bool) $request->user()?->can('purchase_orders.edit'))
             ->orderColumn('doc_num', 'purchase_orders.doc_number $1')
             ->orderColumn('document_date', 'purchase_orders.document_date $1')
             ->orderColumn('supplier', 'suppliers.name $1')
