@@ -48,6 +48,16 @@
         ->filter()
         ->map(fn (string $bucket): string => __(str($bucket)->replace('_', ' ')->title()->toString()))
         ->join(app()->isLocale('ar') ? '، ' : ', ');
+    $hasInvoiceLineage = in_array($kind, ['invoice', 'credit_note'], true) && (
+        $record->order
+        || $record->originalInvoice
+        || $record->deliveries->isNotEmpty()
+        || $record->allocations->isNotEmpty()
+        || $record->returns->isNotEmpty()
+        || $record->creditNotes->isNotEmpty()
+        || $record->journalEntry
+        || $record->reversalJournalEntry
+    );
 @endphp
 
 @section('title', $title.' '.$record->doc_num)
@@ -56,7 +66,7 @@
 @if($kind === 'sales_order' && $record->salesRequest) @can('sales_requests.view')<div class="alert alert-info"><a href="{{ route('admin.sales.customer-requests.show', $record->salesRequest) }}">{{ __('Source Sales Request') }}: {{ $record->salesRequest->doc_num }}</a></div>@endcan @endif
     <div class="alert alert-danger d-none js-sales-form-alert"></div>
     <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div><h5 class="mb-1">{{ $title }}</h5><div class="text-600">{{ $record->doc_num }}</div></div>
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 @include('modules.sales.quotations.partials.status', ['status' => $record->status])
@@ -67,21 +77,21 @@
                 @if($kind === 'sales_return' && in_array($record->status, ['received', 'inspected', 'closed'], true))<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.sales-returns.quality-disposition.print', $record) }}" target="_blank">{{ __('Print Quality Disposition') }}</a>@endif
             </div>
         </div>
-        <div class="card-body">
-            <div class="row g-3">
-                @if($record->customer ?? null)<div class="col-md-4"><strong>{{ __('Customer') }}</strong><div>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</div></div>@endif
-                @if($record->expected_delivery_date ?? null)<div class="col-md-4"><strong>{{ __('Required date') }}</strong><div>{{ $dates->formatDate($record->expected_delivery_date, '') }}</div></div>@endif
-                @if($salesEmployee)<div class="col-md-4"><strong>{{ __('Sales representative') }}</strong><div>{{ $salesEmployee->doc_num }} / {{ $salesEmployee->full_name ?: $salesEmployee->name }}</div></div>@endif
-                @if($record->quotation ?? null)<div class="col-md-4"><strong>{{ __('Source Quotation') }}</strong><div>@can('quotations.view')<a href="{{ route('admin.sales.quotations.show', $record->quotation) }}">{{ $quotationReference($record->quotation, $record->quotationRevision) }}</a>@else{{ $quotationReference($record->quotation, $record->quotationRevision) }}@endcan</div></div>@endif
-                @if($sourceSalesOrder ?? $sourceOrder)<div class="col-md-4"><strong>{{ __('Sales Order') }}</strong><div>{{ ($sourceSalesOrder ?? $sourceOrder)->doc_num }}</div></div>@endif
-                @if($kind === 'sales_delivery' && !($sourceSalesOrder ?? $sourceOrder) && filled($record->source_doc_num))<div class="col-md-4"><strong>{{ __('Sales Invoice') }}</strong><div>{{ $record->source_doc_num }}</div></div>@endif
-                @if($record->invoice ?? null)<div class="col-md-4"><strong>{{ __('Original Invoice') }}</strong><div>{{ $record->invoice->doc_num }}</div></div>@endif
-                @if($record->relationLoaded('customerInvoices') && $record->customerInvoices->isNotEmpty())<div class="col-md-4"><strong>{{ __('Sales Invoice') }}</strong><div>@foreach($record->customerInvoices as $invoice)<a class="d-block" href="{{ route('admin.sales.sales-invoices.show', $invoice) }}">{{ $invoice->doc_num }}</a>@endforeach</div></div>@endif
-                @if($record->relationLoaded('deliveries') && $record->deliveries->isNotEmpty())<div class="col-md-4"><strong>{{ __('Deliveries') }}</strong><div>{{ $record->deliveries->pluck('doc_num')->join(' / ') }}</div></div>
-                @elseif($record->delivery ?? null)<div class="col-md-4"><strong>{{ __('Delivery') }}</strong><div>{{ $record->delivery->doc_num }}</div></div>@endif
-                @if($record->creditNote ?? null)<div class="col-md-4"><strong>{{ __('Credit Note') }}</strong><div>{{ $record->creditNote->doc_num }}</div></div>@endif
-                @if($showPrices && isset($record->total_amount))<div class="col-md-4"><strong>{{ __('Total') }}</strong><div dir="ltr">{{ $numbers->format($record->total_amount) }}</div></div>@endif
-                @if($showPrices && isset($record->remaining_amount))<div class="col-md-4"><strong>{{ __('Outstanding') }}</strong><div dir="ltr">{{ $numbers->format($record->remaining_amount) }}</div></div>@endif
+        <div class="card-body py-2">
+            <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-5 g-2">
+                @if($record->customer ?? null)<div class="col"><strong>{{ __('Customer') }}</strong><div>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</div></div>@endif
+                @if($record->expected_delivery_date ?? null)<div class="col"><strong>{{ __('Required date') }}</strong><div>{{ $dates->formatDate($record->expected_delivery_date, '') }}</div></div>@endif
+                @if($salesEmployee)<div class="col"><strong>{{ __('Sales representative') }}</strong><div>{{ $salesEmployee->doc_num }} / {{ $salesEmployee->full_name ?: $salesEmployee->name }}</div></div>@endif
+                @if($record->quotation ?? null)<div class="col"><strong>{{ __('Source Quotation') }}</strong><div>@can('quotations.view')<a href="{{ route('admin.sales.quotations.show', $record->quotation) }}">{{ $quotationReference($record->quotation, $record->quotationRevision) }}</a>@else{{ $quotationReference($record->quotation, $record->quotationRevision) }}@endcan</div></div>@endif
+                @if($sourceSalesOrder ?? $sourceOrder)<div class="col"><strong>{{ __('Sales Order') }}</strong><div>{{ ($sourceSalesOrder ?? $sourceOrder)->doc_num }}</div></div>@endif
+                @if($kind === 'sales_delivery' && !($sourceSalesOrder ?? $sourceOrder) && filled($record->source_doc_num))<div class="col"><strong>{{ __('Sales Invoice') }}</strong><div>{{ $record->source_doc_num }}</div></div>@endif
+                @if($record->invoice ?? null)<div class="col"><strong>{{ __('Original Invoice') }}</strong><div>{{ $record->invoice->doc_num }}</div></div>@endif
+                @if($record->relationLoaded('customerInvoices') && $record->customerInvoices->isNotEmpty())<div class="col"><strong>{{ __('Sales Invoice') }}</strong><div>@foreach($record->customerInvoices as $invoice)<a class="d-block" href="{{ route('admin.sales.sales-invoices.show', $invoice) }}">{{ $invoice->doc_num }}</a>@endforeach</div></div>@endif
+                @if($record->relationLoaded('deliveries') && $record->deliveries->isNotEmpty())<div class="col"><strong>{{ __('Deliveries') }}</strong><div>{{ $record->deliveries->pluck('doc_num')->join(' / ') }}</div></div>
+                @elseif($record->delivery ?? null)<div class="col"><strong>{{ __('Delivery') }}</strong><div>{{ $record->delivery->doc_num }}</div></div>@endif
+                @if($record->creditNote ?? null)<div class="col"><strong>{{ __('Credit Note') }}</strong><div>{{ $record->creditNote->doc_num }}</div></div>@endif
+                @if($showPrices && isset($record->total_amount))<div class="col"><strong>{{ __('Total') }}</strong><div dir="ltr">{{ $numbers->format($record->total_amount) }}</div></div>@endif
+                @if($showPrices && isset($record->remaining_amount))<div class="col"><strong>{{ __('Outstanding') }}</strong><div dir="ltr">{{ $numbers->format($record->remaining_amount) }}</div></div>@endif
             </div>
         </div>
     </div>
@@ -161,7 +171,7 @@
     @endif
 
     @if($showPrices && $record->relationLoaded('paymentSchedules') && $record->paymentSchedules->isNotEmpty())
-        <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('Payment Schedule') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Collected') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence ?? $schedule->line_number }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td class="text-end">{{ $numbers->format($schedule->amount) }}</td><td class="text-end">{{ $numbers->format($schedule->collected_amount) }}</td><td class="text-end">{{ $numbers->format($schedule->outstanding_amount ?? $schedule->remaining_amount) }}</td><td>{{ __(str($schedule->payment_status ?? $schedule->status)->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table></div></div>
+        <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Payment Schedule') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Collected') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence ?? $schedule->line_number }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td class="text-end">{{ $numbers->format($schedule->amount) }}</td><td class="text-end">{{ $numbers->format($schedule->collected_amount) }}</td><td class="text-end">{{ $numbers->format($schedule->outstanding_amount ?? $schedule->remaining_amount) }}</td><td>{{ __(str($schedule->payment_status ?? $schedule->status)->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table></div></div>
     @endif
 
     @if($kind === 'sales_order')
@@ -177,15 +187,15 @@
         </div></div></div>
     @endif
 
-    @if(in_array($kind, ['invoice', 'credit_note'], true))
-        <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Related documents and accounting lineage') }}</h6></div><div class="card-body"><div class="row g-3">
-            <div class="col-md-4"><strong>{{ __('Source Sales Order') }}</strong><div>@if($record->order) @can('sales_orders.view')<a href="{{ route('admin.sales.sales-orders.show', $record->order) }}">{{ $record->order->doc_num }}</a>@else{{ $record->order->doc_num }}@endcan @else—@endif</div></div>
+    @if($hasInvoiceLineage)
+        <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Related documents and accounting lineage') }}</h6></div><div class="card-body py-3"><div class="row g-3">
+            @if($record->order)<div class="col-md-4"><strong>{{ __('Source Sales Order') }}</strong><div>@can('sales_orders.view')<a href="{{ route('admin.sales.sales-orders.show', $record->order) }}">{{ $record->order->doc_num }}</a>@else{{ $record->order->doc_num }}@endcan</div></div>@endif
             @if($record->originalInvoice)<div class="col-md-4"><strong>{{ __('Original Invoice') }}</strong><div><a href="{{ route('admin.sales.sales-invoices.show', $record->originalInvoice) }}">{{ $record->originalInvoice->doc_num }}</a></div></div>@endif
-            <div class="col-md-4"><strong>{{ __('Deliveries') }}</strong><div>@forelse($record->deliveries as $document) @can('sales_deliveries.view')<a class="d-block" href="{{ route('admin.sales.delivery-notes.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @empty<span class="text-500">—</span>@endforelse</div></div>
-            <div class="col-md-4"><strong>{{ __('Receipts / Allocations') }}</strong><div>@forelse($record->allocations->pluck('receipt')->filter()->unique('id') as $document) @can('customer_receipts.view')<a class="d-block" href="{{ route('admin.sales.customer-receipts.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @empty<span class="text-500">—</span>@endforelse</div></div>
-            <div class="col-md-4"><strong>{{ __('Returns') }}</strong><div>@forelse($record->returns as $document) @can('sales_returns.view')<a class="d-block" href="{{ route('admin.sales.sales-returns.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @empty<span class="text-500">—</span>@endforelse</div></div>
-            <div class="col-md-4"><strong>{{ __('Credit Notes') }}</strong><div>@forelse($record->creditNotes as $document)<a class="d-block" href="{{ route('admin.sales.sales-invoices.show', $document) }}">{{ $document->doc_num }}</a>@empty<span class="text-500">—</span>@endforelse</div></div>
-            <div class="col-md-4"><strong>{{ __('Journal Entry') }}</strong><div>@if($record->journalEntry) @can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $record->journalEntry) }}">{{ $record->journalEntry->doc_num }}</a>@else{{ $record->journalEntry->doc_num }}@endcan @else—@endif</div></div>
+            @if($record->deliveries->isNotEmpty())<div class="col-md-4"><strong>{{ __('Deliveries') }}</strong><div>@foreach($record->deliveries as $document) @can('sales_deliveries.view')<a class="d-block" href="{{ route('admin.sales.delivery-notes.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @endforeach</div></div>@endif
+            @if($record->allocations->isNotEmpty())<div class="col-md-4"><strong>{{ __('Receipts / Allocations') }}</strong><div>@foreach($record->allocations->pluck('receipt')->filter()->unique('id') as $document) @can('customer_receipts.view')<a class="d-block" href="{{ route('admin.sales.customer-receipts.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @endforeach</div></div>@endif
+            @if($record->returns->isNotEmpty())<div class="col-md-4"><strong>{{ __('Returns') }}</strong><div>@foreach($record->returns as $document) @can('sales_returns.view')<a class="d-block" href="{{ route('admin.sales.sales-returns.show', $document) }}">{{ $document->doc_num }}</a>@else<span class="d-block">{{ $document->doc_num }}</span>@endcan @endforeach</div></div>@endif
+            @if($record->creditNotes->isNotEmpty())<div class="col-md-4"><strong>{{ __('Credit Notes') }}</strong><div>@foreach($record->creditNotes as $document)<a class="d-block" href="{{ route('admin.sales.sales-invoices.show', $document) }}">{{ $document->doc_num }}</a>@endforeach</div></div>@endif
+            @if($record->journalEntry)<div class="col-md-4"><strong>{{ __('Journal Entry') }}</strong><div>@can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $record->journalEntry) }}">{{ $record->journalEntry->doc_num }}</a>@else{{ $record->journalEntry->doc_num }}@endcan</div></div>@endif
             @if($record->reversalJournalEntry)<div class="col-md-4"><strong>{{ __('Reversal Journal') }}</strong><div>@can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $record->reversalJournalEntry) }}">{{ $record->reversalJournalEntry->doc_num }}</a>@else{{ $record->reversalJournalEntry->doc_num }}@endcan</div></div>@endif
         </div></div></div>
     @endif
@@ -197,7 +207,7 @@
         </div></div>
     @endif
 
-    @if(in_array($kind, ['invoice', 'credit_note'], true))
+    @if($kind === 'credit_note' || ($kind === 'invoice' && $record->appliedCredits->isNotEmpty()))
         <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Customer Credit Allocation and Refund') }}</h6></div><div class="card-body">
             @if($kind === 'credit_note')
                 <div class="row g-3 mb-3"><div class="col-md-4"><strong>{{ __('Credit created') }}</strong><div dir="ltr">{{ $numbers->format($record->total_amount) }}</div></div><div class="col-md-4"><strong>{{ __('Available Customer Credit') }}</strong><div dir="ltr">{{ $numbers->format($record->credit_available_amount) }}</div></div><div class="col-md-4"><strong>{{ __('Allocated / refunded') }}</strong><div dir="ltr">{{ $numbers->format($record->credit_allocated_amount) }} / {{ $numbers->format($record->credit_refunded_amount) }}</div></div></div>
@@ -211,15 +221,17 @@
             @else
                 <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Credit Source') }}</th><th>{{ __('Date') }}</th><th class="text-end">{{ __('Applied Amount') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@forelse($record->appliedCredits as $allocation)<tr><td><a href="{{ route('admin.sales.sales-invoices.show', $allocation->creditNote) }}">{{ $allocation->creditNote?->doc_num }}</a></td><td>{{ $dates->formatDate($allocation->allocation_date, '') }}</td><td class="text-end">{{ $numbers->format($allocation->amount) }}</td><td>{{ __(str($allocation->status)->replace('_', ' ')->title()->toString()) }}</td></tr>@empty<tr><td colspan="4" class="text-center text-muted">{{ __('No Customer Credit applied.') }}</td></tr>@endforelse</tbody></table></div>
             @endif
-        </div>
+        </div></div>
+    @endif
 
+    @if(in_array($kind, ['invoice', 'credit_note'], true))
         @php($canQueueElectronicInvoice = config('e_invoice.enabled') && $record->status === 'posted' && blank($record->electronic_invoice_uuid) && in_array($record->electronic_invoice_status, ['not_configured', 'draft', 'rejected', 'submission_failed'], true))
         <div class="card mb-3" data-electronic-invoice-summary>
             <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
                 <h6 class="mb-0">{{ __('Tax / Electronic Invoice Status') }}</h6>
                 @if($canQueueElectronicInvoice) @can('customer_invoices.electronic_invoice.submit')<form class="js-sales-cycle-action" method="POST" action="{{ route('admin.sales.sales-invoices.electronic-invoice.submit', $record) }}">@csrf<button class="btn btn-primary btn-sm" type="submit">{{ __('Queue Electronic Invoice Submission') }}</button></form>@endcan @endif
             </div>
-            <div class="card-body py-3">
+            <div class="card-body py-2">
                 <div class="row g-2"><div class="col-sm-6 col-lg-4"><strong>{{ __('Output tax') }}</strong><div dir="ltr">{{ $showPrices ? $numbers->format($record->tax_amount) : '—' }}</div></div><div class="col-sm-6 col-lg-4"><strong>{{ __('Electronic invoice') }}</strong><div><span class="badge bg-{{ $record->electronic_invoice_status === 'accepted' ? 'success' : 'secondary' }}">{{ __(str($record->electronic_invoice_status)->replace('_', ' ')->title()->toString()) }}</span></div></div>@if($record->electronic_invoice_uuid)<div class="col-sm-6 col-lg-4"><strong>{{ __('Authority UUID') }}</strong><div dir="ltr" class="text-break">{{ $record->electronic_invoice_uuid }}</div></div>@endif</div>
                 @if($record->electronic_invoice_status === 'not_configured')<div class="alert alert-info py-2 px-3 mt-2 mb-0">{{ __('No tax-authority/e-invoice connector is configured in this installation. Tax is posted to the canonical output-tax account; submission is intentionally not represented as complete.') }}</div>@endif
             </div>

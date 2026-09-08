@@ -22,6 +22,7 @@ class LedgerQueryService
      *     account_id: int,
      *     from_date: string,
      *     to_date: string,
+     *     all_periods?: bool,
      *     branch_id?: int|null,
      *     cost_center_id?: int|null
      * }  $filters
@@ -37,7 +38,11 @@ class LedgerQueryService
             ->where('journal_entry_lines.account_id', $account->getKey());
         $openingRows = (clone $base)
             ->whereDate('journal_entries.entry_date', '<', $filters['from_date'])
-            ->get(['journal_entry_lines.debit_amount', 'journal_entry_lines.credit_amount', 'journal_entries.exchange_rate']);
+            ->orderBy('journal_entries.entry_date')
+            ->orderBy('journal_entries.doc_number')
+            ->orderBy('journal_entry_lines.line_no')
+            ->orderBy('journal_entry_lines.id')
+            ->get($this->movementColumns());
         $movementRows = (clone $base)
             ->whereDate('journal_entries.entry_date', '>=', $filters['from_date'])
             ->whereDate('journal_entries.entry_date', '<=', $filters['to_date'])
@@ -107,7 +112,18 @@ class LedgerQueryService
      */
     private function result(Account $account, array $filters, Collection $openingRows, Collection $movementRows): array
     {
-        $openingSigned = $this->signedTotal($openingRows);
+        $openingSigned = '0.0000';
+        $openingMovements = [];
+
+        foreach ($openingRows as $row) {
+            $debit = $this->baseAmount($row->debit_amount, $row->exchange_rate);
+            $credit = $this->baseAmount($row->credit_amount, $row->exchange_rate);
+            $openingSigned = bcadd($openingSigned, bcsub($debit, $credit, 4), 4);
+            [$runningDebit, $runningCredit] = $this->splitSigned($openingSigned);
+
+            $openingMovements[] = $this->movement($row, $debit, $credit, $runningDebit, $runningCredit);
+        }
+
         $runningSigned = $openingSigned;
         $periodDebit = '0.0000';
         $periodCredit = '0.0000';
@@ -121,21 +137,7 @@ class LedgerQueryService
             $periodCredit = bcadd($periodCredit, $credit, 4);
             [$runningDebit, $runningCredit] = $this->splitSigned($runningSigned);
 
-            $movements[] = [
-                'entry_date' => CarbonImmutable::parse($row->entry_date)->toDateString(),
-                'doc_num' => (string) $row->doc_num,
-                'reference_no' => $row->reference_no,
-                'source_type' => $row->source_type,
-                'source_doc_num' => $row->source_doc_num,
-                'line_no' => (int) $row->line_no,
-                'description' => $row->line_description ?: $row->entry_description,
-                'debit' => $debit,
-                'credit' => $credit,
-                'running_debit' => $runningDebit,
-                'running_credit' => $runningCredit,
-                'cost_center' => trim(implode(' / ', array_filter([$row->cost_center_doc_num, $row->cost_center_name]))),
-                'branch' => trim(implode(' / ', array_filter([$row->branch_doc_num, $row->branch_name]))),
-            ];
+            $movements[] = $this->movement($row, $debit, $credit, $runningDebit, $runningCredit);
         }
 
         [$openingDebit, $openingCredit] = $this->splitSigned($openingSigned);
@@ -155,6 +157,7 @@ class LedgerQueryService
                 ->first(['doc_num', 'code', 'name'])?->only(['doc_num', 'code', 'name']),
             'filters' => $filters,
             'opening' => ['debit' => $openingDebit, 'credit' => $openingCredit],
+            'opening_movements' => $openingMovements,
             'period' => ['debit' => $periodDebit, 'credit' => $periodCredit],
             'ending' => ['debit' => $endingDebit, 'credit' => $endingCredit],
             'movements' => $movements,
@@ -164,14 +167,25 @@ class LedgerQueryService
     }
 
     /**
-     * @param  Collection<int, object>  $rows
+     * @return array<string, mixed>
      */
-    private function signedTotal(Collection $rows): string
+    private function movement(object $row, string $debit, string $credit, string $runningDebit, string $runningCredit): array
     {
-        return $rows->reduce(
-            fn (string $total, object $row): string => bcadd($total, bcsub($this->baseAmount($row->debit_amount, $row->exchange_rate), $this->baseAmount($row->credit_amount, $row->exchange_rate), 4), 4),
-            '0.0000',
-        );
+        return [
+            'entry_date' => CarbonImmutable::parse($row->entry_date)->toDateString(),
+            'doc_num' => (string) $row->doc_num,
+            'reference_no' => $row->reference_no,
+            'source_type' => $row->source_type,
+            'source_doc_num' => $row->source_doc_num,
+            'line_no' => (int) $row->line_no,
+            'description' => $row->line_description ?: $row->entry_description,
+            'debit' => $debit,
+            'credit' => $credit,
+            'running_debit' => $runningDebit,
+            'running_credit' => $runningCredit,
+            'cost_center' => trim(implode(' / ', array_filter([$row->cost_center_doc_num, $row->cost_center_name]))),
+            'branch' => trim(implode(' / ', array_filter([$row->branch_doc_num, $row->branch_name]))),
+        ];
     }
 
     /**

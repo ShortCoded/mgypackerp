@@ -46,6 +46,8 @@ return [
         'header_discount_type' => 'نوع خصم الفاتورة',
         'header_discount_value' => 'قيمة خصم الفاتورة',
         'header_discount' => 'خصم الفاتورة',
+        'freight_amount' => 'مصاريف الشحن',
+        'freight_tax_rate' => 'نسبة ضريبة الشحن',
         'status' => 'الحالة',
         'payment_status' => 'حالة السداد',
         'notes' => 'ملاحظات',

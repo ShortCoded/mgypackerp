@@ -411,6 +411,8 @@ test('canonical ledger calculates opening movement and ending debit deterministi
     ]);
 
     expect($result['opening'])->toBe(['debit' => '1000.0000', 'credit' => '0.0000'])
+        ->and(collect($result['opening_movements'])->pluck('doc_num')->all())->toBe(['JE-99101'])
+        ->and($result['opening_movements'][0]['running_debit'])->toBe('1000.0000')
         ->and($result['period'])->toBe(['debit' => '300.0000', 'credit' => '200.0000'])
         ->and($result['ending'])->toBe(['debit' => '1100.0000', 'credit' => '0.0000'])
         ->and(collect($result['movements'])->pluck('doc_num')->all())->toBe(['JE-99102', 'JE-99103'])
@@ -574,6 +576,7 @@ test('customer statement uses the shared report controls and exports pdf excel a
         'name' => 'Export Customer',
         'status' => 'active',
     ]);
+    journalPostedMovement($context, $customerAccount, $counterpart, 99220, '2026-01-15', '75.0000', '0.0000');
     journalPostedMovement($context, $customerAccount, $counterpart, 99222, '2026-02-10', '320.0000', '0.0000');
     $dates = app(DateFormatService::class);
     $filters = [
@@ -588,17 +591,25 @@ test('customer statement uses the shared report controls and exports pdf excel a
         ->assertOk()
         ->assertSee('admin-report-page', false)
         ->assertSee('js-date-picker js-report-filter-control', false)
+        ->assertSee('js-select2-ajax js-report-filter-control', false)
+        ->assertSee('data-minimum-input-length="1"', false)
         ->assertSee(__('reports.export_pdf'))
         ->assertSee(__('reports.export_excel'))
         ->assertSee(__('reports.export_csv'))
         ->assertSee(__('ledger_reports.columns.balance'))
+        ->assertSee(__('ledger_reports.messages.partner_posted_source_only'))
+        ->assertSee(__('ledger_reports.summary.prior'))
+        ->assertSee(__('ledger_reports.summary.prior_details'))
+        ->assertSee('JE-99220')
+        ->assertSee('75')
         ->assertDontSee('id="branch_doc_num"', false)
         ->assertDontSee('id="cost_center_doc_num"', false)
         ->assertDontSee('>Source type<', false)
         ->assertDontSee('>Cost center<', false)
         ->assertDontSee($customerAccount->codeNameLabel())
         ->assertDontSee('Customer Invoice, Payment and Credit History')
-        ->assertDontSee('window.print()', false);
+        ->assertDontSee('window.print()', false)
+        ->assertDontSee('ledger-reports.js', false);
 
     expect($page->getContent())->toContain('data-url="'.route('admin.accounting.journal-entries.select2.customers').'"');
 
@@ -617,16 +628,20 @@ test('customer statement uses the shared report controls and exports pdf excel a
     expect(strlen($pdf->getContent()))->toBeGreaterThan(1000)
         ->and($pdfText)->toContain('Customer Statement')
         ->and($pdfText)->toContain('Balance')
+        ->and($pdfText)->toContain('Balance before period')
+        ->and($pdfText)->toContain('JE-99220')
         ->and($pdfText)->not->toContain('Source type')
         ->and($pdfText)->not->toContain('Cost center')
         ->and($pdfText)->not->toContain('Export Customer Account')
         ->and($pdfText)->not->toContain('Customer Invoice, Payment and Credit History');
 });
 
-test('supplier statement uses only the selected supplier linked account movements', function (): void {
+test('supplier statement uses the shared party layout and includes the prior balance detail', function (): void {
+    app()->setLocale('en');
     $context = journalEntryContext();
     [, $counterpart] = journalEntryAccounts($context['company']);
-    $actor = journalEntryActor(['journal_entries.view', 'reports.supplier_statement.view']);
+    $actor = journalEntryActor(['journal_entries.view', 'reports.supplier_statement.view', 'reports.supplier_statement.export']);
+    $actor->forceFill(['locale' => 'en'])->save();
     $supplierAccountA = Account::query()->create([
         'doc_number' => 99301,
         'doc_num' => 'ACC-99301',
@@ -669,19 +684,47 @@ test('supplier statement uses only the selected supplier linked account movement
         'name' => 'Supplier B',
         'status' => 'active',
     ]);
+    journalPostedMovement($context, $supplierAccountA, $counterpart, 99310, '2026-02-10', '0.0000', '80.0000');
     journalPostedMovement($context, $supplierAccountA, $counterpart, 99311, '2026-03-10', '0.0000', '250.0000');
     journalPostedMovement($context, $supplierAccountB, $counterpart, 99312, '2026-03-11', '0.0000', '910.0000');
 
-    $this->actingAs($actor)
-        ->get(route('admin.accounting.reports.supplier-statement', [
-            'run' => 1,
-            'supplier_doc_num' => $supplierA->doc_num,
-            'from_date' => '2026-03-01',
-            'to_date' => '2026-03-31',
-        ]))
+    $filters = [
+        'run' => 1,
+        'supplier_doc_num' => $supplierA->doc_num,
+        'from_date' => '2026-03-01',
+        'to_date' => '2026-03-31',
+    ];
+    $page = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.supplier-statement', $filters))
         ->assertOk()
         ->assertSee('Supplier A')
+        ->assertSee('js-select2-ajax js-report-filter-control', false)
+        ->assertSee(__('ledger_reports.messages.partner_posted_source_only'))
+        ->assertSee(__('ledger_reports.summary.prior'))
+        ->assertSee(__('ledger_reports.summary.prior_details'))
+        ->assertSee('JE-99310')
         ->assertSee('JE-99311')
         ->assertDontSee('JE-99312')
-        ->assertDontSee('910');
+        ->assertDontSee('910')
+        ->assertDontSee('id="branch_doc_num"', false)
+        ->assertDontSee('id="cost_center_doc_num"', false)
+        ->assertDontSee($supplierAccountA->codeNameLabel());
+
+    expect($page->getContent())->toContain('data-url="'.route('admin.accounting.journal-entries.select2.suppliers').'"');
+
+    $this->get(route('admin.accounting.reports.supplier-statement.export.excel', $filters))
+        ->assertOk()
+        ->assertDownload('supplier-statement.xlsx');
+    $this->get(route('admin.accounting.reports.supplier-statement.export.csv', $filters))
+        ->assertOk()
+        ->assertDownload('supplier-statement.csv');
+    $pdf = $this->get(route('admin.accounting.reports.supplier-statement.export.pdf', $filters))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    expect(accountingPdfText($pdf->getContent()))
+        ->toContain('Supplier Statement')
+        ->toContain('Balance before period')
+        ->toContain('JE-99310')
+        ->not->toContain('Supplier A Account');
 });

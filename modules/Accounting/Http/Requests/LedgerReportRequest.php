@@ -82,7 +82,8 @@ class LedgerReportRequest extends FormRequest
             }
 
             $period = FinancialPeriod::query()->whereKey($periodId)->where('company_id', $companyId)->first();
-            if (! ($this->reportType() === 'customer_statement' && $this->boolean('all_periods')) && $period && $this->isValidDate($this->input('from_date')) && $this->isValidDate($this->input('to_date'))) {
+            $isPartnerStatement = in_array($this->reportType(), ['customer_statement', 'supplier_statement'], true);
+            if (! $isPartnerStatement && ! $this->boolean('all_periods') && $period && $this->isValidDate($this->input('from_date')) && $this->isValidDate($this->input('to_date'))) {
                 $from = $this->date('from_date');
                 $to = $this->date('to_date');
                 if ($from->lt($period->from_date) || $to->gt($period->to_date)) {

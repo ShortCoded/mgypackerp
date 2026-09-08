@@ -19,6 +19,8 @@ return [
     'actions' => ['run' => 'Run report'],
     'summary' => [
         'opening' => 'Opening balance',
+        'prior' => 'Balance before period',
+        'prior_details' => 'Balance before period details',
         'period' => 'Period movement',
         'ending' => 'Ending balance',
     ],
@@ -45,6 +47,10 @@ return [
         'customer_receivable_settlement' => 'Customer receivable settlement',
         'customer_credit' => 'Customer credit note',
         'sales_return' => 'Sales return',
+        'supplier_payable' => 'Purchase invoice payable',
+        'supplier_payable_settlement' => 'Supplier payable settlement',
+        'supplier_debit' => 'Supplier debit note',
+        'purchase_return' => 'Purchase return',
     ],
     'sources' => [
         'manual' => 'Manual journal',
@@ -65,6 +71,7 @@ return [
     ],
     'messages' => [
         'posted_source_only' => 'This report is calculated from posted journal lines in the current operating company and financial period.',
+        'partner_posted_source_only' => 'This statement includes all posted partner entries for the current operating company within the selected date range, including the prior balance.',
         'no_movements' => 'No posted movements match the selected filters.',
         'operating_context_required' => 'Select an operating company and financial period first.',
         'date_outside_period' => 'The report date range must be inside the selected financial period.',

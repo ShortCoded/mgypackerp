@@ -3,14 +3,34 @@
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
     @php($dates = app(\Modules\Core\Services\DateFormatService::class))
+    @php($isPartnerStatement = in_array($type, ['customer_statement', 'supplier_statement'], true))
 
     <div class="report-filter-summary">
         <strong>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</strong>
-        <div>@unless($type === 'customer_statement'){{ $selected['account'] }} / @endunless{{ data_get($result, 'currency.code') }}</div>
+        <div>@unless($isPartnerStatement){{ $selected['account'] }} / @endunless{{ data_get($result, 'currency.code') }}</div>
         <div>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }} — {{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</div>
     </div>
 
-    @if($type === 'customer_statement')
+    @if($isPartnerStatement)
+        @if($result['opening_movements'] !== [])
+            <h3>{{ __('ledger_reports.summary.prior_details') }}</h3>
+            <table class="report-table customer-statement-table" style="margin-bottom:8px;">
+                <thead><tr>@foreach(['date', 'document', 'reference', 'description', 'debit', 'credit', 'balance'] as $column)<th>{{ __('ledger_reports.columns.'.$column) }}</th>@endforeach</tr></thead>
+                <tbody>
+                    @foreach($result['opening_movements'] as $movement)
+                        <tr>
+                            <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
+                            <td>{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
+                            <td>{{ $movement['reference_no'] ?: '—' }}</td>
+                            <td>{{ $movement['description'] }}</td>
+                            <td>{{ $numbers->format($movement['debit']) }}</td>
+                            <td>{{ $numbers->format($movement['credit']) }}</td>
+                            <td>{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        @endif
         <table class="report-table customer-statement-table">
             <thead>
                 <tr>
@@ -22,7 +42,7 @@
             <tbody>
                 <tr>
                     <td>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }}</td>
-                    <td>{{ __('ledger_reports.summary.opening') }}</td>
+                    <td>{{ __('ledger_reports.summary.prior') }}</td>
                     <td></td>
                     <td></td>
                     <td>{{ $numbers->format($result['opening']['debit']) }}</td>

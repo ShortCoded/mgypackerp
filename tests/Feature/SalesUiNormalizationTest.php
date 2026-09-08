@@ -492,6 +492,18 @@ test('sales return creation is discoverable and starts from a returnable posted 
         'source_type' => 'invoice',
         'invoice_doc_num' => $invoice->doc_num,
     ]))->assertRedirect(route('admin.sales.sales-invoices.show', $invoice).'#sales-invoice-return');
+
+    $this->get(route('admin.sales.sales-invoices.show', $invoice))
+        ->assertOk()
+        ->assertSee('data-invoice-action-panel', false)
+        ->assertSee('data-sales-return-toggle', false)
+        ->assertSee(__('sales_ui.return_items_help'))
+        ->assertSee(__('sales_ui.select_item_for_return'))
+        ->assertSee(__('sales_ui.return_quantity'))
+        ->assertSee('id="invoice_return_line_0"', false)
+        ->assertSee('for="invoice_return_line_0"', false)
+        ->assertSee('id="invoice_return_quantity_0"', false)
+        ->assertSee('for="invoice_return_quantity_0"', false);
 });
 
 test('customer credit target invoices use the shared paginated ajax picker', function () {

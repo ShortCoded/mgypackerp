@@ -46,6 +46,8 @@ return [
         'header_discount_type' => 'Header Discount Type',
         'header_discount_value' => 'Header Discount Value',
         'header_discount' => 'Header Discount',
+        'freight_amount' => 'Freight Charges',
+        'freight_tax_rate' => 'Freight Tax Rate',
         'status' => 'Status',
         'payment_status' => 'Payment Status',
         'notes' => 'Notes',

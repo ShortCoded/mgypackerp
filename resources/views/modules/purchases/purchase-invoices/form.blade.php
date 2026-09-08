@@ -513,7 +513,7 @@
                         </div>
 
                         <div class="col-md-3">
-                            <label class="form-label" for="freight_amount">{{ __('Approved PO freight to invoice') }}</label>
+                            <label class="form-label" for="freight_amount">{{ __('purchase_invoices.attributes.freight_amount') }}</label>
                             @if($isReadonly)
                                 <x-forms.view-field for="freight_amount" :value="$numbers->format($value('freight_amount', 0))" input-class="text-end" dir="ltr" />
                             @else
@@ -524,7 +524,7 @@
                         </div>
 
                         <div class="col-md-3">
-                            <label class="form-label" for="freight_tax_rate">{{ __('Freight tax rate') }}</label>
+                            <label class="form-label" for="freight_tax_rate">{{ __('purchase_invoices.attributes.freight_tax_rate') }}</label>
                             @if($isReadonly)
                                 <x-forms.view-field for="freight_tax_rate" :value="$numbers->format($value('freight_tax_rate', 0))" input-class="text-end" dir="ltr" />
                             @else

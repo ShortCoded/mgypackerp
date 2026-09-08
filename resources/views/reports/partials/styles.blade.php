@@ -224,4 +224,7 @@
     .document-terms tr { page-break-inside: avoid; }
     .document-terms p { margin: 3px 0; }
     .operational-print h3 { font-size: 11px; margin: 12px 0 5px; }
+    .sales-copy-designation { border-radius: 3px; font-size: 9px; font-weight: 700; margin: 0 0 8px; padding: 4px 8px; text-align: center; }
+    .sales-copy-designation-operational { background: #eef4f7; border: 1px solid #cbdbe3; color: #355368; }
+    .sales-copy-designation-legal { background: #e8f2ff; border: 1px solid #7bb3f4; color: #145ca8; }
 </style>

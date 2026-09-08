@@ -891,15 +891,17 @@ class SalesCycleController extends Controller
         };
 
         $copy = request()->validate(['copy' => ['nullable', Rule::in(['operational', 'legal'])]])['copy'] ?? 'operational';
+        $isInvoiceCopy = in_array($kind, ['invoice', 'credit_note'], true);
 
         return $this->pdf->stream('reports.sales.document', [
-            'printIdentityPolicy' => in_array($kind, ['sales_order', 'invoice', 'credit_note', 'customer_receipt', 'sales_return', 'sales_delivery', 'payment_schedule'], true)
-                ? 'report'
-                : ($copy === 'legal' ? 'legal' : 'operational'),
+            'printIdentityPolicy' => $isInvoiceCopy
+                ? $copy
+                : (in_array($kind, ['sales_order', 'customer_receipt', 'sales_return', 'sales_delivery', 'payment_schedule'], true) ? 'report' : 'operational'),
             'title' => $title.' — '.$record->doc_num,
             'documentHeaderTitle' => $title,
             'kind' => $kind,
             'record' => $record,
+            'copy' => $copy,
             'showPrices' => $financial
                 && ($pricePermission === null || (bool) request()->user()?->can($pricePermission)),
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),

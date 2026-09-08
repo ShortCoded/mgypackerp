@@ -309,6 +309,7 @@ test('purchase invoices allow an optional order and preserve deliberately unlink
 
     $this->get(route('admin.purchases.purchase-invoices.create'))->assertOk()
         ->assertSee(__('purchase_invoices.messages.purchase_order_source_help'))
+        ->assertSee(__('purchase_invoices.attributes.freight_amount'))
         ->assertSee(__('purchase_invoices.actions.duplicate_line'))
         ->assertSee(__('purchase_invoices.actions.delete_line'));
 });

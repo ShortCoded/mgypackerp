@@ -14,6 +14,7 @@
     };
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $isPartnerStatement = in_array($type, ['customer_statement', 'supplier_statement'], true);
     $exportPermission = 'reports.'.$type.'.export';
     $exportRoute = match($type) {
         'customer_statement' => 'admin.accounting.reports.customer-statement.export.',
@@ -33,7 +34,7 @@
 @section('title', $title)
 
 @section('content')
-    <x-admin.report.page :title="$title" :description="__('ledger_reports.messages.posted_source_only')">
+    <x-admin.report.page :title="$title" :description="__('ledger_reports.messages.'.($isPartnerStatement ? 'partner_posted_source_only' : 'posted_source_only'))">
         <x-slot:actions>
             <x-admin.report.actions-toolbar
                 filter-target="ledger-report-filters"
@@ -52,7 +53,7 @@
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="ledger_subject" :label="__('ledger_reports.filters.'.$subjectField)" :required="true" />
-                <select class="form-select form-select-sm js-ledger-select js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" required>
+                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="1" data-per-page="20" required>
                     @if($selected)<option value="{{ $selected['doc_num'] }}" selected>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</option>@endif
                 </select>
                 @error($subjectField)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
@@ -67,7 +68,7 @@
                 <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
                 @error('to_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
-            @unless($type === 'customer_statement')
+            @unless($isPartnerStatement)
                 <div class="col-sm-6 col-xl-2">
                     <x-forms.label for="branch_doc_num" :label="__('ledger_reports.filters.branch')" />
                     <select class="form-select form-select-sm js-report-filter-control" id="branch_doc_num" name="branch_doc_num">
@@ -80,20 +81,12 @@
                 </div>
                 <div class="col-sm-6 col-xl-2">
                     <x-forms.label for="cost_center_doc_num" :label="__('ledger_reports.filters.cost_center')" />
-                    <select class="form-select form-select-sm js-ledger-select js-report-filter-control" id="cost_center_doc_num" name="cost_center_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.cost-centers') }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true">
+                    <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost_center_doc_num" name="cost_center_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.cost-centers') }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true">
                         @if(request('cost_center_doc_num'))<option value="{{ request('cost_center_doc_num') }}" selected>{{ request('cost_center_doc_num') }}</option>@endif
                     </select>
                     @error('cost_center_doc_num')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                 </div>
             @endunless
-            @if($type === 'customer_statement')
-                <div class="col-sm-6 col-xl-1 d-flex align-items-end">
-                    <div class="form-check mb-1">
-                        <input class="form-check-input js-report-filter-control" id="all_periods" type="checkbox" name="all_periods" value="1" @checked(request()->boolean('all_periods'))>
-                        <label class="form-check-label" for="all_periods">{{ __('All financial periods') }}</label>
-                    </div>
-                </div>
-            @endif
         </x-admin.report.filter-panel>
 
     @if($result)
@@ -102,7 +95,7 @@
                 <div class="col-md-4">
                     <div class="card h-100">
                         <div class="card-body">
-                            <h6 class="text-700">{{ __('ledger_reports.summary.'.$summary) }}</h6>
+                            <h6 class="text-700">{{ __('ledger_reports.summary.'.($summary === 'opening' && $isPartnerStatement ? 'prior' : $summary)) }}</h6>
                             <div class="d-flex justify-content-between gap-3"><span>{{ __('ledger_reports.columns.debit') }}</span><strong dir="ltr">{{ $numbers->format($result[$summary]['debit']) }}</strong></div>
                             <div class="d-flex justify-content-between gap-3"><span>{{ __('ledger_reports.columns.credit') }}</span><strong dir="ltr">{{ $numbers->format($result[$summary]['credit']) }}</strong></div>
                         </div>
@@ -111,13 +104,42 @@
             @endforeach
         </div>
 
+        @if($isPartnerStatement && $result['opening_movements'] !== [])
+            <details class="card mb-3" data-opening-balance-details open>
+                <summary class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <span class="fw-semibold">{{ __('ledger_reports.summary.prior_details') }}</span>
+                    <span class="badge rounded-pill bg-200 text-700">{{ count($result['opening_movements']) }}</span>
+                </summary>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped table-hover align-middle mb-0">
+                        <thead class="bg-100"><tr>
+                            @foreach(['date', 'document', 'reference', 'description', 'debit', 'credit', 'balance'] as $column)<th class="{{ in_array($column, ['debit', 'credit', 'balance'], true) ? 'text-end' : '' }}">{{ __('ledger_reports.columns.'.$column) }}</th>@endforeach
+                        </tr></thead>
+                        <tbody>
+                            @foreach($result['opening_movements'] as $movement)
+                                <tr>
+                                    <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
+                                    <td dir="ltr">{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
+                                    <td dir="ltr">{{ $movement['reference_no'] ?: '—' }}</td>
+                                    <td>{{ $movement['description'] }}</td>
+                                    <td class="text-end" dir="ltr">{{ $numbers->format($movement['debit']) }}</td>
+                                    <td class="text-end" dir="ltr">{{ $numbers->format($movement['credit']) }}</td>
+                                    <td class="text-end" dir="ltr">{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        @endif
+
         <div class="card">
             <div class="card-header">
                 <div class="d-flex flex-wrap justify-content-between gap-2">
                     <div>
                         <h6 class="mb-1">{{ $selected['doc_num'] }} / {{ $selected['name'] }}</h6>
                         <span class="text-700 fs-10">
-                            @unless($type === 'customer_statement'){{ $selected['account'] }} / @endunless{{ data_get($result, 'currency.code') }}
+                            @unless($isPartnerStatement){{ $selected['account'] }} / @endunless{{ data_get($result, 'currency.code') }}
                         </span>
                     </div>
                     <div class="text-end fs-10 text-700">
@@ -128,7 +150,7 @@
             </div>
             <div class="card-body p-0">
                 <div class="erp-datatable-scroll">
-                    @if($type === 'customer_statement')
+                    @if($isPartnerStatement)
                         <table class="table table-sm table-striped table-hover align-middle mb-0">
                             <thead class="bg-100">
                                 <tr>
@@ -144,7 +166,7 @@
                             <tbody>
                                 <tr class="table-info">
                                     <td>{{ $dates->formatDate($fromDate, $fromDate) }}</td>
-                                    <td>{{ __('ledger_reports.summary.opening') }}</td>
+                                    <td>{{ __('ledger_reports.summary.prior') }}</td>
                                     <td></td>
                                     <td></td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($result['opening']['debit']) }}</td>
@@ -253,7 +275,3 @@
     @endif
     </x-admin.report.page>
 @endsection
-
-@push('scripts')
-    <script src="{{ asset('assets/js/modules/Accounting/ledger-reports.js') }}"></script>
-@endpush

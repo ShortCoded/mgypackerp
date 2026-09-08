@@ -1562,6 +1562,15 @@ html[dir="rtl"] .admin-report-page .report-filter-buttons {
   font-size: .7rem;
 }
 
+[data-invoice-action-panel] > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+[data-invoice-action-panel][open] > summary {
+  color: var(--falcon-primary);
+}
+
 .roles-permissions {
   --roles-permission-border: var(--falcon-border-color);
   --roles-permission-main-bg: var(--falcon-gray-100);

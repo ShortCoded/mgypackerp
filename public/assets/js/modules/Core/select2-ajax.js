@@ -225,6 +225,9 @@
       inputTooShort: function () { return messages.inputTooShort || ''; },
       loadingMore: function () { return messages.loadingMore || ''; },
       noResults: function () { return noResults || messages.noResults || ''; },
+      removeAllItems: function () { return defaults.clearAllLabel || ''; },
+      removeItem: function () { return defaults.clearAllLabel || ''; },
+      search: function () { return messages.searching || ''; },
       searching: function () { return messages.searching || ''; }
     };
   }

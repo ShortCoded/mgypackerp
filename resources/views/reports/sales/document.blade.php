@@ -29,9 +29,17 @@
             ->join(app()->isLocale('ar') ? '، ' : ', ');
         $sourceSalesOrder = $record->relationLoaded('salesOrder') ? $record->salesOrder : null;
         $sourceOrder = $record->relationLoaded('order') ? $record->order : null;
+        $isInvoiceDocument = in_array($kind, ['invoice', 'credit_note'], true);
+        $isLegalCopy = $isInvoiceDocument && ($copy ?? 'operational') === 'legal';
     @endphp
 
     @include('reports.partials.company-identity')
+
+    @if($isInvoiceDocument)
+        <div class="sales-copy-designation {{ $isLegalCopy ? 'sales-copy-designation-legal' : 'sales-copy-designation-operational' }}">
+            {{ $isLegalCopy ? __('sales_ui.legal_invoice_copy') : __('sales_ui.operational_invoice_copy') }}
+        </div>
+    @endif
 
     <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
         <tr>
@@ -73,7 +81,10 @@
                 @if($record->cheque)<tr><th>{{ __('Canonical Finance document') }}</th><td>{{ __('Received Cheque') }} <span dir="ltr">{{ $record->cheque->doc_num }}</span>@if($record->cheque->cheque_number) / <span dir="ltr">{{ $record->cheque->cheque_number }}</span>@endif</td></tr>@endif
                 <tr><th>{{ __('Receipt amount') }}</th><td dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</td></tr>
             @endif
-            @if(in_array($kind, ['invoice', 'credit_note'], true))<tr><th>{{ __('Electronic invoice status') }}</th><td>{{ __(str($record->electronic_invoice_status)->replace('_', ' ')->title()->toString()) }}</td></tr>@endif
+            @if($isLegalCopy)
+                <tr><th>{{ __('Electronic invoice status') }}</th><td>{{ __(str($record->electronic_invoice_status)->replace('_', ' ')->title()->toString()) }}</td></tr>
+                @if($record->electronic_invoice_uuid)<tr><th>{{ __('Authority UUID') }}</th><td dir="ltr">{{ $record->electronic_invoice_uuid }}</td></tr>@endif
+            @endif
         </tbody>
     </table>
 
@@ -122,7 +133,9 @@
     @if($record->notes ?? null)<div style="margin-top:10px;"><strong>{{ __('Notes') }}:</strong> {{ $record->notes }}</div>@endif
     @if($showPrices && (isset($record->total_amount) || $kind === 'customer_receipt')) @include('reports.partials.amount-in-words') @endif
     @include('reports.partials.document-signatures', ['signatureNames' => [__('Prepared by') => null, __('Reviewed by') => null, __('Approved By') => null]])
-    @include('reports.partials.company-authorization')
+    @if(! $isInvoiceDocument || $isLegalCopy)
+        @include('reports.partials.company-authorization')
+    @endif
 
     <style>
         .sales-document-lines { table-layout: fixed; }

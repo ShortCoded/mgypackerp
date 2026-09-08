@@ -1171,6 +1171,7 @@ test('every formal sales document streams canonical inline mPDF with operational
         'production work order' => route('admin.production.work-orders.print', $production),
         'delivery note' => route('admin.sales.delivery-notes.print', $delivery),
         'sales invoice' => route('admin.sales.sales-invoices.print', $invoice),
+        'sales invoice legal' => route('admin.sales.sales-invoices.print', [$invoice, 'copy' => 'legal']),
         'payment schedule' => route('admin.sales.sales-invoices.payment-schedule.print', $invoice),
         'cash customer receipt' => route('admin.sales.customer-receipts.print', $cashReceipt),
         'cheque customer receipt' => route('admin.sales.customer-receipts.print', $chequeReceipt),
@@ -1192,8 +1193,15 @@ test('every formal sales document streams canonical inline mPDF with operational
 
     $invoiceText = salesPdfText($responses['sales invoice']->getContent());
     expect($invoiceText)->toContain('Unit price')->toContain('876.54')
-        ->toContain('Sales PDF Legal Identity')->toContain('PDF Authorized Signatory')->toContain('Finance Director')
-        ->and(salesPdfImageCount($responses['sales invoice']->getContent()))->toBeGreaterThanOrEqual(3);
+        ->toContain('Sales PDF Legal Identity')->toContain(__('sales_ui.operational_invoice_copy'))
+        ->not->toContain(__('sales_ui.legal_invoice_copy'))->not->toContain('PDF Authorized Signatory')->not->toContain('Finance Director')
+        ->and(salesPdfImageCount($responses['sales invoice']->getContent()))->toBeGreaterThanOrEqual(1);
+    $legalInvoiceText = salesPdfText($responses['sales invoice legal']->getContent());
+    expect($legalInvoiceText)->toContain('Unit price')->toContain('876.54')
+        ->toContain('Sales PDF Legal Identity')->toContain(__('sales_ui.legal_invoice_copy'))
+        ->toContain('PDF Authorized Signatory')->toContain('Finance Director')
+        ->not->toContain(__('sales_ui.operational_invoice_copy'))
+        ->and(salesPdfImageCount($responses['sales invoice legal']->getContent()))->toBeGreaterThanOrEqual(3);
     foreach (['sales-origin production request', 'production work order', 'delivery note', 'return quality disposition'] as $operationalDocument) {
         $text = salesPdfText($responses[$operationalDocument]->getContent());
         expect($text)->not->toContain('Unit price')->not->toContain('876.54');

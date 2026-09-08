@@ -120,42 +120,57 @@ class LedgerReportController extends Controller
     private function ledgerResult(LedgerReportRequest $request, string $type, array $context): array
     {
         $validated = $request->validated();
+        $isPartnerStatement = in_array($type, ['customer_statement', 'supplier_statement'], true);
         [$account, $selected] = $this->resolveSubject($type, $validated, (int) $context['company_id']);
         $filters = [
             'company_id' => (int) $context['company_id'],
             'financial_period_id' => (int) $context['financial_period_id'],
-            'all_periods' => $type === 'customer_statement' && $request->boolean('all_periods'),
+            'all_periods' => $isPartnerStatement || $request->boolean('all_periods'),
             'account_id' => (int) $account->getKey(),
             'from_date' => $validated['from_date'],
             'to_date' => $validated['to_date'],
-            'branch_id' => $type === 'customer_statement'
+            'branch_id' => $isPartnerStatement
                 ? null
                 : $this->branchId((int) $context['company_id'], $validated['branch_doc_num'] ?? null),
-            'cost_center_id' => $type === 'customer_statement'
+            'cost_center_id' => $isPartnerStatement
                 ? null
                 : $this->costCenterId((int) $context['company_id'], $validated['cost_center_doc_num'] ?? null),
         ];
 
         $result = $this->ledger->accountLedger($filters);
-        if ($type === 'customer_statement') {
-            $result['movements'] = array_map(function (array $movement): array {
-                $translationKey = match (trim((string) $movement['description'])) {
-                    'Customer receivable' => 'customer_receivable',
-                    'Customer receivable settlement' => 'customer_receivable_settlement',
-                    'Customer credit' => 'customer_credit',
-                    'Sales return' => 'sales_return',
-                    default => null,
-                };
-
-                if ($translationKey !== null) {
-                    $movement['description'] = __('ledger_reports.movement_descriptions.'.$translationKey);
-                }
-
-                return $movement;
-            }, $result['movements']);
+        if ($isPartnerStatement) {
+            $result['opening_movements'] = $this->localizePartnerMovements($result['opening_movements']);
+            $result['movements'] = $this->localizePartnerMovements($result['movements']);
         }
 
         return [$result, $selected, $validated];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $movements
+     * @return list<array<string, mixed>>
+     */
+    private function localizePartnerMovements(array $movements): array
+    {
+        return array_map(function (array $movement): array {
+            $translationKey = match (trim((string) $movement['description'])) {
+                'Customer receivable' => 'customer_receivable',
+                'Customer receivable settlement' => 'customer_receivable_settlement',
+                'Customer credit' => 'customer_credit',
+                'Sales return' => 'sales_return',
+                'Supplier payable' => 'supplier_payable',
+                'Supplier payable settlement' => 'supplier_payable_settlement',
+                'Supplier debit' => 'supplier_debit',
+                'Purchase return' => 'purchase_return',
+                default => null,
+            };
+
+            if ($translationKey !== null) {
+                $movement['description'] = __('ledger_reports.movement_descriptions.'.$translationKey);
+            }
+
+            return $movement;
+        }, $movements);
     }
 
     /**
