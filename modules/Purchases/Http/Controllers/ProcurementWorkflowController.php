@@ -586,52 +586,40 @@ class ProcurementWorkflowController extends Controller
     {
         $this->assertInventoryBranch();
         $context = $this->context();
-        $supplyOrder = SupplyOrder::query()
+        $inspection = GoodsReceiptInspection::query()
             ->where('company_id', $context['company_id'])
-            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
             ->where('doc_num', $sourceDocument)
-            ->first();
-
-        if ($supplyOrder instanceof SupplyOrder) {
-            abort_unless(in_array($supplyOrder->status, [SupplyOrder::StatusIssued, SupplyOrder::StatusPartiallyReceived], true), 422);
-            $supplyOrder->load([
-                'supplier', 'branchStore', 'purchaseOrder',
-                'lines' => fn ($query) => $query->with(['product', 'unit', 'purchaseOrderLine.deliverySchedules']),
-            ]);
-
-            return view('modules.purchases.procurement.supply-receipt-form', ['record' => $supplyOrder]);
-        }
-
-        $purchaseOrder = PurchaseOrder::query()
-            ->where('company_id', $context['company_id'])
-            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
-            ->where('doc_num', $sourceDocument)
+            ->whereNull('receipt_id')
+            ->where('status', 'finalized')
+            ->whereIn('result', ['accepted', 'partially_accepted'])
+            ->with([
+                'purchaseOrder.supplier', 'purchaseOrder.branchStore', 'supplyOrder',
+                'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine', 'lines.deliverySchedule',
+            ])
             ->firstOrFail();
-        $purchaseOrder->load(['supplier', 'branchStore', 'lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
+        abort_unless($inspection->purchaseOrder instanceof PurchaseOrder, 422);
 
-        return view('modules.purchases.procurement.receipt-form', ['record' => $purchaseOrder]);
+        return view('modules.purchases.procurement.receipt-form', [
+            'record' => $inspection->purchaseOrder,
+            'sourceInspection' => $inspection,
+        ]);
     }
 
     public function storeReceipt(ProcurementWorkflowRequest $request, string $sourceDocument): JsonResponse|RedirectResponse
     {
         $this->assertInventoryBranch();
         $context = $this->context();
-        $supplyOrder = SupplyOrder::query()
+        $inspection = GoodsReceiptInspection::query()
             ->where('company_id', $context['company_id'])
-            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
             ->where('doc_num', $sourceDocument)
-            ->first();
-        if ($supplyOrder instanceof SupplyOrder) {
-            return $this->execute($request, fn () => $this->receiving->createReceiptFromSupplyOrder($supplyOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
-        }
-
-        $purchaseOrder = PurchaseOrder::query()
-            ->where('company_id', $context['company_id'])
-            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
-            ->where('doc_num', $sourceDocument)
+            ->whereNull('receipt_id')
             ->firstOrFail();
 
-        return $this->execute($request, fn () => $this->receiving->createReceipt($purchaseOrder, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
+        return $this->execute($request, fn () => $this->receiving->createReceiptFromInspection($inspection, $request->validated()), 'admin.purchases.goods-receipt-notes.show');
     }
 
     public function editReceipt(string $goodsReceiptNote): View
@@ -701,37 +689,102 @@ class ProcurementWorkflowController extends Controller
 
     public function inspectionsIndex(): View
     {
+        return $this->documentIndex('goods_receipt_inspections');
+    }
+
+    public function createInspection(string $sourceDocument): View
+    {
+        $this->assertInventoryBranch();
         $context = $this->context();
-        $records = GoodsReceiptInspection::query()->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->when(! $this->isAdministrativeBranch(), fn ($query) => $query->where('branch_id', $context['branch_id']))
-            ->with(['receipt.supplier'])->withCount('lines')
-            ->latest('inspection_at')->paginate(25);
+        $source = SupplyOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('doc_num', $sourceDocument)
+            ->first();
+        if ($source instanceof SupplyOrder) {
+            abort_unless(in_array($source->status, [SupplyOrder::StatusIssued, SupplyOrder::StatusPartiallyReceived], true), 422);
+            $source->load([
+                'supplier', 'branchStore', 'purchaseOrder',
+                'lines' => fn ($query) => $query
+                    ->withSum(['receiptLines as committed_receipt_quantity' => fn ($receipts) => $receipts
+                        ->whereHas('receipt', fn ($documents) => $documents->whereNotIn('status', ['cancelled', 'reversed']))], 'delivered_quantity')
+                    ->withSum(['inspectionLines as pending_inspection_quantity' => fn ($inspections) => $inspections
+                        ->whereHas('inspection', fn ($documents) => $documents->whereNull('receipt_id')->where('status', 'finalized'))], 'accepted_quantity')
+                    ->with(['product', 'unit']),
+                'lines.purchaseOrderLine' => fn ($query) => $query
+                    ->withQuantityProgress()
+                    ->withSum(['receiptLines as pending_receipt_quantity' => fn ($receipts) => $receipts
+                        ->whereHas('receipt', fn ($documents) => $documents->where('posting_status', 'unposted')->where('status', 'draft'))], 'delivered_quantity')
+                    ->withSum(['inspectionLines as pending_inspection_quantity' => fn ($inspections) => $inspections
+                        ->whereHas('inspection', fn ($documents) => $documents->whereNull('receipt_id')->where('status', 'finalized'))], 'accepted_quantity')
+                    ->with('deliverySchedules'),
+            ]);
+        } else {
+            $source = PurchaseOrder::query()
+                ->where('company_id', $context['company_id'])
+                ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+                ->where('doc_num', $sourceDocument)
+                ->where('status', PurchaseOrder::StatusApproved)
+                ->with([
+                    'supplier', 'branchStore',
+                    'lines' => fn ($query) => $query
+                        ->withQuantityProgress()
+                        ->withSum(['receiptLines as pending_receipt_quantity' => fn ($receipts) => $receipts
+                            ->whereHas('receipt', fn ($documents) => $documents->where('posting_status', 'unposted')->where('status', 'draft'))], 'delivered_quantity')
+                        ->withSum(['inspectionLines as pending_inspection_quantity' => fn ($inspections) => $inspections
+                            ->whereHas('inspection', fn ($documents) => $documents->whereNull('receipt_id')->where('status', 'finalized'))], 'accepted_quantity')
+                        ->with(['product', 'unit', 'deliverySchedules']),
+                ])
+                ->firstOrFail();
+        }
 
-        return $this->indexView('goods_receipt_inspections', __('Incoming Quality Inspections'), $records);
+        foreach ($source->lines as $line) {
+            if ($source instanceof SupplyOrder) {
+                $orderLine = $line->purchaseOrderLine;
+                $sourceRemaining = max(0, (float) $line->ordered_quantity - (float) $line->committed_receipt_quantity - (float) $line->pending_inspection_quantity);
+                $orderRemaining = $orderLine === null ? 0 : max(
+                    0,
+                    $orderLine->quantityProgress()['remaining'] - (float) $orderLine->pending_receipt_quantity - (float) $orderLine->pending_inspection_quantity,
+                );
+                $line->setAttribute('available_inspection_quantity', min($sourceRemaining, $orderRemaining));
+            } else {
+                $line->setAttribute('available_inspection_quantity', max(
+                    0,
+                    $line->quantityProgress()['remaining'] - (float) $line->pending_receipt_quantity - (float) $line->pending_inspection_quantity,
+                ));
+            }
+        }
+
+        return view('modules.purchases.procurement.inspection-form', ['record' => $source]);
     }
 
-    public function createInspection(string $goodsReceiptNote): View
+    public function storeInspection(ProcurementWorkflowRequest $request, string $sourceDocument): JsonResponse|RedirectResponse
     {
         $this->assertInventoryBranch();
-        $receipt = $this->receipt($goodsReceiptNote)->load(['supplier', 'purchaseOrder', 'lines.product', 'lines.unit']);
-        abort_unless($receipt->status === 'draft' && $receipt->posting_status === 'unposted' && $receipt->qc_status === 'pending_inspection' && ! $receipt->inspection()->exists(), 422);
+        $context = $this->context();
+        $source = SupplyOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('doc_num', $sourceDocument)
+            ->first()
+            ?? PurchaseOrder::query()
+                ->where('company_id', $context['company_id'])
+                ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+                ->where('doc_num', $sourceDocument)
+                ->firstOrFail();
 
-        return view('modules.purchases.procurement.inspection-form', ['record' => $receipt]);
-    }
-
-    public function storeInspection(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
-    {
-        $this->assertInventoryBranch();
-        $receipt = $this->receipt($goodsReceiptNote);
-
-        return $this->execute($request, fn () => $this->receiving->inspect($receipt, $request->validated()), 'admin.purchases.goods-receipt-inspection.show');
+        return $this->execute($request, fn () => $this->receiving->inspectPurchaseSource($source, $request->validated()), 'admin.purchases.goods-receipt-inspection.show');
     }
 
     public function showInspection(GoodsReceiptInspection $goodsReceiptInspection): View
     {
         $this->assertCurrent($goodsReceiptInspection);
-        $goodsReceiptInspection->load(['receipt.supplier', 'receipt.purchaseOrder', 'lines.product', 'lines.receiptLine', 'attachmentUsages.file']);
+        $goodsReceiptInspection->load([
+            'branch', 'receipt.supplier', 'purchaseOrder.supplier', 'purchaseOrder.branchStore.branch',
+            'supplyOrder.supplier', 'supplyOrder.branchStore.branch',
+            'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine', 'lines.receiptLine',
+            'attachmentUsages.file',
+        ]);
 
         return $this->showView('goods_receipt_inspection', $goodsReceiptInspection, false);
     }
@@ -1069,8 +1122,13 @@ class ProcurementWorkflowController extends Controller
             'purchase-order-delivery-schedule' => PurchaseOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'lines.deliverySchedules.purchaseOrderLine.product'])->firstOrFail(),
             'supply-order' => SupplyOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['purchaseOrder', 'purchaseInvoice', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'receipts'])->firstOrFail(),
             'goods-receipt' => $this->receipt($docNum)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine']),
-            'goods-receipt-inspection' => GoodsReceiptInspection::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['receipt.supplier', 'lines.product', 'lines.receiptLine', 'attachmentUsages.file'])->firstOrFail(),
-            'purchase-return' => PurchaseReturn::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'purchaseOrder', 'purchaseInvoice', 'lines.product', 'lines.unit'])->firstOrFail(),
+            'goods-receipt-inspection' => GoodsReceiptInspection::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with([
+                'branch', 'receipt.supplier', 'purchaseOrder.supplier', 'purchaseOrder.branchStore.branch',
+                'supplyOrder.supplier', 'supplyOrder.branchStore.branch',
+                'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine', 'lines.receiptLine',
+                'attachmentUsages.file',
+            ])->firstOrFail(),
+            'purchase-return' => PurchaseReturn::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'purchaseOrder', 'purchaseInvoice', 'receipt', 'lines.product', 'lines.unit', 'lines.receiptLine.receipt'])->firstOrFail(),
             'supplier-payment' => SupplierPaymentContext::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'currency', 'supplier', 'purchaseOrder', 'allocations.purchaseInvoice'])->firstOrFail(),
             default => abort(404),
         };
@@ -1110,10 +1168,15 @@ class ProcurementWorkflowController extends Controller
         if ($screen === 'request_for_quotations') {
             $this->assertAdministrativeBranch();
         }
+        if ($screen === 'goods_receipt_inspections') {
+            $this->assertInventoryBranch();
+
+            return view('modules.purchases.procurement.inspection-source-picker');
+        }
         [$title, $lookup, $destination] = match ($screen) {
             'request_for_quotations' => [__('Create Request for Quotation'), 'requisitions', 'request-for-quotations'],
             'supplier_quotations' => [__('Supplier Quotation Entry'), 'rfqs', 'supplier-quotation-entry'],
-            'goods_receipts' => [__('Goods Receipt Note'), 'supply-orders', 'goods-receipt-notes'],
+            'goods_receipts' => [__('Goods Receipt Note'), 'inspections', 'goods-receipt-notes'],
             default => abort(404),
         };
 
@@ -1133,6 +1196,7 @@ class ProcurementWorkflowController extends Controller
         }
         $statuses = match ($screen) {
             'purchase_requisitions' => ['draft', 'pending_approval', 'approved', 'rejected', 'partially_converted', 'fully_converted', 'closed', 'cancelled'],
+            'goods_receipt_inspections' => ['accepted', 'partially_accepted', 'rejected'],
             'goods_receipts' => ['unposted', 'posted', 'reversed'],
             'purchase_returns' => ['draft', 'posted', 'reversed'],
             'supply_orders' => ['draft', 'issued', 'partially_received', 'fully_received', 'closed', 'cancelled'],
@@ -1140,7 +1204,7 @@ class ProcurementWorkflowController extends Controller
         };
 
         $isAdministrativeBranch = $this->isAdministrativeBranch();
-        if ($isAdministrativeBranch && in_array($screen, ['goods_receipts', 'purchase_returns'], true)) {
+        if ($isAdministrativeBranch && in_array($screen, ['goods_receipt_inspections', 'goods_receipts', 'purchase_returns'], true)) {
             $createUrl = null;
         }
         if (! $isAdministrativeBranch && in_array($screen, ['request_for_quotations', 'supplier_quotations', 'supply_orders'], true)) {

@@ -116,8 +116,9 @@ class SalesRequestController extends Controller
         $this->assertBranch($request, $salesRequest);
 
         return $pdf->stream('reports.sales.request', ['record' => $salesRequest->load('company', 'customer', 'branchStore', 'lines.product.color', 'lines.unit'),
-            'title' => __('Sales Request').' — '.$salesRequest->doc_num, 'printIdentityPolicy' => 'operational', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot,
-            'showPrices' => $request->user()->can('sales_orders.view_prices')], 'sales-request-'.$salesRequest->doc_num.'.pdf');
+            'title' => __('Sales Request').' — '.$salesRequest->doc_num, 'documentHeaderTitle' => __('Sales Request'),
+            'printIdentityPolicy' => 'operational', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot,
+            'showPrices' => $request->user()->can('sales_orders.view_prices'), 'customerFacing' => true], 'sales-request-'.$salesRequest->doc_num.'.pdf');
     }
 
     private function form(Request $request, ?SalesRequest $record = null): View
@@ -152,7 +153,10 @@ class SalesRequestController extends Controller
 
     private function saved(SalesRequest $record): JsonResponse
     {
-        return response()->json(['data' => ['doc_num' => $record->doc_num, 'url' => route('admin.sales.customer-requests.show', $record)]], 200);
+        return response()->json([
+            'message' => __('Saved successfully.'),
+            'data' => ['doc_num' => $record->doc_num, 'url' => route('admin.sales.customer-requests.show', $record)],
+        ], 200);
     }
 
     private function assertBranch(Request $request, SalesRequest $record): void

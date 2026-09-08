@@ -655,6 +655,13 @@
     syncMainCurrency($form);
     calculateTotals($form);
 
+    const $sourceRequest = $form.find('[data-quotation-source]');
+    $sourceRequest.off('.quotationSource').on('select2:select.quotationSource select2:clear.quotationSource', function () {
+      const url = new URL(String($(this).data('create-url')), window.location.origin);
+      if (this.value) url.searchParams.set('source_request_doc_num', this.value);
+      window.location.assign(url.toString());
+    });
+
     $(document)
       .off('click.quotationsSubmitAction', '.js-quotation-submit-action')
       .on('click.quotationsSubmitAction', '.js-quotation-submit-action', function () {

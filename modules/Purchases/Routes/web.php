@@ -16,8 +16,9 @@ Route::middleware('auth')
     ->group(function (): void {
         foreach (['currency-rate' => ['purchase_orders.create', 'purchase_orders.edit'], 'employees' => ['purchases.purchase_requisitions.create', 'purchases.purchase_requisitions.edit'],
             'rfqs' => ['purchases.supplier_quotation_entry.create'], 'requisitions' => ['purchase_orders.create', 'purchase_orders.edit', 'purchases.request_for_quotations.create', 'purchases.supplier_quotation_entry.create'],
-            'purchase-orders' => ['purchases.goods_receipt_notes.create', 'purchases.supply_orders.create', 'purchases.supplier_quotation_entry.create', 'purchase_invoices.create', 'purchase_invoices.edit'],
-            'supply-orders' => ['purchases.goods_receipt_notes.create'],
+            'purchase-orders' => ['purchases.goods_receipt_inspection.create', 'purchases.supply_orders.create', 'purchases.supplier_quotation_entry.create', 'purchase_invoices.create', 'purchase_invoices.edit'],
+            'supply-orders' => ['purchases.goods_receipt_inspection.create'],
+            'inspections' => ['purchases.goods_receipt_notes.create'],
             'invoices' => ['purchases.purchase_returns.create', 'purchases.purchase_returns.edit', 'purchases.supply_orders.create'],
             'receipts' => ['purchases.purchase_returns.create', 'purchases.purchase_returns.edit', 'purchase_invoices.create', 'purchase_invoices.edit']] as $lookup => $permissions) {
             Route::get('/select2/'.$lookup, function (Request $request, PurchasesSelect2Service $select2) use ($lookup, $permissions) {
@@ -302,8 +303,9 @@ Route::middleware('auth')
             Route::get('goods-receipt-lines', 'receiptLinesIndex')->middleware('can:purchases.goods_receipt_lines.view')->name('goods-receipt-lines.index');
             Route::prefix('goods-receipt-inspection')->name('goods-receipt-inspection.')->group(function (): void {
                 Route::get('/', 'inspectionsIndex')->middleware('can:purchases.goods_receipt_inspection.view')->name('index');
-                Route::get('/create/{goodsReceiptNote}', 'createInspection')->middleware('can:purchases.goods_receipt_inspection.create')->name('create');
-                Route::post('/from/{goodsReceiptNote}', 'storeInspection')->middleware('can:purchases.goods_receipt_inspection.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
+                Route::get('/create', 'chooseSource')->defaults('screen', 'goods_receipt_inspections')->middleware('can:purchases.goods_receipt_inspection.create')->name('choose-source');
+                Route::get('/create/{sourceDocument}', 'createInspection')->middleware('can:purchases.goods_receipt_inspection.create')->name('create');
+                Route::post('/from/{sourceDocument}', 'storeInspection')->middleware('can:purchases.goods_receipt_inspection.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{goodsReceiptInspection}', 'showInspection')->middleware('can:purchases.goods_receipt_inspection.view')->name('show');
             });
 

@@ -158,21 +158,28 @@ test('sales order displays a concise quotation revision and does not repeat the 
         ->assertDontSee($f['finished']->name.' / '.$f['finished']->name);
 
     $pdf = $this->get(route('admin.sales.sales-orders.print', $order))->assertOk();
-    expect(salesPdfText($pdf->getContent()))
+    $orderPrintText = salesPdfText($pdf->getContent());
+    expect(substr_count($orderPrintText, $order->doc_num))->toBe(1)
+        ->and($orderPrintText)
         ->toContain($quote->doc_num, 'R01')
-        ->not->toContain($quote->currentRevision->revision_code, $f['finished']->name.' / '.$f['finished']->name);
+        ->not->toContain($quote->currentRevision->revision_code, $f['finished']->name.' / '.$f['finished']->name, __('Classification'));
 });
 
 test('sales request customer type requires customer and internal type uses separate business employee', function () {
     $f = salesUiFixture();
+    Permission::findOrCreate('sales_requests.print', 'web');
+    $f['user']->givePermissionTo('sales_requests.print');
     $employee = salesUiEmployee($f);
     $payload = ['request_type' => 'customer', 'request_date' => now()->toDateString(), 'priority' => 'normal', 'exchange_rate' => 1,
         'currency_doc_num' => $f['currency']->doc_num, 'sales_employee_doc_num' => $employee->doc_num,
-        'lines' => [['product_doc_num' => $f['finished']->doc_num, 'unit_doc_num' => $f['unit']->doc_num, 'quantity' => 2, 'unit_price' => 5]]];
+        'lines' => [['product_doc_num' => $f['finished']->doc_num, 'unit_doc_num' => $f['unit']->doc_num, 'quantity' => 2]]];
     $this->actingAs($f['user'])->withSession(salesCycleSession($f))->postJson(route('admin.sales.customer-requests.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('customer_doc_num');
     $this->postJson(route('admin.sales.customer-requests.store'), [...$payload, 'request_type' => 'internal'])->assertSuccessful();
     $request = SalesRequest::query()->latest('id')->firstOrFail();
-    expect($request->customer_id)->toBeNull()->and($request->sales_employee_id)->toBeNull()->and($request->business_employee_id)->toBe($employee->id);
+    expect($request->customer_id)->toBeNull()
+        ->and($request->sales_employee_id)->toBeNull()
+        ->and($request->business_employee_id)->toBe($employee->id)
+        ->and($request->lines->sole()->unit_price)->toBeNull();
     $requestForm = $this->get(route('admin.sales.customer-requests.create'))->assertOk()->assertDontSee($f['finished']->name);
     $requestForm->assertDontSee('name="branch_store_uuid"', false)
         ->assertDontSee('name="priority"', false)
@@ -182,8 +189,14 @@ test('sales request customer type requires customer and internal type uses separ
         ->assertDontSee('[specifications][units_per_package]', false)
         ->assertSee('data-sales-summary-total', false)
         ->assertSee('data-sales-summary-quantity', false)
+        ->assertSee(__('sales_ui.optional_unit_price'))
         ->assertSee('data-shortcut-action="line.add"', false);
+    expect($requestForm->getContent())->not->toMatch('/name="lines\[[^]]+\]\[unit_price\]"[^>]*required/');
     expect(substr_count($requestForm->getContent(), 'data-sales-add-line'))->toBe(2);
+
+    $printText = salesPdfText($this->get(route('admin.sales.customer-requests.print', $request))->assertOk()->getContent());
+    expect(substr_count($printText, __('Sales Request').' — '.$request->doc_num))->toBe(1)
+        ->and($printText)->not->toContain(__('Unit price'), __('Classification'));
 });
 
 test('sales navigation is one ordered journey with canonical statement and collection links', function () {

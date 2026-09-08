@@ -20,11 +20,14 @@ class CreditControlService
             return $agreement->snapshot();
         }
 
+        $creditLimit = CustomerCreditLimit::query()->where('company_id', $companyId)
+            ->where('customer_id', $customerId)->where('currency_id', $currencyId)->first();
+
         return [
             'customer_type' => CustomerCommercialAgreement::TypeCredit,
-            'credit_limit' => (string) (CustomerCreditLimit::query()->where('company_id', $companyId)
-                ->where('customer_id', $customerId)->where('currency_id', $currencyId)->value('credit_limit') ?? '0'),
-            'blocking_enabled' => true,
+            'credit_limit' => (string) ($creditLimit?->credit_limit ?? '0'),
+            'credit_limit_configured' => $creditLimit instanceof CustomerCreditLimit,
+            'blocking_enabled' => $creditLimit instanceof CustomerCreditLimit,
             'include_open_orders' => true,
         ];
     }
@@ -45,8 +48,11 @@ class CreditControlService
     public function evaluate(SalesOrder $order): array
     {
         $agreement = $this->agreementFor($order);
-        $snapshot = $order->agreement_snapshot ?? $this->snapshotFor($agreement, $order->company_id, $order->customer_id, $order->currency_id);
+        $snapshot = $agreement
+            ? ($order->agreement_snapshot ?? $this->snapshotFor($agreement, $order->company_id, $order->customer_id, $order->currency_id))
+            : $this->snapshotFor(null, $order->company_id, $order->customer_id, $order->currency_id);
         $creditLimit = (string) ($snapshot['credit_limit'] ?? '0');
+        $creditLimitConfigured = (bool) ($snapshot['credit_limit_configured'] ?? $agreement instanceof CustomerCommercialAgreement);
         $isCash = ($snapshot['customer_type'] ?? CustomerCommercialAgreement::TypeCredit) === CustomerCommercialAgreement::TypeCash;
         $blockingEnabled = (bool) ($snapshot['blocking_enabled'] ?? true);
         $includeOpenOrders = (bool) ($snapshot['include_open_orders'] ?? true);
@@ -55,7 +61,7 @@ class CreditControlService
         $advancePaid = $this->approvedAdvance($order);
         $requiredAdvance = (string) $order->required_advance_amount;
         $projectedExposure = $this->amounts->sum([$outstanding, $openOrders, $order->total_amount]);
-        $creditExceeded = ! $isCash && $this->amounts->compare($projectedExposure, $creditLimit) > 0;
+        $creditExceeded = $creditLimitConfigured && ! $isCash && $this->amounts->compare($projectedExposure, $creditLimit) > 0;
         $advanceMissing = $this->amounts->compare($advancePaid, $requiredAdvance) < 0;
         $blocked = $blockingEnabled && ($creditExceeded || $advanceMissing || ($isCash && $this->amounts->compare($advancePaid, $order->total_amount) < 0));
 
@@ -63,6 +69,7 @@ class CreditControlService
             'blocked' => $blocked,
             'customer_type' => $isCash ? CustomerCommercialAgreement::TypeCash : CustomerCommercialAgreement::TypeCredit,
             'credit_limit' => $creditLimit,
+            'credit_limit_configured' => $creditLimitConfigured,
             'outstanding_receivables' => $outstanding,
             'open_order_exposure' => $openOrders,
             'order_amount' => (string) $order->total_amount,

@@ -122,6 +122,14 @@ test('a purchased fixed asset keeps one accounting recognition and separately pr
         ->and(InventoryTransaction::query()->count())->toBe(0)
         ->and(JournalEntry::query()->count())->toBe(0);
 
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+    $this->getJson(route('admin.purchases.select2.receipts', [
+        'purpose' => 'invoice',
+        'purchase_order' => $order->doc_num,
+    ]))->assertOk()->assertJsonPath('results.0.id', $receipt->doc_num);
+    procurementUseBranch($fixture, $fixture['branch']);
+
     $invoice = $invoices->create([
         'purchase_order_doc_num' => $order->doc_num,
         'supplier_doc_num' => $fixture['firstSupplier']->doc_num,

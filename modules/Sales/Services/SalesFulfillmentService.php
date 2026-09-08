@@ -190,10 +190,13 @@ class SalesFulfillmentService
                 throw new DomainException(__('Select each invoice line once and enter its delivery quantity.'));
             }
 
-            $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'deliveries.lines'])
+            $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'lines.product', 'deliveries.lines'])
                 ->lockForUpdate()->findOrFail($invoice->getKey());
-            if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted || ! $lockedInvoice->order) {
-                throw new DomainException(__('Only a posted sales invoice linked to a sales order can be delivered.'));
+            if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted) {
+                throw new DomainException(__('Only a posted sales invoice can be delivered.'));
+            }
+            if (! $lockedInvoice->order) {
+                return $this->deliverDirectInvoice($lockedInvoice, $lines, $logistics);
             }
 
             $branchStore = BranchStore::query()
@@ -233,6 +236,77 @@ class SalesFulfillmentService
 
             return $document->refresh()->load(['lines', 'branchStore']);
         });
+    }
+
+    /**
+     * @param  list<array{customer_invoice_line_id: int, quantity: string|int|float}>  $lines
+     * @param  array<string, mixed>  $logistics
+     */
+    private function deliverDirectInvoice(CustomerInvoice $invoice, array $lines, array $logistics): InventoryDocument
+    {
+        $branchStore = BranchStore::query()
+            ->where('branch_id', $invoice->branch_id)
+            ->where('public_uuid', $logistics['branch_store_uuid'] ?? '')
+            ->lockForUpdate()
+            ->firstOrFail();
+        $documentDate = $logistics['document_date'] ?? now()->toDateString();
+        $period = $this->periods->resolveOpenForPostingDate((int) $invoice->company_id, $documentDate, lockForUpdate: true);
+        $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $invoice->company_id);
+        $document = InventoryDocument::query()->create([
+            ...$numbers,
+            'company_id' => $invoice->company_id, 'financial_period_id' => $period->getKey(), 'branch_id' => $invoice->branch_id,
+            'branch_store_id' => $branchStore->getKey(), 'document_type' => InventoryDocument::TypeSalesDelivery,
+            'document_date' => $documentDate, 'purpose' => 'Sales delivery',
+            'source_document_type' => CustomerInvoice::class, 'source_document_id' => $invoice->getKey(), 'source_doc_num' => $invoice->doc_num,
+            'customer_id' => $invoice->customer_id, 'status' => InventoryDocument::StatusDraft,
+            'recipient_name' => $logistics['recipient_name'] ?? null, 'recipient_phone' => $logistics['recipient_phone'] ?? null,
+            'vehicle_number' => $logistics['vehicle_number'] ?? null, 'driver_name' => $logistics['driver_name'] ?? null,
+            'notes' => $logistics['notes'] ?? null, 'created_by' => auth()->id(),
+        ]);
+
+        $lineNumber = 0;
+        foreach ($lines as $input) {
+            $invoiceLine = CustomerInvoiceLine::query()->with('product')->where('customer_invoice_id', $invoice->getKey())
+                ->lockForUpdate()->findOrFail($input['customer_invoice_line_id']);
+            if ($invoiceLine->is_service || ! $invoiceLine->product_id) {
+                throw new DomainException(__('Services do not generate warehouse deliveries.'));
+            }
+            $delivered = (string) $invoice->deliveries->flatMap->lines
+                ->where('source_line_type', CustomerInvoiceLine::class)
+                ->where('source_line_id', $invoiceLine->getKey())
+                ->sum('transaction_quantity');
+            $remaining = $this->amounts->subtract((string) $invoiceLine->quantity, $delivered, 8);
+            $quantity = (string) $input['quantity'];
+            $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
+            $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Delivery quantity exceeds the invoiced quantity remaining for delivery.'));
+            $baseQuantity = bcmul($quantity, (string) $invoiceLine->conversion_factor, 8);
+
+            foreach ($this->allocateStockPositions((int) $invoice->company_id, (int) $branchStore->getKey(), (int) $invoiceLine->product_id, $baseQuantity) as $allocation) {
+                $document->lines()->create([
+                    'company_id' => $invoice->company_id, 'financial_period_id' => $period->getKey(), 'line_number' => ++$lineNumber,
+                    'product_id' => $invoiceLine->product_id, 'unit_id' => $invoiceLine->product->item_unit_id,
+                    'transaction_unit_id' => $invoiceLine->unit_id, 'conversion_factor' => $invoiceLine->conversion_factor,
+                    'transaction_quantity' => bcdiv($allocation['quantity'], (string) $invoiceLine->conversion_factor, 8),
+                    'base_quantity' => $allocation['quantity'], 'quantity' => $allocation['quantity'],
+                    'warehouse_location_id' => $allocation['warehouse_location_id'], 'batch_lot' => $allocation['batch_lot'],
+                    'source_line_type' => CustomerInvoiceLine::class, 'source_line_id' => $invoiceLine->getKey(),
+                    'source_line_public_id' => $invoiceLine->public_id, 'reference_quantity' => $invoiceLine->base_quantity,
+                    'previous_quantity' => bcmul($delivered, (string) $invoiceLine->conversion_factor, 8),
+                    'product_snapshot' => ['classification' => $invoiceLine->product->item_classification, 'description' => $invoiceLine->description],
+                    'created_by' => auth()->id(),
+                ]);
+            }
+        }
+
+        $posted = $this->posting->post($document);
+        $journal = $this->accounting->postDeliveryCost($posted);
+        $posted->update(['journal_entry_id' => $journal->getKey()]);
+        $invoice->deliveries()->syncWithoutDetaching([$posted->getKey()]);
+        if (! $invoice->delivery_document_id) {
+            $invoice->update(['delivery_document_id' => $posted->getKey()]);
+        }
+
+        return $posted->refresh()->load(['lines', 'branchStore']);
     }
 
     private function consumeReservations(SalesOrderLine $line, string $quantity, int $branchStoreId): void

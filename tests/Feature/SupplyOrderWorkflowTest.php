@@ -113,20 +113,33 @@ test('supply order drives partial warehouse receipts without duplicate inventory
     expect(InventoryTransaction::query()->count())->toBe(0)
         ->and(DB::table('journal_entries')->count())->toBe(0);
 
-    $firstReceipt = $receiving->createReceiptFromSupplyOrder($supplyOrder, [
-        'document_date' => now()->toDateString(),
-        'supplier_delivery_note' => 'DN-4000',
+    $firstInspection = $receiving->inspectPurchaseSource($supplyOrder, [
+        'inspection_at' => now()->toDateString(),
         'lines' => [[
             'supply_order_line_public_id' => $supplyOrder->lines->sole()->public_id,
-            'purchase_order_line_public_id' => $purchaseOrder->lines->sole()->public_id,
             'delivered_quantity' => 4000,
+            'accepted_quantity' => 4000,
+            'rejected_quantity' => 0,
         ]],
     ]);
-    $receiving->inspect($firstReceipt, ['lines' => [[
-        'receipt_line_public_id' => $firstReceipt->lines->sole()->public_id,
-        'accepted_quantity' => 4000,
-        'rejected_quantity' => 0,
-    ]]]);
+    $pendingInspectionRows = app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::IncomingQcPending,
+        ['branch_id' => $fixture['branch']->id],
+        $fixture['company']->id,
+        $fixture['period']->id,
+    );
+    expect($pendingInspectionRows->pluck('document')->all())->toContain($firstInspection->doc_num);
+    $firstReceipt = $receiving->createReceiptFromInspection($firstInspection, [
+        'document_date' => now()->toDateString(),
+        'supplier_delivery_note' => 'DN-4000',
+        'lines' => [['inspection_line_public_id' => $firstInspection->lines->sole()->public_id]],
+    ]);
+    expect(app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::IncomingQcPending,
+        ['branch_id' => $fixture['branch']->id],
+        $fixture['company']->id,
+        $fixture['period']->id,
+    )->pluck('document')->all())->not->toContain($firstInspection->doc_num);
     $firstReceipt = $receiving->postReceipt($firstReceipt->fresh());
 
     expect($supplyOrder->fresh()->status)->toBe(SupplyOrder::StatusPartiallyReceived)
@@ -134,20 +147,20 @@ test('supply order drives partial warehouse receipts without duplicate inventory
         ->and($purchaseOrder->fresh()->fulfillmentStatus())->toBe('partially_received')
         ->and((float) InventoryTransaction::query()->where('source_doc_num', $firstReceipt->doc_num)->sum('quantity_in'))->toBe(4000.0);
 
-    $secondReceipt = $receiving->createReceiptFromSupplyOrder($supplyOrder->fresh(), [
-        'document_date' => now()->toDateString(),
-        'supplier_delivery_note' => 'DN-6000',
+    $secondInspection = $receiving->inspectPurchaseSource($supplyOrder->fresh(), [
+        'inspection_at' => now()->toDateString(),
         'lines' => [[
             'supply_order_line_public_id' => $supplyOrder->lines->sole()->public_id,
-            'purchase_order_line_public_id' => $purchaseOrder->lines->sole()->public_id,
             'delivered_quantity' => 6000,
+            'accepted_quantity' => 6000,
+            'rejected_quantity' => 0,
         ]],
     ]);
-    $receiving->inspect($secondReceipt, ['lines' => [[
-        'receipt_line_public_id' => $secondReceipt->lines->sole()->public_id,
-        'accepted_quantity' => 6000,
-        'rejected_quantity' => 0,
-    ]]]);
+    $secondReceipt = $receiving->createReceiptFromInspection($secondInspection, [
+        'document_date' => now()->toDateString(),
+        'supplier_delivery_note' => 'DN-6000',
+        'lines' => [['inspection_line_public_id' => $secondInspection->lines->sole()->public_id]],
+    ]);
     $secondReceipt = $receiving->postReceipt($secondReceipt->fresh());
 
     expect($supplyOrder->fresh()->status)->toBe(SupplyOrder::StatusFullyReceived)
@@ -158,7 +171,15 @@ test('supply order drives partial warehouse receipts without duplicate inventory
         ->and(InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$secondReceipt->lines->sole()->id}")->count())->toBe(1);
 
     $chain = app(ProcurementCycleReport::class)->documentChain($purchaseOrder)->pluck('doc_num');
-    expect($chain)->toContain($requisition->doc_num, $purchaseOrder->doc_num, $supplyOrder->doc_num, $firstReceipt->doc_num, $secondReceipt->doc_num);
+    expect($chain)->toContain(
+        $requisition->doc_num,
+        $purchaseOrder->doc_num,
+        $supplyOrder->doc_num,
+        $firstInspection->doc_num,
+        $firstReceipt->doc_num,
+        $secondInspection->doc_num,
+        $secondReceipt->doc_num,
+    );
 
     $supplyRows = app(ProcurementCycleReport::class)->rows(
         ProcurementCycleReport::SupplyOrders,

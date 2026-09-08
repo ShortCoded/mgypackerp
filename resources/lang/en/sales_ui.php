@@ -1,6 +1,16 @@
 <?php
 
 return [
+    'direct_quotation' => 'Direct quotation',
+    'source_quotation_request_help' => 'Choose an approved sales request to load its customer, currency, sales employee, and remaining lines.',
+    'choose_invoice_source' => 'Choose invoice source',
+    'invoice_from_order' => 'From sales order',
+    'invoice_from_order_help' => 'Invoice the approved quantities remaining on a sales order.',
+    'invoice_from_request' => 'From sales request',
+    'invoice_from_request_help' => 'Load the customer, currency, and remaining request lines directly into an invoice.',
+    'direct_invoice' => 'Direct invoice',
+    'direct_invoice_help' => 'Create a standalone sales invoice without a sales request or sales order.',
+    'create_direct_invoice' => 'Create direct invoice',
     'add_employee' => 'Add employee',
     'create_invoice' => 'Create Sales Invoice',
     'invoice_source_help' => 'Select an approved sales order with quantities available to invoice.',
@@ -20,6 +30,7 @@ return [
     'distinct_products' => 'Distinct products',
     'total_quantity' => 'Total quantity',
     'grand_total' => 'Grand total',
+    'optional_unit_price' => 'Unit price (optional)',
     'quotation_type_help' => 'Standard quotations hide project fields. Select Project to show the project name and execution schedule.',
     'requested_date_help' => 'The requested date is optional per line. It is inherited by the Sales Order and used for delivery planning.',
     'discount_type_required' => 'Select a discount type before entering a discount value.',

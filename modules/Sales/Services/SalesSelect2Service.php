@@ -21,6 +21,7 @@ use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -87,7 +88,7 @@ class SalesSelect2Service
                     ->whereRaw('customer_invoice_lines.quantity > '.$returnsSql, [SalesReturn::StatusCancelled]))
                     ->orWhere(fn (Builder $physical) => $physical
                         ->where('customer_invoice_lines.is_service', false)
-                        ->whereRaw('(select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = ? and inventory_document_lines.source_line_id = customer_invoice_lines.sales_order_line_id and inventory_documents.status = ? and inventory_documents.deleted_at is null) > '.$returnsSql, [SalesOrderLine::class, InventoryDocument::StatusPosted, SalesReturn::StatusCancelled]));
+                        ->whereRaw('(select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = case when customer_invoice_lines.sales_order_line_id is null then ? else ? end and inventory_document_lines.source_line_id = coalesce(customer_invoice_lines.sales_order_line_id, customer_invoice_lines.id) and inventory_documents.status = ? and inventory_documents.deleted_at is null) > '.$returnsSql, [CustomerInvoiceLine::class, SalesOrderLine::class, InventoryDocument::StatusPosted, SalesReturn::StatusCancelled]));
             }))
             ->orderByDesc('invoice_date')
             ->orderByDesc('id');
@@ -134,7 +135,7 @@ class SalesSelect2Service
             ->where('posting_status', CustomerInvoice::StatusPosted)
             ->whereHas('lines', fn (Builder $lines) => $lines
                 ->where('is_service', false)
-                ->whereRaw('customer_invoice_lines.quantity > (select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = ? and inventory_document_lines.source_line_id = customer_invoice_lines.sales_order_line_id and inventory_documents.status = ? and inventory_documents.deleted_at is null)', [SalesOrderLine::class, InventoryDocument::StatusPosted]))
+                ->whereRaw('customer_invoice_lines.quantity > (select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = case when customer_invoice_lines.sales_order_line_id is null then ? else ? end and inventory_document_lines.source_line_id = coalesce(customer_invoice_lines.sales_order_line_id, customer_invoice_lines.id) and inventory_documents.status = ? and inventory_documents.deleted_at is null)', [CustomerInvoiceLine::class, SalesOrderLine::class, InventoryDocument::StatusPosted]))
             ->orderByDesc('invoice_date')
             ->orderByDesc('id');
         $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);

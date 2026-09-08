@@ -32,6 +32,7 @@
 </div>
 @endsection
 @push('scripts')
-<script>window.salesIndexMessages = {{ Illuminate\Support\Js::from(['confirm' => __('common.actions.apply'), 'cancel' => __('common.actions.cancel'), 'reason' => __('Reason'), 'error' => __('The action could not be completed.')]) }}; window.dataTableTranslations = @json(__('datatables'));</script>
+<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+<script>window.salesIndexMessages = {{ Illuminate\Support\Js::from(['confirm' => __('common.actions.apply'), 'cancel' => __('common.actions.cancel'), 'reason' => __('Reason'), 'error' => __('The action could not be completed.'), 'saved' => __('Saved successfully.')]) }}; window.dataTableTranslations = @json(__('datatables'));</script>
 <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Sales/sales-index.js') }}"></script>
 @endpush

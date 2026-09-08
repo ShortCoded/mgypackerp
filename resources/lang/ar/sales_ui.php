@@ -1,6 +1,16 @@
 <?php
 
 return [
+    'direct_quotation' => 'عرض سعر مباشر',
+    'source_quotation_request_help' => 'اختر طلب مبيعات معتمدًا لتحميل العميل والعملة ومندوب المبيعات والبنود المتبقية.',
+    'choose_invoice_source' => 'اختر مصدر فاتورة المبيعات',
+    'invoice_from_order' => 'من أمر بيع',
+    'invoice_from_order_help' => 'فوترة الكميات المعتمدة والمتبقية في أمر بيع.',
+    'invoice_from_request' => 'من طلب مبيعات',
+    'invoice_from_request_help' => 'تحميل العميل والعملة والبنود المتبقية من طلب المبيعات مباشرة إلى الفاتورة.',
+    'direct_invoice' => 'فاتورة مباشرة',
+    'direct_invoice_help' => 'إنشاء فاتورة مبيعات مستقلة دون طلب مبيعات أو أمر بيع.',
+    'create_direct_invoice' => 'إنشاء فاتورة مباشرة',
     'add_employee' => 'إضافة موظف',
     'create_invoice' => 'إضافة فاتورة مبيعات',
     'invoice_source_help' => 'اختر أمر البيع المعتمد الذي يحتوي كميات قابلة للفوترة.',
@@ -20,6 +30,7 @@ return [
     'distinct_products' => 'عدد المنتجات',
     'total_quantity' => 'إجمالي الكميات',
     'grand_total' => 'الإجمالي الكلي',
+    'optional_unit_price' => 'سعر الوحدة (اختياري)',
     'quotation_type_help' => 'العرض القياسي يخفي حقول المشروع. اختر «مشروع» لإظهار اسم المشروع وجدول التنفيذ.',
     'requested_date_help' => 'التاريخ المطلوب اختياري لكل بند، وينتقل إلى أمر البيع ويُستخدم في تخطيط موعد التسليم.',
     'discount_type_required' => 'اختر نوع الخصم قبل إدخال قيمة الخصم.',

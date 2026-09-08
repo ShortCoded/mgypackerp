@@ -6,6 +6,9 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Models\Currency;
+use Modules\Core\Models\ItemUnit;
+use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
@@ -13,6 +16,8 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Models\SalesRequestLine;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Models\SalesReturnLine;
 
@@ -23,7 +28,122 @@ class CustomerInvoiceService
         private readonly SalesAmountService $amounts,
         private readonly SalesAccountingService $accounting,
         private readonly SalesCycleAuditService $audit,
+        private readonly SalesUnitConversionService $unitConversions,
     ) {}
+
+    /** @param array<string, mixed> $data */
+    public function createDirect(array $data, ?SalesRequest $sourceRequest = null): CustomerInvoice
+    {
+        return DB::transaction(function () use ($data, $sourceRequest): CustomerInvoice {
+            $customer = Customer::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
+            $currency = Currency::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
+            $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $data['company_id'], $data['invoice_date'], lockForUpdate: true);
+            $source = $sourceRequest
+                ? SalesRequest::query()->with(['lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($sourceRequest->getKey())
+                : null;
+            if ($source && (! in_array($source->status, ['approved', 'partially_converted'], true)
+                || (int) $source->company_id !== (int) $data['company_id']
+                || (int) $source->branch_id !== (int) $data['branch_id']
+                || (int) $source->customer_id !== (int) $customer->getKey()
+                || (int) $source->currency_id !== (int) $currency->getKey())) {
+                throw new DomainException(__('The selected sales request is not eligible for direct invoicing.'));
+            }
+
+            $prepared = [];
+            $sourceLineIds = [];
+            foreach ($data['lines'] as $input) {
+                $product = Product::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $input['product_doc_num'])->firstOrFail();
+                if (! $product->isSalesEligible()) {
+                    throw new DomainException(__('The selected product is not eligible for sales.'));
+                }
+                $unit = ItemUnit::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $input['unit_doc_num'])->firstOrFail();
+                $sourceLine = $source?->lines->firstWhere('public_id', $input['source_request_line_public_id'] ?? null);
+                if ($source && (! $sourceLine || in_array($sourceLine->getKey(), $sourceLineIds, true)
+                    || (int) $sourceLine->product_id !== (int) $product->getKey()
+                    || (int) $sourceLine->unit_id !== (int) $unit->getKey())) {
+                    throw new DomainException(__('Each invoice line must keep its selected sales request product and unit.'));
+                }
+
+                $quantity = (string) $input['quantity'];
+                $unitPrice = (string) $input['unit_price'];
+                $discount = (string) ($input['discount_amount'] ?? '0');
+                $tax = (string) ($input['tax_amount'] ?? '0');
+                $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
+                $this->amounts->assertPositive($unitPrice, __('Invoice unit price must be greater than zero.'));
+                if ($sourceLine && bccomp($quantity, $sourceLine->remainingQuantity(), 8) > 0) {
+                    throw new DomainException(__('Invoice quantity exceeds the remaining request quantity.'));
+                }
+                $gross = $this->amounts->multiply($quantity, $unitPrice);
+                $this->amounts->assertNotGreaterThan($discount, $gross, __('Line discount cannot exceed its gross amount.'));
+                $conversion = $this->unitConversions->snapshot($product, $unit->getKey(), $quantity);
+                if ($sourceLine) {
+                    $sourceLineIds[] = $sourceLine->getKey();
+                }
+                $prepared[] = [
+                    'source_line' => $sourceLine,
+                    'product' => $product,
+                    'unit' => $unit,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'discount' => $discount,
+                    'tax' => $tax,
+                    'gross' => $gross,
+                    'conversion' => $conversion,
+                    'line_total' => $this->amounts->add($this->amounts->subtract($gross, $discount), $tax),
+                ];
+            }
+            if ($prepared === []) {
+                throw new DomainException(__('A sales invoice requires at least one line.'));
+            }
+
+            $subtotal = $this->amounts->sum(array_column($prepared, 'gross'));
+            $discount = $this->amounts->sum(array_column($prepared, 'discount'));
+            $tax = $this->amounts->sum(array_column($prepared, 'tax'));
+            $total = $this->amounts->add($this->amounts->subtract($subtotal, $discount), $tax);
+            $numbers = $this->documents->nextForCompany('customer_invoices', CustomerInvoice::class, (int) $data['company_id']);
+            $invoice = CustomerInvoice::query()->create([
+                ...$numbers,
+                'company_id' => $data['company_id'], 'financial_period_id' => $period->getKey(), 'branch_id' => $data['branch_id'],
+                'customer_id' => $customer->getKey(), 'sales_order_id' => null,
+                'invoice_date' => $data['invoice_date'], 'due_date' => $data['due_date'] ?? $data['invoice_date'],
+                'currency_id' => $currency->getKey(), 'exchange_rate' => $data['exchange_rate'] ?? 1,
+                'subtotal_amount' => $subtotal, 'discount_amount' => $discount,
+                'taxable_amount' => $this->amounts->subtract($subtotal, $discount), 'tax_amount' => $tax,
+                'total_amount' => $total, 'remaining_amount' => $total,
+                'document_type' => CustomerInvoice::TypeInvoice, 'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted',
+                'source_type' => $source ? 'sales_request' : 'direct', 'source_id' => $source?->getKey(), 'source_doc_num' => $source?->doc_num,
+                'notes' => $data['notes'] ?? null, 'created_by' => auth()->id(),
+            ]);
+            foreach ($prepared as $index => $row) {
+                $product = $row['product'];
+                $invoice->lines()->create([
+                    'sales_order_line_id' => null, 'line_number' => $index + 1,
+                    'product_id' => $product->getKey(), 'unit_id' => $row['unit']->getKey(),
+                    'description' => $product->name, 'quantity' => $row['quantity'],
+                    'conversion_factor' => $row['conversion']['conversion_factor'], 'base_quantity' => $row['conversion']['base_quantity'],
+                    'unit_price' => $row['unit_price'], 'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
+                    'line_total' => $row['line_total'], 'is_service' => $product->isService(), 'unit_cost' => 0,
+                    'source_snapshot' => array_filter([
+                        'source_type' => $source ? 'sales_request' : 'direct',
+                        'sales_request' => $source?->doc_num,
+                        'sales_request_line_public_id' => $row['source_line']?->public_id,
+                    ]),
+                ]);
+                if ($row['source_line']) {
+                    SalesRequestLine::query()->lockForUpdate()->findOrFail($row['source_line']->getKey())->increment('converted_quantity', $row['quantity']);
+                }
+            }
+            $invoice->paymentSchedules()->create([
+                'sequence' => 1, 'due_date' => $data['due_date'] ?? $data['invoice_date'], 'amount' => $total,
+            ]);
+            if ($source) {
+                $source->update(['status' => $source->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+                $this->audit->record($source, 'sales_request.converted', ['target' => 'invoice', 'document' => $invoice->doc_num]);
+            }
+
+            return $invoice->load(['customer', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']);
+        });
+    }
 
     /** @param list<array{sales_order_line_id: int, quantity: string|int|float, delivery_line_id?: int|null}> $lines @param list<array{due_date: string, amount: string|int|float, notes?: string|null}> $schedules */
     public function createFromOrder(SalesOrder $order, array $lines, array $schedules, ?InventoryDocument $delivery = null, ?string $invoiceDate = null): CustomerInvoice

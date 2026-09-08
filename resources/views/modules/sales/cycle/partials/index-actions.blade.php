@@ -56,7 +56,7 @@
     $deletable = !$trashed && ($canDeleteDraft ?? false);
 @endphp
 <div class="dropstart font-sans-serif position-static d-inline-block">
-    <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" aria-label="{{ __('common.fields.actions') }}"><span class="fas fa-ellipsis-h fs-10"></span></button>
+    <button class="btn btn-link text-600 btn-sm dropdown-toggle dropdown-caret-none btn-reveal" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" aria-label="{{ __('common.fields.actions') }}"><span class="fas fa-ellipsis-h fs-10"></span></button>
     <div class="dropdown-menu dropdown-menu-end py-2">
         @if(!$trashed)
             <a class="dropdown-item" href="{{ route($prefix.'.show', $record) }}">{{ __('common.actions.view') }}</a>

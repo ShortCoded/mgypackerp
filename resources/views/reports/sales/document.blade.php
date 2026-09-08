@@ -27,13 +27,15 @@
             ->filter()
             ->map(fn (string $bucket): string => __(str($bucket)->replace('_', ' ')->title()->toString()))
             ->join(app()->isLocale('ar') ? '، ' : ', ');
+        $sourceSalesOrder = $record->relationLoaded('salesOrder') ? $record->salesOrder : null;
+        $sourceOrder = $record->relationLoaded('order') ? $record->order : null;
     @endphp
 
     @include('reports.partials.company-identity')
 
     <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
         <tr>
-            <td style="border:0; width:60%;"><h2 style="margin:0;">{{ $labels[$kind] ?? __(str($kind)->replace('_', ' ')->title()->toString()) }}</h2><strong dir="ltr">{{ $record->doc_num }}</strong></td>
+            <td style="border:0; width:60%;"><strong>{{ __('Document number') }}:</strong> <span dir="ltr">{{ $record->doc_num }}</span></td>
             <td style="border:0; width:40%; text-align:{{ $direction === 'rtl' ? 'left' : 'right' }};">
                 @if($record->status ?? null)<div>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</div>@endif
                 <div>{{ $dates->formatDate($record->order_date ?? $record->invoice_date ?? $record->receipt_date ?? $record->return_date ?? $record->document_date ?? $record->production_order_date ?? null, '') }}</div>
@@ -45,14 +47,14 @@
         <tbody>
             @if($record->customer ?? null)<tr><th>{{ __('Customer') }}</th><td>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</td></tr>@endif
             @if($record->quotation ?? null)<tr><th>{{ __('Source Quotation') }}</th><td>{{ $quotationReference }}</td></tr>@endif
-            @if($record->salesOrder ?? $record->order ?? null)<tr><th>{{ __('Source Sales Order') }}</th><td>{{ ($record->salesOrder ?? $record->order)->doc_num }}</td></tr>@endif
+            @if($sourceSalesOrder ?? $sourceOrder)<tr><th>{{ __('Source Sales Order') }}</th><td>{{ ($sourceSalesOrder ?? $sourceOrder)->doc_num }}</td></tr>@endif
             @if($record->relationLoaded('customerInvoices') && $record->customerInvoices->isNotEmpty())<tr><th>{{ __('Sales Invoice') }}</th><td>{{ $record->customerInvoices->pluck('doc_num')->join(' / ') }}</td></tr>@endif
-            @if(($record->source_doc_num ?? null) && $kind === 'sales_delivery' && ! ($record->salesOrder ?? $record->order ?? null))<tr><th>{{ __('Source Sales Order') }}</th><td>{{ $record->source_doc_num }}</td></tr>@endif
+            @if(($record->source_doc_num ?? null) && $kind === 'sales_delivery' && ! ($sourceSalesOrder ?? $sourceOrder))<tr><th>{{ __('Sales Invoice') }}</th><td>{{ $record->source_doc_num }}</td></tr>@endif
             @if($record->invoice ?? null)<tr><th>{{ __('Original Invoice') }}</th><td>{{ $record->invoice->doc_num }}</td></tr>@endif
             @if($record->originalInvoice ?? null)<tr><th>{{ __('Original Invoice') }}</th><td>{{ $record->originalInvoice->doc_num }}</td></tr>@endif
             @if($record->branchStore ?? null)<tr><th>{{ __('Store') }}</th><td>{{ $record->branchStore->name }}</td></tr>@endif
             @if($kind === 'sales_delivery')
-                @if($record->salesOrder?->salesEmployee)<tr><th>{{ __('Sales representative') }}</th><td>{{ $record->salesOrder->salesEmployee->doc_num }} / {{ $record->salesOrder->salesEmployee->full_name ?: $record->salesOrder->salesEmployee->name }}</td></tr>@endif
+                @if($sourceSalesOrder?->salesEmployee)<tr><th>{{ __('Sales representative') }}</th><td>{{ $sourceSalesOrder->salesEmployee->doc_num }} / {{ $sourceSalesOrder->salesEmployee->full_name ?: $sourceSalesOrder->salesEmployee->name }}</td></tr>@endif
                 @if($record->recipient_name)<tr><th>{{ __('Recipient') }}</th><td>{{ $record->recipient_name }}</td></tr>@endif
                 @if($record->recipient_phone)<tr><th>{{ __('Recipient phone') }}</th><td dir="ltr">{{ $record->recipient_phone }}</td></tr>@endif
                 @if($record->vehicle_number)<tr><th>{{ __('Vehicle') }}</th><td>{{ $record->vehicle_number }}</td></tr>@endif
@@ -86,7 +88,7 @@
                     @endphp
                     <tr>
                         <td>{{ $line->line_number }}</td>
-                        <td>@include('reports.partials.item-details', ['line' => $line, 'showPacking' => false])</td>
+                        <td>@include('reports.partials.item-details', ['line' => $line, 'showPacking' => false, 'showClassification' => false])</td>
                         <td>{{ $printUnit?->name }}</td>
                         <td dir="ltr">{{ $numbers->format($printQuantity) }}</td>
                         @if($kind === 'sales_order')<td dir="ltr">{{ $numbers->format($line->delivered_quantity) }}</td>@endif

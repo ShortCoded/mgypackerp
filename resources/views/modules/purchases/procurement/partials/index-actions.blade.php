@@ -30,14 +30,15 @@
     @if($draft && $isOwnBranch)
         @can($permission.'.issue')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.issue', $record->doc_num) }}">{{ __('Issue Supply Order') }}</button>@endcan
     @elseif(in_array($record->status, ['issued', 'partially_received'], true))
-        @if($isDestinationBranch && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>@endcan @endif
+        @if($isDestinationBranch && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_inspection.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Create Purchase Inspection') }}</a>@endcan @endif
         @if($isOwnBranch) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
     @endif
 @endif
+@if($screen === 'goods_receipt_inspections' && $isOwnBranch && $record->receipt_id === null && in_array($record->result, ['accepted', 'partially_accepted'], true))
+    @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>@endcan
+@endif
 @if($isOwnBranch && (($screen === 'goods_receipts' && $record->posting_status === 'posted') || ($screen === 'purchase_returns' && $record->status === 'posted'))) @can($permission.'.reverse')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.reverse', $record->doc_num) }}" data-reason-field="reversal_reason">{{ __('Reverse') }}</button>@endcan @endif
-@if($isOwnBranch && $screen === 'goods_receipts' && $draft && $record->qc_status === 'pending_inspection')
-    @can('purchases.goods_receipt_inspection.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Inspect receipt') }}</a>@endcan
-@elseif($isOwnBranch && $screen === 'goods_receipts' && $draft)
+@if($isOwnBranch && $screen === 'goods_receipts' && $draft && $record->qc_status !== 'pending_inspection')
     @can($permission.'.post')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.post', $record->doc_num) }}">{{ __('Post') }}</button>@endcan
 @endif
 @if($screen === 'purchase_returns' && $draft && $isOwnBranch) @can($permission.'.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.approve', $record->doc_num) }}">{{ __('Post') }}</button>@endcan @endif

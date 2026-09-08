@@ -64,6 +64,7 @@ return [
     'purchase_orders' => 'Purchase Orders',
     'supplier_quotations' => 'Supplier Quotations',
     'supply_orders' => 'Supply Orders',
+    'purchase_inspections' => 'Purchase Inspections',
     'goods_receipts' => 'Goods Receipts',
     'purchase_invoices' => 'Purchase Invoices',
     'purchase_returns' => 'Purchase Returns',

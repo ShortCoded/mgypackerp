@@ -2,24 +2,26 @@
     'use strict';
     $(function () {
         const table = $('#sales-cycle-table');
-        if (!table.length || $.fn.DataTable.isDataTable(table[0])) return;
+        if (!table.length) return;
         const filters = document.getElementById('sales-index-filter-form');
-        const grid = table.DataTable(window.AppDataTables.options({
-            processing: true, serverSide: true, order: [[0, 'desc']],
-            ajax: {url: table.data('url'), data: data => { data.trash = $('#trash_filter').val() || 'active'; new FormData(filters).forEach((value, key) => { data[key] = value; }); }},
-            columns: [
-                {data:'doc_num'}, {data:'date'}, {data:'customer', orderable:false},
-                {data:'status'}, {data:'amount', orderable:false}, {data:'actions', orderable:false, searchable:false}
-            ],
-            drawCallback: () => window.AppDataTables.applyFalconEnhancements(document)
-        }));
-        $('#trash_filter').on('change.salesIndex', () => grid.ajax.reload());
-        table.on('click.salesIndex', '.js-sales-index-action', async function () {
+        const grid = $.fn.DataTable.isDataTable(table[0])
+            ? table.DataTable()
+            : table.DataTable(window.AppDataTables.options({
+                processing: true, serverSide: true, order: [[0, 'desc']],
+                ajax: {url: table.data('url'), data: data => { data.trash = $('#trash_filter').val() || 'active'; new FormData(filters).forEach((value, key) => { data[key] = value; }); }},
+                columns: [
+                    {data:'doc_num'}, {data:'date'}, {data:'customer', orderable:false},
+                    {data:'status'}, {data:'amount', orderable:false}, {data:'actions', orderable:false, searchable:false}
+                ],
+                drawCallback: () => window.AppDataTables.applyFalconEnhancements(document)
+            }));
+        $('#trash_filter').off('change.salesIndex').on('change.salesIndex', () => grid.ajax.reload());
+        table.off('click.salesIndex', '.js-sales-index-action').on('click.salesIndex', '.js-sales-index-action', async function () {
             const button = $(this);
             if (button.prop('disabled')) return;
             const messages = window.salesIndexMessages || {};
             const requiresReason = button.attr('data-reason') === '1';
-            const confirmation = await Swal.fire({
+            const confirmation = await window.AppAlerts.confirm({
                 title: button.text().trim(), icon: 'question', showCancelButton: true,
                 confirmButtonText: messages.confirm, cancelButtonText: messages.cancel,
                 ...(requiresReason ? {input: 'textarea', inputLabel: messages.reason, inputValidator: value => !value.trim() ? messages.reason : undefined} : {})
@@ -30,12 +32,18 @@
             $.ajax({url: button.data('url'), method: button.data('method') || 'POST',
                 headers: {'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'), Accept: 'application/json'},
                 data: {status: button.data('status') || undefined, reason: requiresReason ? confirmation.value : undefined}
-            }).done(() => grid.ajax.reload(null, false)).fail(xhr => {
+            }).done(response => {
+                window.AppAlerts.toast('success', response.message || messages.saved);
+                grid.ajax.reload(null, false);
+            }).fail(xhr => {
                 const response = xhr.responseJSON || {};
-                $('#sales-index-error').removeClass('d-none').text(response.message || messages.error);
+                const message = response.message || messages.error;
+                $('#sales-index-error').removeClass('d-none').text(message);
+                window.AppAlerts.toast('error', message);
             }).always(() => button.prop('disabled', false));
         });
-        filters.addEventListener('submit' , event => {event.preventDefault(); grid.ajax.reload();});
-        filters.addEventListener('reset', () => setTimeout(() => grid.ajax.reload(), 0));
+        $(filters).off('.salesIndex')
+            .on('submit.salesIndex', event => {event.preventDefault(); grid.ajax.reload();})
+            .on('reset.salesIndex', () => setTimeout(() => grid.ajax.reload(), 0));
     });
 })(window.jQuery);

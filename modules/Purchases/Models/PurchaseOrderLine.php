@@ -206,6 +206,11 @@ class PurchaseOrderLine extends Model
         return $this->hasMany(UnpricedInventoryReceiptLine::class);
     }
 
+    public function inspectionLines(): HasMany
+    {
+        return $this->hasMany(GoodsReceiptInspectionLine::class);
+    }
+
     public function costCenter(): BelongsTo
     {
         return $this->belongsTo(CostCenter::class)->withTrashed();

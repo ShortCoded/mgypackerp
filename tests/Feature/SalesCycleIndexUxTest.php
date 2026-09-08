@@ -31,19 +31,36 @@ test('request index offers valid workflow and print actions and supports draft r
     $f = salesIndexFixture();
     $this->actingAs($f['user'])->withSession(salesCycleSession($f));
     $record = salesIndexRequest($f);
+    $this->get(route('admin.sales.customer-requests.index'))
+        ->assertOk()
+        ->assertSee('vendors/sweetalert2/sweetalert2.all.min.js', false);
     $url = route('admin.sales.customer-requests.index', ['draw' => 1]);
     $actions = $this->getJson($url)->assertOk()->assertJsonMissingPath('error')->json('data.0.actions');
     expect($this->getJson($url)->json('data.0.amount'))->toBe('25');
-    expect($actions)->toContain('/print', 'data-status="submitted"', 'data-method="DELETE"')->not->toContain('data-status="approved"');
+    expect($actions)->toContain('/print', 'data-status="submitted"', 'data-method="DELETE"', 'dropdown-caret-none')->not->toContain('data-status="approved"');
     $this->deleteJson(route('admin.sales.customer-requests.destroy', $record))->assertOk();
     $this->getJson($url)->assertJsonCount(0, 'data');
     $trashed = $this->getJson(route('admin.sales.customer-requests.index', ['draw' => 1, 'trash' => 'trashed']))->assertOk();
     expect($trashed->json('data.0.actions'))->toContain('/restore')->not->toContain('/print', '/transition');
     $this->patchJson(route('admin.sales.customer-requests.restore', $record->doc_num))->assertOk();
     expect($record->fresh()->trashed())->toBeFalse();
-    app(SalesRequestService::class)->transition($record, 'submitted');
+    $this->postJson(route('admin.sales.customer-requests.transition', $record), ['status' => 'submitted'])
+        ->assertOk()
+        ->assertJsonPath('message', __('Saved successfully.'));
+    expect($record->fresh()->status)->toBe('submitted');
     expect($this->getJson($url)->json('data.0.actions'))->toContain('data-status="approved"')->not->toContain('data-method="DELETE"');
+    $this->postJson(route('admin.sales.customer-requests.transition', $record), ['status' => 'approved'])->assertOk();
+    expect($record->fresh()->status)->toBe('approved');
     $this->deleteJson(route('admin.sales.customer-requests.destroy', $record))->assertConflict();
+});
+
+test('sales index workflow binding remains active when the shared datatable initialized first', function () {
+    $script = file_get_contents(public_path('assets/js/modules/Sales/sales-index.js'));
+
+    expect($script)
+        ->toContain('$.fn.DataTable.isDataTable(table[0])')
+        ->toContain("table.off('click.salesIndex', '.js-sales-index-action').on('click.salesIndex'")
+        ->not->toContain('if (!table.length || $.fn.DataTable.isDataTable(table[0])) return;');
 });
 
 test('trash access is permission guarded and document filtering remains server side', function () {

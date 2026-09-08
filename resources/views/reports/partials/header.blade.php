@@ -11,20 +11,21 @@
         $logoHtml = '';
     }
 @endphp
+@php($headerTitle = ($customerFacing ?? false) ? ($documentHeaderTitle ?? $reportTitle ?? $title) : ($reportTitle ?? $title))
 
 <table class="report-header" style="width:100%;border-collapse:collapse;">
     <tr>
         @if ($isRtl)
             <td class="report-header-side report-header-logo" style="width:32%;text-align:right;vertical-align:middle;">{!! $logoHtml !!}@if(($showCompanyIdentity ?? true) && $logoPath)<br><span class="report-company-name">{{ $companyName }}</span>@endif</td>
-            <td class="report-title" style="width:36%;text-align:center;vertical-align:middle;">@unless($customerFacing ?? false){{ $reportTitle ?? $title }}@endunless</td>
+            <td class="report-title" style="width:36%;text-align:center;vertical-align:middle;color:#2c7be5;font-weight:700;">{{ $headerTitle }}</td>
             <td class="report-header-side report-meta" style="width:32%;text-align:left;vertical-align:middle;">
-                @unless($customerFacing ?? false)<span>{{ __('reports.print_date') }}</span><br><strong>{{ $printDate }}</strong>@endunless
+                <span>{{ __('reports.print_date') }}</span><br><strong>{{ $printDate }}</strong>
             </td>
         @else
             <td class="report-header-side report-header-logo" style="width:32%;text-align:left;vertical-align:middle;">{!! $logoHtml !!}@if(($showCompanyIdentity ?? true) && $logoPath)<br><span class="report-company-name">{{ $companyName }}</span>@endif</td>
-            <td class="report-title" style="width:36%;text-align:center;vertical-align:middle;">@unless($customerFacing ?? false){{ $reportTitle ?? $title }}@endunless</td>
+            <td class="report-title" style="width:36%;text-align:center;vertical-align:middle;color:#2c7be5;font-weight:700;">{{ $headerTitle }}</td>
             <td class="report-header-side report-meta" style="width:32%;text-align:right;vertical-align:middle;">
-                @unless($customerFacing ?? false)<span>{{ __('reports.print_date') }}</span><br><strong>{{ $printDate }}</strong>@endunless
+                <span>{{ __('reports.print_date') }}</span><br><strong>{{ $printDate }}</strong>
             </td>
         @endif
     </tr>

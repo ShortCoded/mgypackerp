@@ -212,8 +212,6 @@
       const row = this.closest('tr'); const data = event.params.data;
       window.salesProductUnits ||= {}; window.salesProductUnits[this.value] = data.units || [];
       populateUnits(row);
-      const description = row.querySelector('[name$="[description]"]');
-      if (description && (!description.value || description.dataset.autofilled === '1')) {description.value = data.productData?.name || ''; description.dataset.autofilled = '1';}
       let details = row.querySelector('[data-sales-product-details]');
       if (!details) {details = document.createElement('small'); details.dataset.salesProductDetails = ''; details.className = 'text-600'; this.parentElement.append(details);}
       details.textContent = [data.productData?.color, data.productData?.model, data.productData?.size].filter(Boolean).join(' · ');

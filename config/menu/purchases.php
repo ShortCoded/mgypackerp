@@ -79,6 +79,17 @@ return [
                 'active' => ['admin.purchases.supply-orders.*'], 'children' => [],
             ],
             [
+                'label' => 'purchase_inspections', 'title' => 'Purchase Inspections', 'icon' => 'clipboard-check',
+                'route' => 'admin.purchases.goods-receipt-inspection.index', 'permission' => 'purchases.goods_receipt_inspection.view',
+                'keywords' => ['purchase inspection', 'quality inspection', 'فحص المشتريات', 'الجودة'],
+                'actions' => [
+                    'view' => 'purchases.goods_receipt_inspection.view',
+                    'create' => 'purchases.goods_receipt_inspection.create',
+                    'print' => 'purchases.goods_receipt_inspection.print',
+                ],
+                'active' => ['admin.purchases.goods-receipt-inspection.*'], 'children' => [],
+            ],
+            [
                 'label' => 'goods_receipts', 'title' => 'Goods Receipt Notes', 'icon' => 'dolly-flatbed',
                 'route' => 'admin.purchases.goods-receipt-notes.index', 'permission' => 'purchases.goods_receipt_notes.view',
                 'keywords' => ['goods receipts', 'warehouse receipt', 'أذون الاستلام', 'إذن استلام'],

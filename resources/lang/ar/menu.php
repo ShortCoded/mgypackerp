@@ -64,6 +64,7 @@ return [
     'purchase_orders' => 'أوامر الشراء',
     'supplier_quotations' => 'عروض أسعار الموردين',
     'supply_orders' => 'أوامر التوريد',
+    'purchase_inspections' => 'فحوص المشتريات',
     'goods_receipts' => 'أذون الاستلام',
     'purchase_invoices' => 'فواتير المشتريات',
     'purchase_returns' => 'مرتجعات المشتريات',

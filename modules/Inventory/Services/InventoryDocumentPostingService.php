@@ -159,7 +159,9 @@ class InventoryDocumentPostingService
 
             $salesOrder = null;
             if ($locked->document_type === InventoryDocument::TypeSalesDelivery) {
-                $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($locked->source_document_id);
+                if ($locked->source_document_type === SalesOrder::class) {
+                    $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($locked->source_document_id);
+                }
                 $salesReturn = SalesReturn::query()->where('delivery_document_id', $locked->id)->where('status', '<>', SalesReturn::StatusCancelled)->first();
                 if ($salesReturn) {
                     throw new DomainException(__('Delivery is linked to return :return.', ['return' => $salesReturn->doc_num]));

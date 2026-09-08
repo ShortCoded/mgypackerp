@@ -10,6 +10,7 @@ use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
+use Modules\Purchases\Models\GoodsReceiptInspection;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\RequestForQuotation;
@@ -28,6 +29,7 @@ class ProcurementDocumentsDataTable
             'request_for_quotations' => ['model' => RequestForQuotation::class, 'route' => 'request-for-quotations', 'permission' => 'request_for_quotations', 'date' => 'issue_date', 'title' => 'Requests for Quotation', 'type' => 'request-for-quotation'],
             'supplier_quotations' => ['model' => SupplierQuotation::class, 'route' => 'supplier-quotation-entry', 'permission' => 'supplier_quotation_entry', 'date' => 'quotation_date', 'title' => 'Supplier Quotations', 'type' => 'supplier-quotation'],
             'supply_orders' => ['model' => SupplyOrder::class, 'route' => 'supply-orders', 'permission' => 'supply_orders', 'date' => 'issue_date', 'title' => 'Supply Orders', 'type' => 'supply-order'],
+            'goods_receipt_inspections' => ['model' => GoodsReceiptInspection::class, 'route' => 'goods-receipt-inspection', 'permission' => 'goods_receipt_inspection', 'date' => 'inspection_at', 'title' => 'Purchase Inspections', 'type' => 'goods-receipt-inspection'],
             'goods_receipts' => ['model' => UnpricedInventoryReceipt::class, 'route' => 'goods-receipt-notes', 'permission' => 'goods_receipt_notes', 'date' => 'document_date', 'title' => 'Goods Receipt Notes', 'type' => 'goods-receipt'],
             'purchase_returns' => ['model' => PurchaseReturn::class, 'route' => 'purchase-returns', 'permission' => 'purchase_returns', 'date' => 'return_date', 'title' => 'Purchase Returns', 'type' => 'purchase-return'],
             default => abort(404),
@@ -63,15 +65,30 @@ class ProcurementDocumentsDataTable
             $query->where('status', '<>', SupplyOrder::StatusDraft);
         }
         if ($request->filled('status')) {
-            $query->where($screen === 'goods_receipts' ? 'posting_status' : 'status', $request->string('status')->toString());
+            $statusColumn = match ($screen) {
+                'goods_receipts' => 'posting_status',
+                'goods_receipt_inspections' => 'result',
+                default => 'status',
+            };
+            $query->where($statusColumn, $request->string('status')->toString());
         }
         foreach (['date_from' => '>=', 'date_to' => '<='] as $filter => $operator) {
             if ($request->filled($filter) && $this->dates->isValidDate($request->input($filter))) {
                 $query->whereDate($definition['date'], $operator, $this->dates->normalizeForStorage($request->input($filter)));
             }
         }
-        if ($request->filled('supplier_doc_num') && in_array($screen, ['supplier_quotations', 'supply_orders', 'goods_receipts', 'purchase_returns'], true)) {
-            $query->whereHas('supplier', fn ($supplier) => $supplier->where('doc_num', $request->input('supplier_doc_num')));
+        if ($request->filled('supplier_doc_num') && in_array($screen, ['supplier_quotations', 'supply_orders', 'goods_receipt_inspections', 'goods_receipts', 'purchase_returns'], true)) {
+            if ($screen === 'goods_receipt_inspections') {
+                $supplierDocNum = $request->string('supplier_doc_num')->toString();
+                $query->where(function (Builder $inspections) use ($supplierDocNum): void {
+                    $inspections
+                        ->whereHas('purchaseOrder.supplier', fn (Builder $suppliers) => $suppliers->where('doc_num', $supplierDocNum))
+                        ->orWhereHas('supplyOrder.supplier', fn (Builder $suppliers) => $suppliers->where('doc_num', $supplierDocNum))
+                        ->orWhereHas('receipt.supplier', fn (Builder $suppliers) => $suppliers->where('doc_num', $supplierDocNum));
+                });
+            } else {
+                $query->whereHas('supplier', fn ($supplier) => $supplier->where('doc_num', $request->input('supplier_doc_num')));
+            }
         }
 
         return $query;
@@ -93,6 +110,14 @@ class ProcurementDocumentsDataTable
             'request_for_quotations' => ['requisition', 'suppliers'],
             'supplier_quotations' => ['supplier', 'requestForQuotation', 'purchaseRequisition', 'purchaseOrder'],
             'supply_orders' => ['supplier', 'purchaseOrder', 'purchaseInvoice'],
+            'goods_receipt_inspections' => [
+                'branch',
+                'receipt.supplier',
+                'purchaseOrder.supplier',
+                'purchaseOrder.branchStore.branch',
+                'supplyOrder.supplier',
+                'supplyOrder.branchStore.branch',
+            ],
             'goods_receipts' => ['supplier', 'purchaseOrder'],
             default => ['supplier', 'receipt'],
         };
@@ -106,6 +131,7 @@ class ProcurementDocumentsDataTable
                     'request_for_quotations' => [['purchase_requisitions', 'purchase_requisition_id', ['doc_num']]],
                     'supplier_quotations' => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['request_for_quotations', 'request_for_quotation_id', ['doc_num']], ['purchase_requisitions', 'purchase_requisition_id', ['doc_num']], ['purchase_orders', 'purchase_order_id', ['doc_num']]],
                     'supply_orders' => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['purchase_orders', 'purchase_order_id', ['doc_num']], ['purchase_invoices', 'purchase_invoice_id', ['doc_num']]],
+                    'goods_receipt_inspections' => [['purchase_orders', 'purchase_order_id', ['doc_num']], ['supply_orders', 'supply_order_id', ['doc_num']], ['unpriced_inventory_receipts', 'receipt_id', ['doc_num']]],
                     'goods_receipts' => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['purchase_orders', 'purchase_order_id', ['doc_num']]],
                     default => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['unpriced_inventory_receipts', 'receipt_id', ['doc_num']]],
                 };
@@ -117,14 +143,27 @@ class ProcurementDocumentsDataTable
             ->addColumn('checkbox', fn ($record): string => view('modules.purchases.procurement.partials.index-checkbox', ['record' => $record, 'screen' => $screen, 'isAdministrativeBranch' => $isAdministrativeBranch])->render())
             ->editColumn('doc_num', fn ($record): string => '<a class="dt-code-value fw-semibold" href="'.e(route('admin.purchases.'.$definition['route'].'.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
             ->addColumn('date', fn ($record): string => $this->dates->formatDate($record->{$definition['date']}))
-            ->addColumn('party', fn ($record): string => $screen === 'purchase_requisitions' ? ($record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name ?: __('common.empty_value')) : ($screen === 'request_for_quotations' ? $record->suppliers->pluck('name')->join('، ') : ($record->supplier?->name ?? __('common.empty_value'))))
+            ->addColumn('party', fn ($record): string => match ($screen) {
+                'purchase_requisitions' => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name ?: __('common.empty_value'),
+                'request_for_quotations' => $record->suppliers->pluck('name')->join('، '),
+                'goods_receipt_inspections' => $record->purchaseOrder?->supplier?->name ?? $record->supplyOrder?->supplier?->name ?? $record->receipt?->supplier?->name ?? __('common.empty_value'),
+                default => $record->supplier?->name ?? __('common.empty_value'),
+            })
             ->addColumn('source', fn ($record): string => match ($screen) {
                 'purchase_requisitions' => collect([$record->branch?->name, $record->branchStore?->name])->filter()->join(' — '),
                 'request_for_quotations' => $record->requisition?->doc_num ?? '',
                 'supplier_quotations' => $record->source_doc_num ?? $record->requestForQuotation?->doc_num ?? '',
                 'supply_orders' => $record->source_doc_num,
+                'goods_receipt_inspections' => $record->source_doc_num ?? $record->purchaseOrder?->doc_num ?? $record->supplyOrder?->doc_num ?? $record->receipt?->doc_num ?? '',
                 'goods_receipts' => $record->purchaseOrder?->doc_num ?? '',
                 default => $record->receipt?->doc_num ?? '',
+            })
+            ->addColumn('location', fn ($record): string => match ($screen) {
+                'goods_receipt_inspections' => collect([
+                    $record->branch?->name ?? $record->purchaseOrder?->branchStore?->branch?->name ?? $record->supplyOrder?->branchStore?->branch?->name,
+                    $record->purchaseOrder?->branchStore?->name ?? $record->supplyOrder?->branchStore?->name,
+                ])->filter()->join(' — '),
+                default => '',
             })
             ->editColumn('status', fn ($record): string => view('modules.purchases.procurement.partials.index-status', ['record' => $record, 'screen' => $screen])->render())
             ->editColumn('created_at', fn ($record): string => $this->dates->formatDateTime($record->created_at))
@@ -136,10 +175,14 @@ class ProcurementDocumentsDataTable
                 'isAdministrativeBranch' => $isAdministrativeBranch,
                 'activeBranchId' => (int) $context['branch_id'],
             ])->render())
-            ->orderColumn('status', ($screen === 'goods_receipts' ? 'posting_status' : 'status').' $1')
+            ->orderColumn('status', match ($screen) {
+                'goods_receipts' => 'posting_status $1',
+                'goods_receipt_inspections' => 'result $1',
+                default => 'status $1',
+            })
             ->orderColumn('date', $definition['date'].' $1')
             ->orderColumn('doc_num', 'doc_number $1')
-            ->only(['checkbox', 'doc_num', 'date', 'party', 'source', 'lines_count', 'status', 'created_at', 'updated_at', 'actions'])
+            ->only(['checkbox', 'doc_num', 'date', 'party', 'source', 'location', 'lines_count', 'status', 'created_at', 'updated_at', 'actions'])
             ->rawColumns(['checkbox', 'doc_num', 'status', 'actions'])->toJson();
     }
 }

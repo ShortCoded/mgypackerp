@@ -9,6 +9,7 @@
             'purchase_requisitions' => route('admin.purchases.purchase-requisitions.create'),
             'purchase_returns' => route('admin.purchases.purchase-returns.create'),
             'supplier_payments' => route('admin.purchases.supplier-payments.create'),
+            'goods_receipt_inspections' => route('admin.purchases.goods-receipt-inspection.choose-source'),
             default => null,
         };
         $showUrl = function ($record) use ($screen) {

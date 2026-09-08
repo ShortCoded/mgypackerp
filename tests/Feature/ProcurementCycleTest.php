@@ -1667,7 +1667,7 @@ test('procurement reports filter, print, and export without leaking confidential
 
     app()->setLocale('ar');
     expect(__('procurement.reports.types.open_requirements'))->toBe('احتياجات الشراء المفتوحة')
-        ->and(__('procurement.documents.types.goods-receipt-inspection'))->toBe('فحص الجودة الوارد');
+        ->and(__('procurement.documents.types.goods-receipt-inspection'))->toBe('فحص المشتريات');
 });
 
 test('warehouse purchase requests retain approval audit and enforce split order capacity', function (): void {

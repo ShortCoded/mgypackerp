@@ -5,6 +5,7 @@ namespace Modules\Purchases\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
+use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 
@@ -12,6 +13,9 @@ class GoodsReceiptInspectionLine extends Model
 {
     protected $fillable = [
         'public_id', 'goods_receipt_inspection_id', 'receipt_line_id', 'product_id', 'inspected_quantity',
+        'purchase_order_line_id', 'supply_order_line_id', 'unit_id', 'supplier_lot_number',
+        'delivery_schedule_id',
+        'manufacture_date', 'expiry_date', 'notes',
         'accepted_quantity', 'rejected_quantity', 'result', 'disposition', 'reason', 'measurements',
     ];
 
@@ -27,6 +31,7 @@ class GoodsReceiptInspectionLine extends Model
         return [
             'inspected_quantity' => 'decimal:8', 'accepted_quantity' => 'decimal:8',
             'rejected_quantity' => 'decimal:8', 'measurements' => 'array',
+            'manufacture_date' => 'date', 'expiry_date' => 'date',
         ];
     }
 
@@ -43,5 +48,25 @@ class GoodsReceiptInspectionLine extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function purchaseOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderLine::class);
+    }
+
+    public function supplyOrderLine(): BelongsTo
+    {
+        return $this->belongsTo(SupplyOrderLine::class);
+    }
+
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(ItemUnit::class)->withTrashed();
+    }
+
+    public function deliverySchedule(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderDeliverySchedule::class, 'delivery_schedule_id');
     }
 }

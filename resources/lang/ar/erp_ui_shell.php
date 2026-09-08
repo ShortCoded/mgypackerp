@@ -21,8 +21,8 @@ return [
         'workflows' => [
             'quotations' => 'عروض الأسعار', 'sales_orders' => 'أوامر البيع', 'deliveries' => 'التسليمات', 'sales_invoices' => 'فواتير المبيعات', 'collections' => 'التحصيلات',
             'sales_returns' => 'مردودات المبيعات', 'customer_statements' => 'كشوف العملاء', 'requisitions' => 'طلبات الشراء', 'rfqs' => 'طلبات عروض الأسعار',
-            'supplier_quotes' => 'عروض الموردين', 'comparison' => 'مقارنة العروض', 'supplier_selection' => 'اختيار المورد', 'purchase_orders' => 'أوامر الشراء',
-            'goods_receipts' => 'أذون الاستلام', 'incoming_qc' => 'فحص جودة الوارد', 'purchase_invoices' => 'فواتير المشتريات', 'supplier_payments' => 'مدفوعات الموردين',
+            'supplier_quotes' => 'عروض الموردين', 'comparison' => 'مقارنة العروض', 'supplier_selection' => 'اختيار المورد', 'purchase_orders' => 'أوامر الشراء', 'supply_orders' => 'أوامر التوريد',
+            'goods_receipts' => 'أذون الاستلام', 'incoming_qc' => 'فحص المشتريات', 'purchase_invoices' => 'فواتير المشتريات', 'supplier_payments' => 'مدفوعات الموردين',
             'supplier_statements' => 'كشوف الموردين', 'opening_stocks' => 'رصيد أول المدة', 'inventory_documents' => 'عمليات المخزون', 'stock_counts' => 'الجرد',
             'inventory_reports' => 'تقارير المخزون', 'production_orders' => 'أوامر الإنتاج', 'production_runs' => 'تشغيلات الإنتاج', 'production_resources' => 'الماكينات والاسطمبات',
             'production_reports' => 'تقارير الإنتاج', 'asset_register' => 'سجل الأصول', 'asset_accounting' => 'محاسبة الأصول', 'depreciation' => 'الإهلاك',

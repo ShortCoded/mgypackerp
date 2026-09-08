@@ -3,7 +3,9 @@
     $prefix = 'admin.purchases.'.$definition['route'];
     $permission = 'purchases.'.$definition['permission'];
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $columns = ['doc_num' => __('Document Number'), 'date' => __('Date'), 'party' => $screen === 'purchase_requisitions' ? __('procurement.ui.requester_employee') : __('Supplier'), 'source' => $screen === 'purchase_requisitions' ? __('procurement.ui.request_origin') : __('Source document'), 'lines_count' => __('Lines'), 'status' => __('Status'), 'created_at' => __('Created at'), 'updated_at' => __('Updated at')];
+    $columns = ['doc_num' => __('Document Number'), 'date' => __('Date'), 'party' => $screen === 'purchase_requisitions' ? __('procurement.ui.requester_employee') : __('Supplier'), 'source' => $screen === 'purchase_requisitions' ? __('procurement.ui.request_origin') : __('Source document')]
+        + ($screen === 'goods_receipt_inspections' ? ['location' => __('procurement.ui.receiving_location')] : [])
+        + ['lines_count' => __('Lines'), 'status' => __('Status'), 'created_at' => __('Created at'), 'updated_at' => __('Updated at')];
 @endphp
 @section('title', __($definition['title']))
 @section('content')
@@ -12,7 +14,7 @@
     <div class="collapse" id="procurement-filters"><form class="card-body row g-3" data-procurement-filters>
         <div class="col-md-3"><label class="form-label">{{ __('Status') }}</label><select class="form-select" name="status"><option value="">{{ __('All') }}</option>@foreach($statuses as $status)<option value="{{ $status }}">{{ __('procurement.ui.statuses.'.$status) }}</option>@endforeach</select></div>
         @foreach(['date_from' => __('From date'), 'date_to' => __('To date')] as $field => $label)<div class="col-md-3"><label class="form-label" for="{{ $field }}">{{ $label }}</label><input class="form-control js-date-picker" name="{{ $field }}" id="{{ $field }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr"></div>@endforeach
-        @if(in_array($screen, ['supplier_quotations', 'goods_receipts', 'purchase_returns']))<div class="col-md-3"><label class="form-label">{{ __('Supplier') }}</label><select class="form-select js-select2-ajax" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('Select') }}"></select></div>@endif
+        @if(in_array($screen, ['supplier_quotations', 'goods_receipt_inspections', 'goods_receipts', 'purchase_returns']))<div class="col-md-3"><label class="form-label">{{ __('Supplier') }}</label><select class="form-select js-select2-ajax" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('Select') }}"></select></div>@endif
         <div class="col-12 d-flex gap-2"><button type="submit" class="btn btn-primary btn-sm">{{ __('common.actions.apply') }}</button><button type="reset" class="btn btn-falcon-default btn-sm">{{ __('Reset') }}</button></div>
     </form></div>
 </div>

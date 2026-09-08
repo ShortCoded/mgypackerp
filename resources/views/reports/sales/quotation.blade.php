@@ -22,7 +22,6 @@
         $characteristicValue = fn ($line, $key) => data_get($line->specifications, $key) ?: ($key === 'color' ? $line->product?->color?->name : null);
         $characteristics = array_filter($characteristics, fn ($key) => $revision->lines->contains(fn ($line) => filled($characteristicValue($line, $key))));
     @endphp
-    <h2 style="color:#2c7be5; margin:8px 0; font-size:20pt;">{{ __('quotations.print.title') }}</h2>
     <table class="report-table" style="margin-bottom:9px;"><tbody>
         <tr><th>{{ __('quotations.attributes.doc_num') }}</th><td dir="ltr">{{ $record->doc_num }}</td><th>{{ __('quotations.attributes.revision_code') }}</th><td dir="ltr">R{{ str_pad((string) $revision->revision_number, 2, '0', STR_PAD_LEFT) }}</td></tr>
         <tr><th>{{ __('Date') }}</th><td colspan="3">{{ $dates->formatDate($revision->revision_date, '') }}</td></tr>

@@ -45,7 +45,7 @@ class SalesRequestWorkflowRequest extends FormRequest
             'sales_employee_doc_num' => ['nullable', 'string', 'exists:hr_employees,doc_num'], 'request_type' => ['required', Rule::in(['customer', 'internal'])], 'priority' => ['sometimes', Rule::in(['low', 'normal', 'high', 'urgent'])],
             'customer_reference' => ['nullable', 'string', 'max:160'], 'notes' => ['nullable', 'string', 'max:5000'], 'exchange_rate' => ['required', 'numeric', 'gt:0'],
             'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['required', 'string'],
-            'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.unit_price' => ['nullable', 'numeric', 'min:0'],
             'lines.*.specifications' => ['nullable', 'array'], 'lines.*.notes' => ['nullable', 'string']];
     }
 }

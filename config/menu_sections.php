@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'leaf_order' => ['purchases' => ['purchase_requisitions', 'purchase_orders', 'supplier_quotations', 'supply_orders', 'goods_receipts', 'purchase_invoices', 'supplier_payments', 'purchase_returns', 'suppliers', 'purchase_reports'], 'sales' => ['customers', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_reports']],
+    'leaf_order' => ['purchases' => ['purchase_requisitions', 'purchase_orders', 'supplier_quotations', 'supply_orders', 'purchase_inspections', 'goods_receipts', 'purchase_invoices', 'supplier_payments', 'purchase_returns', 'suppliers', 'purchase_reports'], 'sales' => ['customers', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_reports']],
     'navigation_children' => [
         'accounting_costing' => ['fixed_assets'],
         'production' => ['maintenance', 'quality'],

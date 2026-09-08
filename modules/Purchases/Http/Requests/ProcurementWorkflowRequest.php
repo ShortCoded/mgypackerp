@@ -132,23 +132,32 @@ class ProcurementWorkflowRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            if (! $this->routeIs('admin.purchases.purchase-requisitions.store', 'admin.purchases.purchase-requisitions.update')) {
-                return;
+            if ($this->routeIs('admin.purchases.purchase-requisitions.store', 'admin.purchases.purchase-requisitions.update')) {
+                foreach ($this->input('lines', []) as $index => $line) {
+                    if (! is_array($line)) {
+                        continue;
+                    }
+
+                    $product = Product::query()
+                        ->active()
+                        ->forCompany($this->companyId())
+                        ->where('doc_num', $line['product_doc_num'] ?? null)
+                        ->first();
+
+                    if ($product instanceof Product && ! $product->isPurchasable()) {
+                        $validator->errors()->add("lines.{$index}.product_doc_num", __('procurement.messages.purchase_product_type_invalid'));
+                    }
+                }
             }
 
-            foreach ($this->input('lines', []) as $index => $line) {
-                if (! is_array($line)) {
-                    continue;
-                }
-
-                $product = Product::query()
-                    ->active()
-                    ->forCompany($this->companyId())
-                    ->where('doc_num', $line['product_doc_num'] ?? null)
-                    ->first();
-
-                if ($product instanceof Product && ! $product->isPurchasable()) {
-                    $validator->errors()->add("lines.{$index}.product_doc_num", __('procurement.messages.purchase_product_type_invalid'));
+            if ($this->routeIs('admin.purchases.goods-receipt-inspection.store')) {
+                foreach ($this->input('lines', []) as $index => $line) {
+                    if (is_array($line)
+                        && blank($line['receipt_line_public_id'] ?? null)
+                        && blank($line['purchase_order_line_public_id'] ?? null)
+                        && blank($line['supply_order_line_public_id'] ?? null)) {
+                        $validator->errors()->add("lines.{$index}.purchase_order_line_public_id", __('A purchase inspection line requires a source line.'));
+                    }
                 }
             }
         }];
@@ -265,7 +274,8 @@ class ProcurementWorkflowRequest extends FormRequest
             'supplier_delivery_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.purchase_order_line_public_id' => ['required', 'uuid', 'distinct'],
+            'lines.*.inspection_line_public_id' => ['nullable', 'uuid', 'distinct'],
+            'lines.*.purchase_order_line_public_id' => ['nullable', 'required_without:lines.*.supply_order_line_public_id', 'uuid', 'distinct'],
             'lines.*.supply_order_line_public_id' => ['nullable', 'uuid', 'distinct'],
             'lines.*.delivery_schedule_public_id' => ['nullable', 'uuid'],
             'lines.*.delivered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
@@ -301,9 +311,17 @@ class ProcurementWorkflowRequest extends FormRequest
             'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
             ...$this->lineAttachmentRules(),
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.receipt_line_public_id' => ['required', 'uuid'],
+            'lines.*.receipt_line_public_id' => ['nullable', 'uuid', 'distinct'],
+            'lines.*.purchase_order_line_public_id' => ['nullable', 'uuid', 'distinct'],
+            'lines.*.supply_order_line_public_id' => ['nullable', 'uuid', 'distinct'],
+            'lines.*.delivery_schedule_public_id' => ['nullable', 'uuid'],
+            'lines.*.delivered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.accepted_quantity' => ['required', 'numeric', 'decimal:0,8', 'min:0'],
             'lines.*.rejected_quantity' => ['required', 'numeric', 'decimal:0,8', 'min:0'],
+            'lines.*.supplier_lot_number' => ['nullable', 'string', 'max:120'],
+            'lines.*.manufacture_date' => ['nullable', 'date', 'before_or_equal:lines.*.expiry_date'],
+            'lines.*.expiry_date' => ['nullable', 'date'],
+            'lines.*.notes' => ['nullable', 'string'],
             'lines.*.disposition' => ['nullable', Rule::in(['quarantine', 'return_supplier', 'reinspect', 'conditional_acceptance'])],
             'lines.*.reason' => ['nullable', 'string'],
             'lines.*.measurements' => ['nullable', 'array'],

@@ -109,8 +109,8 @@
                         </div>
                     @endif
                     @if($mode === 'view' && $record?->isApproved() && ! ($canManageInCurrentBranch ?? false) && (int) $record?->branchStore?->branch_id === (int) ($context['branch_id'] ?? 0))
-                        @can('purchases.goods_receipt_notes.create')
-                            <a class="btn btn-falcon-primary btn-sm mt-2" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>
+                        @can('purchases.goods_receipt_inspection.create')
+                            <a class="btn btn-falcon-primary btn-sm mt-2" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Create Purchase Inspection') }}</a>
                         @endcan
                     @endif
                 </div>

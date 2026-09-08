@@ -181,6 +181,59 @@ class SalesRequestService
         });
     }
 
+    /** @param array<string, mixed> $data */
+    public function convertToQuotation(SalesRequest $request, array $data): Quotation
+    {
+        return DB::transaction(function () use ($request, $data): Quotation {
+            $record = SalesRequest::query()->with(['customer', 'currency', 'lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($request->getKey());
+            if (! in_array($record->status, ['approved', 'partially_converted'], true) || ! $record->customer_id || ! $record->currency_id) {
+                throw new DomainException(__('Conversion requires an approved request with a customer and currency.'));
+            }
+
+            $preparedLines = [];
+            $sourceLineIds = [];
+            foreach ($data['lines'] ?? [] as $input) {
+                $sourceLine = $record->lines->firstWhere('public_id', $input['source_request_line_public_id'] ?? null);
+                if (! $sourceLine || in_array($sourceLine->getKey(), $sourceLineIds, true)
+                    || $sourceLine->product?->doc_num !== ($input['product_doc_num'] ?? null)
+                    || $sourceLine->unit?->doc_num !== ($input['unit_doc_num'] ?? null)) {
+                    throw new DomainException(__('Each quotation line must keep its selected sales request product and unit.'));
+                }
+
+                $quantity = (string) ($input['quantity'] ?? '0');
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $sourceLine->remainingQuantity(), 8) > 0) {
+                    throw new DomainException(__('Converted quantity exceeds the remaining request quantity.'));
+                }
+                $sourceLineIds[] = $sourceLine->getKey();
+                $preparedLines[] = [
+                    ...collect($input)->except('source_request_line_public_id')->all(),
+                    'sales_request_line_id' => $sourceLine->getKey(),
+                ];
+            }
+            if ($preparedLines === []) {
+                throw new DomainException(__('Select at least one sales request line.'));
+            }
+
+            $quotation = app(QuotationService::class)->create([
+                ...collect($data)->except(['source_request_doc_num', 'sales_person_doc_num', 'customer_doc_num', 'currency_doc_num', 'lines'])->all(),
+                'sales_request_id' => $record->getKey(),
+                'business_employee_id' => $record->business_employee_id,
+                'customer_doc_num' => $record->customer->doc_num,
+                'currency_doc_num' => $record->currency->doc_num,
+                'exchange_rate' => $record->exchange_rate,
+                'lines' => $preparedLines,
+            ])['record'];
+
+            foreach ($preparedLines as $line) {
+                SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
+            }
+            $record->update(['status' => $record->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+            $this->audit->record($record, 'sales_request.converted', ['target' => 'quotation', 'document' => $quotation->doc_num]);
+
+            return $quotation;
+        });
+    }
+
     /** @param list<array{public_id: string, quantity: string}> $selection */
     public function convert(SalesRequest $request, string $target, array $selection, array $conversionContext = []): Quotation|SalesOrder
     {

@@ -37,8 +37,10 @@ use Modules\Sales\Models\QuotationExecutionScheduleLine;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\QuotationRevisionLine;
+use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Services\QuotationService;
 use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
 use Modules\Sales\Services\SalesSelect2Service;
 use Throwable;
 
@@ -64,9 +66,22 @@ class QuotationController extends Controller
         return $dataTable->json($request);
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
-        return $this->form('create');
+        $sourceRequest = null;
+        if ($request->filled('source_request_doc_num')) {
+            abort_unless($request->user()?->can('sales_requests.view'), 403);
+            $context = app(OperatingContextService::class)->snapshot($request);
+            $sourceRequest = SalesRequest::query()
+                ->with(['customer', 'currency', 'salesEmployee', 'lines.product.unit', 'lines.product.equivalentUnit', 'lines.unit'])
+                ->where('company_id', $context['company_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->whereIn('status', ['approved', 'partially_converted'])
+                ->where('doc_num', $request->string('source_request_doc_num')->toString())
+                ->firstOrFail();
+        }
+
+        return $this->form('create', sourceRequest: $sourceRequest);
     }
 
     public function show(Request $request, Quotation $quotation): View
@@ -86,10 +101,21 @@ class QuotationController extends Controller
         return $this->form('clone', $quotation, (string) Str::uuid());
     }
 
-    public function store(StoreQuotationRequest $request): JsonResponse
+    public function store(StoreQuotationRequest $request, SalesRequestService $salesRequests): JsonResponse
     {
         try {
-            $record = $this->service->create($request->validated(), $request)['record'];
+            if ($request->filled('source_request_doc_num')) {
+                abort_unless($request->user()?->can('sales_requests.view'), 403);
+                $context = app(OperatingContextService::class)->snapshot($request);
+                $sourceRequest = SalesRequest::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->where('doc_num', $request->validated('source_request_doc_num'))
+                    ->firstOrFail();
+                $record = $salesRequests->convertToQuotation($sourceRequest, $request->validated());
+            } else {
+                $record = $this->service->create($request->validated(), $request)['record'];
+            }
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -349,7 +375,7 @@ class QuotationController extends Controller
         return response()->json($select2->products($request));
     }
 
-    private function form(string $mode, ?Quotation $record = null, ?string $cloneSourceToken = null, ?QuotationRevision $selectedRevision = null): View
+    private function form(string $mode, ?Quotation $record = null, ?string $cloneSourceToken = null, ?QuotationRevision $selectedRevision = null, ?SalesRequest $sourceRequest = null): View
     {
         $record?->loadMissing($this->service->defaultRelations());
         $revision = $selectedRevision ?: $record?->currentRevision;
@@ -367,11 +393,12 @@ class QuotationController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'cloneSourceToken' => $cloneSourceToken,
             'isRevisionLocked' => $record instanceof Quotation && ! $record->canEditCurrentRevision(),
-            'customerOption' => $this->customerOption($record),
-            'currencyOption' => $this->currencyOption($record) ?? $mainCurrencyOption,
+            'sourceRequest' => $sourceRequest,
+            'customerOption' => $this->customerOption($record, $sourceRequest),
+            'currencyOption' => $this->currencyOption($record, $sourceRequest) ?? $mainCurrencyOption,
             'mainCurrencyOption' => $mainCurrencyOption,
-            'salesPersonOption' => $this->salesPersonOption($record),
-            'lines' => $this->lines($revision, $mode),
+            'salesPersonOption' => $this->salesPersonOption($record, $sourceRequest),
+            'lines' => $this->lines($revision, $mode, $sourceRequest),
             'paymentMilestones' => $this->paymentMilestones($revision),
             'executionScheduleLines' => $this->executionScheduleLines($revision),
             'metadata' => $this->metadata($record),
@@ -384,6 +411,7 @@ class QuotationController extends Controller
 
         return $pdf->stream('reports.sales.quotation', [
             'title' => __('quotations.print.title'),
+            'documentHeaderTitle' => __('quotations.print.title'),
             'customerFacing' => true,
             'record' => $quotation,
             'revision' => $revision,
@@ -504,20 +532,24 @@ class QuotationController extends Controller
     /**
      * @return array{id: string, text: string}|null
      */
-    private function customerOption(?Quotation $record): ?array
+    private function customerOption(?Quotation $record, ?SalesRequest $sourceRequest = null): ?array
     {
-        return $record?->customer instanceof Customer
-            ? ['id' => (string) $record->customer->doc_num, 'text' => trim(implode(' / ', array_filter([$record->customer->doc_num, $record->customer->name])))]
+        $customer = $record?->customer ?? $sourceRequest?->customer;
+
+        return $customer instanceof Customer
+            ? ['id' => (string) $customer->doc_num, 'text' => trim(implode(' / ', array_filter([$customer->doc_num, $customer->name])))]
             : null;
     }
 
     /**
      * @return array{id: string, text: string}|null
      */
-    private function currencyOption(?Quotation $record): ?array
+    private function currencyOption(?Quotation $record, ?SalesRequest $sourceRequest = null): ?array
     {
-        return $record?->currency instanceof Currency
-            ? ['id' => (string) $record->currency->doc_num, 'text' => trim(implode(' / ', array_filter([$record->currency->code, $record->currency->name])))]
+        $currency = $record?->currency ?? $sourceRequest?->currency;
+
+        return $currency instanceof Currency
+            ? ['id' => (string) $currency->doc_num, 'text' => trim(implode(' / ', array_filter([$currency->code, $currency->name])))]
             : null;
     }
 
@@ -540,17 +572,19 @@ class QuotationController extends Controller
     /**
      * @return array{id: string, text: string}|null
      */
-    private function salesPersonOption(?Quotation $record): ?array
+    private function salesPersonOption(?Quotation $record, ?SalesRequest $sourceRequest = null): ?array
     {
-        return $record?->salesPerson instanceof HrEmployee
-            ? ['id' => (string) $record->salesPerson->doc_num, 'text' => trim(implode(' / ', array_filter([$record->salesPerson->name, $record->salesPerson->doc_num])))]
+        $employee = $record?->salesPerson ?? $sourceRequest?->salesEmployee;
+
+        return $employee instanceof HrEmployee
+            ? ['id' => (string) $employee->doc_num, 'text' => trim(implode(' / ', array_filter([$employee->name, $employee->doc_num])))]
             : null;
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    private function lines(?QuotationRevision $revision, string $mode): array
+    private function lines(?QuotationRevision $revision, string $mode, ?SalesRequest $sourceRequest = null): array
     {
         $lines = old('lines');
 
@@ -588,6 +622,30 @@ class QuotationController extends Controller
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];
+
+            if ($lines === [] && $sourceRequest) {
+                $lines = $sourceRequest->lines
+                    ->filter(fn ($line): bool => bccomp($line->remainingQuantity(), '0', 8) > 0)
+                    ->map(fn ($line): array => [
+                        'source_request_line_public_id' => $line->public_id,
+                        'product_doc_num' => $line->product?->doc_num,
+                        'product_label' => trim(implode(' / ', array_filter([$line->product?->doc_num, $line->product?->name]))),
+                        'description' => $line->description,
+                        'unit_doc_num' => $line->unit?->doc_num,
+                        'unit_label' => trim(implode(' / ', array_filter([$line->unit?->doc_num, $line->unit?->name]))),
+                        'quantity' => $this->numbers->format($line->remainingQuantity()),
+                        'unit_price' => $line->unit_price === null ? null : $this->numbers->format($line->unit_price),
+                        'discount_type' => null,
+                        'discount_value' => '0',
+                        'tax_rate' => '0',
+                        'line_total' => '0',
+                        'requested_date' => $sourceRequest->required_delivery_date ? app(DateFormatService::class)->formatDate($sourceRequest->required_delivery_date, '') : null,
+                        'specifications' => $line->specifications ?? [],
+                        'warehouse_notes' => null,
+                        'production_notes' => null,
+                        'notes' => $line->notes,
+                    ])->values()->all();
+            }
         }
 
         if ($lines === [] && $mode !== 'view') {

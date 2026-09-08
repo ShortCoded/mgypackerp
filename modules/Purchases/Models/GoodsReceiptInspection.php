@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Core\Models\ArchiveFileUsage;
+use Modules\Core\Models\Branch;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 
@@ -19,6 +20,7 @@ class GoodsReceiptInspection extends Model
 
     protected $fillable = [
         'doc_number', 'doc_num', 'company_id', 'financial_period_id', 'branch_id', 'receipt_id',
+        'purchase_order_id', 'supply_order_id', 'source_type', 'source_id', 'source_doc_num',
         'inspection_at', 'result', 'status', 'observations', 'inspected_by', 'finalized_by',
         'finalized_at', 'created_by', 'updated_by',
     ];
@@ -44,6 +46,21 @@ class GoodsReceiptInspection extends Model
     public function receipt(): BelongsTo
     {
         return $this->belongsTo(UnpricedInventoryReceipt::class, 'receipt_id');
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    public function purchaseOrder(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    public function supplyOrder(): BelongsTo
+    {
+        return $this->belongsTo(SupplyOrder::class);
     }
 
     public function lines(): HasMany

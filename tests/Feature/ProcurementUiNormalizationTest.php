@@ -139,7 +139,7 @@ test('administrative branches manage legacy purchasing documents while factory b
         'report_type' => ProcurementCycleReport::OrderedVsReceived,
         'branch_id' => $administrativeBranch->getKey(),
     ]))->assertUnprocessable();
-    $this->get(route('admin.purchases.goods-receipt-notes.create', $order))
+    $this->get(route('admin.purchases.goods-receipt-inspection.create', $order))
         ->assertOk()
         ->assertSee($order->doc_num)
         ->assertSee(__('Attachments'));
@@ -223,14 +223,19 @@ test('supplier quotations are entered directly from approved requests or purchas
 
 test('all procurement lists use canonical server pagination and source create screens', function (): void {
     $fixture = procurementUiFixture();
-    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
     foreach (['request_for_quotations' => 'request-for-quotations', 'supplier_quotations' => 'supplier-quotation-entry', 'supply_orders' => 'supply-orders', 'goods_receipts' => 'goods-receipt-notes', 'purchase_returns' => 'purchase-returns'] as $screen => $route) {
         $this->get(route('admin.purchases.'.$route.'.index'))->assertOk()->assertSee('procurement-documents-table');
         $this->getJson(route('admin.purchases.procurement.data', $screen).'?draw=1&start=0&length=10')->assertOk()->assertJsonPath('recordsFiltered', 0);
     }
+    procurementUseBranch($fixture, $fixture['branch']);
+    $this->get(route('admin.purchases.goods-receipt-inspection.choose-source'))->assertOk()
+        ->assertSee('js-select2-ajax')->assertSee(__('From Purchase Order'))->assertSee(__('From Supply Order'));
     $this->get(route('admin.purchases.goods-receipt-notes.choose-source'))->assertOk()
-        ->assertSee('js-select2-ajax')->assertSee(__('Supply Order'))
-        ->assertSee(__('Select an issued supply order; remaining quantities are loaded automatically.'));
+        ->assertSee('js-select2-ajax')->assertSee(__('Purchase inspection'))
+        ->assertSee(__('Select a finalized purchase inspection; only accepted quantities will be loaded.'));
+    procurementUseBranch($fixture, $administrativeBranch);
     $this->get(route('admin.purchases.purchase-invoices.create'))->assertOk()
         ->assertSee('data-load-invoice-source', false)
         ->assertSee('data-input-name="lines[0][attachment_file_doc_nums][]"', false);
@@ -276,7 +281,7 @@ test('sourcing drafts edit in the same workflow and restore their original line 
     expect(fn () => $sourcing->deleteSourcingDraft($quote->fresh()))->toThrow(DomainException::class);
 });
 
-test('receipt inspection and invoice forms keep source links and submit buttons outside nested file picker forms', function (): void {
+test('purchase inspection precedes receipt and accepted quantities feed the warehouse document', function (): void {
     $this->withoutExceptionHandling();
     $fixture = procurementUiFixture();
     $sourcing = app(ProcurementSourcingService::class);
@@ -291,27 +296,85 @@ test('receipt inspection and invoice forms keep source links and submit buttons 
     $this->postJson(route('admin.purchases.purchase-orders.submit', $order))->assertOk();
     $this->postJson(route('admin.purchases.purchase-orders.approve', $order))->assertOk();
     procurementUseBranch($fixture, $fixture['branch']);
-    $this->get(route('admin.purchases.purchase-orders.show', $order))->assertOk()->assertDontSee(__('Create supplier invoice'));
-    $this->getJson(route('admin.purchases.select2.purchase-orders', ['purpose' => 'receipt']))->assertOk()->assertJsonPath('results.0.id', $order->doc_num);
+    $this->get(route('admin.purchases.purchase-orders.show', $order))->assertOk()
+        ->assertSee(__('Create Purchase Inspection'))->assertDontSee(__('Create supplier invoice'));
+    $this->getJson(route('admin.purchases.select2.purchase-orders', ['purpose' => 'inspection']))->assertOk()->assertJsonPath('results.0.id', $order->doc_num);
     $receiving = app(ProcurementReceivingService::class);
-    $receipt = $receiving->createReceipt($order->fresh(), ['document_date' => now()->toDateString(), 'lines' => [['purchase_order_line_public_id' => $order->lines->sole()->public_id, 'delivered_quantity' => 40]]]);
-    $html = $this->get(route('admin.purchases.goods-receipt-inspection.create', $receipt))->assertOk()->assertDontSee('40.00000000')->getContent();
+    $html = $this->get(route('admin.purchases.goods-receipt-inspection.create', $order))->assertOk()->assertDontSee('100.00000000')->getContent();
     $dom = HTMLDocument::createFromString($html, LIBXML_NOERROR);
     $submit = collect($dom->querySelectorAll('button'))->first(fn ($button) => str_contains($button->textContent, __('procurement.ui.finalize_quality_inspection')));
-    expect($submit)->not->toBeNull()->and($submit->closest('form')->getAttribute('action'))->toBe(route('admin.purchases.goods-receipt-inspection.store', $receipt));
-    $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->sole()->public_id, 'accepted_quantity' => 40, 'rejected_quantity' => 0]]]);
+    expect($submit)->not->toBeNull()->and($submit->closest('form')->getAttribute('action'))->toBe(route('admin.purchases.goods-receipt-inspection.store', $order));
+    $inspection = $receiving->inspectPurchaseSource($order->fresh(), [
+        'inspection_at' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $order->lines->sole()->public_id,
+            'delivered_quantity' => 50,
+            'accepted_quantity' => 40,
+            'rejected_quantity' => 10,
+            'disposition' => 'return_supplier',
+            'reason' => 'Packaging damage',
+        ]],
+    ]);
+    expect($inspection->receipt_id)->toBeNull()
+        ->and($inspection->purchase_order_id)->toBe($order->id)
+        ->and((float) $inspection->lines->sole()->accepted_quantity)->toBe(40.0);
+    $this->get(route('admin.purchases.goods-receipt-inspection.index'))->assertOk()
+        ->assertSee('procurement-documents-table', false)
+        ->assertSee(route('admin.purchases.procurement.data', 'goods_receipt_inspections'), false);
+    $inspectionData = $this->getJson(route('admin.purchases.procurement.data', 'goods_receipt_inspections').'?draw=1&start=0&length=10&search[value]='.$order->doc_num)->assertOk();
+    expect($inspectionData->json('recordsFiltered'))->toBe(1)
+        ->and($inspectionData->json('data.0.doc_num'))->toContain($inspection->doc_num)
+        ->and($inspectionData->json('data.0.source'))->toBe($order->doc_num)
+        ->and($inspectionData->json('data.0.status'))->not->toContain('procurement.ui.statuses')
+        ->and($inspectionData->json('data.0.actions'))->toContain('/goods-receipt-notes/create/'.$inspection->doc_num);
+    $rejectionRows = app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::QcRejection,
+        ['branch_id' => $fixture['branch']->id],
+        $fixture['company']->id,
+        $fixture['period']->id,
+    );
+    expect($rejectionRows->firstWhere('document', $inspection->doc_num))
+        ->toMatchArray(['rejected' => '10.00000000', 'document_permission' => 'purchases.goods_receipt_inspection.view']);
+    $this->get(route('admin.purchases.goods-receipt-notes.create', $inspection))->assertOk()
+        ->assertSee($inspection->doc_num)->assertSee(__('Accepted for receipt'))->assertDontSee(__('Rejected for receipt'));
+    $receipt = $receiving->createReceiptFromInspection($inspection, [
+        'document_date' => now()->toDateString(),
+        'lines' => [['inspection_line_public_id' => $inspection->lines->sole()->public_id]],
+    ]);
     expect(InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->count())->toBe(0);
+    expect((float) $receipt->lines->sole()->accepted_quantity)->toBe(40.0)
+        ->and($inspection->fresh()->receipt_id)->toBe($receipt->id)
+        ->and(fn () => $receiving->createReceiptFromInspection($inspection->fresh(), [
+            'document_date' => now()->toDateString(),
+            'lines' => [['inspection_line_public_id' => $inspection->lines->sole()->public_id]],
+        ]))->toThrow(DomainException::class, __('Only an accepted unused purchase inspection can create a goods receipt.'));
+    expect(app(ProcurementCycleReport::class)->documentChain($receipt)->pluck('doc_num')->all())
+        ->toContain($order->doc_num, $inspection->doc_num, $receipt->doc_num);
     $receipt = $receiving->postReceipt($receipt->fresh());
+    $secondInspection = $receiving->inspectPurchaseSource($order->fresh(), [
+        'inspection_at' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $order->lines->sole()->public_id,
+            'delivered_quantity' => 30,
+            'accepted_quantity' => 30,
+            'rejected_quantity' => 0,
+        ]],
+    ]);
+    $secondReceipt = $receiving->postReceipt($receiving->createReceiptFromInspection($secondInspection, [
+        'document_date' => now()->toDateString(),
+        'lines' => [['inspection_line_public_id' => $secondInspection->lines->sole()->public_id]],
+    ]));
     $this->get(route('admin.purchases.purchase-returns.create', ['receipt' => $receipt->doc_num]))
         ->assertOk()->assertSee($receipt->doc_num)->assertSee($fixture['raw']->name);
     procurementUseBranch($fixture, $administrativeBranch);
-    $this->getJson(route('admin.purchases.select2.receipts', ['purpose' => 'invoice']))->assertOk()->assertJsonPath('results.0.id', $receipt->doc_num);
+    $receiptOptions = $this->getJson(route('admin.purchases.select2.receipts', ['purpose' => 'invoice', 'purchase_order' => $order->doc_num]))->assertOk();
+    expect(collect($receiptOptions->json('results'))->pluck('id')->all())->toContain($receipt->doc_num, $secondReceipt->doc_num);
     $invoiceHtml = $this->get(route('admin.purchases.purchase-invoices.create', ['receipts' => [$receipt->doc_num]]))->assertOk()->assertSee('value="'.$receipt->doc_num.'" selected', false)->getContent();
     $invoiceDom = HTMLDocument::createFromString($invoiceHtml, LIBXML_NOERROR);
     $source = $invoiceDom->querySelector('input[name="lines[0][receipt_line_public_id]"]');
     expect($source->getAttribute('value'))->toBe($receipt->lines->sole()->public_id)
         ->and($invoiceDom->querySelector('.js-purchase-invoice-duplicate-line')->hasAttribute('hidden'))->toBeTrue();
-    $this->getJson(route('admin.purchases.procurement.data', 'goods_receipts').'?search[value]='.$order->doc_num)->assertOk()->assertJsonPath('recordsFiltered', 1);
+    $this->getJson(route('admin.purchases.procurement.data', 'goods_receipts').'?search[value]='.$order->doc_num)->assertOk()->assertJsonPath('recordsFiltered', 2);
 });
 
 test('editing the simplified request preserves legacy hidden metadata and timestamps on a no-op', function (): void {
@@ -385,6 +448,7 @@ test('purchase navigation follows the operational document sequence', function (
         'purchase_orders',
         'supplier_quotations',
         'supply_orders',
+        'purchase_inspections',
         'goods_receipts',
         'purchase_invoices',
         'supplier_payments',
@@ -396,4 +460,7 @@ test('purchase navigation follows the operational document sequence', function (
 
     expect(config('menu_sections.leaf_order.purchases'))->toBe($expectedOrder)
         ->and(collect($purchases['children'])->pluck('label')->all())->toBe($expectedOrder);
+
+    app()->setLocale('ar');
+    expect(__('menu.purchase_inspections'))->toBe('فحوص المشتريات');
 });

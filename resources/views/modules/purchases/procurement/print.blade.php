@@ -5,7 +5,11 @@
         $dates = app(\Modules\Core\Services\DateFormatService::class);
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
         $document = $record->doc_num ?? $record->cashVoucher?->doc_num;
-        $documentTitle = $type === 'goods-receipt' ? app(\Modules\Core\Services\Reports\ReportPdfService::class)->stockDocumentTitle($record) : __('procurement.documents.types.'.$type);
+        $documentTitle = match (true) {
+            $type === 'goods-receipt' => app(\Modules\Core\Services\Reports\ReportPdfService::class)->stockDocumentTitle($record),
+            $type === 'purchase-return' && $record->purchase_invoice_id !== null => __('procurement.documents.types.purchase-return-invoiced'),
+            default => __('procurement.documents.types.'.$type),
+        };
         $documentStatus = (string) ($record->status ?? $record->qc_status ?? $record->cashVoucher?->status ?? '');
         $documentStatusLabel = $documentStatus !== '' ? __('procurement.statuses.'.$documentStatus) : '';
         $lines = match ($type) {
@@ -17,6 +21,7 @@
         $isRequest = $type === 'purchase-requisition';
         $isReceipt = $type === 'goods-receipt';
         $isReturn = $type === 'purchase-return';
+        $supplier = $record->supplier ?? $record->purchaseOrder?->supplier ?? $record->supplyOrder?->supplier;
         $showReceiptReference = $isReturn && $lines->pluck('receipt_line_id')->map(fn ($id) => $lines->firstWhere('receipt_line_id', $id)?->receiptLine?->receipt_id)->unique()->count() > 1;
         $showRejected = $isReceipt && $lines->contains(fn ($line) => (float) $line->rejected_quantity > 0 || $line->product?->requiresIncomingInspection());
         $isItemDocument = $type !== 'supplier-payment';
@@ -48,8 +53,8 @@
                 <tr><td><strong>{{ __('procurement.ui.requester_employee') }}</strong></td><td>{{ $record->requesterEmployee->full_name ?: $record->requesterEmployee->name }}</td></tr>
             @endif
             @if($isReturn)<tr><td><strong>{{ __('Return reason') }}</strong></td><td>{{ __(str($record->reason_code)->replace('_', ' ')->title()->toString()) }}</td></tr>@endif
-            @if($record->supplier ?? null)
-                <tr><td><strong>{{ __('procurement.fields.supplier') }}</strong></td><td>{{ $record->supplier?->doc_num }} / {{ $record->supplier?->name }}</td></tr>
+            @if($supplier)
+                <tr><td><strong>{{ __('procurement.fields.supplier') }}</strong></td><td>{{ $supplier->doc_num }} / {{ $supplier->name }}</td></tr>
             @endif
             @if($type === 'supplier-quotation' && filled($record->source_doc_num))
                 <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num }}</td></tr>
@@ -69,6 +74,21 @@
             @endif
             @if($record->receipt ?? null)
                 <tr><td><strong>{{ __('procurement.fields.goods_receipt') }}</strong></td><td dir="ltr">{{ $record->receipt?->doc_num }}</td></tr>
+            @endif
+            @if($type === 'goods-receipt-inspection')
+                @php
+                    $inspectionStore = $record->purchaseOrder?->branchStore ?? $record->supplyOrder?->branchStore;
+                    $inspectionBranch = $record->branch ?? $inspectionStore?->branch;
+                @endphp
+                <tr><td><strong>{{ __('Branch') }}</strong></td><td>{{ $inspectionBranch?->name ?: '—' }}</td></tr>
+                <tr><td><strong>{{ __('Warehouse') }}</strong></td><td>{{ $inspectionStore?->name ?: '—' }}</td></tr>
+                <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num ?: '—' }}</td></tr>
+                <tr><td><strong>{{ __('Inspection result') }}</strong></td><td>{{ __(str($record->result)->replace('_', ' ')->title()->toString()) }}</td></tr>
+                <tr><td><strong>{{ __('Warehouse receipt') }}</strong></td><td dir="ltr">{{ $record->receipt?->doc_num ?: __('Not created yet') }}</td></tr>
+            @endif
+            @if($isReturn)
+                <tr><td><strong>{{ __('Source invoice') }}</strong></td><td dir="ltr">{{ $record->purchaseInvoice?->doc_num ?: '—' }}</td></tr>
+                <tr><td><strong>{{ __('Financial treatment') }}</strong></td><td>{{ $record->purchase_invoice_id ? __('Supplier debit note') : __('Inventory / GRNI adjustment only') }}</td></tr>
             @endif
             @if($type === 'goods-receipt')
                 @if(filled($record->supplier_delivery_note))<tr><td><strong>{{ __('procurement.fields.supplier_delivery_note') }}</strong></td><td>{{ $record->supplier_delivery_note }}</td></tr>@endif

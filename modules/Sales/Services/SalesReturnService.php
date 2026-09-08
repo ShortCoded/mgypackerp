@@ -72,10 +72,12 @@ class SalesReturnService
                 }
 
                 $remaining = $quantity;
+                $deliverySourceType = $line->sales_order_line_id ? SalesOrderLine::class : CustomerInvoiceLine::class;
+                $deliverySourceId = $line->sales_order_line_id ?: $line->getKey();
                 $deliveryLines = InventoryDocumentLine::query()->with('document')
                     ->whereIn('inventory_document_id', $source->deliveries->modelKeys())
-                    ->where('source_line_type', SalesOrderLine::class)
-                    ->where('source_line_id', $line->sales_order_line_id)
+                    ->where('source_line_type', $deliverySourceType)
+                    ->where('source_line_id', $deliverySourceId)
                     ->whereHas('document', fn ($query) => $query->where('status', InventoryDocument::StatusPosted))
                     ->oldest('id')
                     ->lockForUpdate()

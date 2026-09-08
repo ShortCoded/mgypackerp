@@ -130,6 +130,18 @@
                 <div class="tab-content pt-3">
                     <div class="tab-pane fade show active" id="quotation-basic" role="tabpanel" aria-labelledby="quotation-basic-tab">
                         <div class="row g-3">
+                            @if($mode === 'create')
+                                @can('sales_requests.view')
+                                    <div class="col-12">
+                                        <x-forms.label for="source_request_doc_num" :label="__('sales_ui.source_sales_request')" />
+                                        <select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-quotation-source data-create-url="{{ route('admin.sales.quotations.create') }}" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.direct_quotation') }}" data-allow-clear="true">
+                                            <option value="">{{ __('sales_ui.direct_quotation') }}</option>
+                                            @if($sourceRequest)<option value="{{ $sourceRequest->doc_num }}" selected>{{ $sourceRequest->doc_num }} / {{ $sourceRequest->customer?->name }}</option>@endif
+                                        </select>
+                                        <small class="text-muted">{{ __('sales_ui.source_quotation_request_help') }}</small>
+                                    </div>
+                                @endcan
+                            @endif
                             @if ($canControlDocumentNumber)
                                 <div class="col-md-3 col-xl-2">
                                     <label class="form-label" for="doc_number">{{ __('quotations.attributes.doc_number') }}</label>
@@ -223,7 +235,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="exchange_rate" :value="$numbers->format($record?->exchange_rate ?? 1)" dir="ltr" input-class="text-center" />
                                 @else
-                                    <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
+                                    <x-forms.numeric-input class="text-center" id="exchange_rate" name="exchange_rate" :value="old('exchange_rate', $record?->exchange_rate ?? $sourceRequest?->exchange_rate ?? 1)" :scale="6" min="0.000001" step="0.000001" required />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="exchange_rate"></div>
                             </div>
@@ -268,7 +280,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="customer_reference" :value="$record?->customer_reference" />
                                 @else
-                                    <input class="form-control" id="customer_reference" name="customer_reference" type="text" value="{{ old('customer_reference', $record?->customer_reference) }}" maxlength="160">
+                                    <input class="form-control" id="customer_reference" name="customer_reference" type="text" value="{{ old('customer_reference', $record?->customer_reference ?? $sourceRequest?->customer_reference) }}" maxlength="160">
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="customer_reference"></div>
                             </div>
@@ -342,6 +354,7 @@
                                     @foreach ($lines as $index => $line)
                                         <tr class="js-quotation-line" data-index="{{ $index }}">
                                             <td>
+                                                @if(! empty($line['source_request_line_public_id']))<input type="hidden" name="lines[{{ $index }}][source_request_line_public_id]" value="{{ $line['source_request_line_public_id'] }}">@endif
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['product_label'] ?? __('common.empty_value') }}</div>
                                                 @else
@@ -429,7 +442,7 @@
                                             </td>
                                             @unless ($isReadonly)
                                                 <td class="text-center line-card-actions">
-                                                    <button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}" title="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>
+                                                    @if(empty($line['source_request_line_public_id']))<button class="btn btn-link text-600 p-0 me-2 js-quotation-duplicate-line" type="button" aria-label="{{ __('Duplicate line') }}" title="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button>@endif
                                                     <button class="btn btn-link text-danger p-0 js-quotation-remove-line" type="button" aria-label="{{ __('Remove line') }}" title="{{ __('Remove line') }}"><span class="fas fa-trash-alt"></span></button>
                                                 </td>
                                             @endunless

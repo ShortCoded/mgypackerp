@@ -55,7 +55,8 @@ Route::middleware('auth')
             Route::post('/sales-orders/{salesOrder}/invoices', 'invoiceOrder')->middleware('can:sales_orders.invoice')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.invoices.store');
 
             Route::get('/sales-invoices', 'invoices')->middleware('can:customer_invoices.view')->name('sales-invoices.index');
-            Route::get('/sales-invoices/create', 'createInvoice')->middleware(['can:customer_invoices.create', 'can:sales_orders.invoice', 'can:sales_orders.view'])->name('sales-invoices.create');
+            Route::get('/sales-invoices/create', 'createInvoice')->middleware('can:customer_invoices.create')->name('sales-invoices.create');
+            Route::post('/sales-invoices', 'storeDirectInvoice')->middleware('can:customer_invoices.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-invoices.store');
             Route::get('/sales-invoices/{customerInvoice}', 'showInvoice')->middleware('can:customer_invoices.view')->name('sales-invoices.show');
             Route::get('/sales-invoices/{customerInvoice}/edit', 'editInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.edit');
             Route::put('/sales-invoices/{customerInvoice}', 'updateInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.update');
@@ -102,7 +103,11 @@ Route::middleware('auth')
         });
 
         Route::get('/select2/invoiceable-orders', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->invoiceableOrders($request)))->middleware(['can:customer_invoices.create', 'can:sales_orders.invoice', 'can:sales_orders.view'])->name('select2.invoiceable-orders');
-        Route::get('/select2/convertible-requests', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->convertibleRequests($request)))->middleware(['can:sales_orders.create', 'can:sales_requests.view'])->name('select2.convertible-requests');
+        Route::get('/select2/convertible-requests', function (Request $request, SalesSelect2Service $select2) {
+            abort_unless($request->user()?->canAny(['sales_orders.create', 'quotations.create', 'customer_invoices.create']), 403);
+
+            return response()->json($select2->convertibleRequests($request));
+        })->middleware('can:sales_requests.view')->name('select2.convertible-requests');
         Route::get('/select2/deliverable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->deliverableInvoices($request)))->middleware(['can:sales_deliveries.create', 'can:customer_invoices.view'])->name('select2.deliverable-invoices');
         Route::get('/select2/returnable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->returnableInvoices($request)))->middleware('can:sales_returns.create')->name('select2.returnable-invoices');
         Route::get('/select2/credit-target-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->creditTargetInvoices($request)))->middleware('can:customer_credits.allocate')->name('select2.credit-target-invoices');

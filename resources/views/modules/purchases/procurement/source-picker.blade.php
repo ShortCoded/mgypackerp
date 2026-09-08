@@ -3,9 +3,9 @@
 @section('content')
 @php
     $isReceiptSource = $destination === 'goods-receipt-notes';
-    $sourceLabel = $isReceiptSource ? __('Supply Order') : __('Source document');
+    $sourceLabel = $isReceiptSource ? __('Purchase inspection') : __('Source document');
     $sourceHelp = $isReceiptSource
-        ? __('Select an issued supply order; remaining quantities are loaded automatically.')
+        ? __('Select a finalized purchase inspection; only accepted quantities will be loaded.')
         : __('Select the source document to load its lines automatically.');
 @endphp
 
@@ -30,7 +30,7 @@
                 <select
                     id="source_document"
                     class="form-select js-select2-ajax"
-                    data-url="{{ route('admin.purchases.select2.'.$lookup, ['purpose' => $isReceiptSource ? 'receipt' : null]) }}"
+                    data-url="{{ route('admin.purchases.select2.'.$lookup) }}"
                     data-placeholder="{{ __('Select') }}"
                     aria-describedby="source_document_help"
                     required

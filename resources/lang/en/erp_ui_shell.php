@@ -21,8 +21,8 @@ return [
         'workflows' => [
             'quotations' => 'Quotations', 'sales_orders' => 'Sales Orders', 'deliveries' => 'Deliveries', 'sales_invoices' => 'Sales Invoices', 'collections' => 'Collections',
             'sales_returns' => 'Sales Returns', 'customer_statements' => 'Customer Statements', 'requisitions' => 'Purchase Requisitions', 'rfqs' => 'RFQs',
-            'supplier_quotes' => 'Supplier Quotations', 'comparison' => 'Quotation Comparison', 'supplier_selection' => 'Supplier Selection', 'purchase_orders' => 'Purchase Orders',
-            'goods_receipts' => 'Goods Receipts', 'incoming_qc' => 'Incoming Quality', 'purchase_invoices' => 'Purchase Invoices', 'supplier_payments' => 'Supplier Payments',
+            'supplier_quotes' => 'Supplier Quotations', 'comparison' => 'Quotation Comparison', 'supplier_selection' => 'Supplier Selection', 'purchase_orders' => 'Purchase Orders', 'supply_orders' => 'Supply Orders',
+            'goods_receipts' => 'Goods Receipts', 'incoming_qc' => 'Purchase Inspections', 'purchase_invoices' => 'Purchase Invoices', 'supplier_payments' => 'Supplier Payments',
             'supplier_statements' => 'Supplier Statements', 'opening_stocks' => 'Opening Stock', 'inventory_documents' => 'Inventory Operations', 'stock_counts' => 'Stock Counts',
             'inventory_reports' => 'Inventory Reports', 'production_orders' => 'Production Orders', 'production_runs' => 'Production Runs', 'production_resources' => 'Machines & Molds',
             'production_reports' => 'Production Reports', 'asset_register' => 'Asset Register', 'asset_accounting' => 'Asset Accounting', 'depreciation' => 'Depreciation',

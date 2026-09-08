@@ -123,9 +123,11 @@
     @if($kind === 'invoice' && $record->posting_status === 'posted')
         @php
             $invoiceDeliveryLines = $record->lines->reject(fn ($line) => $line->is_service)->map(function ($line) use ($record) {
+                $deliverySourceType = $line->sales_order_line_id ? \Modules\Sales\Models\SalesOrderLine::class : \Modules\Sales\Models\CustomerInvoiceLine::class;
+                $deliverySourceId = $line->sales_order_line_id ?: $line->getKey();
                 $delivered = $record->deliveries->flatMap->lines
-                    ->where('source_line_type', \Modules\Sales\Models\SalesOrderLine::class)
-                    ->where('source_line_id', $line->sales_order_line_id)
+                    ->where('source_line_type', $deliverySourceType)
+                    ->where('source_line_id', $deliverySourceId)
                     ->sum('transaction_quantity');
                 $remaining = bcsub((string) $line->quantity, (string) $delivered, 8);
 
@@ -158,9 +160,11 @@
             @foreach($record->lines as $index => $line)
                 @php
                     $previouslyReturned = $line->returnLines->reject(fn($returnLine) => $returnLine->salesReturn?->status === 'cancelled')->sum('quantity');
+                    $deliverySourceType = $line->sales_order_line_id ? \Modules\Sales\Models\SalesOrderLine::class : \Modules\Sales\Models\CustomerInvoiceLine::class;
+                    $deliverySourceId = $line->sales_order_line_id ?: $line->getKey();
                     $delivered = $line->is_service ? $line->quantity : $record->deliveries->flatMap->lines
-                        ->where('source_line_type', \Modules\Sales\Models\SalesOrderLine::class)
-                        ->where('source_line_id', $line->sales_order_line_id)
+                        ->where('source_line_type', $deliverySourceType)
+                        ->where('source_line_id', $deliverySourceId)
                         ->sum('transaction_quantity');
                     $returnable = bcsub(bccomp((string) $delivered, (string) $line->quantity, 8) > 0 ? (string) $line->quantity : (string) $delivered, (string) $previouslyReturned, 8);
                 @endphp

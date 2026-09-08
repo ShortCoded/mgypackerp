@@ -4,7 +4,10 @@
     $showPrices = $commercial && auth()->user()?->can('purchases.prices.view');
     $document = $record->doc_num ?? $record->cashVoucher?->doc_num;
     $status = $record->status ?? $record->cashVoucher?->status ?? '—';
-    $title = __(str($type)->replace('_', ' ')->title()->toString()).' '.$document;
+    $titleLabel = $type === 'purchase_return'
+        ? __($record->purchase_invoice_id ? 'procurement.documents.types.purchase-return-invoiced' : 'procurement.documents.types.purchase-return')
+        : __(str($type)->replace('_', ' ')->title()->toString());
+    $title = $titleLabel.' '.$document;
     $printType = str($type)->replace('_', '-')->toString();
     $printPermission = match ($type) {
         'purchase_requisition' => 'purchases.purchase_requisitions.print',
@@ -83,10 +86,11 @@
     } elseif ($type === 'goods_receipt') {
         $addLineage(__('Supply Order'), $record->supplyOrder, 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
-        $addLineage(__('Incoming QC Inspection'), $record->inspection, 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
+        $addLineage(__('Purchase Inspection'), $record->inspection, 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
     } elseif ($type === 'goods_receipt_inspection') {
         $addLineage(__('Goods Receipt'), $record->receipt, 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
-        $addLineage(__('Purchase Order'), $record->receipt?->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
+        $addLineage(__('Supply Order'), $record->supplyOrder, 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
+        $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
     } elseif ($type === 'purchase_return') {
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
         $addLineage(__('Goods Receipt'), $record->receipt, 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
@@ -215,8 +219,13 @@
                     @can('purchases.supply_orders.issue')<form method="POST" action="{{ route('admin.purchases.supply-orders.issue', $record) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Issue Supply Order') }}</button></form>@endcan
                 @endif
                 @if($type === 'supply_order' && in_array($record->status, ['issued', 'partially_received'], true))
-                    @if((int) $record->branchStore?->branch_id === (int) ($activeBranchId ?? 0) && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_notes.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>@endcan @endif
+                    @if((int) $record->branchStore?->branch_id === (int) ($activeBranchId ?? 0) && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_inspection.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record) }}">{{ __('Create Purchase Inspection') }}</a>@endcan @endif
                     @if((int) $record->branch_id === (int) ($activeBranchId ?? 0)) @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan @endif
+                @endif
+                @if($type === 'goods_receipt_inspection' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->receipt_id === null && in_array($record->result, ['accepted', 'partially_accepted'], true))
+                    @can('purchases.goods_receipt_notes.create')
+                    <a class="btn btn-success btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>
+                    @endcan
                 @endif
                 @if($type === 'goods_receipt' && $record->posting_status === 'posted')
                     @if($isAdministrativeBranch ?? false)
@@ -253,9 +262,6 @@
                     @endcan
                 @endif
                 @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft' && $record->posting_status === 'unposted' && $record->qc_status === 'pending_inspection')
-                    @can('purchases.goods_receipt_inspection.create')
-                    <a class="btn btn-warning btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Inspect receipt') }}</a>
-                    @endcan
                     @can('purchases.goods_receipt_notes.edit')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
@@ -317,6 +323,22 @@
                 @if($type === 'goods_receipt')
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ __(str($record->qc_status)->replace('_', ' ')->title()->toString()) }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Posting status') }}</div><div>{{ __(str($record->posting_status)->replace('_', ' ')->title()->toString()) }}</div></div>
+                @endif
+                @if($type === 'goods_receipt_inspection')
+                    @php
+                        $inspectionStore = $record->purchaseOrder?->branchStore ?? $record->supplyOrder?->branchStore;
+                        $inspectionBranch = $record->branch ?? $inspectionStore?->branch;
+                    @endphp
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Branch') }}</div><div>{{ $inspectionBranch?->name ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Warehouse') }}</div><div>{{ $inspectionStore?->name ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source document') }}</div><div dir="ltr">{{ $record->source_doc_num ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Inspection result') }}</div><div>{{ __(str($record->result)->replace('_', ' ')->title()->toString()) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Warehouse receipt') }}</div><div dir="ltr">{{ $record->receipt?->doc_num ?: __('Not created yet') }}</div></div>
+                @endif
+                @if($type === 'purchase_return')
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source Goods Receipt') }}</div><div dir="ltr">{{ $record->receipt?->doc_num ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source invoice') }}</div><div dir="ltr">{{ $record->purchaseInvoice?->doc_num ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Financial treatment') }}</div><div>{{ $record->purchase_invoice_id ? __('Supplier debit note') : __('Inventory / GRNI adjustment only') }}</div></div>
                 @endif
                 @if($type === 'supplier_payment')
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __(str($record->payment_method)->replace('_', ' ')->title()->toString()) }}</div></div>
@@ -401,7 +423,7 @@
                             @foreach($lines as $index => $line)
                                 @php
                                     $item = $line->product?->name ?? $line->purchaseInvoice?->doc_num ?? '—';
-                                    $source = $line->source_doc_num ?? $line->rfqLine?->requestForQuotation?->doc_num ?? $line->receiptLine?->receipt?->doc_num ?? $line->paymentSchedule?->public_id ?? '—';
+                                    $source = $line->source_doc_num ?? ($type === 'goods_receipt_inspection' ? $record->source_doc_num : null) ?? $line->rfqLine?->requestForQuotation?->doc_num ?? $line->receiptLine?->receipt?->doc_num ?? $line->paymentSchedule?->public_id ?? '—';
                                     $quantity = $line->requested_quantity ?? $line->ordered_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
                                     if ($commercial && ! $showPrices && isset($line->amount)) {
                                         $quantity = '—';

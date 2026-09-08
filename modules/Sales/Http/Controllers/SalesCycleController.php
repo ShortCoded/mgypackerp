@@ -40,6 +40,7 @@ use Modules\Sales\Http\Requests\ReleaseSalesStockRequest;
 use Modules\Sales\Http\Requests\ReserveSalesStockRequest;
 use Modules\Sales\Http\Requests\SalesOrderActionRequest;
 use Modules\Sales\Http\Requests\StoreCustomerInvoiceRequest;
+use Modules\Sales\Http\Requests\StoreDirectCustomerInvoiceRequest;
 use Modules\Sales\Http\Requests\StoreCustomerReceiptRequest;
 use Modules\Sales\Http\Requests\StoreSalesOrderRequest;
 use Modules\Sales\Http\Requests\StoreSalesReturnRequest;
@@ -241,6 +242,7 @@ class SalesCycleController extends Controller
     {
         $context = $this->requiredContext($request);
         if ($request->filled('sales_order_doc_num')) {
+            abort_unless($request->user()?->can('sales_orders.view') && $request->user()?->can('sales_orders.invoice'), 403);
             $order = SalesOrder::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
                 ->where('financial_period_id', $context['financial_period_id'])->where('doc_num', $request->string('sales_order_doc_num')->toString())
                 ->whereIn('status', ['approved', 'partially_fulfilled', 'fulfilled'])->firstOrFail();
@@ -248,7 +250,39 @@ class SalesCycleController extends Controller
             return redirect()->to(route('admin.sales.sales-orders.show', $order).'#sales-order-invoice');
         }
 
+        $sourceRequest = null;
+        if ($request->filled('source_request_doc_num')) {
+            abort_unless($request->user()?->can('sales_requests.view'), 403);
+            $sourceRequest = SalesRequest::query()
+                ->with(['customer', 'currency', 'salesEmployee', 'lines.product.unit', 'lines.product.equivalentUnit', 'lines.unit'])
+                ->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                ->whereIn('status', ['approved', 'partially_converted'])
+                ->where('doc_num', $request->string('source_request_doc_num')->toString())
+                ->firstOrFail();
+        }
+
+        if ($request->boolean('direct') || $sourceRequest) {
+            return view('modules.sales.cycle.direct-invoice-form', [
+                ...$this->formOptions($request, null, $sourceRequest),
+                'sourceRequest' => $sourceRequest,
+            ]);
+        }
+
         return view('modules.sales.cycle.invoice-source');
+    }
+
+    public function storeDirectInvoice(StoreDirectCustomerInvoiceRequest $request, CustomerInvoiceService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $sourceRequest = $request->filled('source_request_doc_num')
+            ? SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail()
+            : null;
+        if ($sourceRequest) {
+            abort_unless($request->user()?->can('sales_requests.view'), 403);
+        }
+
+        return $this->created($service->createDirect($request->validated(), $sourceRequest), 'admin.sales.sales-invoices.show');
     }
 
     public function showInvoice(CustomerInvoice $customerInvoice): View
@@ -363,7 +397,12 @@ class SalesCycleController extends Controller
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
-        return $this->show('sales_delivery', $inventoryDocument->load(['customer', 'salesOrder.salesEmployee', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']));
+        $relations = ['customer', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit'];
+        if ($inventoryDocument->source_document_type === SalesOrder::class) {
+            $relations[] = 'salesOrder.salesEmployee';
+        }
+
+        return $this->show('sales_delivery', $inventoryDocument->load($relations));
     }
 
     public function showProduction(ProductionOrder $productionOrder): View
@@ -700,7 +739,12 @@ class SalesCycleController extends Controller
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
-        return $this->print('sales_delivery', $inventoryDocument->load(['company', 'customer', 'salesOrder.salesEmployee', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit']), false);
+        $relations = ['company', 'customer', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit'];
+        if ($inventoryDocument->source_document_type === SalesOrder::class) {
+            $relations[] = 'salesOrder.salesEmployee';
+        }
+
+        return $this->print('sales_delivery', $inventoryDocument->load($relations), false);
     }
 
     public function printProduction(ProductionOrder $productionOrder): Response
@@ -851,11 +895,13 @@ class SalesCycleController extends Controller
         return $this->pdf->stream('reports.sales.document', [
             'printIdentityPolicy' => in_array($kind, ['invoice', 'credit_note'], true) ? $copy : 'operational',
             'title' => $title.' — '.$record->doc_num,
+            'documentHeaderTitle' => $title,
             'kind' => $kind,
             'record' => $record,
             'showPrices' => $financial
                 && ($pricePermission === null || (bool) request()->user()?->can($pricePermission)),
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
+            'customerFacing' => true,
         ], str($kind.'-'.$record->doc_num)->slug().'.pdf');
     }
 

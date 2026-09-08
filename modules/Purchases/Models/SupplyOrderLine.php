@@ -80,4 +80,9 @@ class SupplyOrderLine extends Model
     {
         return $this->hasMany(UnpricedInventoryReceiptLine::class);
     }
+
+    public function inspectionLines(): HasMany
+    {
+        return $this->hasMany(GoodsReceiptInspectionLine::class);
+    }
 }
