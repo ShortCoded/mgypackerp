@@ -5,6 +5,7 @@ namespace Modules\Purchases\DataTables;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
@@ -37,7 +38,16 @@ class ProcurementDocumentsDataTable
     {
         $definition = self::definition($screen);
         $context = $this->context->snapshot($request);
-        $query = $definition['model']::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id']);
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
+        $query = $definition['model']::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->when(! $isAdministrativeBranch && $screen === 'supply_orders', fn (Builder $query) => $query->whereHas('branchStore', fn (Builder $stores) => $stores->where('branch_id', $context['branch_id'])))
+            ->when(! $isAdministrativeBranch && $screen !== 'supply_orders', fn (Builder $query) => $query->where('branch_id', $context['branch_id']));
         $trash = $request->string('trash_filter')->toString();
         if ($request->user()?->can('purchases.'.$definition['permission'].'.view_trashed')) {
             if ($trash === 'trashed') {
@@ -48,6 +58,9 @@ class ProcurementDocumentsDataTable
         }
         if ($screen === 'goods_receipts') {
             $query->whereNotNull('purchase_order_id');
+        }
+        if ($screen === 'supply_orders' && ! $isAdministrativeBranch) {
+            $query->where('status', '<>', SupplyOrder::StatusDraft);
         }
         if ($request->filled('status')) {
             $query->where($screen === 'goods_receipts' ? 'posting_status' : 'status', $request->string('status')->toString());
@@ -68,6 +81,12 @@ class ProcurementDocumentsDataTable
     {
         $definition = self::definition($screen);
         abort_unless($request->user()?->can('purchases.'.$definition['permission'].'.view'), 403);
+        $context = $this->context->snapshot($request);
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
         $query = $this->query($request, $screen)->withCount('lines');
         $relations = match ($screen) {
             'purchase_requisitions' => ['requesterEmployee', 'branch', 'branchStore'],
@@ -83,7 +102,7 @@ class ProcurementDocumentsDataTable
             ->filter(function ($query) use ($request, $screen, $definition): void {
                 $table = $query->getModel()->getTable();
                 $related = match ($screen) {
-                    'purchase_requisitions' => [['hr_employees', 'requester_employee_id', ['doc_num', 'full_name', 'name']], ['branches', 'branch_id', ['name']]],
+                    'purchase_requisitions' => [['hr_employees', 'requester_employee_id', ['doc_num', 'full_name', 'name']], ['branches', 'branch_id', ['name']], ['branch_stores', 'branch_store_id', ['name']]],
                     'request_for_quotations' => [['purchase_requisitions', 'purchase_requisition_id', ['doc_num']]],
                     'supplier_quotations' => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['request_for_quotations', 'request_for_quotation_id', ['doc_num']], ['purchase_requisitions', 'purchase_requisition_id', ['doc_num']], ['purchase_orders', 'purchase_order_id', ['doc_num']]],
                     'supply_orders' => [['suppliers', 'supplier_id', ['name', 'doc_num']], ['purchase_orders', 'purchase_order_id', ['doc_num']], ['purchase_invoices', 'purchase_invoice_id', ['doc_num']]],
@@ -95,12 +114,12 @@ class ProcurementDocumentsDataTable
                     'exists' => array_map(fn (array $relation): array => ['table' => $relation[0], 'first' => $relation[0].'.id', 'second' => $table.'.'.$relation[1], 'columns' => array_map(fn (string $column): string => $relation[0].'.'.$column, $relation[2])], $related),
                 ]);
             })
-            ->addColumn('checkbox', fn ($record): string => view('modules.purchases.procurement.partials.index-checkbox', ['record' => $record, 'screen' => $screen])->render())
+            ->addColumn('checkbox', fn ($record): string => view('modules.purchases.procurement.partials.index-checkbox', ['record' => $record, 'screen' => $screen, 'isAdministrativeBranch' => $isAdministrativeBranch])->render())
             ->editColumn('doc_num', fn ($record): string => '<a class="dt-code-value fw-semibold" href="'.e(route('admin.purchases.'.$definition['route'].'.show', $record->doc_num)).'">'.e($record->doc_num).'</a>')
             ->addColumn('date', fn ($record): string => $this->dates->formatDate($record->{$definition['date']}))
             ->addColumn('party', fn ($record): string => $screen === 'purchase_requisitions' ? ($record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name ?: __('common.empty_value')) : ($screen === 'request_for_quotations' ? $record->suppliers->pluck('name')->join('، ') : ($record->supplier?->name ?? __('common.empty_value'))))
             ->addColumn('source', fn ($record): string => match ($screen) {
-                'purchase_requisitions' => $record->branch?->name ?? '',
+                'purchase_requisitions' => collect([$record->branch?->name, $record->branchStore?->name])->filter()->join(' — '),
                 'request_for_quotations' => $record->requisition?->doc_num ?? '',
                 'supplier_quotations' => $record->source_doc_num ?? $record->requestForQuotation?->doc_num ?? '',
                 'supply_orders' => $record->source_doc_num,
@@ -110,7 +129,13 @@ class ProcurementDocumentsDataTable
             ->editColumn('status', fn ($record): string => view('modules.purchases.procurement.partials.index-status', ['record' => $record, 'screen' => $screen])->render())
             ->editColumn('created_at', fn ($record): string => $this->dates->formatDateTime($record->created_at))
             ->editColumn('updated_at', fn ($record): string => $this->dates->formatDateTime($record->updated_at))
-            ->addColumn('actions', fn ($record): string => view('modules.purchases.procurement.partials.index-actions', ['record' => $record, 'screen' => $screen, 'definition' => $definition])->render())
+            ->addColumn('actions', fn ($record): string => view('modules.purchases.procurement.partials.index-actions', [
+                'record' => $record,
+                'screen' => $screen,
+                'definition' => $definition,
+                'isAdministrativeBranch' => $isAdministrativeBranch,
+                'activeBranchId' => (int) $context['branch_id'],
+            ])->render())
             ->orderColumn('status', ($screen === 'goods_receipts' ? 'posting_status' : 'status').' $1')
             ->orderColumn('date', $definition['date'].' $1')
             ->orderColumn('doc_num', 'doc_number $1')

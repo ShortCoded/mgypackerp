@@ -24,7 +24,7 @@
                                     'disposal_loss_account_doc_num' => $mapping?->disposalLossAccount,
                                     'disposal_clearing_account_doc_num' => $mapping?->disposalClearingAccount,
                                 ] as $field => $account)
-                                    <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.mapping_fields.'.$field) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.credit-accounts') }}">@if($account)<option value="{{ $account->doc_num }}" selected>{{ $account->codeNameLabel() }}</option>@endif</select></div>
+                                    <div class="col-md-6"><label class="form-label">{{ __('fixed_assets.lifecycle.mapping_fields.'.$field) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.credit-accounts') }}" data-placeholder="{{ __('fixed_assets.placeholders.account') }}" data-allow-clear="true">@if($account)<option value="{{ $account->doc_num }}" selected>{{ $account->codeNameLabel() }}</option>@endif</select></div>
                                 @endforeach
                                 <div class="col-12"><button class="btn btn-falcon-primary" type="submit"><span class="fas fa-save me-1"></span>{{ __('common.actions.save') }}</button></div>
                             </form>
@@ -40,6 +40,7 @@
 @endsection
 
 @push('scripts')
+    <script>window.fixedAssetsMessages = @json(__('fixed_assets.js'));</script>
     <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

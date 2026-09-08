@@ -95,7 +95,7 @@ class ProcurementSourcingService
     public function rejectRequisition(PurchaseRequisition $requisition, string $reason): PurchaseRequisition
     {
         return DB::transaction(function () use ($requisition, $reason): PurchaseRequisition {
-            $locked = $this->lockRequisition($requisition);
+            $locked = $this->lockRequisition($requisition, allowAdministrativeAccess: true);
             if ($locked->status === PurchaseRequisition::StatusRejected) {
                 return $locked;
             }
@@ -114,7 +114,7 @@ class ProcurementSourcingService
     public function finishRequisition(PurchaseRequisition $requisition, string $status, ?string $reason = null): PurchaseRequisition
     {
         return DB::transaction(function () use ($requisition, $status, $reason): PurchaseRequisition {
-            $locked = $this->lockRequisition($requisition, true);
+            $locked = $this->lockRequisition($requisition, true, allowAdministrativeAccess: true);
             $this->requireStatus($status, [PurchaseRequisition::StatusCancelled, PurchaseRequisition::StatusClosed]);
             if ($locked->status === $status) {
                 return $locked;
@@ -289,7 +289,7 @@ class ProcurementSourcingService
     public function approveRequisition(PurchaseRequisition $requisition, array $approvedQuantities = []): PurchaseRequisition
     {
         return DB::transaction(function () use ($approvedQuantities, $requisition): PurchaseRequisition {
-            $locked = $this->lockRequisition($requisition, true);
+            $locked = $this->lockRequisition($requisition, true, allowAdministrativeAccess: true);
             if (in_array($locked->status, [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)) {
                 return $locked;
             }
@@ -344,8 +344,8 @@ class ProcurementSourcingService
             $changed = ! $draft;
             $keptLineIds = [];
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['issue_date'], $context['financial_period_id'], lockForUpdate: true);
-            $locked = $this->lockRequisition($requisition, true, true);
-            $this->assertContext($locked, $context, true);
+            $locked = $this->lockRequisition($requisition, true, true, true);
+            $this->assertContext($locked, $context, true, true);
             $this->requireStatus($locked->status, [
                 PurchaseRequisition::StatusApproved,
                 PurchaseRequisition::StatusPartiallyConverted,
@@ -490,7 +490,7 @@ class ProcurementSourcingService
             $keptLineIds = [];
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['quotation_date'], $context['financial_period_id'], lockForUpdate: true);
             $locked = $source->newQuery()->with($source instanceof RequestForQuotation ? ['lines.product', 'suppliers'] : ['lines.product'])->lockForUpdate()->findOrFail($source->getKey());
-            $this->assertContext($locked, $context, true);
+            $this->assertContext($locked, $context, true, $locked instanceof PurchaseRequisition);
             $this->assertSupplierQuotationSourceStatus($locked);
             $supplier = $this->supplier($context['company_id'], $data['supplier_doc_num']);
 
@@ -876,14 +876,14 @@ class ProcurementSourcingService
         $requisition->refreshOrderingStatus();
     }
 
-    private function lockRequisition(PurchaseRequisition $requisition, bool $withLines = false, bool $source = false): PurchaseRequisition
+    private function lockRequisition(PurchaseRequisition $requisition, bool $withLines = false, bool $source = false, bool $allowAdministrativeAccess = false): PurchaseRequisition
     {
         $query = PurchaseRequisition::query()->lockForUpdate();
         if ($withLines) {
             $query->with('lines');
         }
         $locked = $query->findOrFail($requisition->getKey());
-        $this->assertContext($locked, $this->context(), $source);
+        $this->assertContext($locked, $this->context(), $source, $allowAdministrativeAccess);
         if (! $source && $locked->financialPeriod?->is_closed) {
             throw new DomainException(__('journal_entries.messages.period_closed'));
         }
@@ -1011,14 +1011,22 @@ class ProcurementSourcingService
         }
     }
 
-    private function assertContext(object $record, array $context, bool $source = false): void
+    private function assertContext(object $record, array $context, bool $source = false, bool $allowAdministrativeAccess = false): void
     {
         if (! $source && FinancialPeriod::query()->whereKey($record->financial_period_id)->value('is_closed')) {
             throw new DomainException(__('journal_entries.messages.period_closed'));
         }
+        $hasBranchAccess = $record->branch_id === null
+            || (int) $record->branch_id === $context['branch_id']
+            || ($allowAdministrativeAccess && Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeAdministrative)
+                ->exists());
+
         if ((int) $record->company_id !== $context['company_id']
             || (! $source && (int) $record->financial_period_id !== $context['financial_period_id'])
-            || ($record->branch_id !== null && (int) $record->branch_id !== $context['branch_id'])) {
+            || ! $hasBranchAccess) {
             throw new DomainException(__('The document is outside the active operating context.'));
         }
     }

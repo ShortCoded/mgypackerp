@@ -32,12 +32,13 @@ class SupplyOrderLine extends Model
 
     public function receivedQuantity(?int $exceptReceiptId = null, bool $includeDrafts = false): float
     {
-        return (float) $this->receiptLines()
+        $query = $this->receiptLines()
             ->when($exceptReceiptId !== null, fn ($query) => $query->where('receipt_id', '<>', $exceptReceiptId))
             ->whereHas('receipt', fn ($query) => $query
                 ->whereNotIn('status', ['cancelled', 'reversed'])
-                ->when(! $includeDrafts, fn ($receipts) => $receipts->where('approved', true)))
-            ->sum('delivered_quantity');
+                ->when(! $includeDrafts, fn ($receipts) => $receipts->where('approved', true)->where('posting_status', 'posted')));
+
+        return (float) $query->sum($includeDrafts ? 'delivered_quantity' : 'accepted_quantity');
     }
 
     public function remainingQuantity(?int $exceptReceiptId = null, bool $includeDrafts = false): float

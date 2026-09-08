@@ -7,6 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -52,7 +53,7 @@ class FixedAssetPurchaseIntegrationService
 
         $invoice = $line->purchaseInvoice;
         if (! $invoice instanceof PurchaseInvoice
-            || (int) $invoice->branch_id !== (int) ($context['branch_id'] ?? 0)
+            || ! $this->invoiceMatchesOperatingContext($invoice, $context)
             || ($requireDraftInvoice && ! $invoice->isDraft())) {
             throw new DomainException(__('fixed_assets.purchase_source.invoice_must_be_draft'));
         }
@@ -71,8 +72,7 @@ class FixedAssetPurchaseIntegrationService
             $context = $this->operatingContext->snapshot(request());
             $invoice = PurchaseInvoice::query()->lockForUpdate()->findOrFail($invoice->getKey());
             if (! $invoice->isDraft()
-                || (int) $invoice->company_id !== (int) ($context['company_id'] ?? 0)
-                || (int) $invoice->branch_id !== (int) ($context['branch_id'] ?? 0)) {
+                || ! $this->invoiceMatchesOperatingContext($invoice, $context)) {
                 throw new DomainException(__('fixed_assets.purchase_source.invoice_must_be_draft'));
             }
 
@@ -415,6 +415,26 @@ class FixedAssetPurchaseIntegrationService
         if (! $line->product instanceof Product || $line->product->isService() || $line->product->cost_as_inventory) {
             throw new DomainException(__('fixed_assets.purchase_source.non_inventory_required'));
         }
+    }
+
+    /** @param array<string, mixed> $context */
+    private function invoiceMatchesOperatingContext(PurchaseInvoice $invoice, array $context): bool
+    {
+        if ((int) $invoice->company_id !== (int) ($context['company_id'] ?? 0)
+            || (int) $invoice->financial_period_id !== (int) ($context['financial_period_id'] ?? 0)) {
+            return false;
+        }
+
+        if ((int) $invoice->branch_id === (int) ($context['branch_id'] ?? 0)) {
+            return true;
+        }
+
+        return Branch::query()
+            ->whereKey((int) ($context['branch_id'] ?? 0))
+            ->where('company_id', $invoice->company_id)
+            ->where('type', Branch::TypeAdministrative)
+            ->where('status', 'active')
+            ->exists();
     }
 
     private function improvementTarget(PurchaseInvoiceLine $line, string $docNum): FixedAsset

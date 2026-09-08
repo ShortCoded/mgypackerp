@@ -393,17 +393,28 @@ class FixedAsset extends Model
 
     public function canEditMaster(): bool
     {
-        return ! $this->trashed() && ! $this->isDisposed() && ! $this->isMasterLocked();
+        return ! $this->trashed()
+            && (self::allowsFullMasterCrud() || (! $this->isDisposed() && ! $this->isMasterLocked()));
     }
 
     public function canEditBasicData(): bool
     {
-        return ! $this->trashed() && ! $this->isDisposed();
+        return ! $this->trashed() && (self::allowsFullMasterCrud() || ! $this->isDisposed());
     }
 
     public function isLockedForEditing(): bool
     {
         return ! $this->canEditMaster();
+    }
+
+    public static function allowsFullMasterCrud(): bool
+    {
+        return (bool) config('erp_features.fixed_assets.allow_full_master_crud', true);
+    }
+
+    public function protectsMasterHistory(): bool
+    {
+        return ! self::allowsFullMasterCrud() && $this->isMasterLocked();
     }
 
     public function isMasterLocked(): bool

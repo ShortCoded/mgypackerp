@@ -218,6 +218,8 @@ return [
         'amount' => 'Amount',
         'receipt_type' => 'Receipt type',
         'reference_no' => 'Reference',
+        'source_request_doc_num' => 'Source request',
+        'received_by_employee_doc_num' => 'Received by',
         'cheque_due_date' => 'Cheque due date',
         'external_bank_name' => 'External bank name',
         'allocations' => 'Allocations',
@@ -225,6 +227,7 @@ return [
         'allocations.*.amount' => 'Amount',
         'delivery_doc_num' => 'Delivery Note',
         'lines.*.sales_order_line_public_id' => 'Sales order line',
+        'lines.*.source_request_line_public_id' => 'Source request line',
         'lines.*.delivery_line_public_id' => 'Delivery line',
     ],
 ];

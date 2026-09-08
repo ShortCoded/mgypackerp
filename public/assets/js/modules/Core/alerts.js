@@ -68,7 +68,6 @@
 
         const normalized = Object.assign({}, options);
 
-        normalized.heightAuto = false;
         normalized.customClass = mergeCustomClass(normalized.customClass);
         normalized.position = normalized.position || (currentDirection() === 'rtl' ? 'top-left' : 'top-right');
 

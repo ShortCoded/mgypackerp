@@ -205,9 +205,7 @@ class ProcurementCycleReport
             return $payment ? $this->documentChain($payment) : collect();
         }
         $companyId = (int) $document->company_id;
-        $periodId = (int) $document->financial_period_id;
-        $branchId = (int) $document->branch_id;
-        $scope = fn ($query) => $query->where('company_id', $companyId)->where('branch_id', $branchId);
+        $scope = fn ($query) => $query->where('company_id', $companyId);
         $orderIds = collect();
         $requestIds = collect();
         if ($document instanceof RequestForQuotation) {
@@ -242,7 +240,10 @@ class ProcurementCycleReport
         $orders = $scope(PurchaseOrder::query())->whereIn('id', $orderIds->unique())->with(['lines' => fn ($query) => $query->withQuantityProgress()->with(['requisitionLine', 'product'])])->get();
         $requestIds = $requestIds->merge($orders->pluck('purchase_requisition_id')->filter())
             ->merge($orders->flatMap(fn ($order) => $order->lines->pluck('requisitionLine.purchase_requisition_id')->filter()))->unique();
-        $requests = $scope(PurchaseRequisition::query())->whereIn('id', $requestIds)->get();
+        $requests = PurchaseRequisition::query()
+            ->where('company_id', $companyId)
+            ->whereIn('id', $requestIds)
+            ->get();
         $receipts = $scope(UnpricedInventoryReceipt::query())->whereIn('purchase_order_id', $orders->modelKeys())->with('lines')->get();
         $supplyOrders = $scope(SupplyOrder::query())->whereIn('purchase_order_id', $orders->modelKeys())->with('lines')->get();
         $invoices = $scope(PurchaseInvoice::query())->where(function ($query) use ($orders, $document): void {
@@ -254,14 +255,11 @@ class ProcurementCycleReport
         $invoiceLineIds = PurchaseInvoiceLine::query()->whereIn('purchase_invoice_id', $invoices->modelKeys())->pluck('id');
         $fixedAssets = FixedAsset::query()
             ->forCompany($companyId)
-            ->where('period_id', $periodId)
-            ->where('branch_id', $branchId)
             ->where('source_type', FixedAssetPurchaseIntegrationService::SourceType)
             ->whereIn('source_id', $invoiceLineIds)
             ->get()
             ->concat(FixedAsset::query()
                 ->forCompany($companyId)
-                ->where('branch_id', $branchId)
                 ->whereIn('id', PurchaseInvoiceLine::query()
                     ->whereIn('id', $invoiceLineIds)
                     ->where('asset_treatment', FixedAssetPurchaseIntegrationService::TreatmentCapitalImprovement)

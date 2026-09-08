@@ -218,6 +218,8 @@ return [
         'amount' => 'المبلغ',
         'receipt_type' => 'نوع التحصيل',
         'reference_no' => 'المرجع',
+        'source_request_doc_num' => 'الطلب المصدر',
+        'received_by_employee_doc_num' => 'المستلم',
         'cheque_due_date' => 'تاريخ استحقاق الشيك',
         'external_bank_name' => 'اسم البنك الخارجي',
         'allocations' => 'التخصيصات',
@@ -225,6 +227,7 @@ return [
         'allocations.*.amount' => 'المبلغ',
         'delivery_doc_num' => 'إذن تسليم',
         'lines.*.sales_order_line_public_id' => 'بند أمر المبيعات',
+        'lines.*.source_request_line_public_id' => 'بند الطلب المصدر',
         'lines.*.delivery_line_public_id' => 'بند التسليم',
     ],
 ];

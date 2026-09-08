@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
@@ -464,8 +465,8 @@ class PurchaseInvoiceService
         $cashbox = $this->cashbox($context['company_id'], $data['cashbox_doc_num'] ?? null);
         $bankAccount = $this->bankAccount($context['company_id'], $data['bank_account_doc_num'] ?? null);
         $purchaseOrder = $this->purchaseOrder($context['company_id'], $data['purchase_order_doc_num'] ?? null);
-        if ($purchaseOrder && ((int) $purchaseOrder->branch_id !== (int) $context['branch_id']
-            || (int) $purchaseOrder->supplier_id !== (int) $supplier?->getKey())) {
+        $documentBranchId = $purchaseOrder?->branch_id ?? $record?->branch_id ?? $context['branch_id'];
+        if ($purchaseOrder && (int) $purchaseOrder->supplier_id !== (int) $supplier?->getKey()) {
             throw new DomainException(__('Purchase order, supplier, and invoice context do not match.'));
         }
         $supplierNumber = trim((string) ($data['supplier_invoice_number'] ?? ''));
@@ -482,7 +483,7 @@ class PurchaseInvoiceService
         return [
             'company_id' => $context['company_id'],
             'financial_period_id' => $context['financial_period_id'],
-            'branch_id' => $context['branch_id'],
+            'branch_id' => $documentBranchId,
             'supplier_id' => $supplier?->getKey(),
             'purchase_order_id' => $purchaseOrder?->getKey(),
             'purchase_type' => $data['purchase_type'] ?? 'standard',
@@ -535,6 +536,13 @@ class PurchaseInvoiceService
             }
 
             $purchaseOrderLine = $this->purchaseOrderLine($record, $line['purchase_order_line_public_id'] ?? null);
+            $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id'])
+                ?: $product->unit;
+            if (! $purchaseOrderLine instanceof PurchaseOrderLine
+                || (int) $purchaseOrderLine->product_id !== (int) $product->getKey()
+                || (int) $purchaseOrderLine->unit_id !== (int) $unit?->getKey()) {
+                $purchaseOrderLine = $this->purchaseOrderLineForProduct($record, $product, $unit);
+            }
             $receiptLine = $this->receiptLine($purchaseOrderLine, $line['receipt_line_public_id'] ?? null);
             $isSourceLinked = $purchaseOrderLine instanceof PurchaseOrderLine
                 && (int) $purchaseOrderLine->product_id === (int) $product->getKey()
@@ -547,8 +555,6 @@ class PurchaseInvoiceService
                 throw new DomainException(__('purchase_invoices.messages.purchase_product_type_invalid'));
             }
 
-            $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id'])
-                ?: $product->unit;
             $values = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
@@ -1104,7 +1110,13 @@ class PurchaseInvoiceService
         }
 
         $context = $this->operatingContext->snapshot(request());
-        if ((int) $record->company_id !== (int) $context['company_id'] || (int) $record->branch_id !== (int) $context['branch_id']
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
+        if ((! $isAdministrativeBranch && (int) $record->branch_id !== (int) $context['branch_id'])
+            || (int) $record->company_id !== (int) $context['company_id']
             || (int) $record->financial_period_id !== (int) $context['financial_period_id']) {
             throw new DomainException(__('The document is outside the active operating context.'));
         }
@@ -1237,6 +1249,22 @@ class PurchaseInvoiceService
             ->where('purchase_order_line_id', $purchaseOrderLine->getKey())
             ->where('public_id', $publicId)
             ->first();
+    }
+
+    private function purchaseOrderLineForProduct(PurchaseInvoice $invoice, Product $product, ?ItemUnit $unit): ?PurchaseOrderLine
+    {
+        if ($invoice->purchase_order_id === null || $unit === null) {
+            return null;
+        }
+
+        $lines = PurchaseOrderLine::query()
+            ->where('purchase_order_id', $invoice->purchase_order_id)
+            ->where('product_id', $product->getKey())
+            ->where('unit_id', $unit->getKey())
+            ->limit(2)
+            ->get();
+
+        return $lines->count() === 1 ? $lines->first() : null;
     }
 
     /**

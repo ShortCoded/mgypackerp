@@ -2,6 +2,7 @@
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
     $isView = $mode === 'view';
     $isTrashed = $record?->trashed() ?? false;
+    $canManageInCurrentBranch = $canManageInCurrentBranch ?? false;
 @endphp
 
 <div class="d-flex flex-wrap gap-2 justify-content-end">
@@ -10,6 +11,14 @@
     </a>
 
     @if($isView && $record && ! $isTrashed)
+        @can('purchase_invoices.print')
+            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.print', $record->doc_num) }}" target="_blank" rel="noopener">
+                <span class="fas fa-print me-1"></span>{{ __('purchase_invoices.actions.print') }}
+            </a>
+        @endcan
+    @endif
+
+    @if($isView && $record && ! $isTrashed && $canManageInCurrentBranch)
         @can('purchase_invoices.edit')
             @if(! $record->isLockedForEditing())
                 <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.edit', $record->doc_num) }}">
@@ -20,11 +29,6 @@
         @can('purchase_invoices.clone')
             <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.clone', $record->doc_num) }}">
                 <span class="fas fa-copy me-1"></span>{{ __('common.actions.clone') }}
-            </a>
-        @endcan
-        @can('purchase_invoices.print')
-            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.print', $record->doc_num) }}" target="_blank" rel="noopener">
-                <span class="fas fa-print me-1"></span>{{ __('purchase_invoices.actions.print') }}
             </a>
         @endcan
         @if($record->isDraft())

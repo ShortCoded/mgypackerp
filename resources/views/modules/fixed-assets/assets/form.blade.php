@@ -9,7 +9,7 @@
     $isView = $mode === 'view';
     $isClone = $mode === 'clone';
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
-    $financialLocked = !$isCreateLike && (bool) $record?->isMasterLocked();
+    $financialLocked = !$isCreateLike && (bool) $record?->protectsMasterHistory();
     $title = __("fixed_assets.{$mode}");
     $fixedAssetClass = \Modules\FixedAssets\Models\FixedAsset::class;
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);

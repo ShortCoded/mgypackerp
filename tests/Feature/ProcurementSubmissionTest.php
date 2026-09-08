@@ -26,6 +26,7 @@ test('purchase document retries replay once reject changed payload and recheck p
     $user->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
     $sourcing = app(ProcurementSourcingService::class);
     $request = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 100)));
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
     $payload = ['_submission_token' => (string) Str::uuid(),
         'document_date' => app(DateFormatService::class)->formatDate(now()),
         'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
@@ -77,6 +78,7 @@ test('shared line cards load styles and behavior once and preserve inline errors
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
     $response = $this->get(route('admin.purchases.purchase-orders.create'))->assertOk();
     expect(substr_count($response->getContent(), 'assets/js/modules/Core/line-item-cards.js'))->toBe(1)
         ->and(substr_count($response->getContent(), 'assets/css/line-item-cards.css'))->toBe(1);
@@ -185,20 +187,22 @@ test('draft receipts and returns keep line identities and audit untouched on a n
         'lines' => [['purchase_requisition_line_id' => $request->lines->sole()->id, 'product_doc_num' => $fixture['raw']->doc_num,
             'unit_doc_num' => $fixture['unit']->doc_num, 'ordered_quantity' => 100, 'unit_price' => 2]]])['record']);
     $receiving = app(ProcurementReceivingService::class);
-    $receiptPayload = ['document_date' => now()->toDateString(), 'lines' => [['purchase_order_line_public_id' => $order->lines->sole()->public_id, 'delivered_quantity' => 100]]];
+    $receiptPayload = ['document_date' => now()->toDateString(), 'lines' => [['purchase_order_line_public_id' => $order->lines->sole()->public_id, 'delivered_quantity' => 90]]];
     $receipt = $receiving->createReceipt($order, $receiptPayload);
-    $staleDraft = $receiving->createReceipt($order, $receiptPayload);
+    $staleDraftPayload = ['document_date' => now()->toDateString(), 'lines' => [['purchase_order_line_public_id' => $order->lines->sole()->public_id, 'delivered_quantity' => 10]]];
+    $staleDraft = $receiving->createReceipt($order, $staleDraftPayload);
     $before = [$receipt->getAttributes(), $receipt->lines->sole()->getAttributes()];
     $this->travel(2)->minutes();
     $updated = $receiving->updateReceipt($receipt, $receiptPayload);
     expect([$updated->getAttributes(), $updated->lines->sole()->getAttributes()])->toBe($before);
-    $receipt = $receiving->postReceipt($receipt);
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo(['purchases.goods_receipt_notes.view', 'purchases.goods_receipt_notes.edit']);
     $this->get(route('admin.purchases.goods-receipt-notes.edit', $staleDraft->doc_num))->assertOk()
         ->assertSee('name="lines[0][delivered_quantity]"', false)->assertSee($order->lines->sole()->public_id);
-    expect(fn () => $receiving->postReceipt($staleDraft))->toThrow(DomainException::class);
-    $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->sole()->public_id, 'accepted_quantity' => 100, 'rejected_quantity' => 0]]]);
+    $overReservedPayload = ['document_date' => now()->toDateString(), 'lines' => [['purchase_order_line_public_id' => $order->lines->sole()->public_id, 'delivered_quantity' => 11]]];
+    expect(fn () => $receiving->updateReceipt($staleDraft, $overReservedPayload))->toThrow(DomainException::class);
+    $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->sole()->public_id, 'accepted_quantity' => 90, 'rejected_quantity' => 0]]]);
+    $receipt = $receiving->postReceipt($receipt->fresh());
     $settlement = app(ProcurementSettlementService::class);
     $returnPayload = ['purchase_order_doc_num' => $order->doc_num, 'return_date' => now()->toDateString(), 'reason_code' => 'supplier_defect',
         'lines' => [['receipt_line_public_id' => $receipt->lines->sole()->public_id, 'quantity' => 10]]];

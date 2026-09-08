@@ -112,13 +112,14 @@ class PurchaseOrderLine extends Model
         return (float) UnpricedInventoryReceiptLine::query()
             ->where('purchase_order_line_id', $this->getKey())
             ->when($exceptReceiptId !== null, fn ($query) => $query->where('receipt_id', '<>', $exceptReceiptId))
-            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))
-            ->sum('delivered_quantity');
+            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('accepted_quantity');
     }
 
     public function returnedQuantity(): float
     {
         return (float) PurchaseReturnLine::query()->where('purchase_order_line_id', $this->getKey())
+            ->where('from_quarantine', false)
             ->whereHas('purchaseReturn', fn ($query) => $query->where('status', PurchaseReturn::StatusPosted))->sum('quantity');
     }
 
@@ -132,11 +133,11 @@ class PurchaseOrderLine extends Model
     {
         $query->addSelect(['purchase_order_lines.*']);
         $receipts = UnpricedInventoryReceiptLine::query()->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
-            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed'])->when($asOf, fn ($query) => $query->whereDate('document_date', '<=', $asOf)));
+            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed'])->when($asOf, fn ($query) => $query->whereDate('document_date', '<=', $asOf)));
         $returns = PurchaseReturnLine::query()->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
             ->whereHas('purchaseReturn', fn ($query) => $query->where('status', PurchaseReturn::StatusPosted)->when($asOf, fn ($query) => $query->whereDate('return_date', '<=', $asOf)));
-        $query->selectSub((clone $receipts)->selectRaw('coalesce(sum(delivered_quantity), 0)'), 'progress_received')
-            ->selectSub((clone $receipts)->selectRaw('coalesce(sum(inventory_posted_quantity), 0)'), 'progress_accepted')
+        $query->selectSub((clone $receipts)->selectRaw('coalesce(sum(accepted_quantity), 0)'), 'progress_received')
+            ->selectSub((clone $receipts)->selectRaw('coalesce(sum(accepted_quantity), 0)'), 'progress_accepted')
             ->selectSub((clone $returns)->selectRaw('coalesce(sum(quantity), 0)'), 'progress_returned')
             ->selectSub((clone $returns)->where('from_quarantine', false)->selectRaw('coalesce(sum(quantity), 0)'), 'progress_accepted_returned')
             ->selectSub((clone $returns)->whereNotNull('purchase_invoice_line_id')->selectRaw('coalesce(sum(quantity), 0)'), 'progress_credited')
@@ -155,7 +156,7 @@ class PurchaseOrderLine extends Model
         $invoiced = (float) $progress->progress_invoiced;
         $credited = (float) $progress->progress_credited;
         $returned = (float) $progress->progress_returned;
-        $net = max(0, $received - $returned);
+        $net = max(0, $received - $acceptedReturned);
         $netAccepted = max(0, $accepted - $acceptedReturned);
 
         return ['ordered' => (float) $this->ordered_quantity, 'received' => $received, 'accepted' => $accepted,

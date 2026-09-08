@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -12,6 +13,7 @@ use Modules\FixedAssets\Services\FixedAssetBookValueService;
 use Modules\FixedAssets\Services\FixedAssetCostMovementService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
+use Modules\FixedAssets\Services\FixedAssetService;
 
 uses(RefreshDatabase::class);
 require_once dirname(__DIR__).'/FixedAssetCycleSupport.php';
@@ -107,6 +109,54 @@ test('legacy rollout baseline preserves history and cannot grandfather later ass
     expect(app(FixedAssetBookValueService::class)->position($legacy->fresh())['acquisition_cost'])->toBe(bcadd($position['acquisition_cost'], '1000', 4));
     $cost->reverse($addition, 'Baseline compatibility');
     expect(app(FixedAssetBookValueService::class)->position($legacy->fresh())['acquisition_cost'])->toBe($position['acquisition_cost']);
+});
+
+test('legacy baseline uses historical service dates instead of the later rollout document date', function (): void {
+    $context = coreFixedAssetContext();
+    $year = $context['period']->from_date->year;
+    $legacy = coreFixedAsset($context, [
+        'entry_type' => 'opening_asset',
+        'asset_date' => "{$year}-09-01",
+        'purchase_date' => "{$year}-01-01",
+        'acquisition_date' => "{$year}-01-01",
+        'operation_date' => "{$year}-01-01",
+        'depreciation_start_date' => "{$year}-01-01",
+        'previous_depreciation' => '20000',
+        'previous_depreciation_until_date' => ($year - 1).'-12-31',
+    ]);
+    $snapshot = ['captured_at' => now()->toDateTimeString(), 'asset_id' => $legacy->id, 'company_id' => $legacy->company_id];
+    foreach (['purchase_value', 'base_acquisition_value', 'previous_depreciation', 'previous_depreciation_until_date', 'exchange_rate', 'salvage_value', 'useful_life', 'asset_date', 'depreciation_start_date', 'account_id', 'branch_id', 'cost_center_id', 'period_id'] as $field) {
+        $snapshot[$field] = $legacy->getRawOriginal($field);
+    }
+    $legacy->forceFill(['legacy_recognition' => $snapshot])->save();
+
+    $preview = app(FixedAssetDepreciationService::class)->preview([
+        'financial_period_doc_num' => $context['period']->doc_num,
+        'posting_date' => "{$year}-01-31",
+        'asset_doc_nums' => [$legacy->doc_num],
+    ]);
+
+    expect($preview['eligible'])->toHaveCount(1)
+        ->and($preview['excluded'])->toBeEmpty()
+        ->and($preview['eligible'][0]['acquisition_cost'])->toBe('120000.0000');
+
+    $update = [
+        ...$legacy->getAttributes(),
+        'asset_group_account_doc_num' => $legacy->assetGroupAccount->doc_num,
+        'credit_account_doc_num' => $legacy->creditAccount->doc_num,
+        'currency_doc_num' => $legacy->currency->doc_num,
+        'branch_doc_num' => $legacy->branch->doc_num,
+        'cost_center_doc_num' => $legacy->costCenter->doc_num,
+        'purchase_value' => '130000',
+        'previous_depreciation' => '10000',
+    ];
+    app(FixedAssetService::class)->update($legacy, $update);
+    $legacy = $legacy->fresh();
+    $corrected = app(FixedAssetBookValueService::class)->position($legacy, Carbon::parse("{$year}-01-31"));
+
+    expect(data_get($legacy->legacy_recognition, 'purchase_value'))->toBe('130000.0000')
+        ->and($corrected['acquisition_cost'])->toBe('130000.0000')
+        ->and($corrected['accumulated_depreciation'])->toBe('10000.0000');
 });
 
 test('ambiguous chart requires only the relevant optional override', function (): void {

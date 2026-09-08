@@ -5,6 +5,7 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
@@ -75,7 +76,7 @@ class PurchaseOrderService
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context, $locked);
             $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? $locked->freight_amount);
             $values = [
-                ...$this->values($data, $context),
+                ...$this->values($data, $context, $locked),
                 ...$calculation['order'],
             ];
 
@@ -309,7 +310,6 @@ class PurchaseOrderService
             foreach (PurchaseOrder::query()
                 ->where('company_id', $context['company_id'])
                 ->where('financial_period_id', $context['financial_period_id'])
-                ->where('branch_id', $context['branch_id'])
                 ->whereIn('doc_num', $docNums)
                 ->get() as $record) {
                 try {
@@ -405,7 +405,7 @@ class PurchaseOrderService
      * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
      * @return array<string, mixed>
      */
-    private function values(array $data, array $context): array
+    private function values(array $data, array $context, ?PurchaseOrder $record = null): array
     {
         $supplier = $this->supplier($context['company_id'], $data['supplier_doc_num'] ?? null);
         $currency = $this->currency($context['company_id'], $data['currency_doc_num'] ?? null);
@@ -414,7 +414,7 @@ class PurchaseOrderService
         return [
             'company_id' => $context['company_id'],
             'financial_period_id' => $context['financial_period_id'],
-            'branch_id' => $context['branch_id'],
+            'branch_id' => $record?->branch_id ?? $context['branch_id'],
             'branch_store_id' => $branchStore->getKey(),
             'supplier_id' => $supplier->getKey(),
             'currency_id' => $currency?->getKey(),
@@ -600,12 +600,12 @@ class PurchaseOrderService
             if (! $source instanceof PurchaseRequisitionLine) {
                 throw new DomainException(__('The selected purchase request line is invalid.'));
             }
-            $request = PurchaseRequisition::query()->lockForUpdate()->findOrFail($source->purchase_requisition_id);
+            $request = PurchaseRequisition::query()->with('branch:id,type')->lockForUpdate()->findOrFail($source->purchase_requisition_id);
             if ((int) $request->company_id !== $context['company_id']
-                || (int) $request->branch_id !== $context['branch_id']
+                || ! in_array($request->branch?->type, [Branch::TypeFactory, Branch::TypeWarehouse], true)
                 || ($request->branch_store_id !== null && (int) $request->branch_store_id !== (int) $order->branch_store_id)
                 || ! in_array($request->status, [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)) {
-                throw new DomainException(__('Purchase orders require approved purchase request lines in the same operating context and warehouse.'));
+                throw new DomainException(__('procurement.messages.purchase_requisition_context_invalid'));
             }
             foreach ($inputs as $input) {
                 $product = $this->product($context['company_id'], $input['product_doc_num'] ?? null);
@@ -852,7 +852,11 @@ class PurchaseOrderService
         if (
             (int) $record->company_id !== $context['company_id']
             || (int) $record->financial_period_id !== $context['financial_period_id']
-            || (int) $record->branch_id !== $context['branch_id']
+            || ((int) $record->branch_id !== $context['branch_id'] && ! Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeAdministrative)
+                ->exists())
         ) {
             throw new DomainException(__('operating_context.messages.required'));
         }

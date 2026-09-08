@@ -91,6 +91,47 @@ test('workflow status and type labels have Arabic translations', function (): vo
     expect($missing)->toBe([]);
 });
 
+test('shared rtl toasts avoid modal-only options and keep their responsive classes', function (): void {
+    $script = <<<'JS'
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+
+const source = readFileSync(process.argv[1], 'utf8');
+let receivedOptions = null;
+const document = {
+    documentElement: { getAttribute: name => name === 'dir' ? 'rtl' : null },
+    body: { getAttribute: () => null },
+    querySelector: () => null,
+};
+const window = {
+    Swal: {
+        fire: options => { receivedOptions = options; return Promise.resolve({ isConfirmed: true }); },
+        isVisible: () => false,
+        stopTimer() {},
+        resumeTimer() {},
+    },
+};
+
+runInNewContext(source, { window, document, Promise });
+await window.AppAlerts.toast('success', 'Saved');
+
+assert.equal(receivedOptions.toast, true);
+assert.equal(receivedOptions.position, 'top-left');
+assert.match(receivedOptions.customClass.container, /erp-swal-toast-container/);
+assert.match(receivedOptions.customClass.popup, /erp-swal-toast-popup/);
+assert.equal(Object.hasOwn(receivedOptions, 'heightAuto'), false);
+JS;
+
+    $process = new Process([
+        'node', '--input-type=module', '-e', $script,
+        public_path('assets/js/modules/Core/alerts.js'),
+    ]);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput());
+});
+
 test('sales browser messages follow the active locale', function (string $locale, string $saved, string $failed): void {
     app()->setLocale($locale);
 

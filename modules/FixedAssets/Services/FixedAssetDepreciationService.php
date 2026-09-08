@@ -380,12 +380,21 @@ class FixedAssetDepreciationService
             return $excluded(__('fixed_assets.lifecycle.exclusions.not_in_service'));
         }
 
-        $position = $this->bookValues->position($asset, $periodEnd);
-        if (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
-            return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
+        $position = null;
+        if ($asset->status === FixedAsset::StatusFullyDepreciated) {
+            $position = $this->bookValues->position($asset, $periodEnd);
+            if (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
+                return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
+            }
         }
+
         if (! $asset->hasPostedRecognition()) {
             return $excluded(__('fixed_assets.cycle.recognition_required'), true);
+        }
+
+        $position ??= $this->bookValues->position($asset, $periodEnd);
+        if (bccomp($position['remaining_depreciable_amount'], '0', 4) <= 0) {
+            return $excluded(__('fixed_assets.lifecycle.exclusions.fully_depreciated'));
         }
         $asset->loadMissing('postedDepreciations');
         $nextDate = $this->nextUnpostedDate($asset);
@@ -475,11 +484,15 @@ class FixedAssetDepreciationService
         if ($asset->isDisposed()) {
             return __('fixed_assets.lifecycle.exclusions.disposed');
         }
-        if (bccomp($this->bookValues->position($asset)['remaining_depreciable_amount'], '0', 4) <= 0) {
+        if ($asset->status === FixedAsset::StatusFullyDepreciated
+            && bccomp($this->bookValues->position($asset)['remaining_depreciable_amount'], '0', 4) <= 0) {
             return __('fixed_assets.lifecycle.exclusions.fully_depreciated');
         }
         if (! $asset->hasPostedRecognition() || $asset->status === FixedAsset::StatusDraft) {
             return __('fixed_assets.cycle.recognition_required');
+        }
+        if (bccomp($this->bookValues->position($asset)['remaining_depreciable_amount'], '0', 4) <= 0) {
+            return __('fixed_assets.lifecycle.exclusions.fully_depreciated');
         }
         if (! in_array($asset->status, [FixedAsset::StatusActive, FixedAsset::StatusFullyDepreciated], true)) {
             return __('fixed_assets.lifecycle.exclusions.status');

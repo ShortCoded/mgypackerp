@@ -192,7 +192,7 @@ class ProcurementSettlementService
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['return_date'], $context['financial_period_id'], lockForUpdate: true);
             $order = PurchaseOrder::query()->lockForUpdate()->where('company_id', $context['company_id'])
                 ->where('doc_num', $data['purchase_order_doc_num'])->firstOrFail();
-            $this->assertOrderContext($order, $context);
+            $this->assertReceivingOrderContext($order, $context);
             $invoice = filled($data['purchase_invoice_doc_num'] ?? null)
                 ? PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('doc_num', $data['purchase_invoice_doc_num'])->firstOrFail()
                 : null;
@@ -1016,6 +1016,15 @@ class ProcurementSettlementService
         if ((int) $order->company_id !== $context['company_id']
             || (int) $order->branch_id !== $context['branch_id']) {
             throw new DomainException(__('The purchase order is outside the active operating context.'));
+        }
+    }
+
+    private function assertReceivingOrderContext(PurchaseOrder $order, array $context): void
+    {
+        $receivingBranchId = BranchStore::query()->whereKey($order->branch_store_id)->value('branch_id');
+        if ((int) $order->company_id !== $context['company_id']
+            || (int) $receivingBranchId !== $context['branch_id']) {
+            throw new DomainException(__('procurement.messages.purchase_order_outside_receiving_context'));
         }
     }
 

@@ -89,7 +89,7 @@ class ProcurementWorkflowController extends Controller
 
     public function editRequisition(PurchaseRequisition $purchaseRequisition): View
     {
-        $this->assertCurrent($purchaseRequisition);
+        $this->assertRequisitionOrigin($purchaseRequisition);
         abort_if($purchaseRequisition->isLockedForEditing(), 403);
 
         return $this->requisitionForm($purchaseRequisition);
@@ -123,6 +123,8 @@ class ProcurementWorkflowController extends Controller
 
     public function rejectRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->sourcing->rejectRequisition($purchaseRequisition, $request->validated('rejection_reason')), 'admin.purchases.purchase-requisitions.show');
     }
 
@@ -138,7 +140,7 @@ class ProcurementWorkflowController extends Controller
 
     public function destroyRequisition(Request $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
-        $this->assertCurrent($purchaseRequisition);
+        $this->assertRequisitionOrigin($purchaseRequisition);
         try {
             $this->sourcing->deleteRequisition($purchaseRequisition);
         } catch (DomainException $exception) {
@@ -186,6 +188,8 @@ class ProcurementWorkflowController extends Controller
 
     public function approveRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->sourcing->approveRequisition($purchaseRequisition, $request->validated('approved_quantities', [])), 'admin.purchases.purchase-requisitions.show');
     }
 
@@ -196,6 +200,7 @@ class ProcurementWorkflowController extends Controller
 
     public function createRfq(PurchaseRequisition $purchaseRequisition): View|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
         $this->assertCurrent($purchaseRequisition);
 
         if (! in_array($purchaseRequisition->status, [
@@ -240,6 +245,8 @@ class ProcurementWorkflowController extends Controller
 
     public function storeRfq(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->sourcing->createRequestForQuotation($purchaseRequisition, $request->validated()), 'admin.purchases.request-for-quotations.show');
     }
 
@@ -263,6 +270,8 @@ class ProcurementWorkflowController extends Controller
 
     public function chooseQuotationSource(): View
     {
+        $this->assertAdministrativeBranch();
+
         return view('modules.purchases.procurement.quotation-source-picker');
     }
 
@@ -273,11 +282,15 @@ class ProcurementWorkflowController extends Controller
 
     public function createQuotation(RequestForQuotation $requestForQuotation): View
     {
+        $this->assertAdministrativeBranch();
+
         return $this->quotationForm($requestForQuotation);
     }
 
     public function createQuotationFromSource(string $sourceType, string $sourceDocument): View
     {
+        $this->assertAdministrativeBranch();
+
         return $this->quotationForm($this->supplierQuotationSource($sourceType, $sourceDocument));
     }
 
@@ -309,11 +322,14 @@ class ProcurementWorkflowController extends Controller
 
     public function storeQuotation(ProcurementWorkflowRequest $request, RequestForQuotation $requestForQuotation): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->sourcing->createSupplierQuotation($requestForQuotation, $request->validated()), 'admin.purchases.supplier-quotation-entry.show');
     }
 
     public function storeQuotationFromSource(ProcurementWorkflowRequest $request, string $sourceType, string $sourceDocument): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
         $source = $this->supplierQuotationSource($sourceType, $sourceDocument);
 
         return $this->execute($request, fn () => $this->sourcing->createSupplierQuotation($source, $request->validated()), 'admin.purchases.supplier-quotation-entry.show');
@@ -454,6 +470,7 @@ class ProcurementWorkflowController extends Controller
 
     public function createSupplyOrder(Request $request): View
     {
+        $this->assertAdministrativeBranch();
         $context = $this->context();
         $sourceType = $request->filled('purchase_invoice') ? SupplyOrder::SourcePurchaseInvoice : SupplyOrder::SourcePurchaseOrder;
         $sourceDocNum = $request->string($sourceType === SupplyOrder::SourcePurchaseInvoice ? 'purchase_invoice' : 'purchase_order')->trim()->toString();
@@ -469,6 +486,7 @@ class ProcurementWorkflowController extends Controller
 
     public function editSupplyOrder(SupplyOrder $supplyOrder): View
     {
+        $this->assertAdministrativeBranch();
         abort_unless($supplyOrder->status === SupplyOrder::StatusDraft, 403);
         $source = $supplyOrder->source_type === SupplyOrder::SourcePurchaseInvoice
             ? $supplyOrder->purchaseInvoice
@@ -493,33 +511,54 @@ class ProcurementWorkflowController extends Controller
 
     public function storeSupplyOrder(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->supplyOrders->create($request->validated()), 'admin.purchases.supply-orders.show');
     }
 
     public function updateSupplyOrder(ProcurementWorkflowRequest $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->supplyOrders->update($supplyOrder, $request->validated()), 'admin.purchases.supply-orders.show');
     }
 
     public function showSupplyOrder(SupplyOrder $supplyOrder): View
     {
         $supplyOrder->load(['supplier', 'branchStore', 'purchaseOrder', 'purchaseInvoice', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'receipts']);
+        $context = $this->context();
+        abort_unless(
+            (int) $supplyOrder->company_id === $context['company_id']
+            && (int) $supplyOrder->financial_period_id === $context['financial_period_id']
+            && (
+                (int) $supplyOrder->branch_id === $context['branch_id']
+                || ($supplyOrder->status !== SupplyOrder::StatusDraft && (int) $supplyOrder->branchStore?->branch_id === $context['branch_id'])
+                || $this->isAdministrativeBranch()
+            ),
+            404,
+        );
 
         return $this->showView('supply_order', $supplyOrder, false);
     }
 
     public function issueSupplyOrder(Request $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->supplyOrders->issue($supplyOrder), 'admin.purchases.supply-orders.show');
     }
 
     public function cancelSupplyOrder(ProcurementWorkflowRequest $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->supplyOrders->cancel($supplyOrder, $request->validated('cancel_reason')), 'admin.purchases.supply-orders.show');
     }
 
     public function destroySupplyOrder(Request $request, SupplyOrder $supplyOrder): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         try {
             $this->supplyOrders->deleteDraft($supplyOrder);
         } catch (DomainException $exception) {
@@ -545,11 +584,11 @@ class ProcurementWorkflowController extends Controller
 
     public function createReceipt(string $sourceDocument): View
     {
+        $this->assertInventoryBranch();
         $context = $this->context();
         $supplyOrder = SupplyOrder::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $context['branch_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
             ->where('doc_num', $sourceDocument)
             ->first();
 
@@ -565,8 +604,7 @@ class ProcurementWorkflowController extends Controller
 
         $purchaseOrder = PurchaseOrder::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $context['branch_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
             ->where('doc_num', $sourceDocument)
             ->firstOrFail();
         $purchaseOrder->load(['supplier', 'branchStore', 'lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules'])]);
@@ -576,11 +614,11 @@ class ProcurementWorkflowController extends Controller
 
     public function storeReceipt(ProcurementWorkflowRequest $request, string $sourceDocument): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
         $context = $this->context();
         $supplyOrder = SupplyOrder::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $context['branch_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
             ->where('doc_num', $sourceDocument)
             ->first();
         if ($supplyOrder instanceof SupplyOrder) {
@@ -589,8 +627,7 @@ class ProcurementWorkflowController extends Controller
 
         $purchaseOrder = PurchaseOrder::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $context['branch_id'])
+            ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
             ->where('doc_num', $sourceDocument)
             ->firstOrFail();
 
@@ -599,12 +636,13 @@ class ProcurementWorkflowController extends Controller
 
     public function editReceipt(string $goodsReceiptNote): View
     {
+        $this->assertInventoryBranch();
         $draft = $this->receipt($goodsReceiptNote)->load([
             'lines.deliverySchedule', 'lines.supplyOrderLine',
             'purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules']),
             'supplyOrder.lines' => fn ($query) => $query->with(['product', 'unit', 'purchaseOrderLine.deliverySchedules']),
         ]);
-        abort_unless($draft->status === 'draft' && $draft->posting_status === 'unposted', 403);
+        abort_unless($draft->status === 'draft' && $draft->posting_status === 'unposted' && ! $draft->inspection()->exists(), 403);
 
         if ($draft->supplyOrder instanceof SupplyOrder) {
             return view('modules.purchases.procurement.supply-receipt-form', ['record' => $draft->supplyOrder, 'draft' => $draft]);
@@ -615,21 +653,29 @@ class ProcurementWorkflowController extends Controller
 
     public function updateReceipt(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->receiving->updateReceipt($this->receipt($goodsReceiptNote), $request->validated()), 'admin.purchases.goods-receipt-notes.show');
     }
 
     public function destroyReceipt(Request $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->receiving->deleteReceipt($this->receipt($goodsReceiptNote)), 'admin.purchases.goods-receipt-notes.index');
     }
 
     public function postReceipt(Request $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->receiving->postReceipt($this->receipt($goodsReceiptNote)), 'admin.purchases.goods-receipt-notes.show');
     }
 
     public function reverseReceipt(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->receiving->reverseReceipt($this->receipt($goodsReceiptNote), $request->validated('reversal_reason')), 'admin.purchases.goods-receipt-notes.show');
     }
 
@@ -642,6 +688,7 @@ class ProcurementWorkflowController extends Controller
 
     public function cancelReceipt(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
         $receipt = $this->receipt($goodsReceiptNote);
 
         return $this->execute(
@@ -656,7 +703,9 @@ class ProcurementWorkflowController extends Controller
     {
         $context = $this->context();
         $records = GoodsReceiptInspection::query()->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])->with(['receipt.supplier'])->withCount('lines')
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->when(! $this->isAdministrativeBranch(), fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->with(['receipt.supplier'])->withCount('lines')
             ->latest('inspection_at')->paginate(25);
 
         return $this->indexView('goods_receipt_inspections', __('Incoming Quality Inspections'), $records);
@@ -664,13 +713,16 @@ class ProcurementWorkflowController extends Controller
 
     public function createInspection(string $goodsReceiptNote): View
     {
+        $this->assertInventoryBranch();
         $receipt = $this->receipt($goodsReceiptNote)->load(['supplier', 'purchaseOrder', 'lines.product', 'lines.unit']);
+        abort_unless($receipt->status === 'draft' && $receipt->posting_status === 'unposted' && $receipt->qc_status === 'pending_inspection' && ! $receipt->inspection()->exists(), 422);
 
         return view('modules.purchases.procurement.inspection-form', ['record' => $receipt]);
     }
 
     public function storeInspection(ProcurementWorkflowRequest $request, string $goodsReceiptNote): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
         $receipt = $this->receipt($goodsReceiptNote);
 
         return $this->execute($request, fn () => $this->receiving->inspect($receipt, $request->validated()), 'admin.purchases.goods-receipt-inspection.show');
@@ -678,6 +730,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showInspection(GoodsReceiptInspection $goodsReceiptInspection): View
     {
+        $this->assertCurrent($goodsReceiptInspection);
         $goodsReceiptInspection->load(['receipt.supplier', 'receipt.purchaseOrder', 'lines.product', 'lines.receiptLine', 'attachmentUsages.file']);
 
         return $this->showView('goods_receipt_inspection', $goodsReceiptInspection, false);
@@ -695,14 +748,19 @@ class ProcurementWorkflowController extends Controller
 
     public function createReturn(Request $request, ?PurchaseReturn $draft = null): View
     {
+        $this->assertInventoryBranch();
         $context = $this->context();
         $sourceReceipt = $draft?->receipt ?? (filled($request->query('receipt')) ? $this->receipt($request->query('receipt')) : null);
+        if ($sourceReceipt instanceof UnpricedInventoryReceipt) {
+            abort_unless($sourceReceipt->approved && $sourceReceipt->posting_status === 'posted' && ! in_array($sourceReceipt->status, ['cancelled', 'reversed'], true), 422, __('Only posted receipts can be returned.'));
+        }
         $order = $sourceReceipt?->purchaseOrder ?? (filled($request->query('purchase_order'))
             ? PurchaseOrder::query()->forCompany($context['company_id'])
-                ->where('branch_id', $context['branch_id'])->where('doc_num', $request->query('purchase_order'))->firstOrFail() : null);
+                ->whereHas('branchStore', fn ($query) => $query->where('branch_id', $context['branch_id']))
+                ->where('doc_num', $request->query('purchase_order'))->firstOrFail() : null);
         $order?->load(['supplier', 'lines.product']);
         $receiptLines = $order ? UnpricedInventoryReceiptLine::query()->with(['receipt', 'product', 'unit'])
-            ->whereHas('receipt', fn ($query) => $query->where('purchase_order_id', $order->getKey())->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))
+            ->whereHas('receipt', fn ($query) => $query->where('purchase_order_id', $order->getKey())->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))
             ->when($sourceReceipt, fn ($query) => $query->where('receipt_id', $sourceReceipt->getKey()))->get()
             ->map(function ($line) use ($draft) {
                 $activeReturns = PurchaseReturnLine::query()->where('receipt_line_id', $line->getKey())
@@ -739,21 +797,28 @@ class ProcurementWorkflowController extends Controller
 
     public function updateReturn(ProcurementWorkflowRequest $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->settlement->updatePurchaseReturn($purchaseReturn, $request->validated()), 'admin.purchases.purchase-returns.show');
     }
 
     public function destroyReturn(Request $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->settlement->deletePurchaseReturn($purchaseReturn), 'admin.purchases.purchase-returns.index');
     }
 
     public function storeReturn(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->settlement->createPurchaseReturn($request->validated()), 'admin.purchases.purchase-returns.show');
     }
 
     public function showReturn(PurchaseReturn $purchaseReturn): View
     {
+        $this->assertCurrent($purchaseReturn);
         $purchaseReturn->load(['supplier', 'purchaseOrder', 'receipt', 'purchaseInvoice', 'lines.product', 'lines.unit']);
 
         return $this->showView('purchase_return', $purchaseReturn, true);
@@ -761,11 +826,15 @@ class ProcurementWorkflowController extends Controller
 
     public function approveReturn(Request $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute($request, fn () => $this->settlement->approvePurchaseReturn($purchaseReturn), 'admin.purchases.purchase-returns.show');
     }
 
     public function reverseReturn(ProcurementWorkflowRequest $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
     {
+        $this->assertInventoryBranch();
+
         return $this->execute(
             $request,
             fn () => $this->settlement->reversePurchaseReturn($purchaseReturn, (string) $request->validated('reversal_reason')),
@@ -775,6 +844,7 @@ class ProcurementWorkflowController extends Controller
 
     public function supplierPaymentsIndex(): View
     {
+        $this->assertAdministrativeBranch();
         $context = $this->context();
         $records = SupplierPaymentContext::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id'])
             ->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'supplier', 'purchaseOrder'])->withCount('allocations')->latest('id')->paginate(25);
@@ -784,6 +854,7 @@ class ProcurementWorkflowController extends Controller
 
     public function supplierAdvancesIndex(): View
     {
+        $this->assertAdministrativeBranch();
         $context = $this->context();
         $records = SupplierPaymentContext::query()->where('company_id', $context['company_id'])->where('is_advance', true)
             ->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'supplier', 'purchaseOrder'])->withCount('allocations')->latest('id')->paginate(25);
@@ -793,6 +864,7 @@ class ProcurementWorkflowController extends Controller
 
     public function createSupplierPayment(Request $request): View
     {
+        $this->assertAdministrativeBranch();
         $context = $this->context();
         $invoices = PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'currency', 'paymentSchedules'])->get();
         $selectedInvoice = $invoices->firstWhere('doc_num', $request->string('invoice')->trim()->toString());
@@ -810,11 +882,14 @@ class ProcurementWorkflowController extends Controller
 
     public function storeSupplierPayment(ProcurementWorkflowRequest $request): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
+
         return $this->execute($request, fn () => $this->settlement->createSupplierPayment($request->validated()), 'admin.purchases.supplier-payments.show');
     }
 
     public function showSupplierPayment(string $supplierPayment): View
     {
+        $this->assertAdministrativeBranch();
         $record = $this->supplierPayment($supplierPayment, [
             'cashVoucher', 'bankAccount.bank', 'bankAccount.account', 'cheque', 'currency', 'supplier', 'purchaseOrder',
             'allocations.purchaseInvoice', 'allocations.paymentSchedule', 'journalEntry',
@@ -825,6 +900,7 @@ class ProcurementWorkflowController extends Controller
 
     public function approveSupplierPayment(Request $request, string $supplierPayment): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
         $record = $this->supplierPayment($supplierPayment);
 
         return $this->execute($request, fn () => $this->settlement->approveSupplierPayment($record), 'admin.purchases.supplier-payments.show', $supplierPayment);
@@ -832,6 +908,7 @@ class ProcurementWorkflowController extends Controller
 
     public function cancelSupplierPayment(ProcurementWorkflowRequest $request, string $supplierPayment): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
         $record = $this->supplierPayment($supplierPayment);
 
         return $this->execute(
@@ -844,6 +921,7 @@ class ProcurementWorkflowController extends Controller
 
     public function allocateSupplierPayment(ProcurementWorkflowRequest $request, string $supplierPayment): JsonResponse|RedirectResponse
     {
+        $this->assertAdministrativeBranch();
         $record = $this->supplierPayment($supplierPayment);
 
         return $this->execute($request, fn () => $this->settlement->allocatePayment($record, $request->validated('allocations')), 'admin.purchases.supplier-payments.show', $supplierPayment);
@@ -867,6 +945,7 @@ class ProcurementWorkflowController extends Controller
     public function report(Request $request): View
     {
         $context = $this->context();
+        $isAdministrativeBranch = $this->isAdministrativeBranch();
         $showPrices = (bool) request()->user()?->can('purchases.prices.view');
         $filters = $this->reportFilters($request);
         $reportType = $filters['report_type'];
@@ -907,10 +986,10 @@ class ProcurementWorkflowController extends Controller
             'suppliers' => Supplier::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['supplier_doc_num'] ?? '')->get(),
             'currencies' => Currency::query()->where('company_id', $context['company_id'])->orderBy('doc_num')->get(),
             'products' => Product::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['product_doc_num'] ?? '')->get(),
-            'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->latest('id')->limit(200)->get(),
-            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->latest('id')->limit(200)->get(),
-            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->orderBy('name')->get(),
-            'warehouses' => BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id']))->whereNull('deleted_at')->orderBy('name')->get(),
+            'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->latest('id')->limit(200)->get(),
+            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->latest('id')->limit(200)->get(),
+            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id']))->orderBy('name')->get(),
+            'warehouses' => BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))->whereNull('deleted_at')->orderBy('name')->get(),
         ]);
     }
 
@@ -1028,6 +1107,9 @@ class ProcurementWorkflowController extends Controller
     public function chooseSource(Request $request): View
     {
         $screen = $request->route('screen');
+        if ($screen === 'request_for_quotations') {
+            $this->assertAdministrativeBranch();
+        }
         [$title, $lookup, $destination] = match ($screen) {
             'request_for_quotations' => [__('Create Request for Quotation'), 'requisitions', 'request-for-quotations'],
             'supplier_quotations' => [__('Supplier Quotation Entry'), 'rfqs', 'supplier-quotation-entry'],
@@ -1057,7 +1139,15 @@ class ProcurementWorkflowController extends Controller
             default => ['draft', 'issued', 'submitted', 'approved', 'cancelled'],
         };
 
-        return view('modules.purchases.procurement.document-index', compact('screen', 'definition', 'createUrl', 'statuses'));
+        $isAdministrativeBranch = $this->isAdministrativeBranch();
+        if ($isAdministrativeBranch && in_array($screen, ['goods_receipts', 'purchase_returns'], true)) {
+            $createUrl = null;
+        }
+        if (! $isAdministrativeBranch && in_array($screen, ['request_for_quotations', 'supplier_quotations', 'supply_orders'], true)) {
+            $createUrl = null;
+        }
+
+        return view('modules.purchases.procurement.document-index', compact('screen', 'definition', 'createUrl', 'statuses', 'isAdministrativeBranch'));
     }
 
     public function documentData(Request $request, string $screen, ProcurementDocumentsDataTable $table): JsonResponse
@@ -1089,7 +1179,10 @@ class ProcurementWorkflowController extends Controller
 
     private function showView(string $type, object $record, bool $commercial): View
     {
-        return view('modules.purchases.procurement.show', compact('type', 'record', 'commercial'));
+        $activeBranchId = $this->context()['branch_id'];
+        $isAdministrativeBranch = $this->isAdministrativeBranch();
+
+        return view('modules.purchases.procurement.show', compact('type', 'record', 'commercial', 'activeBranchId', 'isAdministrativeBranch'));
     }
 
     private function execute(Request $request, Closure $operation, string $route, ?string $routeKey = null): JsonResponse|RedirectResponse
@@ -1128,7 +1221,8 @@ class ProcurementWorkflowController extends Controller
         $context = $this->context();
 
         return UnpricedInventoryReceipt::query()->where('company_id', $context['company_id'])
-            ->where('branch_id', $context['branch_id'])->where('doc_num', $docNum)->whereNotNull('purchase_order_id')->firstOrFail();
+            ->when(! $this->isAdministrativeBranch(), fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('doc_num', $docNum)->whereNotNull('purchase_order_id')->firstOrFail();
     }
 
     /** @param list<string> $relations */
@@ -1181,8 +1275,12 @@ class ProcurementWorkflowController extends Controller
             default => abort(404),
         };
 
-        return $model::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
-            ->where('financial_period_id', $context['financial_period_id'])->where('doc_num', $sourceDocument)->firstOrFail();
+        return $model::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->when($model !== PurchaseRequisition::class, fn ($query) => $query->where('branch_id', $context['branch_id']))
+            ->where('doc_num', $sourceDocument)
+            ->firstOrFail();
     }
 
     /** @return Collection<int, Supplier> */
@@ -1207,7 +1305,53 @@ class ProcurementWorkflowController extends Controller
     {
         $context = $this->context();
         $branchId = $record->branch_id ?? $record->purchaseOrder?->branch_id ?? $record->receipt?->branch_id;
-        abort_unless((int) $record->company_id === $context['company_id'] && (int) $branchId === $context['branch_id'], 404);
+        $financialPeriodId = $record->financial_period_id
+            ?? $record->purchaseOrder?->financial_period_id
+            ?? $record->receipt?->financial_period_id;
+        $hasBranchAccess = (int) $branchId === $context['branch_id'] || $this->isAdministrativeBranch();
+        abort_unless(
+            (int) $record->company_id === $context['company_id']
+            && (int) $financialPeriodId === $context['financial_period_id']
+            && $hasBranchAccess,
+            404,
+        );
+    }
+
+    private function assertRequisitionOrigin(PurchaseRequisition $record): void
+    {
+        $context = $this->context();
+        abort_unless(
+            (int) $record->company_id === $context['company_id']
+            && (int) $record->branch_id === $context['branch_id']
+            && (int) $record->financial_period_id === $context['financial_period_id'],
+            404,
+        );
+    }
+
+    private function assertAdministrativeBranch(): void
+    {
+        abort_unless($this->isAdministrativeBranch(), 403, __('procurement.ui.administrative_context_required'));
+    }
+
+    private function assertInventoryBranch(): void
+    {
+        $context = $this->context();
+        abort_unless(Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->whereIn('type', [Branch::TypeFactory, Branch::TypeWarehouse])
+            ->exists(), 403, __('procurement.ui.inventory_context_required'));
+    }
+
+    private function isAdministrativeBranch(): bool
+    {
+        $context = $this->context();
+
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 
     /** @return array<string, mixed> */
@@ -1235,8 +1379,16 @@ class ProcurementWorkflowController extends Controller
             'overdue' => ['nullable', Rule::in(['0', '1'])],
             'outstanding' => ['nullable', Rule::in(['0', '1'])],
         ]);
-        $filters['branch_id'] = $filters['branch_id'] ?? $this->context()['branch_id'];
-        abort_unless($this->operatingContext->allowedBranchQueryForCurrentCompany($request)->whereKey($filters['branch_id'])->exists(), 422);
+        $context = $this->context();
+        if ($this->isAdministrativeBranch()) {
+            $filters['branch_id'] = $filters['branch_id'] ?? null;
+            if ($filters['branch_id'] !== null) {
+                abort_unless($this->operatingContext->allowedBranchQueryForCurrentCompany($request)->whereKey($filters['branch_id'])->exists(), 422);
+            }
+        } else {
+            abort_if(filled($filters['branch_id'] ?? null) && (int) $filters['branch_id'] !== $context['branch_id'], 422);
+            $filters['branch_id'] = $context['branch_id'];
+        }
         $filters['report_type'] = $filters['report_type'] ?? ProcurementCycleReport::OpenRequirements;
         if (in_array($filters['report_type'], [ProcurementCycleReport::SupplierStatement, ProcurementCycleReport::PurchaseLedger, ProcurementCycleReport::OutstandingSupplierInvoices, ProcurementCycleReport::SupplierAging, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::DueSupplierInstallments, ProcurementCycleReport::UpcomingSupplierPayments, ProcurementCycleReport::GoodsReceivedNotInvoiced], true)) {
             abort_unless($request->user()?->can('purchases.prices.view'), 403);

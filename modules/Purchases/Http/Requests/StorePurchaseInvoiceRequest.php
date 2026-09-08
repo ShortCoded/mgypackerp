@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
@@ -26,7 +27,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
     {
         $action = $this->filled('clone_source_token') ? 'clone' : 'create';
 
-        return (bool) $this->user()?->can('purchase_invoices.'.$action);
+        return (bool) $this->user()?->can('purchase_invoices.'.$action) && $this->isAdministrativeBranchContext();
     }
 
     protected function prepareForValidation(): void
@@ -558,5 +559,16 @@ class StorePurchaseInvoiceRequest extends FormRequest
         $value = trim((string) ($value ?? ''));
 
         return $value === '' ? null : $value;
+    }
+
+    protected function isAdministrativeBranchContext(): bool
+    {
+        $context = app(OperatingContextService::class)->snapshot($this);
+
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 }

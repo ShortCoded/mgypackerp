@@ -3,7 +3,7 @@
     $prefix = 'admin.purchases.'.$definition['route'];
     $permission = 'purchases.'.$definition['permission'];
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $columns = ['doc_num' => __('Document Number'), 'date' => __('Date'), 'party' => $screen === 'purchase_requisitions' ? __('procurement.ui.requester_employee') : __('Supplier'), 'source' => $screen === 'purchase_requisitions' ? __('Branch') : __('Source document'), 'lines_count' => __('Lines'), 'status' => __('Status'), 'created_at' => __('Created at'), 'updated_at' => __('Updated at')];
+    $columns = ['doc_num' => __('Document Number'), 'date' => __('Date'), 'party' => $screen === 'purchase_requisitions' ? __('procurement.ui.requester_employee') : __('Supplier'), 'source' => $screen === 'purchase_requisitions' ? __('procurement.ui.request_origin') : __('Source document'), 'lines_count' => __('Lines'), 'status' => __('Status'), 'created_at' => __('Created at'), 'updated_at' => __('Updated at')];
 @endphp
 @section('title', __($definition['title']))
 @section('content')
@@ -18,11 +18,11 @@
 </div>
 <div class="card erp-datatable-card" data-procurement-index>
     <x-admin.crud-index-toolbar :title="__($definition['title'])" :add-route="$createUrl" :add-permission="$permission.'.create'" :show-trash-filter="auth()->user()?->can($permission.'.view_trashed')">
-        @if($screen === 'purchase_requisitions') @can('purchase_orders.create') @can('purchases.prices.view')<button class="btn btn-falcon-primary btn-sm d-none" type="button" data-bulk-create-order="{{ route('admin.purchases.purchase-orders.create') }}">{{ __('procurement.ui.order_selected') }} <span data-selected-count></span></button>@endcan @endcan @endif
+        @if($screen === 'purchase_requisitions' && $isAdministrativeBranch) @can('purchase_orders.create') @can('purchases.prices.view')<button class="btn btn-falcon-primary btn-sm d-none" type="button" data-bulk-create-order="{{ route('admin.purchases.purchase-orders.create') }}">{{ __('procurement.ui.order_selected') }} <span data-selected-count></span></button>@endcan @endcan @endif
     </x-admin.crud-index-toolbar>
     <div class="card-body p-0"><div class="falcon-data-table"><div class="erp-datatable-wrapper"><div class="erp-datatable-scroll">
         <table class="table table-sm table-hover mb-0 data-table erp-datatable align-middle" id="procurement-documents-table" data-url="{{ route('admin.purchases.procurement.data', $screen) }}" data-table-name="{{ $screen }}" data-field-keys="{{ json_encode(array_keys($columns)) }}">
-        <thead class="bg-100 text-900"><tr><th class="all no-colvis dt-select" data-orderable="false">@if($screen === 'purchase_requisitions')<input type="checkbox" class="form-check-input" data-procurement-select-all aria-label="{{ __('Select all') }}">@endif</th>@foreach($columns as $field => $label)<th class="{{ $field === 'doc_num' ? 'all dt-code' : 'dt-text' }}">{{ $label }}</th>@endforeach<th class="all no-colvis dt-actions"></th></tr></thead>
+        <thead class="bg-100 text-900"><tr><th class="all no-colvis dt-select" data-orderable="false">@if($screen === 'purchase_requisitions' && $isAdministrativeBranch)<input type="checkbox" class="form-check-input" data-procurement-select-all aria-label="{{ __('Select all') }}">@endif</th>@foreach($columns as $field => $label)<th class="{{ $field === 'doc_num' ? 'all dt-code' : 'dt-text' }}">{{ $label }}</th>@endforeach<th class="all no-colvis dt-actions"></th></tr></thead>
         </table>
     </div></div></div></div>
 </div>

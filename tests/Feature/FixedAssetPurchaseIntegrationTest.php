@@ -434,6 +434,9 @@ test('a purchase invoice capital improvement reuses the invoice journal and reve
     ])['record'];
     $invoiceLine = $invoice->lines->sole();
 
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+    expect(app(FixedAssetPurchaseIntegrationService::class)->sourceLine($invoiceLine->public_id, true)->is($invoiceLine))->toBeTrue();
     $this->actingAs($fixture['user'])
         ->post(route('admin.purchases.purchase-invoices.asset-treatment', $invoice->doc_num), [
             'line_public_id' => $invoiceLine->public_id,
@@ -454,6 +457,7 @@ test('a purchase invoice capital improvement reuses the invoice journal and reve
         'target_fixed_asset_doc_num' => $targetAsset->doc_num,
         'asset_effective_date' => $assetDate,
     ])->assertRedirect()->assertSessionHasNoErrors();
+    procurementUseBranch($fixture, $fixture['branch']);
 
     expect(SupplierPaymentContext::query()->count())->toBe(0)
         ->and(InventoryTransaction::query()->count())->toBe(0);

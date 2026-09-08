@@ -143,6 +143,33 @@ function procurementManualRequisition(array $fixture, float $quantity = 10): Pur
     ]);
 }
 
+/** @param array<string, mixed> $fixture */
+function procurementAdministrativeBranch(array $fixture): Branch
+{
+    return Branch::query()->create([
+        ...app(DocumentNumberService::class)->next('branches', Branch::class),
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Procurement Administration',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+}
+
+/** @param array<string, mixed> $fixture */
+function procurementUseBranch(array $fixture, Branch $branch): void
+{
+    $context = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $branch->getKey(),
+        OperatingContextService::BranchDocNumKey => $branch->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    session($context);
+    test()->withSession($context);
+}
+
 function procurementPostingAccount(Company $company, string $parentCode, string $accountCode, string $name): Account
 {
     $parent = Account::query()

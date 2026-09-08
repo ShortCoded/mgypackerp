@@ -24,7 +24,7 @@ class StorePurchaseOrderRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('purchase_orders.create');
+        return (bool) $this->user()?->can('purchase_orders.create') && $this->isAdministrativeBranchContext();
     }
 
     protected function prepareForValidation(): void
@@ -178,6 +178,17 @@ class StorePurchaseOrderRequest extends FormRequest
     protected function currentRecord(): ?PurchaseOrder
     {
         return null;
+    }
+
+    protected function isAdministrativeBranchContext(): bool
+    {
+        $context = app(OperatingContextService::class)->snapshot($this);
+
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 
     protected function validateBusiness(Validator $validator, ?PurchaseOrder $current = null): void

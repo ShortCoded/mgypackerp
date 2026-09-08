@@ -3,6 +3,8 @@
 return [
     'ui' => [
         'inventory_context_required' => 'Purchase requests require a factory or warehouse context.',
+        'administrative_context_required' => 'This purchasing action requires an administrative branch context.',
+        'request_origin' => 'Request origin',
         'employee_unavailable' => 'The employee is not available in the current company.',
         'requester_employee' => 'Requesting employee',
         'order_selected' => 'Create order from selected',
@@ -14,6 +16,7 @@ return [
         'enter_rate' => 'Enter the approved exchange rate; no previous rate is available.',
         'load_lines' => 'Load lines',
         'load_received_lines' => 'Load received lines',
+        'finalize_quality_inspection' => 'Finalize quality inspection',
         'statuses' => [
             'draft' => 'Draft',
             'pending_approval' => 'Submitted',
@@ -51,6 +54,12 @@ return [
     ],
     'messages' => [
         'purchase_product_type_invalid' => 'Finished products and services cannot be selected in purchase lines.',
+        'purchase_requisition_context_invalid' => 'Purchase orders require approved purchase request lines from a factory or warehouse in the same company and receiving warehouse.',
+        'quality_before_receipt_posting' => 'Finalize the incoming quality inspection before posting the warehouse receipt.',
+        'accepted_exceeds_po_remaining' => 'Accepted quantity exceeds the remaining purchase order quantity.',
+        'accepted_exceeds_supply_remaining' => 'Accepted quantity exceeds the remaining supply order quantity.',
+        'accepted_exceeds_schedule_remaining' => 'Accepted quantity exceeds the remaining scheduled quantity.',
+        'purchase_order_outside_receiving_context' => 'The purchase order is outside the active receiving branch context.',
     ],
     'reports' => [
         'types' => [

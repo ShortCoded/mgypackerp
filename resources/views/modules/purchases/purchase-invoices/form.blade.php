@@ -233,7 +233,7 @@
                     <h5 class="mb-0">{{ $title }}</h5>
                 </div>
                 <div class="col-auto">
-                    @include('modules.purchases.purchase-invoices.partials.form-actions', compact('mode', 'record'))
+                    @include('modules.purchases.purchase-invoices.partials.form-actions', compact('mode', 'record', 'canManageInCurrentBranch'))
                 </div>
             </div>
         </div>
@@ -254,10 +254,10 @@
                 @include('modules.purchases.procurement.document-cycle', ['record' => $record])
             @php $matchingNotes = json_decode($record->matching_notes ?? '', true) ?: []; @endphp
             @if(!empty($matchingNotes['line_variances']))
-            <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('Quantity variance') }}</th><th>{{ __('Unit price variance') }}</th></tr></thead><tbody>
+            <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('PO / Receipt / Invoice matching') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('purchase_invoices.attributes.ordered_quantity') }}</th><th>{{ __('purchase_invoices.attributes.received_quantity') }}</th><th>{{ __('Invoice quantity') }}</th><th>{{ __('purchase_invoices.attributes.quantity_variance') }}</th><th>{{ __('purchase_invoices.attributes.unit_price_variance') }}</th><th>{{ __('purchase_invoices.attributes.tax_rate_variance') }}</th></tr></thead><tbody>
             @foreach($matchingNotes['line_variances'] as $variance)
                 @php $matchedLine = $record->lines->firstWhere('public_id', $variance['line']); @endphp
-                <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td></tr>
+                <tr><td>{{ $matchedLine?->product?->name }}</td><td>{{ $numbers->format($variance['ordered_quantity'] ?? 0) }}</td><td>{{ $numbers->format($variance['received_quantity'] ?? 0) }}</td><td>{{ $numbers->format($matchedLine?->quantity) }}</td><td>{{ $numbers->format($variance['quantity_variance']) }}</td><td>{{ $numbers->format($variance['unit_price_variance']) }}</td><td>{{ $numbers->format($variance['tax_rate_variance'] ?? 0) }}</td></tr>
             @endforeach
             </tbody></table></div></div>
             @endif
@@ -350,7 +350,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
                             @else
-                                <select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders') }}" data-placeholder="{{ __('Select') }}">
+                                <select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders', ['purpose' => 'invoice']) }}" data-placeholder="{{ __('Select') }}">
                                     <option value="">{{ __('Select') }}</option>
                                     @foreach($procurementPurchaseOrders as $purchaseOrder)
                                         <option value="{{ $purchaseOrder->doc_num }}"
@@ -362,7 +362,8 @@
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
                             @if($mode === 'create')
-                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }}</label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
+                            <label class="form-label mt-2" for="source_receipts">{{ __('Goods Receipts') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
+                            <div class="form-text">{{ __('purchase_invoices.messages.receipt_filter_optional') }}</div>
                             <button class="btn btn-falcon-primary btn-sm mt-2" type="button" data-load-invoice-source="{{ route('admin.purchases.purchase-invoices.create') }}">{{ __('procurement.ui.load_received_lines') }}</button>
                             @endif
                         </div>
@@ -813,7 +814,7 @@
                                                 @endforelse
                                             </td>
                                             <td class="text-end">
-                                                @if($record->isDraft() && $assetEligible)
+                                                @if($record->isDraft() && $assetEligible && ($canManageInCurrentBranch ?? false))
                                                     <div class="js-asset-treatment-editor text-start" data-endpoint="{{ route('admin.purchases.purchase-invoices.asset-treatment', $record->doc_num) }}" data-line-public-id="{{ $invoiceLine->public_id }}">
                                                         <label class="form-label small mb-1">{{ __('fixed_assets.purchase_source.treatment') }}</label>
                                                         <select class="form-select form-select-sm js-asset-treatment mb-2">
@@ -944,9 +945,9 @@
                                             @endif
                                         </td>
                                         @if($isReadonly)
-                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['paid_amount'] ?? '0' }}</div></td>
-                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['credited_amount'] ?? '0' }}</div></td>
-                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $schedule['outstanding_amount'] ?? '0' }}</div></td>
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['paid_amount'] ?? 0) }}</div></td>
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['credited_amount'] ?? 0) }}</div></td>
+                                            <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['outstanding_amount'] ?? 0) }}</div></td>
                                             <td><div class="form-control-plaintext">{{ __('purchase_invoices.schedule_statuses.'.($schedule['status'] ?? \Modules\Purchases\Models\PurchaseInvoicePaymentSchedule::StatusScheduled)) }}</div></td>
                                         @endif
                                         <td>

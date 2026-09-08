@@ -104,7 +104,9 @@
                             </button>
                         </div>
                     @endif
-                    <x-buttons.add-record :href="route('admin.purchases.purchase-invoices.create')" permission="purchase_invoices.create" />
+                    @if($canCreateInCurrentBranch)
+                        <x-buttons.add-record :href="route('admin.purchases.purchase-invoices.create')" permission="purchase_invoices.create" />
+                    @endif
                 </div>
             </div>
         </div>

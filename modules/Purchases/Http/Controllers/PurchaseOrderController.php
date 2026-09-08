@@ -10,6 +10,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
@@ -45,6 +46,7 @@ class PurchaseOrderController extends Controller
         return view('modules.purchases.purchase-orders.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.purchases.purchase-orders.index'),
             'documentNumberSettings' => $settings->current('purchase_orders'),
+            'canCreateInCurrentBranch' => $this->isAdministrativeBranch(request()),
         ]);
     }
 
@@ -55,6 +57,7 @@ class PurchaseOrderController extends Controller
 
     public function create(Request $request): View|JsonResponse
     {
+        $this->assertAdministrativeBranch($request);
         $input = $request->validate(['purchase_requisition_doc_nums' => ['nullable', 'array', 'max:50'], 'purchase_requisition_doc_nums.*' => ['required', 'string', 'distinct']]);
         $view = $request->expectsJson() ? null : $this->form('create');
         $numbers = $input['purchase_requisition_doc_nums'] ?? [];
@@ -64,7 +67,8 @@ class PurchaseOrderController extends Controller
         abort_unless($request->user()?->can('purchases.purchase_requisitions.view'), 403);
         $context = $this->operatingContext->snapshot($request);
         $requests = PurchaseRequisition::query()->where('company_id', $context['company_id'])
-            ->where('branch_id', $context['branch_id'])->whereIn('doc_num', $numbers)
+            ->whereIn('doc_num', $numbers)
+            ->whereHas('branch', fn ($query) => $query->whereIn('type', [Branch::TypeFactory, Branch::TypeWarehouse]))
             ->whereIn('status', [PurchaseRequisition::StatusApproved, PurchaseRequisition::StatusPartiallyConverted])
             ->with(['lines.product', 'lines.unit', 'branchStore', 'suggestedSupplier'])->get();
         abort_unless($requests->count() === count($numbers), 422, __('Only approved purchase requests can create purchase orders.'));
@@ -114,7 +118,7 @@ class PurchaseOrderController extends Controller
 
     public function show(Request $request, PurchaseOrder $purchaseOrder): View
     {
-        $this->abortUnlessInCurrentContext($purchaseOrder);
+        $this->abortUnlessVisibleInCurrentContext($purchaseOrder);
         abort_if($purchaseOrder->trashed() && ! $request->user()?->can('purchase_orders.view_trashed'), 404);
 
         return $this->form('view', $purchaseOrder);
@@ -154,6 +158,7 @@ class PurchaseOrderController extends Controller
 
     public function destroy(PurchaseOrder $purchaseOrder): JsonResponse
     {
+        $this->assertAdministrativeBranch(request());
         try {
             $this->service->delete($purchaseOrder);
         } catch (DomainException $exception) {
@@ -165,6 +170,8 @@ class PurchaseOrderController extends Controller
 
     public function bulkDelete(BulkDeletePurchaseOrdersRequest $request): JsonResponse
     {
+        $this->assertAdministrativeBranch($request);
+
         return response()->json([
             'success' => true,
             'message' => __('purchase_orders.messages.bulk_deleted', [
@@ -176,12 +183,12 @@ class PurchaseOrderController extends Controller
     public function restore(string $purchaseOrder): JsonResponse
     {
         try {
+            $this->assertAdministrativeBranch(request());
             $context = $this->operatingContext->snapshot(request());
             abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 404);
             $record = PurchaseOrder::withTrashed()
                 ->where('company_id', (int) $context['company_id'])
                 ->where('financial_period_id', (int) $context['financial_period_id'])
-                ->where('branch_id', (int) $context['branch_id'])
                 ->where('doc_num', $purchaseOrder)
                 ->firstOrFail();
             $this->service->restore($record);
@@ -194,6 +201,7 @@ class PurchaseOrderController extends Controller
 
     public function markSent(PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
     {
+        $this->assertAdministrativeBranch(request());
         try {
             $this->service->markSent($purchaseOrder);
 
@@ -205,6 +213,7 @@ class PurchaseOrderController extends Controller
 
     public function submit(PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
     {
+        $this->assertAdministrativeBranch(request());
         try {
             $this->service->submit($purchaseOrder);
         } catch (DomainException $exception) {
@@ -216,6 +225,7 @@ class PurchaseOrderController extends Controller
 
     public function reject(Request $request, PurchaseOrder $purchaseOrder): RedirectResponse|JsonResponse
     {
+        $this->assertAdministrativeBranch($request);
         $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         try {
             $this->service->reject($purchaseOrder, $data['reason']);
@@ -228,6 +238,7 @@ class PurchaseOrderController extends Controller
 
     public function approve(PurchaseOrder $purchaseOrder): JsonResponse
     {
+        $this->assertAdministrativeBranch(request());
         try {
             if (! in_array($purchaseOrder->status, [PurchaseOrder::StatusSubmitted, PurchaseOrder::StatusApproved], true)) {
                 throw new DomainException(__('Submit this purchase order before approval.'));
@@ -246,6 +257,7 @@ class PurchaseOrderController extends Controller
 
     public function close(PurchaseOrder $purchaseOrder): JsonResponse
     {
+        $this->assertAdministrativeBranch(request());
         try {
             $record = $this->service->close($purchaseOrder);
         } catch (DomainException $exception) {
@@ -261,6 +273,7 @@ class PurchaseOrderController extends Controller
 
     public function cancel(CancelPurchaseOrderRequest $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
+        $this->assertAdministrativeBranch($request);
         try {
             $record = $this->service->cancel($purchaseOrder, (string) $request->validated('cancel_reason'));
         } catch (DomainException $exception) {
@@ -276,7 +289,7 @@ class PurchaseOrderController extends Controller
 
     public function print(PurchaseOrder $purchaseOrder, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
-        $this->abortUnlessInCurrentContext($purchaseOrder);
+        $this->abortUnlessVisibleInCurrentContext($purchaseOrder);
         $purchaseOrder->loadMissing($this->service->defaultRelations());
         $identity = $printIdentities->forCompany($purchaseOrder->company);
 
@@ -291,6 +304,7 @@ class PurchaseOrderController extends Controller
 
     public function updateDocumentNumberSettings(UpdatePurchaseOrderDocumentNumberSettingsRequest $request, DocumentNumberSettingsService $settings): JsonResponse
     {
+        $this->assertAdministrativeBranch($request);
         $result = $settings->update('purchase_orders', $request->validated('prefix'), (int) $request->validated('padding'));
 
         return response()->json([
@@ -309,6 +323,7 @@ class PurchaseOrderController extends Controller
                 'deliverySchedules', 'receipts.inspection', 'purchaseInvoices', 'purchaseReturns', 'supplierPayments', 'supplierQuotations',
             ]);
         }
+        $context = $this->operatingContext->snapshot(request());
 
         return view('modules.purchases.purchase-orders.form', [
             'mode' => $mode,
@@ -320,7 +335,8 @@ class PurchaseOrderController extends Controller
             'canControlDocumentNumber' => (bool) auth()->user()?->can('purchase_orders.document_number.control'),
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'metadata' => $this->metadata($record),
-            'context' => $this->operatingContext->snapshot(request()),
+            'context' => $context,
+            'canManageInCurrentBranch' => $this->isAdministrativeBranch(request()) && (! $record instanceof PurchaseOrder || ((int) $record->company_id === (int) $context['company_id'] && (int) $record->financial_period_id === (int) $context['financial_period_id'])),
             'supplierOption' => $this->supplierOption($record),
             'currencyOption' => $this->currencyOption($record),
             'storeOption' => $this->storeOption($record),
@@ -603,9 +619,50 @@ class PurchaseOrderController extends Controller
             $context['company_id']
             && $context['financial_period_id']
             && $context['branch_id']
+            && $this->isAdministrativeBranch(request())
             && (int) $record->company_id === (int) $context['company_id']
-            && (int) $record->branch_id === (int) $context['branch_id'],
+            && (int) $record->financial_period_id === (int) $context['financial_period_id'],
             404
         );
+    }
+
+    private function abortUnlessVisibleInCurrentContext(PurchaseOrder $record): void
+    {
+        $context = $this->operatingContext->snapshot(request());
+        $currentBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->first();
+        $isDestinationBranch = $record->branchStore()
+            ->where('branch_id', $context['branch_id'])
+            ->exists();
+
+        abort_unless(
+            $context['company_id']
+            && $context['branch_id']
+            && (int) $record->company_id === (int) $context['company_id']
+            && (
+                (int) $record->branch_id === (int) $context['branch_id']
+                || $isDestinationBranch
+                || $currentBranch?->type === Branch::TypeAdministrative
+            ),
+            404
+        );
+    }
+
+    private function assertAdministrativeBranch(Request $request): void
+    {
+        abort_unless($this->isAdministrativeBranch($request), 403, __('procurement.ui.administrative_context_required'));
+    }
+
+    private function isAdministrativeBranch(Request $request): bool
+    {
+        $context = $this->operatingContext->snapshot($request);
+
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 }

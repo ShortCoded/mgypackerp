@@ -67,7 +67,6 @@ test('posted purchase receipts feed the stock balance inquiry and item attribute
             'delivered_quantity' => 4000,
         ]],
     ]);
-    $receipt = $receiving->postReceipt($receipt);
     $receiving->inspect($receipt, [
         'lines' => [[
             'receipt_line_public_id' => $receipt->lines->first()->public_id,
@@ -75,7 +74,7 @@ test('posted purchase receipts feed the stock balance inquiry and item attribute
             'rejected_quantity' => 0,
         ]],
     ]);
-    $receiving->postReceipt($receipt->fresh());
+    $receipt = $receiving->postReceipt($receipt->fresh());
 
     $report = app(InventoryReportService::class)->stockBalanceInquiry(
         $fixture['company']->getKey(),

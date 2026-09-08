@@ -126,7 +126,7 @@ class FixedAssetsDataTable
             ->editColumn('previous_depreciation', fn (FixedAsset $record): string => $this->plainText($this->moneyText($position($record)['accumulated_depreciation'], $record->currency_code)))
             ->editColumn('net_value', fn (FixedAsset $record): string => $this->plainText($this->moneyText($position($record)['net_book_value'], $record->currency_code)))
             ->editColumn('is_depreciable', fn (FixedAsset $record): string => '<span class="badge rounded-pill badge-subtle-'.($record->is_depreciable ? 'success' : 'secondary').'">'.e(__('fixed_assets.booleans.'.($record->is_depreciable ? 'yes' : 'no'))).'</span>')
-            ->editColumn('status', fn (FixedAsset $record): string => '<span class="badge rounded-pill badge-subtle-'.($record->status === 'active' ? 'success' : 'secondary').'">'.e(__("fixed_assets.statuses.{$record->status}")).'</span>')
+            ->editColumn('status', fn (FixedAsset $record): string => '<span class="badge rounded-pill badge-subtle-'.$this->statusTone($record->status).'">'.e(__("fixed_assets.statuses.{$record->status}")).'</span>')
             ->editColumn('created_by', fn (FixedAsset $record): string => $this->ellipsisText($this->auditUserLabel($record->created_by_name, $record->created_by_doc_num)))
             ->editColumn('created_at', fn (FixedAsset $record): string => $this->plainText($this->dateTimeText($record->created_at, $dateTimeFormat)))
             ->editColumn('updated_by', fn (FixedAsset $record): string => $this->ellipsisText($this->auditUserLabel($record->updated_by_name, $record->updated_by_doc_num)))
@@ -191,6 +191,17 @@ class FixedAssetsDataTable
             ->removeColumn('deleted_by_doc_num')
             ->rawColumns(['checkbox', 'doc_num', 'asset_name', 'asset_category', 'branch', 'cost_center', 'created_by', 'updated_by', 'deleted_by', 'is_depreciable', 'status', 'actions'])
             ->toJson();
+    }
+
+    private function statusTone(string $status): string
+    {
+        return match ($status) {
+            'active' => 'success',
+            'draft', 'suspended' => 'warning',
+            'fully_depreciated' => 'info',
+            'disposed', 'sold', 'written_off' => 'danger',
+            default => 'secondary',
+        };
     }
 
     private function moneyText(mixed $value, mixed $currencyCode): string

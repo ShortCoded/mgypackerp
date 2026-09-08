@@ -121,7 +121,7 @@ class FixedAssetService
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
 
-            if ($record->isMasterLocked()) {
+            if ($record->protectsMasterHistory()) {
                 $this->assertLockedMasterPayload($record, $data);
 
                 return $this->updateBasicData($record, $data, $oldDocNumber, $oldDocNum);
@@ -135,8 +135,8 @@ class FixedAssetService
                 : ['account' => $linkedAccount, 'changed' => false];
             $values = $this->values($data, (int) $record->company_id, $chartResult['account'], $parentAccount);
             $values['period_id'] = $record->period_id;
-            if ($record->isMasterLocked()) {
-                $values['net_value'] = $record->net_value;
+            if ($record->hasLegacyRecognition() && FixedAsset::allowsFullMasterCrud()) {
+                $values['legacy_recognition'] = $this->legacyRecognition($record, $values);
             }
             $selectedImageFile = $this->selectedArchiveImageFile($data['image_archive_file_doc_num'] ?? null, (int) $record->company_id);
             $detachesImage = ($data['remove_image'] ?? false) === true;
@@ -307,11 +307,13 @@ class FixedAssetService
         DB::transaction(function () use ($record): void {
             $record = FixedAsset::query()->forCompany($this->companies->requireCompanyId())->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
 
-            if ($record->isMasterLocked()) {
+            if ($record->protectsMasterHistory()) {
                 throw new DomainException(__('fixed_assets.messages.delete_blocked_lifecycle'));
             }
 
-            $this->accountingSync->softDeleteLinkedAccountForFixedAsset($record);
+            if (! $record->isMasterLocked()) {
+                $this->accountingSync->softDeleteLinkedAccountForFixedAsset($record);
+            }
             $this->audit->softDelete($record);
         });
     }
@@ -451,7 +453,7 @@ class FixedAssetService
      */
     private function assertMasterUpdateAllowed(FixedAsset $record, array $changes): void
     {
-        if (! $record->isMasterLocked()) {
+        if (! $record->protectsMasterHistory()) {
             return;
         }
 
@@ -479,6 +481,21 @@ class FixedAssetService
         $record->setRelation('account', $linkedAccount);
 
         return $linkedAccount;
+    }
+
+    /** @param array<string, mixed> $values */
+    private function legacyRecognition(FixedAsset $record, array $values): array
+    {
+        $baseline = (array) $record->legacy_recognition;
+        $baseline['captured_at'] ??= now()->toDateTimeString();
+        $baseline['asset_id'] = $record->getKey();
+        $baseline['company_id'] = $record->company_id;
+
+        foreach (['purchase_value', 'base_acquisition_value', 'previous_depreciation', 'previous_depreciation_until_date', 'exchange_rate', 'salvage_value', 'useful_life', 'asset_date', 'depreciation_start_date', 'account_id', 'branch_id', 'cost_center_id', 'period_id'] as $field) {
+            $baseline[$field] = array_key_exists($field, $values) ? $values[$field] : $record->getRawOriginal($field);
+        }
+
+        return $baseline;
     }
 
     private function assertLinkedAccountCanMove(Account $linkedAccount, Account $parentAccount): void

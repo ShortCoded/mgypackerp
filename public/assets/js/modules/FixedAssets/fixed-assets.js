@@ -2,11 +2,31 @@
     'use strict';
 
     const messages = window.fixedAssetsMessages || {};
+    const isArabic = String(document.documentElement.lang || '').toLowerCase().startsWith('ar');
+    const fallbackMessages = isArabic ? {
+        select2ErrorLoading: 'تعذر تحميل النتائج.',
+        select2InputTooShort: 'يرجى إدخال المزيد من الأحرف.',
+        select2LoadingMore: 'جاري تحميل المزيد...',
+        select2NoResults: 'لا توجد نتائج',
+        select2RemoveItem: 'إزالة العنصر',
+        select2RemoveAllItems: 'إزالة كل العناصر',
+        select2Search: 'بحث',
+        select2Searching: 'جاري البحث...'
+    } : {
+        select2ErrorLoading: 'The results could not be loaded.',
+        select2InputTooShort: 'Please enter more characters.',
+        select2LoadingMore: 'Loading more results...',
+        select2NoResults: 'No results found.',
+        select2RemoveItem: 'Remove item',
+        select2RemoveAllItems: 'Remove all items',
+        select2Search: 'Search',
+        select2Searching: 'Searching...'
+    };
     const csrfToken = $('meta[name="csrf-token"]').attr('content');
     let fixedAssetsTable = null;
 
     function msg(key) {
-        return messages[key] || key;
+        return messages[key] || fallbackMessages[key] || '';
     }
 
     function headers() {

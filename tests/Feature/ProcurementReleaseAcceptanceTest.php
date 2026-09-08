@@ -78,6 +78,8 @@ test('five item two supplier release acceptance reconciles sourcing cross period
             'accepted_quantity' => (float) $line->delivered_quantity - ($index === 0 ? $rejected : 0), 'rejected_quantity' => $index === 0 ? $rejected : 0,
             'disposition' => $index === 0 && $rejected > 0 ? 'quarantine' : 'accepted', 'reason' => $rejected ? 'QC defect' : null])->all()]);
 
+        $receiving->postReceipt($receipt->fresh());
+
         return $receipt->fresh()->load('lines');
     };
     $first = $receive($orderA, [400, 400, 400], 5);

@@ -33,6 +33,7 @@
         'goods_receipt_inspection' => \Modules\Purchases\Models\GoodsReceiptInspection::AttachmentCollection,
         default => \Modules\Purchases\Services\ProcurementAttachmentService::OperationalCollection,
     };
+    $isOwnBranch = (int) ($record->branch_id ?? 0) === (int) ($activeBranchId ?? 0);
     if ($type === 'purchase_order_change_request' && ! $showPrices) {
         $originalChangeValues['lines'] = collect($originalChangeValues['lines'] ?? [])->map(fn ($line) => collect($line)->except('unit_price')->all())->all();
         $requestedChangeValues['lines'] = collect($requestedChangeValues['lines'] ?? [])->map(fn ($line) => collect($line)->except('unit_price')->all())->all();
@@ -119,19 +120,19 @@
                 </a>
                 @endif
 
-                @if($type === 'purchase_requisition' && $record->status === 'draft')
+                @if($type === 'purchase_requisition' && $record->status === 'draft' && $isOwnBranch)
                     @can('purchases.purchase_requisitions.delete')<form method="POST" action="{{ route('admin.purchases.purchase-requisitions.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
                     @can('purchases.purchase_requisitions.edit')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-requisitions.edit', $record->doc_num) }}">{{ __('Edit') }}</a>@endcan
                     @can('purchases.purchase_requisitions.submit')
                     <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.submit', $record->doc_num) }}">@csrf<button class="btn btn-falcon-primary btn-sm">{{ __('Submit for approval') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'purchase_requisition' && $record->status === 'pending_approval')
+                @if($type === 'purchase_requisition' && $record->status === 'pending_approval' && ($isAdministrativeBranch ?? false))
                     @can('purchases.purchase_requisition_approvals.approve')
                     <form id="purchase-request-approval" method="POST" action="{{ route('admin.purchases.purchase-requisitions.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'purchase_requisition' && in_array($record->status, ['approved', 'partially_converted', 'fully_converted'], true))
+                @if($type === 'purchase_requisition' && ($isAdministrativeBranch ?? false) && in_array($record->status, ['approved', 'partially_converted', 'fully_converted'], true))
                     @can('purchases.supplier_quotation_entry.create')
                     @can('purchases.prices.view')
                     <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseRequisition, $record->doc_num]) }}">{{ __('Enter supplier quotation') }}</a>
@@ -147,17 +148,17 @@
                 @endif
 
                 @if($type === 'purchase_requisition')
-                    @if($record->status === 'pending_approval')
+                    @if($record->status === 'pending_approval' && ($isAdministrativeBranch ?? false))
                         @can('purchases.purchase_requisition_approvals.reject')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
                         @endcan
                     @endif
-                    @if(!in_array($record->status, ['cancelled', 'closed']))
+                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed']))
                         @can('purchases.purchase_requisitions.cancel')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
                         @endcan
                     @endif
-                    @if(in_array($record->status, ['approved', 'partially_converted', 'fully_converted']))
+                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && in_array($record->status, ['approved', 'partially_converted', 'fully_converted']))
                         @can('purchases.purchase_requisitions.close')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.close', $record->doc_num) }}">@csrf<button class="btn btn-falcon-default btn-sm">{{ __('Close') }}</button></form>
                         @endcan
@@ -208,42 +209,50 @@
                     @endcan
                     @endcan
                 @endif
-                @if($type === 'supply_order' && $record->status === 'draft')
+                @if($type === 'supply_order' && $record->status === 'draft' && $isOwnBranch)
                     @can('purchases.supply_orders.edit')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supply-orders.edit', $record) }}">{{ __('Edit draft') }}</a>@endcan
                     @can('purchases.supply_orders.delete')<form method="POST" action="{{ route('admin.purchases.supply-orders.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
                     @can('purchases.supply_orders.issue')<form method="POST" action="{{ route('admin.purchases.supply-orders.issue', $record) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Issue Supply Order') }}</button></form>@endcan
                 @endif
                 @if($type === 'supply_order' && in_array($record->status, ['issued', 'partially_received'], true))
-                    @can('purchases.goods_receipt_notes.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>@endcan
-                    @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan
+                    @if((int) $record->branchStore?->branch_id === (int) ($activeBranchId ?? 0) && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_notes.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>@endcan @endif
+                    @if((int) $record->branch_id === (int) ($activeBranchId ?? 0)) @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan @endif
                 @endif
                 @if($type === 'goods_receipt' && $record->posting_status === 'posted')
+                    @if($isAdministrativeBranch ?? false)
                     @can('purchase_invoices.create')
                     @can('purchases.prices.view')
                     <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.create', ['purchase_order' => $record->purchaseOrder->doc_num, 'receipts' => [$record->doc_num]]) }}">{{ __('Create supplier invoice') }}</a>
                     @endcan
                     @endcan
+                    @endif
+                    @if($isOwnBranch && ! ($isAdministrativeBranch ?? false))
                     @can('purchases.purchase_returns.create')
                     <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-returns.create', ['purchase_order' => $record->purchaseOrder->doc_num, 'receipt' => $record->doc_num]) }}">{{ __('Create purchase return') }}</a>
                     @endcan
+                    @endif
                 @endif
-                @if($type === 'goods_receipt' && $record->status === 'draft')
+                @if($type === 'goods_receipt' && $record->status === 'draft' && $isOwnBranch && ! ($isAdministrativeBranch ?? false))
+                    @if(in_array($record->qc_status, ['pending_inspection', 'not_required'], true))
                     @can('purchases.goods_receipt_notes.edit')
                     <a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.edit', $record->doc_num) }}">{{ __('Edit draft') }}</a>
                     @endcan
                     @can('purchases.goods_receipt_notes.delete')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.destroy', $record->doc_num) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>
                     @endcan
+                    @endif
+                    @if($record->qc_status !== 'pending_inspection')
                     @can('purchases.goods_receipt_notes.post')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.post', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Post receipt') }}</button></form>
                     @endcan
+                    @endif
                 @endif
-                @if($type === 'goods_receipt' && in_array($record->posting_status, ['posted', 'partially_posted']))
+                @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && in_array($record->posting_status, ['posted', 'partially_posted']))
                     @can('purchases.goods_receipt_notes.reverse')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.reverse', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reverse receipt') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'goods_receipt' && $record->approved && $record->qc_status === 'pending_inspection')
+                @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft' && $record->posting_status === 'unposted' && $record->qc_status === 'pending_inspection')
                     @can('purchases.goods_receipt_inspection.create')
                     <a class="btn btn-warning btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record->doc_num) }}">{{ __('Inspect receipt') }}</a>
                     @endcan
@@ -255,14 +264,14 @@
                     </form>
                     @endcan
                 @endif
-                @if($type === 'purchase_return' && $record->status === 'draft')
+                @if($type === 'purchase_return' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft')
                     @can('purchases.purchase_returns.edit')<a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.purchase-returns.edit', $record) }}">{{ __('Edit draft') }}</a>@endcan
                     @can('purchases.purchase_returns.delete')<form method="POST" action="{{ route('admin.purchases.purchase-returns.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
                     @can('purchases.purchase_returns.post')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve and post return') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'purchase_return' && $record->status === \Modules\Purchases\Models\PurchaseReturn::StatusPosted)
+                @if($type === 'purchase_return' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === \Modules\Purchases\Models\PurchaseReturn::StatusPosted)
                     @can('purchases.purchase_returns.reverse')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.reverse', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
@@ -404,9 +413,9 @@
                                     <td dir="ltr">{{ $source }}</td>
                                     <td class="text-end" dir="ltr">{{ is_numeric($quantity) ? app(\Modules\Core\Services\NumericFormatService::class)->format($quantity) : $quantity }}</td>
                                     @if($type === 'purchase_requisition')
-                                        <td>@if($record->status === 'pending_approval' && auth()->user()?->can('purchases.purchase_requisition_approvals.approve'))
-                                        <input class="form-control form-control-sm" type="number" form="purchase-request-approval" name="approved_quantities[{{ $line->public_id }}]" min="0" max="{{ $line->requested_quantity }}" step="0.00000001" value="{{ old('approved_quantities.'.$line->public_id, $line->requested_quantity) }}">
-                                        @else{{ $line->approved_quantity }}@endif</td><td>{{ $line->orderedQuantity() }}</td><td>{{ $line->remainingToOrder() }}</td>
+                                        <td>@if($record->status === 'pending_approval' && ($isAdministrativeBranch ?? false) && auth()->user()?->can('purchases.purchase_requisition_approvals.approve'))
+                                        <x-forms.numeric-input class="form-control-sm" form="purchase-request-approval" name="approved_quantities[{{ $line->public_id }}]" :scale="8" min="0" :max="$line->requested_quantity" step="0.00000001" :value="old('approved_quantities.'.$line->public_id, $line->requested_quantity)" />
+                                        @else{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->approved_quantity) }}@endif</td><td>{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->orderedQuantity()) }}</td><td>{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->remainingToOrder()) }}</td>
                                     @endif
                                     @if($type === 'goods_receipt_inspection')
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->accepted_quantity) }}</td>

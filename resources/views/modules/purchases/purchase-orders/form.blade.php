@@ -72,10 +72,18 @@
                     @include('modules.finance.partials.form-actions', [
                             'resource' => 'purchase_orders',
                             'routePrefix' => $routePrefix,
-                            'canEditRecord' => ! ($record?->isLockedForEditing() ?? false),
-                            'canDeleteRecord' => $record?->isDeletable() ?? false,
+                            'canEditRecord' => ($canManageInCurrentBranch ?? false) && ! ($record?->isLockedForEditing() ?? false),
+                            'canDeleteRecord' => ($canManageInCurrentBranch ?? false) && ($record?->isDeletable() ?? false),
+                            'canClone' => ($canManageInCurrentBranch ?? false) && auth()->user()?->can('purchase_orders.clone'),
                     ])
-                    @if($mode === 'view' && $record?->isApproved())
+                    @if($mode === 'view')
+                        @can('purchase_orders.print')
+                            <a class="btn btn-falcon-default btn-sm mt-2" href="{{ route('admin.purchases.purchase-orders.print', $record->doc_num) }}" target="_blank" rel="noopener">
+                                <span class="fas fa-print me-1"></span>{{ __('common.actions.print') }}
+                            </a>
+                        @endcan
+                    @endif
+                    @if($mode === 'view' && $record?->isApproved() && ($canManageInCurrentBranch ?? false))
                         <div class="d-flex flex-wrap gap-2 mt-2">
                             @can('purchases.supplier_quotation_entry.create')
                             @can('purchases.prices.view')
@@ -99,6 +107,11 @@
                             @endif
                             @endcan
                         </div>
+                    @endif
+                    @if($mode === 'view' && $record?->isApproved() && ! ($canManageInCurrentBranch ?? false) && (int) $record?->branchStore?->branch_id === (int) ($context['branch_id'] ?? 0))
+                        @can('purchases.goods_receipt_notes.create')
+                            <a class="btn btn-falcon-primary btn-sm mt-2" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>
+                        @endcan
                     @endif
                 </div>
                 </div>
@@ -477,7 +490,7 @@
         </div>
         @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => $isReadonly])
     </form>
-    @if($mode === 'view' && $record && in_array($record->status, ['draft', 'submitted', 'rejected'], true))
+    @if($mode === 'view' && $record && ($canManageInCurrentBranch ?? false) && in_array($record->status, ['draft', 'submitted', 'rejected'], true))
     <section class="card mb-3"><div class="card-body">
         @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
         <div class="d-flex flex-wrap gap-2">
@@ -493,7 +506,7 @@
         @if($record->submitted_at)<div class="small text-600 mt-2">{{ __('Submitted at') }}: {{ $dates->formatDateTime($record->submitted_at) }}</div>@endif
     </div></section>
     @endif
-    @if($record?->isApproved() && ! $record->sent_at)
+    @if(($canManageInCurrentBranch ?? false) && $record?->isApproved() && ! $record->sent_at)
     @can('purchase_orders.send')
     <form id="purchase-order-mark-sent" method="POST" action="{{ route('admin.purchases.purchase-orders.sent', $record->doc_num) }}">@csrf</form>
     @endcan

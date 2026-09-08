@@ -13,6 +13,13 @@
     $supplierPayments = $purchaseInvoice?->paymentAllocations?->pluck('paymentContext')->filter()->unique('id') ?? collect();
     $assetTabs = ['overview', 'financial', 'depreciation', 'movements', 'documents', 'audit'];
     $activeTab = in_array(request('tab'), $assetTabs, true) ? request('tab') : 'overview';
+    $assetStatusTone = match ($asset->status) {
+        'active' => 'success',
+        'draft', 'suspended' => 'warning',
+        'fully_depreciated' => 'info',
+        'disposed', 'sold', 'written_off' => 'danger',
+        default => 'secondary',
+    };
 @endphp
 @section('title', $asset->doc_num.' / '.$asset->asset_name)
 @section('content')
@@ -20,7 +27,7 @@
 @if(session('success'))<div class="alert alert-success" role="status">{{ session('success') }}</div>@endif
 @if($errors->any())<div class="alert alert-danger" role="alert"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 <div class="card mb-3 fa-card-compact"><div class="card-body d-flex flex-wrap justify-content-between gap-3 align-items-center">
-    <div><h5 class="mb-2">{{ $asset->doc_num }} / {{ $asset->asset_name }}</h5><span class="badge badge-subtle-{{ $asset->isDisposed() ? 'danger' : ($recognized ? 'success' : 'warning') }}">{{ __('fixed_assets.statuses.'.$asset->status) }}</span> <span class="small text-600">{{ $asset->entryTypeLabel() }}</span></div>
+    <div><h5 class="mb-2">{{ $asset->doc_num }} / {{ $asset->asset_name }}</h5><span class="badge badge-subtle-{{ $assetStatusTone }}">{{ __('fixed_assets.statuses.'.$asset->status) }}</span> <span class="small text-600">{{ $asset->entryTypeLabel() }}</span></div>
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.assets.index') }}">{{ __('common.actions.back') }}</a>
         @can('fixed_assets.print')<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.fixed-assets.prints.asset', $asset) }}">{{ __('common.actions.print') }}</a>@endcan
@@ -46,13 +53,13 @@
             @endforeach
         </div>
         <div class="row g-3 mt-1">
-            <div class="col-md-3"><div class="text-600 fs-10">{{ __('Supplier') }}</div><div class="fw-semibold">{{ $purchaseInvoice->supplier?->name }}</div></div>
-            <div class="col-md-3"><div class="text-600 fs-10">{{ __('Purchase Invoice') }}</div><a href="{{ route('admin.purchases.purchase-invoices.show', $purchaseInvoice->doc_num) }}">{{ $purchaseInvoice->doc_num }}</a></div>
+            <div class="col-md-3"><div class="text-600 fs-10">{{ __('purchase_invoices.attributes.supplier') }}</div><div class="fw-semibold">{{ $purchaseInvoice->supplier?->name }}</div></div>
+            <div class="col-md-3"><div class="text-600 fs-10">{{ __('purchase_invoices.singular') }}</div><a href="{{ route('admin.purchases.purchase-invoices.show', $purchaseInvoice->doc_num) }}">{{ $purchaseInvoice->doc_num }}</a></div>
             <div class="col-md-3"><div class="text-600 fs-10">{{ __('fixed_assets.purchase_source.invoice_status') }}</div><div>{{ __('purchase_invoices.statuses.'.$purchaseInvoice->status) }}</div></div>
             <div class="col-md-3"><div class="text-600 fs-10">{{ __('purchase_invoices.attributes.payment_status') }}</div><div>{{ __('purchase_invoices.payment_statuses.'.$purchaseInvoice->payment_status) }}</div></div>
         </div>
         @if($supplierPayments->isNotEmpty())
-            <div class="table-responsive mt-3"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Document number') }}</th><th>{{ __('Payment method') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Status') }}</th><th></th></tr></thead><tbody>
+            <div class="table-responsive mt-3"><table class="table table-sm mb-0"><thead><tr><th>{{ __('common.fields.document_number') }}</th><th>{{ __('procurement.fields.payment_method') }}</th><th>{{ __('procurement.fields.amount') }}</th><th>{{ __('common.fields.status') }}</th><th></th></tr></thead><tbody>
             @foreach($supplierPayments as $payment)
                 @php
                     $voucher = $payment->cashVoucher ?: $payment->cheque;
@@ -70,7 +77,7 @@
     <div class="card-header bg-light"><h6 class="mb-0">{{ __('fixed_assets.purchase_source.purchase_improvements') }}</h6></div>
     <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
-            <thead><tr><th>{{ __('fixed_assets.cycle.addition') }}</th><th>{{ __('Purchase Invoice') }}</th><th>{{ __('fixed_assets.purchase_source.effective_date') }}</th><th>{{ __('Amount') }}</th><th>{{ __('fixed_assets.purchase_source.actual_payments') }}</th></tr></thead>
+            <thead><tr><th>{{ __('fixed_assets.cycle.addition') }}</th><th>{{ __('purchase_invoices.singular') }}</th><th>{{ __('fixed_assets.purchase_source.effective_date') }}</th><th>{{ __('procurement.fields.amount') }}</th><th>{{ __('fixed_assets.purchase_source.actual_payments') }}</th></tr></thead>
             <tbody>
             @foreach($purchaseImprovements as $improvement)
                 @php
@@ -79,7 +86,7 @@
                     $improvementPayments = $improvementInvoice?->paymentAllocations?->pluck('paymentContext')->filter()->unique('id') ?? collect();
                 @endphp
                 <tr>
-                    <td>@can('fixed_assets.print')<a href="{{ route('admin.fixed-assets.prints.movement', $improvement) }}" target="_blank">{{ $improvement->doc_num }}</a>@else{{ $improvement->doc_num }}@endcan<div class="small text-600">{{ __('fixed_assets.statuses.'.$improvement->status) }}</div></td>
+                    <td>@can('fixed_assets.print')<a href="{{ route('admin.fixed-assets.prints.movement', $improvement) }}" target="_blank">{{ $improvement->doc_num }}</a>@else{{ $improvement->doc_num }}@endcan<div class="mt-1"><span class="badge badge-subtle-{{ $improvement->status === 'posted' ? 'success' : 'danger' }}">{{ __('fixed_assets.lifecycle.statuses.'.$improvement->status) }}</span></div></td>
                     <td>
                         @if($improvementLine?->purchaseOrderLine?->purchaseOrder)<a class="badge badge-subtle-secondary" href="{{ route('admin.purchases.purchase-orders.show', $improvementLine->purchaseOrderLine->purchaseOrder->doc_num) }}">{{ $improvementLine->purchaseOrderLine->purchaseOrder->doc_num }}</a>@endif
                         @if($improvementLine?->receiptLine?->receipt)<a class="badge badge-subtle-info" href="{{ route('admin.purchases.goods-receipt-notes.show', $improvementLine->receiptLine->receipt->doc_num) }}">{{ $improvementLine->receiptLine->receipt->doc_num }}</a>@endif
@@ -179,7 +186,7 @@
 
 </div><div class="tab-pane fade @if($activeTab === 'movements') show active @endif" id="asset-movements" role="tabpanel" aria-labelledby="movements-tab">
 @include('modules.fixed-assets.lifecycle.ledger')
-    <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.disposal_history') }}</h6></div><div class="d-md-none alert alert-info rounded-0 border-0 mb-0 py-2 small"><span class="fas fa-arrows-alt-h me-1"></span>{{ __('fixed_assets.product.scroll_table_hint') }}</div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.document') }}</th><th>{{ __('fixed_assets.reports.columns.date') }}</th><th>{{ __('fixed_assets.lifecycle.disposition_type') }}</th><th>{{ __('fixed_assets.reports.columns.net_book_value') }}</th><th>{{ __('fixed_assets.lifecycle.proceeds') }}</th><th>{{ __('fixed_assets.lifecycle.gain_loss') }}</th><th>{{ __('fixed_assets.lifecycle.customer_invoice') }}</th><th>{{ __('fixed_assets.lifecycle.accounting_lineage') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th><th></th></tr></thead><tbody>@forelse($asset->disposals as $disposal)<tr id="disposal-{{ $disposal->doc_num }}"><td>{{ $disposal->doc_num }}</td><td>{{ $dates->formatDate($disposal->disposal_date, '') }}</td><td>{{ __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type) }}</td><td dir="ltr">{{ $numbers->format($disposal->net_book_value) }}</td><td dir="ltr">{{ $numbers->format($disposal->proceeds) }}</td><td dir="ltr">{{ $numbers->format($disposal->gain_amount) }} / {{ $numbers->format($disposal->loss_amount) }}</td><td>{{ $disposal->customerInvoice?->doc_num ?? '—' }}</td><td><small>{{ __('fixed_assets.lifecycle.derecognition') }}: {{ $disposal->journalEntry?->doc_num ?? '—' }}<br>{{ __('fixed_assets.lifecycle.gain_loss_posting') }}: {{ $disposal->gainLossJournalEntry?->doc_num ?? '—' }}@if($disposal->reversalJournalEntry || $disposal->gainLossReversalJournalEntry)<br>{{ __('fixed_assets.lifecycle.reversal_entries') }}: {{ trim(implode(' / ', array_filter([$disposal->reversalJournalEntry?->doc_num, $disposal->gainLossReversalJournalEntry?->doc_num]))) }}@endif</small></td><td>{{ __('fixed_assets.lifecycle.statuses.'.$disposal->status) }}</td><td>@can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.disposal', $disposal) }}">{{ __('common.actions.print') }}</a>@endcan @if(app(\Modules\FixedAssets\Services\FixedAssetLifecycleService::class)->canReverseDisposal($disposal)) @can('fixed_assets.disposal.reverse')<form method="POST" action="{{ route('admin.fixed-assets.disposal.reverse', $disposal) }}" class="mt-2">@csrf<input class="form-control form-control-sm mb-1" name="reason" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}" required><button class="btn btn-falcon-danger btn-sm" type="submit">{{ __('fixed_assets.lifecycle.reverse') }}</button></form>@endcan @endif</td></tr>@empty<tr><td colspan="10" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
+    <div class="card"><div class="card-header"><h6 class="mb-0">{{ __('fixed_assets.lifecycle.disposal_history') }}</h6></div><div class="d-md-none alert alert-info rounded-0 border-0 mb-0 py-2 small"><span class="fas fa-arrows-alt-h me-1"></span>{{ __('fixed_assets.product.scroll_table_hint') }}</div><div class="card-body p-0 table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>{{ __('fixed_assets.reports.columns.document') }}</th><th>{{ __('fixed_assets.reports.columns.date') }}</th><th>{{ __('fixed_assets.lifecycle.disposition_type') }}</th><th>{{ __('fixed_assets.reports.columns.net_book_value') }}</th><th>{{ __('fixed_assets.lifecycle.proceeds') }}</th><th>{{ __('fixed_assets.lifecycle.gain_loss') }}</th><th>{{ __('fixed_assets.lifecycle.customer_invoice') }}</th><th>{{ __('fixed_assets.lifecycle.accounting_lineage') }}</th><th>{{ __('fixed_assets.reports.columns.status') }}</th><th></th></tr></thead><tbody>@forelse($asset->disposals as $disposal)<tr id="disposal-{{ $disposal->doc_num }}" class="{{ $disposal->status === 'reversed' ? 'bg-danger-subtle' : '' }}"><td>{{ $disposal->doc_num }}</td><td>{{ $dates->formatDate($disposal->disposal_date, '') }}</td><td>{{ __('fixed_assets.lifecycle.disposition_types.'.$disposal->disposition_type) }}</td><td dir="ltr">{{ $numbers->format($disposal->net_book_value) }}</td><td dir="ltr">{{ $numbers->format($disposal->proceeds) }}</td><td dir="ltr">{{ $numbers->format($disposal->gain_amount) }} / {{ $numbers->format($disposal->loss_amount) }}</td><td>{{ $disposal->customerInvoice?->doc_num ?? '—' }}</td><td><small>{{ __('fixed_assets.lifecycle.derecognition') }}: {{ $disposal->journalEntry?->doc_num ?? '—' }}<br>{{ __('fixed_assets.lifecycle.gain_loss_posting') }}: {{ $disposal->gainLossJournalEntry?->doc_num ?? '—' }}@if($disposal->reversalJournalEntry || $disposal->gainLossReversalJournalEntry)<br>{{ __('fixed_assets.lifecycle.reversal_entries') }}: {{ trim(implode(' / ', array_filter([$disposal->reversalJournalEntry?->doc_num, $disposal->gainLossReversalJournalEntry?->doc_num]))) }}@endif</small></td><td><span class="badge badge-subtle-{{ $disposal->status === 'posted' ? 'success' : 'danger' }}">{{ __('fixed_assets.lifecycle.statuses.'.$disposal->status) }}</span></td><td>@can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.disposal', $disposal) }}">{{ __('common.actions.print') }}</a>@endcan @if(app(\Modules\FixedAssets\Services\FixedAssetLifecycleService::class)->canReverseDisposal($disposal)) @can('fixed_assets.disposal.reverse')<form method="POST" action="{{ route('admin.fixed-assets.disposal.reverse', $disposal) }}" class="mt-2">@csrf<input class="form-control form-control-sm mb-1" name="reason" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}" required><button class="btn btn-falcon-danger btn-sm" type="submit">{{ __('fixed_assets.lifecycle.reverse') }}</button></form>@endcan @endif</td></tr>@empty<tr><td colspan="10" class="text-center text-600 py-4">{{ __('common.empty_value') }}</td></tr>@endforelse</tbody></table></div></div>
 </div><div class="tab-pane fade @if($activeTab === 'documents') show active @endif" id="asset-documents" role="tabpanel" aria-labelledby="documents-tab">
 @php
     $movementAttachmentTargets = $attachmentTargets->where('type', '!=', 'asset');

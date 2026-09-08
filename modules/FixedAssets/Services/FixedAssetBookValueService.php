@@ -38,7 +38,7 @@ class FixedAssetBookValueService
         $legacy = $asset->hasLegacyRecognition() ? $asset->legacy_recognition : null;
         $hasRecognition = $asset->hasPostedRecognition() && ! $legacy;
         $rate = $this->rate($asset->exchange_rate);
-        $beforeEntry = $through->lt($asset->asset_date);
+        $beforeEntry = $through->lt($this->recognitionDate($asset, $legacy));
         $cost = $hasRecognition || $beforeEntry ? '0.0000' : $this->scale($legacy['purchase_value'] ?? $asset->purchase_value);
         $baseCost = $hasRecognition || $beforeEntry ? '0.0000' : ($asset->base_acquisition_value === null ? bcmul($cost, $rate, 4) : $this->scale($asset->base_acquisition_value));
         if ($recognition) {
@@ -135,6 +135,24 @@ class FixedAssetBookValueService
     private function nonNegative(string $value): string
     {
         return bccomp($value, '0', 4) >= 0 ? $value : '0.0000';
+    }
+
+    /** @param array<string, mixed>|null $legacy */
+    private function recognitionDate(FixedAsset $asset, ?array $legacy): Carbon
+    {
+        if ($legacy === null) {
+            return $asset->asset_date->copy()->startOfDay();
+        }
+
+        return collect([
+            $asset->acquisition_date,
+            $asset->purchase_date,
+            $asset->operation_date,
+            $asset->depreciation_start_date,
+            $asset->previous_depreciation_until_date,
+            data_get($legacy, 'asset_date'),
+        ])->filter()->map(fn (mixed $date): Carbon => Carbon::parse($date)->startOfDay())->sort()->first()
+            ?? $asset->asset_date->copy()->startOfDay();
     }
 
     private function minimum(string $left, string $right): string

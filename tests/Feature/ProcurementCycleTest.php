@@ -54,6 +54,7 @@ test('unapproved requisitions cannot open the request for quotation creation scr
     $fixture = procurementFixture();
     $requisition = procurementManualRequisition($fixture);
     $requisition = app(ProcurementSourcingService::class)->submitRequisition($requisition);
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
 
     $response = app(ProcurementWorkflowController::class)->createRfq($requisition);
 
@@ -259,6 +260,8 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
             'rejected_quantity' => 1, 'disposition' => 'quarantine', 'reason' => 'Contaminated bag.',
         ]],
     ]);
+    expect(InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->count())->toBe(0);
+    $receipt = $receiving->postReceipt($receipt->fresh());
     $receiptMovement = InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->firstOrFail();
     $unvaluedBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
         'branch_store_id' => $fixture['store']->getKey(),
@@ -286,14 +289,21 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
     $invoice->lines()->create([
         'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
         'line_number' => 1, 'product_id' => $fixture['raw']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
-        'purchase_order_line_id' => $orderLine->getKey(), 'receipt_line_id' => $receiptLine->getKey(),
+        'purchase_order_line_id' => $orderLine->getKey(), 'receipt_line_id' => null,
         'quantity' => 5, 'unit_price' => 2, 'discount_type' => 'fixed', 'discount_value' => 1,
         'discount_amount' => 1, 'tax_rate' => 10, 'tax_amount' => 0.9, 'subtotal_amount' => 10,
         'total_before_tax' => 9, 'total_after_tax' => 9.9,
     ]);
     app(PurchaseInvoiceMatchingService::class)->matchForPosting($invoice);
     expect($invoice->fresh()->matching_status)->toBe('matched')
-        ->and($invoice->lines->first()->fresh()->matched_quantity)->toBe('5.00000000');
+        ->and($invoice->lines->first()->fresh()->matched_quantity)->toBe('5.00000000')
+        ->and($invoice->lines->first()->fresh()->receipt_line_id)->toBe($receiptLine->getKey());
+    $invoice->lines->first()->forceFill(['tax_rate' => 0])->save();
+    $invoice->unsetRelation('lines');
+    app(PurchaseInvoiceMatchingService::class)->matchForPosting($invoice);
+    expect($invoice->fresh()->matching_status)->toBe('approved_with_variance');
+    $invoice->lines->first()->forceFill(['tax_rate' => 10])->save();
+    $invoice->unsetRelation('lines');
     $invoice = app(PurchaseInvoiceService::class)->approve($invoice);
     $valuedBalance = app(InventoryReportService::class)->balances($fixture['company']->getKey(), [
         'branch_store_id' => $fixture['store']->getKey(),
@@ -322,9 +332,6 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'discount_amount' => 0.2, 'tax_rate' => 10, 'tax_amount' => 0.18, 'subtotal_amount' => 2,
         'total_before_tax' => 1.8, 'total_after_tax' => 1.98,
     ]);
-    $excessLine->forceFill(['discount_amount' => 0, 'tax_rate' => 0])->save();
-    expect(fn () => app(PurchaseInvoiceMatchingService::class)->matchForPosting($excessInvoice))
-        ->toThrow(DomainException::class, __('Invoice tax differs from the approved purchase order terms.'));
     $excessLine->forceFill(['discount_amount' => 0.2, 'tax_rate' => 10])->save();
     $excessInvoice->unsetRelation('lines');
     expect(fn () => app(PurchaseInvoiceMatchingService::class)->matchForPosting($excessInvoice))
@@ -539,7 +546,9 @@ test('the ten thousand kilogram split award closes supplier B and reconciles qua
             ]],
         ]);
 
-        return [$receipt, $receiptLine, $inspection];
+        $receipt = $receiving->postReceipt($receipt->fresh());
+
+        return [$receipt, $receiptLine->fresh(), $inspection];
     };
 
     [$supplierAReceipt, $supplierAReceiptLine] = $receiveAndInspect($supplierAOrder, 6000, 5900, 100);
@@ -1188,6 +1197,7 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
             'disposition' => 'accepted',
         ]],
     ]);
+    $receipt = $receiving->postReceipt($receipt->fresh());
 
     $receiptLine->refresh();
     expect($receiptLine->provisional_unit_value)->toBe('10.00000000')
@@ -1333,6 +1343,7 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
             'disposition' => 'accepted',
         ]],
     ]);
+    $returnReceipt = $receiving->postReceipt($returnReceipt->fresh());
     $settlement = app(ProcurementSettlementService::class);
     $return = $settlement->createPurchaseReturn([
         'purchase_order_doc_num' => $returnOrder->doc_num,
@@ -1369,6 +1380,9 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
         'document_date' => now()->toDateString(),
         'lines' => [['purchase_order_line_public_id' => $returnOrder->lines->sole()->public_id, 'delivered_quantity' => 2]],
     ]);
+    $receiving->inspect($replacement, ['lines' => [['receipt_line_public_id' => $replacement->lines->sole()->public_id,
+        'accepted_quantity' => 2, 'rejected_quantity' => 0]]]);
+    $replacement = $receiving->postReceipt($replacement->fresh());
     expect($returnOrder->fresh()->fulfillmentStatus())->toBe('fully_received');
     expect(fn () => $settlement->reversePurchaseReturn($return, 'Would exceed the source order'))
         ->toThrow(DomainException::class);
@@ -1738,11 +1752,10 @@ test('goods receipt drafts post once and reverse quantities and grni without tru
     expect($receipt->status)->toBe('draft')->and($receipt->posting_status)->toBe('unposted')
         ->and(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0)
         ->and($line->receivedQuantity())->toBe(0.0);
-    $receipt = $receiving->postReceipt($receipt);
     if ($receipt->qc_status === 'pending_inspection') {
         $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id, 'accepted_quantity' => 4000, 'rejected_quantity' => 0]]]);
     }
-    $receiving->postReceipt($receipt->fresh());
+    $receipt = $receiving->postReceipt($receipt->fresh());
     expect($line->receivedQuantity())->toBe(4000.0)
         ->and((float) $order->fresh()->total_remaining_quantity)->toBe(6000.0)
         ->and(InventoryTransaction::query()->count())->toBe(1)
@@ -1755,6 +1768,7 @@ test('goods receipt drafts post once and reverse quantities and grni without tru
     if ($second->qc_status === 'pending_inspection') {
         $receiving->inspect($second, ['lines' => [['receipt_line_public_id' => $second->lines->first()->public_id, 'accepted_quantity' => 6000, 'rejected_quantity' => 0]]]);
     }
+    $second = $receiving->postReceipt($second->fresh());
     expect($line->receivedQuantity())->toBe(10000.0)->and((float) $order->fresh()->total_remaining_quantity)->toBe(0.0);
     $receiving->reverseReceipt($second->fresh(), 'Incorrect delivery');
     $receiving->reverseReceipt($second->fresh(), 'Repeated reversal');
@@ -1769,6 +1783,7 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     $this->withoutExceptionHandling();
     Storage::fake('public');
     $fixture = procurementFixture();
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111091', 'Acceptance Supplier');
@@ -1776,7 +1791,7 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->getKey()])->save();
     $cashbox = Cashbox::query()->create([
         ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->getKey()),
-        'company_id' => $fixture['company']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
+        'company_id' => $fixture['company']->getKey(), 'branch_id' => $administrativeBranch->getKey(),
         'account_id' => $cashAccount->getKey(), 'name' => 'Acceptance cashbox', 'status' => 'active',
     ]);
     CashboxCurrency::query()->create(['cashbox_id' => $cashbox->getKey(), 'currency_id' => $fixture['currency']->getKey(), 'is_default' => true, 'status' => 'active']);
@@ -1788,6 +1803,7 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     $attachment = procurementDocumentAttachment($fixture['company']);
     $attachments = app(ProcurementAttachmentService::class);
     $request = $sourcing->approveRequisition($sourcing->submitRequisition(procurementManualRequisition($fixture, 10000)));
+    procurementUseBranch($fixture, $administrativeBranch);
     $order = $orders->approve($orders->create([
         'supplier_doc_num' => $fixture['firstSupplier']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
         'branch_store_uuid' => $fixture['store']->public_uuid, 'document_date' => now()->toDateString(), 'exchange_rate' => 1,
@@ -1798,6 +1814,7 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     expect(InventoryTransaction::query()->count())->toBe(0)->and(JournalEntry::query()->count())->toBe(0);
     $orderLine = $order->lines->first();
     expect($attachments->documents($orderLine, ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
+    procurementUseBranch($fixture, $fixture['branch']);
     $receipts = collect();
     foreach ([4000, 6000] as $quantity) {
         $receipt = $receiving->createReceipt($order, ['document_date' => now()->toDateString(),
@@ -1805,18 +1822,18 @@ test('warehouse procurement acceptance completes ten thousand units through rece
                 'attachment_file_doc_nums' => [$attachment->doc_num]]],
         ]);
         expect($attachments->documents($receipt->lines->first(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
-        $receipt = $receiving->postReceipt($receipt);
         if ($receipt->qc_status === 'pending_inspection') {
             $inspection = $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
                 'accepted_quantity' => $quantity, 'rejected_quantity' => 0,
                 'attachment_file_doc_nums' => [$attachment->doc_num]]]]);
             expect($attachments->documents($inspection->lines->first(), ProcurementAttachmentService::LineCollection, $fixture['company']->id))->toHaveCount(1);
         }
-        $receiving->postReceipt($receipt->fresh());
+        $receipt = $receiving->postReceipt($receipt->fresh());
         $receipts->push($receipt->fresh()->load('lines'));
         expect($order->fresh()->fulfillmentStatus())->toBe($quantity === 4000 ? 'partially_received' : 'fully_received')
             ->and((float) $orderLine->quantityProgress()['remaining'])->toBe($quantity === 4000 ? 6000.0 : 0.0);
     }
+    procurementUseBranch($fixture, $administrativeBranch);
     $invoicePayload = [
         'purchase_order_doc_num' => $order->doc_num, 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
         'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1, 'invoice_date' => now()->toDateString(),
@@ -1853,6 +1870,10 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     }
     expect((float) $invoice->fresh()->remaining_amount)->toBe(0.0);
     expect(fn () => $invoices->reverse($invoice, 'Payments must be reversed first'))->toThrow(DomainException::class);
+    procurementUseBranch($fixture, $fixture['branch']);
+    $this->get(route('admin.purchases.purchase-invoices.show', $invoice->doc_num))
+        ->assertOk()
+        ->assertDontSee(route('admin.purchases.purchase-invoices.edit', $invoice->doc_num), false);
     $return = $settlement->createPurchaseReturn([
         'purchase_order_doc_num' => $order->doc_num, 'purchase_invoice_doc_num' => $invoice->doc_num,
         'return_date' => now()->toDateString(), 'reason_code' => 'latent_defect',
@@ -1886,6 +1907,7 @@ test('warehouse procurement acceptance completes ten thousand units through rece
             expect($chain->pluck('doc_num')->all())->toContain($number);
         }
     }
+    procurementUseBranch($fixture, $administrativeBranch);
     $printRoutes = [
         route('admin.purchases.procurement.print', ['purchase-requisition', $request->doc_num]),
         route('admin.purchases.purchase-orders.print', $order->doc_num),
@@ -1928,7 +1950,10 @@ test('warehouse procurement acceptance completes ten thousand units through rece
     foreach ([ProcurementCycleReport::PurchaseRequests, ProcurementCycleReport::RequestedVsOrdered, ProcurementCycleReport::PurchaseReceipts,
         ProcurementCycleReport::ReceivedVsInvoiced, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::PurchasesBySupplier,
         ProcurementCycleReport::PurchasesByProduct, ProcurementCycleReport::PurchasesByCategory, ProcurementCycleReport::PurchasesByWarehouse, ProcurementCycleReport::PriceHistory] as $reportType) {
-        $rows = $reports->rows($reportType, ['branch_id' => $fixture['branch']->getKey()], $fixture['company']->getKey(), $fixture['period']->getKey());
+        $reportBranchId = in_array($reportType, [ProcurementCycleReport::PurchaseRequests, ProcurementCycleReport::RequestedVsOrdered, ProcurementCycleReport::PurchaseReceipts], true)
+            ? $fixture['branch']->getKey()
+            : $administrativeBranch->getKey();
+        $rows = $reports->rows($reportType, ['branch_id' => $reportBranchId], $fixture['company']->getKey(), $fixture['period']->getKey());
         expect($rows)->not->toBeEmpty();
         $this->get(route('admin.purchases.procurement-cycle-report.index', ['report_type' => $reportType]))->assertOk();
         expect($reports->rows($reportType, ['date_from' => now()->addDay()->toDateString()], $fixture['company']->getKey(), $fixture['period']->getKey()))->toBeEmpty();
@@ -1982,8 +2007,9 @@ test('alternate purchase units keep stock lineage and draft edits preserve ident
     expect($draft->updated_at->toDateTimeString())->toBe($updatedAt)->and($draft->lines->first()->public_id)->toBe($lineId)
         ->and($draft->lines->first()->updated_at->toDateTimeString())->toBe($lineUpdatedAt);
     $payload['lines'][0]['delivered_quantity'] = 4;
-    $receipt = $receiving->postReceipt($receiving->updateReceipt($draft, $payload));
+    $receipt = $receiving->updateReceipt($draft, $payload);
     $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $lineId, 'accepted_quantity' => 4, 'rejected_quantity' => 0]]]);
+    $receipt = $receiving->postReceipt($receipt->fresh());
     $receipt = $receipt->fresh()->load('lines');
     $movement = InventoryTransaction::query()->where('source_id', $receipt->getKey())->where('transaction_type', 'purchase_receipt')->sole();
     expect($movement->quantity_in)->toBe('4000.00000000')->and($movement->unit_id)->toBe($fixture['unit']->getKey())
@@ -2035,6 +2061,8 @@ test('supplier invoice preserves receipt precision and rejects duplicate supplie
     $receiptLine = $receipt->lines->sole();
     $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receiptLine->public_id,
         'accepted_quantity' => '0.12345678', 'rejected_quantity' => 0]]]);
+    $receipt = $receiving->postReceipt($receipt->fresh());
+    $receiptLine = $receipt->lines()->where('public_id', $receiptLine->public_id)->firstOrFail();
     $payload = [
         'purchase_order_doc_num' => $order->doc_num, 'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
         'currency_doc_num' => $fixture['currency']->doc_num, 'exchange_rate' => 1,
@@ -2056,6 +2084,7 @@ test('one purchase order combines approved requests and retains every source lin
     $orders = app(PurchaseOrderService::class);
     $requests = collect([10, 20])->map(fn ($quantity) => $sourcing->approveRequisition(
         $sourcing->submitRequisition(procurementManualRequisition($fixture, $quantity))));
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
     foreach (['purchase_orders.create', 'purchases.prices.view', 'purchases.purchase_requisitions.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
@@ -2153,11 +2182,12 @@ test('procurement crosses closed source periods while each child posts in its ow
     $receipts = collect();
     foreach ([[9, 4000, '2026-09-03'], [10, 6000, '2026-10-03']] as [$month, $quantity, $date]) {
         $usePeriod($periods[$month], $date);
-        $receipt = $receiving->postReceipt($receiving->createReceipt($order, ['document_date' => $date,
+        $receipt = $receiving->createReceipt($order, ['document_date' => $date,
             'lines' => [['purchase_order_line_public_id' => $order->lines->first()->public_id, 'delivered_quantity' => $quantity]],
-        ]));
+        ]);
         $receiving->inspect($receipt, ['lines' => [['receipt_line_public_id' => $receipt->lines->first()->public_id,
             'accepted_quantity' => $quantity, 'rejected_quantity' => 0]]]);
+        $receipt = $receiving->postReceipt($receipt->fresh());
         $receipts->push($receipt->fresh()->load('lines'));
         if ($month === 9) {
             $periods[9]->forceFill(['is_closed' => true])->save();

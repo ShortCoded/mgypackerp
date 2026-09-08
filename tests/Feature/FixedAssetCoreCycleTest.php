@@ -295,6 +295,7 @@ test('core monthly usage preview responds with recalculated values before postin
 });
 
 test('core financial fields lock after recognition while a no op does not write or log', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', false);
     coreFixedAssetActor(['fixed_assets.create', 'fixed_assets.activate', 'fixed_assets.edit']);
     $context = coreFixedAssetContext();
     $asset = coreRecognizedAsset($context);
@@ -368,6 +369,7 @@ test('core documents use the shared archive and duplicate attachment is a no op'
 });
 
 test('core a capitalized asset keeps account rename synchronization but rejects account deactivation', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', false);
     coreFixedAssetActor(['fixed_assets.create', 'fixed_assets.activate']);
     $context = coreFixedAssetContext();
     $asset = coreRecognizedAsset($context);

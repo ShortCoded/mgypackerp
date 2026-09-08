@@ -44,6 +44,7 @@ test('draft asset opens the canonical card with the appropriate next recognition
 })->with(['new_asset', 'opening_asset']);
 
 test('capitalized assets allow descriptive edits while disposed cards hide invalid actions', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', false);
     coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.delete', 'fixed_assets.activate', 'fixed_assets.improvement.post', 'fixed_assets.transfer', 'fixed_assets.custody.post', 'fixed_assets.dispose']);
     $context = coreFixedAssetContext();
     $asset = coreRecognizedAsset($context, ['status' => 'draft']);
@@ -75,17 +76,18 @@ test('capitalized assets allow descriptive edits while disposed cards hide inval
 });
 
 test('asset register exposes a labelled actions menu with state appropriate crud actions', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', false);
     coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.delete', 'fixed_assets.activate']);
     $context = coreFixedAssetContext();
     $unrecognized = coreFixedAsset($context, ['status' => 'active']);
     $recognized = coreRecognizedAsset($context, ['status' => 'draft']);
 
     $this->get(route('admin.fixed-assets.assets.index'))->assertOk()
-        ->assertSee(__('common.fields.actions'))
-        ->assertSee('fa-cog', false);
+        ->assertSee(__('common.fields.actions'));
 
     $unrecognizedActions = view('modules.fixed-assets.assets.actions', ['record' => $unrecognized])->render();
     expect($unrecognizedActions)->toContain(__('common.fields.actions'))
+        ->and($unrecognizedActions)->not->toContain('fa-cog')
         ->and($unrecognizedActions)->toContain(route('admin.fixed-assets.assets.edit', $unrecognized))
         ->and($unrecognizedActions)->toContain('data-delete-url="'.route('admin.fixed-assets.assets.destroy', $unrecognized).'"');
 
@@ -93,6 +95,28 @@ test('asset register exposes a labelled actions menu with state appropriate crud
     expect($recognizedActions)->toContain(__('common.fields.actions'))
         ->and($recognizedActions)->toContain(route('admin.fixed-assets.assets.edit', $recognized))
         ->and($recognizedActions)->not->toContain('data-delete-url="'.route('admin.fixed-assets.assets.destroy', $recognized).'"');
+});
+
+test('configured full asset crud exposes the standard actions menu and permits corrections after recognition', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', true);
+    coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.delete', 'fixed_assets.activate']);
+    $context = coreFixedAssetContext();
+    $asset = coreRecognizedAsset($context);
+
+    $this->get(route('admin.fixed-assets.assets.edit', $asset))->assertOk()
+        ->assertDontSee(__('fixed_assets.messages.financial_fields_locked'));
+
+    $actions = view('modules.fixed-assets.assets.actions', ['record' => $asset])->render();
+    expect($actions)->toContain('btn btn-link text-600')
+        ->and($actions)->toContain('fa-ellipsis-h')
+        ->and($actions)->not->toContain('btn-falcon-default')
+        ->and($actions)->toContain(route('admin.fixed-assets.assets.show', $asset))
+        ->and($actions)->toContain(route('admin.fixed-assets.assets.edit', $asset))
+        ->and($actions)->toContain('data-delete-url="'.route('admin.fixed-assets.assets.destroy', $asset).'"');
+
+    $this->deleteJson(route('admin.fixed-assets.assets.destroy', $asset))->assertOk();
+    expect($asset->fresh()?->trashed())->toBeTrue()
+        ->and($asset->account()->withTrashed()->first()?->trashed())->toBeFalse();
 });
 
 test('movement history filters original and reversed documents without losing their journal links', function (): void {

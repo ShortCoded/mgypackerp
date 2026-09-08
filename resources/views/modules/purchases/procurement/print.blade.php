@@ -109,7 +109,7 @@
                         $quantity = $line->requested_quantity ?? $line->ordered_quantity ?? $line->delivered_quantity ?? $line->quantity ?? $line->offered_quantity ?? $line->selected_quantity ?? $line->scheduled_quantity ?? $line->inspected_quantity ?? $line->amount ?? 0;
                         $previouslyReceived = $isReceipt ? \Modules\Inventory\Models\UnpricedInventoryReceiptLine::query()
                             ->when($line->supply_order_line_id, fn ($query) => $query->where('supply_order_line_id', $line->supply_order_line_id), fn ($query) => $query->where('purchase_order_line_id', $line->purchase_order_line_id))
-                            ->where('receipt_id', '<', $record->getKey())->whereHas('receipt', fn ($query) => $query->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed']))->sum('delivered_quantity') : 0;
+                            ->where('receipt_id', '<', $record->getKey())->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))->sum('accepted_quantity') : 0;
                     @endphp
                     <tr>
                         <td>{{ $index + 1 }}</td>

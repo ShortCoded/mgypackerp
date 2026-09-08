@@ -122,12 +122,12 @@ test('supply order drives partial warehouse receipts without duplicate inventory
             'delivered_quantity' => 4000,
         ]],
     ]);
-    $firstReceipt = $receiving->postReceipt($firstReceipt);
     $receiving->inspect($firstReceipt, ['lines' => [[
         'receipt_line_public_id' => $firstReceipt->lines->sole()->public_id,
         'accepted_quantity' => 4000,
         'rejected_quantity' => 0,
     ]]]);
+    $firstReceipt = $receiving->postReceipt($firstReceipt->fresh());
 
     expect($supplyOrder->fresh()->status)->toBe(SupplyOrder::StatusPartiallyReceived)
         ->and($supplyOrder->fresh()->lines->sole()->remainingQuantity())->toBe(6000.0)
@@ -143,12 +143,12 @@ test('supply order drives partial warehouse receipts without duplicate inventory
             'delivered_quantity' => 6000,
         ]],
     ]);
-    $secondReceipt = $receiving->postReceipt($secondReceipt);
     $receiving->inspect($secondReceipt, ['lines' => [[
         'receipt_line_public_id' => $secondReceipt->lines->sole()->public_id,
         'accepted_quantity' => 6000,
         'rejected_quantity' => 0,
     ]]]);
+    $secondReceipt = $receiving->postReceipt($secondReceipt->fresh());
 
     expect($supplyOrder->fresh()->status)->toBe(SupplyOrder::StatusFullyReceived)
         ->and($supplyOrder->fresh()->lines->sole()->remainingQuantity())->toBe(0.0)

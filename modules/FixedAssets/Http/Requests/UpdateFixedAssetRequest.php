@@ -51,6 +51,6 @@ class UpdateFixedAssetRequest extends StoreFixedAssetRequest
 
     private function isLockedMasterUpdate(): bool
     {
-        return (bool) $this->currentFixedAsset()?->isMasterLocked();
+        return (bool) $this->currentFixedAsset()?->protectsMasterHistory();
     }
 }

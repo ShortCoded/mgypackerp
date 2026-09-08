@@ -22,6 +22,10 @@ return [
         'last' => '<span class="fas fa-angle-double-right"></span>',
     ],
     'aria' => [
+        'orderable' => ': activate to sort column',
+        'orderableReverse' => ': activate to reverse column sorting',
+        'orderableRemove' => ': activate to clear column sorting',
+        'paginate' => ['first' => 'First', 'previous' => 'Previous', 'next' => 'Next', 'last' => 'Last'],
         'sortAscending' => ': activate to sort column ascending',
         'sortDescending' => ': activate to sort column descending',
     ],

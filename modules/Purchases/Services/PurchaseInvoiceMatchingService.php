@@ -17,7 +17,7 @@ class PurchaseInvoiceMatchingService
     public function remainingForReceipt(UnpricedInventoryReceiptLine $line, ?int $exceptInvoiceId = null): float
     {
         $line->loadMissing(['receipt', 'product']);
-        if (! $line->receipt?->approved || in_array($line->receipt->status, ['cancelled', 'reversed'], true)) {
+        if (! $line->receipt?->approved || $line->receipt->posting_status !== 'posted' || in_array($line->receipt->status, ['cancelled', 'reversed'], true)) {
             return 0.0;
         }
         $billed = (float) PurchaseInvoiceLine::query()->where('receipt_line_id', $line->getKey())
@@ -55,16 +55,29 @@ class PurchaseInvoiceMatchingService
         $variances = [];
         foreach ($invoice->lines as $invoiceLine) {
             $this->matchLine($invoiceLine, $order);
+            $invoiceLine->refresh()->load(['purchaseOrderLine', 'receiptLine']);
             $source = $invoiceLine->purchaseOrderLine;
-            $variances[] = ['line' => $invoiceLine->public_id, 'order_line' => $source->public_id,
-                'quantity_variance' => number_format(max(0, (float) $invoiceLine->quantity - ($invoiceLine->receiptLine ? $this->acceptedQuantity($invoiceLine->receiptLine) : (float) $source->ordered_quantity)), 8, '.', ''),
-                'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 4)];
+            $baselineQuantity = $invoiceLine->receiptLine
+                ? $this->acceptedQuantity($invoiceLine->receiptLine)
+                : (float) $source->ordered_quantity;
+            $variances[] = [
+                'line' => $invoiceLine->public_id,
+                'order_line' => $source->public_id,
+                'ordered_quantity' => number_format((float) $source->ordered_quantity, 8, '.', ''),
+                'received_quantity' => number_format((float) $source->receivedQuantity(), 8, '.', ''),
+                'quantity_variance' => number_format((float) $invoiceLine->quantity - $baselineQuantity, 8, '.', ''),
+                'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 4),
+                'tax_rate_variance' => bcsub((string) $invoiceLine->tax_rate, (string) $source->tax_rate, 4),
+            ];
         }
 
         $freightMatch = $this->matchFreight($invoice, $order);
 
+        $hasVariance = collect($variances)->contains(fn (array $variance): bool => abs((float) $variance['quantity_variance']) > 0.00000001
+            || abs((float) $variance['unit_price_variance']) > 0.0001
+            || abs((float) $variance['tax_rate_variance']) > 0.0001);
         $invoice->forceFill([
-            'matching_status' => 'matched',
+            'matching_status' => $hasVariance ? 'approved_with_variance' : 'matched',
             'matching_notes' => json_encode([...$freightMatch, 'line_variances' => $variances], JSON_THROW_ON_ERROR),
         ])->save();
         $this->audit->record($invoice, 'purchase_invoice.matched', [
@@ -114,10 +127,6 @@ class PurchaseInvoiceMatchingService
             throw new DomainException(__('Every invoice line must match its purchase order line and unit.'));
         }
 
-        if (abs((float) $invoiceLine->tax_rate - (float) $orderLine->tax_rate) > 0.0001) {
-            throw new DomainException(__('Invoice tax differs from the approved purchase order terms.'));
-        }
-
         $invoicedForOrderLine = (float) PurchaseInvoiceLine::query()
             ->where('purchase_order_line_id', $orderLine->getKey())
             ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']))
@@ -126,12 +135,11 @@ class PurchaseInvoiceMatchingService
         if ($orderLine->product?->isService()) {
             $eligibleQuantity = (float) $orderLine->ordered_quantity;
         } else {
-            $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()
-                ->where('purchase_order_line_id', $orderLine->getKey())
-                ->find($invoiceLine->receipt_line_id);
+            $receiptLine = $this->resolveReceiptLine($invoiceLine, $orderLine);
             if (! $receiptLine instanceof UnpricedInventoryReceiptLine
                 || (int) $receiptLine->product_id !== (int) $invoiceLine->product_id
                 || ! $receiptLine->receipt?->approved
+                || $receiptLine->receipt?->posting_status !== 'posted'
                 || in_array($receiptLine->receipt?->status, ['cancelled', 'reversed'], true)) {
                 throw new DomainException(__('A stock invoice line requires an accepted goods receipt line.'));
             }
@@ -157,6 +165,36 @@ class PurchaseInvoiceMatchingService
         }
 
         $invoiceLine->forceFill(['matched_quantity' => $invoiceLine->quantity, 'updated_by' => auth()->id()])->save();
+    }
+
+    private function resolveReceiptLine(PurchaseInvoiceLine $invoiceLine, PurchaseOrderLine $orderLine): ?UnpricedInventoryReceiptLine
+    {
+        if ($invoiceLine->receipt_line_id !== null) {
+            return UnpricedInventoryReceiptLine::query()->lockForUpdate()
+                ->where('purchase_order_line_id', $orderLine->getKey())
+                ->find($invoiceLine->receipt_line_id);
+        }
+
+        $requiredQuantity = (float) $invoiceLine->quantity;
+        $receiptLine = UnpricedInventoryReceiptLine::query()
+            ->where('purchase_order_line_id', $orderLine->getKey())
+            ->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))
+            ->with(['receipt', 'product'])
+            ->orderBy('id')
+            ->get()
+            ->first(fn (UnpricedInventoryReceiptLine $line): bool => $this->remainingForReceipt($line, $invoiceLine->purchase_invoice_id) + 0.00000001 >= $requiredQuantity);
+
+        if (! $receiptLine instanceof UnpricedInventoryReceiptLine) {
+            throw new DomainException(__('purchase_invoices.messages.receipt_capacity_required'));
+        }
+
+        $invoiceLine->forceFill([
+            'receipt_line_id' => $receiptLine->getKey(),
+            'updated_by' => auth()->id(),
+        ])->save();
+        $invoiceLine->setRelation('receiptLine', $receiptLine);
+
+        return $receiptLine;
     }
 
     private function acceptedQuantity(UnpricedInventoryReceiptLine $line, mixed $product = null): float

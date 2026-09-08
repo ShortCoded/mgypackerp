@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ArchiveFileService;
@@ -53,7 +54,14 @@ test('depreciation missing period provides a usable action and informational exc
     $preview = app(FixedAssetDepreciationService::class)->preview($data);
     $row = collect($preview['excluded'])->firstWhere('asset.id', $asset->id);
     expect($row['actionable'])->toBeTrue()->and($row['next_date'])->toBe($context['period']->from_date->copy()->endOfMonth()->toDateString());
-    $this->post(route('admin.fixed-assets.depreciation.preview'), $data)->assertOk()->assertSee(__('fixed_assets.usability.open_period'))->assertSee('<details class="card mb-3" >', false)->assertSee('data-confirm-title="'.__('fixed_assets.lifecycle.confirm_depreciation_title').'"', false)->assertDontSee('<td class="text-danger">', false);
+    $this->post(route('admin.fixed-assets.depreciation.preview'), $data)->assertOk()
+        ->assertSee(__('fixed_assets.usability.run_required_month', ['period' => $context['period']->from_date->locale(app()->getLocale())->translatedFormat('F Y')]))
+        ->assertSee('card mb-3 border-warning', false)
+        ->assertSee('card mb-3 border-danger', false)
+        ->assertSee('card-header bg-warning-subtle text-warning', false)
+        ->assertSee('card-header bg-danger-subtle text-danger', false)
+        ->assertSee('<td class="text-danger">', false)
+        ->assertSee('data-confirm-title="'.__('fixed_assets.lifecycle.confirm_depreciation_title').'"', false);
     expect(app(FixedAssetDepreciationService::class)->readiness($asset->fresh()))->toBe(__('fixed_assets.usability.ready'));
     corePostMonth($context, $asset);
     $this->get(route('admin.fixed-assets.assets.show', $asset))->assertOk()->assertSee(__('fixed_assets.depreciation.success'))->assertDontSee('fixed_assets.depreciation.success');
@@ -62,6 +70,21 @@ test('depreciation missing period provides a usable action and informational exc
 test('opening a depreciation preview URL directly returns to the run screen', function (): void {
     $this->get('/admin/fixed-assets/depreciation/preview')
         ->assertRedirect(route('admin.fixed-assets.depreciation.index'));
+});
+
+test('depreciation screen defaults to the current month end inside the selected financial period', function (): void {
+    $context = coreFixedAssetContext();
+    $today = $context['period']->from_date->copy()->addMonths(8)->addDays(6);
+    Carbon::setTestNow($today);
+
+    try {
+        $this->get(route('admin.fixed-assets.depreciation.index'))
+            ->assertOk()
+            ->assertSee('name="posting_date" value="'.$today->copy()->endOfMonth()->min($context['period']->to_date)->format('d/m/Y').'"', false)
+            ->assertSee(__('fixed_assets.usability.depreciation_month_end'));
+    } finally {
+        Carbon::setTestNow();
+    }
 });
 
 test('missing depreciation action opens the financial period that covers the required month', function (): void {
@@ -112,6 +135,11 @@ test('asset movements render with bootstrap pagination and a responsive mobile h
     $this->get(route('admin.fixed-assets.movements.index'))
         ->assertOk()
         ->assertSee(__('fixed_assets.product.movements_help'))
+        ->assertSee('window.fixedAssetsMessages', false)
+        ->assertSee('select2Search', false)
+        ->assertSee(json_encode(__('fixed_assets.js.select2Search')), false)
+        ->assertSee('data-placeholder="'.__('fixed_assets.placeholders.asset').'"', false)
+        ->assertSee('data-placeholder="'.__('fixed_assets.placeholders.branch').'"', false)
         ->assertSee(__('fixed_assets.product.pagination_summary', ['from' => 1, 'to' => 25, 'total' => 26]))
         ->assertSee('d-none d-lg-block', false)
         ->assertSee('<article class="p-3 border-bottom', false)
@@ -120,6 +148,19 @@ test('asset movements render with bootstrap pagination and a responsive mobile h
         ->assertDontSee('pagination.previous')
         ->assertDontSee('pagination.next')
         ->assertDontSee('<svg', false);
+});
+
+test('fixed asset select2 controls render localized placeholders in English as well', function (): void {
+    coreFixedAssetContext();
+    auth()->user()->forceFill(['locale' => 'en'])->save();
+    app()->setLocale('en');
+
+    $this->withSession(['locale' => 'en'])->get(route('admin.fixed-assets.movements.index'))
+        ->assertOk()
+        ->assertSee('select2Search', false)
+        ->assertSee(json_encode('Search'), false)
+        ->assertSee('data-placeholder="Select Asset"', false)
+        ->assertSee('data-placeholder="Select Branch"', false);
 });
 
 test('asset card keeps compact responsive attachment zones in the context of every financial document', function (): void {
@@ -250,6 +291,39 @@ test('trashed assets remain restorable without being selectable for bulk deletio
 
     expect($response->json('data.0.checkbox'))->toBe('')
         ->and($response->json('data.0.actions'))->toContain(__('common.actions.restore'));
+});
+
+test('asset register status badges use the domain state colors', function (): void {
+    $context = coreFixedAssetContext();
+    $assets = collect([
+        ['draft', 'warning'],
+        ['active', 'success'],
+        ['suspended', 'warning'],
+        ['fully_depreciated', 'info'],
+        ['disposed', 'danger'],
+    ])->mapWithKeys(function (array $state) use ($context): array {
+        $asset = coreFixedAsset($context, ['status' => $state[0], 'asset_name' => 'Tone '.$state[0]]);
+
+        return [$asset->doc_num => $state[1]];
+    });
+
+    $response = $this->getJson(route('admin.fixed-assets.assets.data', [
+        'draw' => 1,
+        'columns' => [
+            ['data' => 'checkbox', 'name' => 'checkbox', 'searchable' => 'false', 'orderable' => 'false', 'search' => ['value' => null, 'regex' => 'false']],
+            ['data' => 'doc_num', 'name' => 'fixed_assets.doc_number', 'searchable' => 'true', 'orderable' => 'true', 'search' => ['value' => null, 'regex' => 'false']],
+        ],
+        'order' => [['column' => 1, 'dir' => 'desc']],
+        'start' => 0,
+        'length' => 20,
+        'search' => ['value' => '', 'regex' => 'false'],
+    ]))->assertOk();
+
+    foreach ($assets as $docNum => $tone) {
+        $row = collect($response->json('data'))->first(fn (array $record): bool => str_contains($record['doc_num'], $docNum));
+        expect($row)->not->toBeNull()
+            ->and($row['status'])->toContain('badge-subtle-'.$tone);
+    }
 });
 
 test('fixed asset Arabic and English translation contracts stay aligned', function (): void {

@@ -214,6 +214,7 @@ function assertInlineFixedAssetPdf(TestResponse $response, ?string $filename = n
 }
 
 test('opening assets establish controlled book values and non-depreciable assets never enter a run', function (): void {
+    config()->set('erp_features.fixed_assets.allow_full_master_crud', false);
     lifecycleFixedAssetActor(['fixed_assets.create', 'fixed_assets.depreciation.preview', 'fixed_assets.activate', 'fixed_assets.delete']);
     $context = lifecycleFixedAssetContext();
     $throughDate = $context['period']->from_date->copy()->addDays(8)->toDateString();

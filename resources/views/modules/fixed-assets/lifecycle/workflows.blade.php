@@ -4,7 +4,7 @@
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $movementTone = static fn (string $type): string => match (true) {
-        str_contains($type, 'reversal') => 'warning',
+        str_contains($type, 'reversal') => 'danger',
         $type === 'disposal' => 'danger',
         $type === 'depreciation' => 'primary',
         $type === 'addition' => 'success',
@@ -32,7 +32,7 @@
             <form method="GET" class="row g-3 align-items-end" autocomplete="off">
                 <div class="col-12 col-md-6 col-xl-4">
                     <label class="form-label" for="movement-asset">{{ __('fixed_assets.reports.columns.asset') }}</label>
-                    <select id="movement-asset" class="form-select js-select2-ajax" name="asset_doc_num" data-url="{{ route('admin.fixed-assets.select2.assets') }}" data-allow-clear="true">
+                    <select id="movement-asset" class="form-select js-select2-ajax" name="asset_doc_num" data-url="{{ route('admin.fixed-assets.select2.assets') }}" data-placeholder="{{ __('fixed_assets.placeholders.asset') }}" data-allow-clear="true">
                         @if($filters['asset_doc_num'] ?? null)<option selected value="{{ $filters['asset_doc_num'] }}">{{ $filters['asset_doc_num'] }}</option>@endif
                     </select>
                 </div>
@@ -51,7 +51,7 @@
                 @endforeach
                 <div class="col-12 col-sm-6 col-xl-2">
                     <label class="form-label" for="movement-branch">{{ __('fixed_assets.attributes.branch') }}</label>
-                    <select id="movement-branch" class="form-select js-select2-ajax" name="branch_doc_num" data-url="{{ route('admin.fixed-assets.select2.branches') }}" data-allow-clear="true">
+                    <select id="movement-branch" class="form-select js-select2-ajax" name="branch_doc_num" data-url="{{ route('admin.fixed-assets.select2.branches') }}" data-placeholder="{{ __('fixed_assets.placeholders.branch') }}" data-allow-clear="true">
                         @if($filters['branch_doc_num'] ?? null)<option selected value="{{ $filters['branch_doc_num'] }}">{{ $filters['branch_doc_num'] }}</option>@endif
                     </select>
                 </div>
@@ -98,7 +98,7 @@
                     </thead>
                     <tbody>
                         @foreach($rows as $row)
-                            <tr class="{{ $row['_reversed'] ? 'bg-warning-subtle' : '' }}">
+                            <tr class="{{ $row['_reversed'] ? 'bg-danger-subtle' : '' }}">
                                 <td class="text-nowrap">
                                     <div>{{ $dates->formatDate($row['date'], '') }}</div>
                                     <a class="fw-semibold" href="{{ $row['_url'] }}">{{ $row['document'] }}</a>
@@ -122,7 +122,7 @@
 
             <div class="d-lg-none">
                 @foreach($rows as $row)
-                    <article class="p-3 border-bottom {{ $row['_reversed'] ? 'bg-warning-subtle' : '' }}">
+                    <article class="p-3 border-bottom {{ $row['_reversed'] ? 'bg-danger-subtle' : '' }}">
                         <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
                             <div>
                                 <a class="fw-semibold" href="{{ $row['_url'] }}">{{ $row['document'] }}</a>
@@ -152,6 +152,7 @@
 @endsection
 
 @push('scripts')
+    <script>window.fixedAssetsMessages = @json(__('fixed_assets.js'));</script>
     <script src="{{ asset('vendors/select2/select2.min.js') }}"></script>
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/FixedAssets/fixed-assets.js') }}"></script>
 @endpush

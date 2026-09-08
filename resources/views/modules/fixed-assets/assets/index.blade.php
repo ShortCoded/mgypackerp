@@ -85,7 +85,8 @@
             <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$field) }}</label><select class="form-select" name="{{ $field }}" id="asset-filter-{{ $field }}"><option value=""></option>@foreach($choices as $choice)<option value="{{ $choice }}">{{ __($field === 'status' ? 'fixed_assets.statuses.'.$choice : 'fixed_assets.entry_types.'.$choice) }}</option>@endforeach</select></div>
             @endforeach
             @foreach(['asset_group_account_doc_num' => ['asset_group_account', 'asset-categories'], 'branch_doc_num' => ['branch', 'branches'], 'cost_center_doc_num' => ['cost_center', 'cost-centers']] as $field => [$label, $endpoint])
-            <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$label) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" id="asset-filter-{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.'.$endpoint) }}" data-allow-clear="true"></select></div>
+            @php($placeholder = $label === 'asset_group_account' ? 'asset_category' : $label)
+            <div class="col-12 col-sm-6 col-lg-2"><label class="form-label" for="asset-filter-{{ $field }}">{{ __('fixed_assets.attributes.'.$label) }}</label><select class="form-select js-select2-ajax" name="{{ $field }}" id="asset-filter-{{ $field }}" data-url="{{ route('admin.fixed-assets.select2.'.$endpoint) }}" data-placeholder="{{ __('fixed_assets.placeholders.'.$placeholder) }}" data-allow-clear="true"></select></div>
             @endforeach
             <div class="col-12 col-sm-auto d-grid d-sm-block"><button type="reset" class="btn btn-falcon-default">{{ __('common.actions.reset') }}</button></div>
         </div>
@@ -152,7 +153,7 @@
                                         <th class="text-900 sort pe-1 align-middle white-space-nowrap {{ $index === 0 ? 'all no-colvis dt-code' : 'dt-text dt-ellipsis' }}">{{ in_array($column, $auditColumns, true) ? __("common.fields.{$column}") : __(match ($column) { 'purchase_value' => 'fixed_assets.reports.columns.cost', 'previous_depreciation' => 'fixed_assets.reports.columns.accumulated_depreciation', 'net_value' => 'fixed_assets.reports.columns.net_book_value', default => "fixed_assets.columns.{$column}" }) }}</th>
                                     @endforeach
                                     <th class="text-900 no-sort pe-1 align-middle text-center white-space-nowrap data-table-row-action all no-colvis dt-actions">
-                                        <span class="fas fa-cog me-1" aria-hidden="true"></span>{{ __('common.fields.actions') }}
+                                        {{ __('common.fields.actions') }}
                                     </th>
                                 </tr>
                             </thead>

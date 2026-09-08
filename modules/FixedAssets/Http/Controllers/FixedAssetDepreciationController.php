@@ -42,7 +42,7 @@ class FixedAssetDepreciationController extends Controller
             'preview' => null,
             'selectedAssets' => $this->selectedAssets(),
             'financialPeriod' => $period,
-            'postingDate' => app(DateFormatService::class)->formatDate(app(DateFormatService::class)->normalizeForStorage(request('posting_date')) ?: now()->endOfMonth(), ''),
+            'postingDate' => app(DateFormatService::class)->normalizeForStorage(request('posting_date')) ?: $this->defaultPostingDate($period)->toDateString(),
             'recentRuns' => $this->recentRuns($context['company_id'] ? (int) $context['company_id'] : null),
             'requiredPeriods' => [],
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.fixed-assets.depreciation.index'),
@@ -83,7 +83,7 @@ class FixedAssetDepreciationController extends Controller
 
     /**
      * @param  array<string, mixed>  $preview
-     * @return array<string, array{doc_num: string, label: string, is_closed: bool}>
+     * @return array<string, array{doc_num: string, label: string, month: string, is_closed: bool}>
      */
     private function requiredPeriods(array $preview): array
     {
@@ -101,7 +101,8 @@ class FixedAssetDepreciationController extends Controller
         $periods = app(OperatingScopeAccessService::class)
             ->allowedFinancialPeriodQuery($user)
             ->where('financial_periods.company_id', (int) $preview['financialPeriod']->company_id)
-            ->get();
+            ->get()
+            ->sortBy(fn (FinancialPeriod $period): int => $period->from_date->diffInDays($period->to_date));
 
         return $dates->mapWithKeys(function (string $date) use ($periods): array {
             $requiredDate = Carbon::parse($date);
@@ -114,9 +115,26 @@ class FixedAssetDepreciationController extends Controller
             return [$date => [
                 'doc_num' => $period->doc_num,
                 'label' => $period->doc_num.' / '.$period->name,
+                'month' => $requiredDate->locale(app()->getLocale())->translatedFormat('F Y'),
                 'is_closed' => (bool) $period->is_closed,
             ]];
         })->all();
+    }
+
+    private function defaultPostingDate(?FinancialPeriod $period): Carbon
+    {
+        if (! $period instanceof FinancialPeriod) {
+            return now()->endOfMonth();
+        }
+
+        $cursor = now()->startOfDay();
+        if ($cursor->lt($period->from_date)) {
+            $cursor = $period->from_date->copy();
+        } elseif ($cursor->gt($period->to_date)) {
+            return $period->to_date->copy();
+        }
+
+        return $cursor->endOfMonth()->min($period->to_date->copy());
     }
 
     private function selectedAssets(): Collection

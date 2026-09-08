@@ -3,6 +3,8 @@
 return [
     'ui' => [
         'inventory_context_required' => 'طلبات الشراء متاحة من سياق مصنع أو مخزن فقط.',
+        'administrative_context_required' => 'هذا الإجراء في المشتريات متاح من فرع إداري فقط.',
+        'request_origin' => 'جهة الطلب والمخزن',
         'employee_unavailable' => 'الموظف المحدد غير متاح في الشركة الحالية.',
         'requester_employee' => 'مقدم الطلب',
         'order_selected' => 'إنشاء أمر شراء من المحدد',
@@ -14,6 +16,7 @@ return [
         'enter_rate' => 'أدخل سعر الصرف المعتمد؛ لا يوجد سعر سابق لهذه العملة.',
         'load_lines' => 'تحميل البنود',
         'load_received_lines' => 'تحميل البنود المستلمة',
+        'finalize_quality_inspection' => 'اعتماد نتيجة فحص الجودة',
         'statuses' => [
             'draft' => 'مسودة',
             'pending_approval' => 'مرسل للاعتماد',
@@ -51,6 +54,12 @@ return [
     ],
     'messages' => [
         'purchase_product_type_invalid' => 'لا يمكن اختيار منتج تام أو خدمة ضمن بنود المشتريات.',
+        'purchase_requisition_context_invalid' => 'يتطلب أمر الشراء بنود طلب شراء معتمدة صادرة من مصنع أو مخزن داخل نفس الشركة ومخزن الاستلام.',
+        'quality_before_receipt_posting' => 'اعتمد نتيجة فحص الجودة الوارد قبل ترحيل إذن الاستلام للمخزون.',
+        'accepted_exceeds_po_remaining' => 'الكمية المقبولة تتجاوز الكمية المتبقية في أمر الشراء.',
+        'accepted_exceeds_supply_remaining' => 'الكمية المقبولة تتجاوز الكمية المتبقية في أمر التوريد.',
+        'accepted_exceeds_schedule_remaining' => 'الكمية المقبولة تتجاوز الكمية المتبقية في جدول التوريد.',
+        'purchase_order_outside_receiving_context' => 'أمر الشراء خارج نطاق فرع الاستلام النشط.',
     ],
     'reports' => [
         'types' => [
