@@ -45,38 +45,38 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-date-from">{{ __('reports.from_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="activity-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="activity-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-date-to">{{ __('reports.to_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="activity-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="activity-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-causer">{{ __('activity_logs.filters.causer') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-causer" name="causer" data-filter-label="{{ __('activity_logs.filters.causer') }}" data-url="{{ route('admin.activity-logs.filter-options.users') }}" data-placeholder="{{ __('activity_logs.placeholders.select_user') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-causer" name="causer" data-filter-label="{{ __('activity_logs.filters.causer') }}" data-url="{{ route('admin.activity-logs.filter-options.users') }}" data-placeholder="{{ __('activity_logs.placeholders.select_user') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-area">{{ __('activity_logs.filters.area') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-area" name="area" data-filter-label="{{ __('activity_logs.filters.area') }}" data-url="{{ route('admin.activity-logs.filter-options.areas') }}" data-placeholder="{{ __('activity_logs.placeholders.select_area') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-area" name="area" data-filter-label="{{ __('activity_logs.filters.area') }}" data-url="{{ route('admin.activity-logs.filter-options.areas') }}" data-placeholder="{{ __('activity_logs.placeholders.select_area') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-action">{{ __('activity_logs.filters.action') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-action" name="action" data-filter-label="{{ __('activity_logs.filters.action') }}" data-url="{{ route('admin.activity-logs.filter-options.actions') }}" data-placeholder="{{ __('activity_logs.placeholders.select_activity') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-action" name="action" data-filter-label="{{ __('activity_logs.filters.action') }}" data-url="{{ route('admin.activity-logs.filter-options.actions') }}" data-placeholder="{{ __('activity_logs.placeholders.select_activity') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="activity-status">{{ __('activity_logs.filters.status') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-status" name="status" data-filter-label="{{ __('activity_logs.filters.status') }}" data-url="{{ route('admin.activity-logs.filter-options.statuses') }}" data-placeholder="{{ __('activity_logs.placeholders.select_result') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="activity-status" name="status" data-filter-label="{{ __('activity_logs.filters.status') }}" data-url="{{ route('admin.activity-logs.filter-options.statuses') }}" data-placeholder="{{ __('activity_logs.placeholders.select_result') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
         </x-admin.report.filter-panel>
 

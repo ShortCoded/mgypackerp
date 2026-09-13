@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureErpFeatureEnabled;
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\Http\Controllers\ActivityLogReportController;
 use Modules\Auth\Http\Controllers\AuthenticatedSessionController;
@@ -238,39 +239,42 @@ Route::middleware('auth')
             ->middleware('can:users.delete')
             ->name('users.destroy');
 
-        Route::get('/screen-data-visibility-rules', [ScreenDataVisibilityRuleController::class, 'index'])
-            ->middleware('can:screen_data_visibility_rules.view')
-            ->name('screen-data-visibility-rules.index');
-        Route::get('/screen-data-visibility-rules/data', [ScreenDataVisibilityRuleController::class, 'data'])
-            ->middleware('can:screen_data_visibility_rules.view')
-            ->name('screen-data-visibility-rules.data');
-        Route::get('/screen-data-visibility-rules/create', [ScreenDataVisibilityRuleController::class, 'create'])
-            ->middleware('can:screen_data_visibility_rules.create')
-            ->name('screen-data-visibility-rules.create');
-        Route::post('/screen-data-visibility-rules', [ScreenDataVisibilityRuleController::class, 'store'])
-            ->name('screen-data-visibility-rules.store');
-        Route::delete('/screen-data-visibility-rules/bulk-delete', [ScreenDataVisibilityRuleController::class, 'bulkDelete'])
-            ->middleware('can:screen_data_visibility_rules.delete')
-            ->name('screen-data-visibility-rules.bulk-delete');
-        Route::patch('/screen-data-visibility-rules/{screenDataVisibilityRule}/restore', [ScreenDataVisibilityRuleController::class, 'restore'])
-            ->middleware('can:screen_data_visibility_rules.restore')
-            ->name('screen-data-visibility-rules.restore');
-        Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}/clone', [ScreenDataVisibilityRuleController::class, 'clone'])
-            ->middleware('can:screen_data_visibility_rules.clone')
-            ->name('screen-data-visibility-rules.clone');
-        Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'show'])
-            ->withTrashed()
-            ->middleware('can:screen_data_visibility_rules.view')
-            ->name('screen-data-visibility-rules.show');
-        Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}/edit', [ScreenDataVisibilityRuleController::class, 'edit'])
-            ->middleware('can:screen_data_visibility_rules.edit')
-            ->name('screen-data-visibility-rules.edit');
-        Route::put('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'update'])
-            ->middleware('can:screen_data_visibility_rules.edit')
-            ->name('screen-data-visibility-rules.update');
-        Route::delete('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'destroy'])
-            ->middleware('can:screen_data_visibility_rules.delete')
-            ->name('screen-data-visibility-rules.destroy');
+        Route::middleware(EnsureErpFeatureEnabled::class.':screen_data_visibility_rules.enabled')
+            ->group(function (): void {
+                Route::get('/screen-data-visibility-rules', [ScreenDataVisibilityRuleController::class, 'index'])
+                    ->middleware('can:screen_data_visibility_rules.view')
+                    ->name('screen-data-visibility-rules.index');
+                Route::get('/screen-data-visibility-rules/data', [ScreenDataVisibilityRuleController::class, 'data'])
+                    ->middleware('can:screen_data_visibility_rules.view')
+                    ->name('screen-data-visibility-rules.data');
+                Route::get('/screen-data-visibility-rules/create', [ScreenDataVisibilityRuleController::class, 'create'])
+                    ->middleware('can:screen_data_visibility_rules.create')
+                    ->name('screen-data-visibility-rules.create');
+                Route::post('/screen-data-visibility-rules', [ScreenDataVisibilityRuleController::class, 'store'])
+                    ->name('screen-data-visibility-rules.store');
+                Route::delete('/screen-data-visibility-rules/bulk-delete', [ScreenDataVisibilityRuleController::class, 'bulkDelete'])
+                    ->middleware('can:screen_data_visibility_rules.delete')
+                    ->name('screen-data-visibility-rules.bulk-delete');
+                Route::patch('/screen-data-visibility-rules/{screenDataVisibilityRule}/restore', [ScreenDataVisibilityRuleController::class, 'restore'])
+                    ->middleware('can:screen_data_visibility_rules.restore')
+                    ->name('screen-data-visibility-rules.restore');
+                Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}/clone', [ScreenDataVisibilityRuleController::class, 'clone'])
+                    ->middleware('can:screen_data_visibility_rules.clone')
+                    ->name('screen-data-visibility-rules.clone');
+                Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'show'])
+                    ->withTrashed()
+                    ->middleware('can:screen_data_visibility_rules.view')
+                    ->name('screen-data-visibility-rules.show');
+                Route::get('/screen-data-visibility-rules/{screenDataVisibilityRule}/edit', [ScreenDataVisibilityRuleController::class, 'edit'])
+                    ->middleware('can:screen_data_visibility_rules.edit')
+                    ->name('screen-data-visibility-rules.edit');
+                Route::put('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'update'])
+                    ->middleware('can:screen_data_visibility_rules.edit')
+                    ->name('screen-data-visibility-rules.update');
+                Route::delete('/screen-data-visibility-rules/{screenDataVisibilityRule}', [ScreenDataVisibilityRuleController::class, 'destroy'])
+                    ->middleware('can:screen_data_visibility_rules.delete')
+                    ->name('screen-data-visibility-rules.destroy');
+            });
 
         Route::get('/roles', [RoleController::class, 'index'])
             ->middleware('can:roles.view')

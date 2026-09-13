@@ -693,6 +693,51 @@ html[dir="rtl"] .erp-datatable.erp-datatable-sticky-columns .dt-actions {
   white-space: nowrap;
 }
 
+.erp-pwa-navigation-item {
+  padding-inline-start: .375rem;
+}
+
+.erp-pwa-navigation-item[hidden] {
+  display: none !important;
+}
+
+.erp-pwa-navigation {
+  align-items: center;
+  direction: ltr;
+  display: inline-flex;
+  gap: .125rem;
+}
+
+.erp-pwa-navigation-button {
+  align-items: center;
+  background-color: transparent;
+  block-size: 2rem;
+  border: 0;
+  border-radius: .375rem;
+  color: var(--falcon-gray-700);
+  display: inline-flex;
+  inline-size: 2rem;
+  justify-content: center;
+  padding: 0;
+}
+
+.erp-pwa-navigation-button:hover,
+.erp-pwa-navigation-button:focus-visible {
+  background-color: var(--falcon-gray-200);
+  color: var(--falcon-gray-1000);
+}
+
+.erp-pwa-navigation-button:focus-visible {
+  box-shadow: 0 0 0 .125rem rgba(var(--falcon-primary-rgb), .25);
+  outline: 0;
+}
+
+.erp-pwa-navigation-button:disabled {
+  background-color: transparent;
+  color: var(--falcon-gray-500);
+  opacity: .45;
+}
+
 @media (max-width: 767.98px) {
   .erp-operating-context-trigger {
     max-width: 54vw;
@@ -2277,6 +2322,13 @@ html[dir="rtl"] .erp-date-picker-calendar {
     padding-inline: .5rem !important;
   }
 
+  .erp-pwa-navigation-button {
+    block-size: 2.75rem;
+    inline-size: 2.75rem;
+    min-block-size: 2.75rem !important;
+    min-inline-size: 2.75rem !important;
+  }
+
   .form-check-input {
     block-size: 1.25rem;
     inline-size: 1.25rem;
@@ -2521,6 +2573,24 @@ html[dir="rtl"] .erp-date-picker-calendar {
 
   .erp-operating-context-trigger {
     max-inline-size: min(48vw, 11rem);
+  }
+
+  .erp-pwa-standalone .erp-operating-context-trigger {
+    inline-size: 2.75rem;
+    justify-content: center;
+    max-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
+    min-inline-size: 2.75rem;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .erp-pwa-standalone .erp-operating-context-trigger > :not(.fa-building) {
+    display: none;
+  }
+
+  .erp-pwa-standalone .erp-operating-context-trigger > .fa-building {
+    margin: 0 !important;
   }
 }
 

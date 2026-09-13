@@ -64,90 +64,81 @@
             :expanded="$filtersExpanded"
             :reset-url="route('admin.inventory.stock-balances.index', ['run' => 1])"
         >
-            <input type="hidden" name="run" value="1">
+            <x-forms.input type="hidden" name="run" value="1" />
 
             <div class="col-12"><h6 class="border-bottom pb-1 mb-0 text-700">{{ __('stock_balance_inquiry.filter_groups.position') }}</h6></div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-as-of">{{ __('stock_balance_inquiry.filters.as_of') }}</label>
-                <input class="form-control form-control-sm" id="stock-balance-as-of" name="as_of" type="date" value="{{ $filters['as_of'] }}" required dir="ltr">
+                <x-forms.date-input class="form-control-sm" id="stock-balance-as-of" name="as_of" :value="$filters['as_of']" required />
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-branch">{{ __('stock_balance_inquiry.filters.branch') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-branch" name="branch_doc_num" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-branch" name="branch_doc_num" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach ($options['branches'] as $branch)
                         <option value="{{ $branch->doc_num }}" data-branch-type="{{ $branch->type }}" @selected(($filters['branch_doc_num'] ?? null) === $branch->doc_num)>{{ $branch->doc_num }} — {{ $branch->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-store">{{ __('stock_balance_inquiry.filters.store') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-store" name="branch_store_uuid" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-store" name="branch_store_uuid" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach ($options['stores'] as $store)
                         <option value="{{ $store->public_uuid }}" data-branch="{{ $store->branch?->doc_num }}" @selected(($filters['branch_store_uuid'] ?? null) === $store->public_uuid)>{{ $store->branch?->name }} — {{ $store->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field" id="stock-balance-hall-field">
                 <label class="form-label mb-1" for="stock-balance-hall">{{ __('stock_balance_inquiry.filters.hall') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-hall" name="branch_hall_uuid" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-hall" name="branch_hall_uuid" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach ($options['halls'] as $hall)
                         <option value="{{ $hall->public_uuid }}" data-branch="{{ $hall->branch?->doc_num }}" @selected(($filters['branch_hall_uuid'] ?? null) === $hall->public_uuid)>{{ $hall->branch?->name }} — {{ $hall->name }}</option>
                     @endforeach
-                </select>
-            </div>
-            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
-                <label class="form-label mb-1" for="stock-balance-location">{{ __('stock_balance_inquiry.filters.location') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-location" name="warehouse_location_uuid" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
-                    <option value=""></option>
-                    @foreach ($options['locations'] as $location)
-                        <option value="{{ $location->public_id }}" data-branch="{{ $location->branchStore?->branch?->doc_num }}" data-store="{{ $location->branchStore?->public_uuid }}" @selected(($filters['warehouse_location_uuid'] ?? null) === $location->public_id)>{{ $location->branchStore?->name }} — {{ $location->code }} / {{ $location->name }}</option>
-                    @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-status">{{ __('stock_balance_inquiry.filters.stock_status') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-status" name="stock_status" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-status" name="stock_status" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach ($stockStatuses as $status)
                         <option value="{{ $status }}" @selected(($filters['stock_status'] ?? null) === $status)>{{ __('stock_balance_inquiry.stock_statuses.'.$status) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-quantity-state">{{ __('stock_balance_inquiry.filters.quantity_state') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-quantity-state" name="quantity_state" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-quantity-state" name="quantity_state" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach (['positive', 'negative', 'held', 'below_reorder'] as $state)
                         <option value="{{ $state }}" @selected(($filters['quantity_state'] ?? null) === $state)>{{ __('stock_balance_inquiry.quantity_states.'.$state) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
 
             <div class="col-12"><h6 class="border-bottom pb-1 mb-0 mt-1 text-700">{{ __('stock_balance_inquiry.filter_groups.item') }}</h6></div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-product">{{ __('stock_balance_inquiry.filters.product') }}</label>
-                <select class="{{ $ajaxSelectClass }}" id="stock-balance-product" name="product_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('stock_balance_inquiry.options.select_item') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="stock-balance-product" name="product_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('stock_balance_inquiry.options.select_item') }}" data-allow-clear="true">
                     <option value=""></option>
                     @if ($options['selected_product'])
                         <option value="{{ $options['selected_product']->doc_num }}" selected>{{ $options['selected_product']->doc_num }} — {{ $options['selected_product']->name }}</option>
                     @endif
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-search">{{ __('stock_balance_inquiry.filters.search') }}</label>
-                <input class="form-control form-control-sm" id="stock-balance-search" name="search" value="{{ $filters['search'] ?? '' }}" autocomplete="off">
+                <x-forms.input class="form-control form-control-sm" id="stock-balance-search" name="search" value="{{ $filters['search'] ?? '' }}" autocomplete="off" />
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="stock-balance-classification">{{ __('stock_balance_inquiry.filters.item_classification') }}</label>
-                <select class="{{ $localSelectClass }}" id="stock-balance-classification" name="item_classification" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $localSelectClass }}" id="stock-balance-classification" name="item_classification" data-placeholder="{{ __('stock_balance_inquiry.options.all') }}" data-allow-clear="true">
                     <option value=""></option>
                     @foreach (\Modules\Core\Models\Product::stockableItemClassifications() as $classification)
                         <option value="{{ $classification }}" @selected(($filters['item_classification'] ?? null) === $classification)>{{ __('products.classifications.'.$classification) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
 
             <div class="col-12"><h6 class="border-bottom pb-1 mb-0 mt-1 text-700">{{ __('stock_balance_inquiry.filter_groups.attributes') }}</h6></div>
@@ -166,12 +157,12 @@
                 @endphp
                 <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                     <label class="form-label mb-1" for="stock-balance-{{ $lookup['id'] }}">{{ __('stock_balance_inquiry.filters.'.$lookup['field']) }}</label>
-                    <select class="{{ $ajaxSelectClass }}" id="stock-balance-{{ $lookup['id'] }}" name="{{ $lookup['field'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('stock_balance_inquiry.options.select_value') }}" data-allow-clear="true">
+                    <x-forms.select class="{{ $ajaxSelectClass }}" id="stock-balance-{{ $lookup['id'] }}" name="{{ $lookup['field'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('stock_balance_inquiry.options.select_value') }}" data-allow-clear="true">
                         <option value=""></option>
                         @if ($selectedLookup)
                             <option value="{{ $selectedLookup->doc_num }}" selected>{{ $selectedLookup->doc_num }} — {{ $selectedLookup->name }}</option>
                         @endif
-                    </select>
+                    </x-forms.select>
                 </div>
             @endforeach
         </x-admin.report.filter-panel>

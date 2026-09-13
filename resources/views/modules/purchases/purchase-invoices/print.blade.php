@@ -70,10 +70,10 @@
     @if($record->paymentSchedules->isNotEmpty())
     <h3>{{ __('purchase_invoices.sections.payment_schedule') }}</h3>
     <table class="report-table">
-        <thead><tr><th>#</th><th>{{ __('purchase_invoices.attributes.due_date') }}</th><th class="text-end">{{ __('purchase_invoices.attributes.payment_amount') }}</th><th class="text-end">{{ __('purchase_invoices.totals.paid') }}</th><th class="text-end">{{ __('purchase_invoices.totals.credited') }}</th><th class="text-end">{{ __('purchase_invoices.totals.remaining') }}</th><th>{{ __('purchase_invoices.attributes.status') }}</th></tr></thead>
+        <thead><tr><th>#</th><th>{{ __('purchase_invoices.attributes.due_date') }}</th><th class="text-end">{{ __('purchase_invoices.attributes.payment_amount') }}</th><th class="text-end">{{ __('purchase_invoices.totals.paid') }}</th><th class="text-end">{{ __('purchase_invoices.totals.credited') }}</th><th class="text-end">{{ __('purchase_invoices.totals.remaining') }}</th><th>{{ __('purchase_invoices.attributes.payment_source_type') }}</th></tr></thead>
         <tbody>
             @forelse($record->paymentSchedules as $schedule)
-                <tr><td>{{ $schedule->line_number }}</td><td dir="ltr">{{ $dates->formatDate($schedule->due_date, '—') }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->paid_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->credited_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->outstanding_amount) }}</td><td>{{ __('purchase_invoices.schedule_statuses.'.$schedule->status) }}</td></tr>
+                <tr><td>{{ $schedule->line_number }}</td><td dir="ltr">{{ $dates->formatDate($schedule->due_date, '—') }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->paid_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->credited_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($schedule->outstanding_amount) }}</td><td>{{ in_array($schedule->payment_source_type, \Modules\Purchases\Models\PurchaseInvoice::scheduleSourceTypes(), true) ? __('purchase_invoices.source_types.'.$schedule->payment_source_type) : __('common.empty_value') }}</td></tr>
             @empty
                 <tr><td colspan="7" style="text-align: center;">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td></tr>
             @endforelse

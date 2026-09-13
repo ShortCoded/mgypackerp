@@ -8,6 +8,7 @@
 <script defer src="{{ $erpAsset->url('vendors/fontawesome/all.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/lodash/lodash.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/list.js/list.min.js') }}"></script>
+<script src="{{ $erpAsset->url('vendors/simplebar/simplebar.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/theme.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/jquery/jquery.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/datatables.net/dataTables.min.js') }}"></script>
@@ -17,7 +18,6 @@
 <script src="{{ $erpAsset->url('vendors/datatables.net-buttons/js/dataTables.buttons.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/datatables.net-buttons-bs5/js/buttons.bootstrap5.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/datatables.net-buttons/js/buttons.colVis.min.js') }}"></script>
-<script src="{{ $erpAsset->url('vendors/dropzone/dropzone-min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/flatpickr/flatpickr.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/select2/select2.full.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/datatables-defaults.js') }}"></script>
@@ -58,30 +58,6 @@
             'locale' => app()->getLocale(),
             'direction' => config('languages.available.' . app()->getLocale() . '.dir', 'ltr'),
             'phpDateFormat' => $dateFormatService->dateFormat(),
-        ];
-        $appArchive = [
-            'maxFiles' => (int) config('archive.uploads.max_files', 100),
-            'maxFileSizeMiB' => (int) config('archive.uploads.max_file_size_mib', 50),
-            'parallelUploads' => (int) config('archive.uploads.parallel_uploads', 2),
-            'acceptedFiles' => collect(config('archive.documents.allowed_extensions', config('archive.allowed_extensions', [])))->map(fn (string $extension): string => '.' . ltrim($extension, '.'))->implode(','),
-            'messages' => [
-                'tooManyFiles' => __('archive.too_many_files', ['count' => (int) config('archive.uploads.max_files', 100)]),
-                'fileTooLarge' => __('archive.file_too_large', ['size' => (int) config('archive.uploads.max_file_size_mib', 50)]),
-                'invalidFileType' => __('archive.invalid_file_type'),
-                'unexpectedError' => __('common.messages.unexpected_error'),
-                'deleteConfirmTitle' => __('archive.messages.delete_confirm_title'),
-                'deleteConfirmText' => __('archive.messages.delete_confirm_text'),
-                'deleteConfirmYes' => __('archive.messages.delete_confirm_yes'),
-                'folderDeleteConfirmTitle' => __('archive.messages.folder_delete_confirm_title'),
-                'folderDeleteConfirmText' => __('archive.messages.folder_delete_confirm_text'),
-                'folderDeleteConfirmYes' => __('archive.messages.folder_delete_confirm_yes'),
-                'renameFolderTitle' => __('archive.rename_folder'),
-                'folderName' => __('archive.folder_name'),
-                'noFilesSelected' => __('archive.no_files_selected'),
-                'publicLinkMissing' => __('archive.public_links.missing'),
-                'publicLinkCopied' => __('archive.public_links.copied'),
-                'no' => __('common.actions.no'),
-            ],
         ];
         $appNotifications = [
             'coordinationIdentity' => $appSession['identity'],
@@ -192,7 +168,6 @@
         window.AppNumericInputMessages = @json($appNumericInputMessages);
         window.AppSelect2 = @json($appSelect2);
         window.AppDatePicker = @json($appDatePicker);
-        window.AppArchive = @json($appArchive);
         window.AppNotificationSoundConfig = @json($appNotificationSound);
         window.AppPushNotifications = @json($appPushNotifications);
         window.AppNotifications = @json($appNotifications);
@@ -220,7 +195,6 @@
     <script src="{{ $erpAsset->url('assets/js/modules/Core/navigation-search.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/operating-context.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/contact-actions.js') }}"></script>
-    <script src="{{ $erpAsset->url('assets/js/modules/Core/archive-uploader.js') }}"></script>
 @endauth
 <script src="{{ $erpAsset->url('assets/js/modules/Core/connectivity.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/layout.js') }}"></script>

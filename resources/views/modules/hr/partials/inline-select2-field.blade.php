@@ -13,22 +13,21 @@
     @endphp
     <x-forms.label :for="$inputId" :label="$fieldLabel" :required="$required" />
     <div class="hr-select2-inline-control">
-        <select id="{{ $inputId }}"
-            name="{{ $fieldName }}"
-            class="form-select js-select2-ajax"
-            data-url="{{ $dataUrl }}"
-            data-placeholder="{{ $placeholder }}"
-            data-allow-clear="true"
-            @if ($dependsOn) data-depends-on="{{ $dependsOn }}" @endif
-            @if ($dependentParam) data-dependent-param="{{ $dependentParam }}" @endif
-            @if ($dependentResultField) data-dependent-result-field="{{ $dependentResultField }}" @endif
-            @if ($preserveDependentValues) data-preserve-dependent-values="true" @endif
-            @if ($disableWhenDependencyEmpty) data-disable-when-dependency-empty="true" @endif
-            @required($required)>
+        <x-forms.select :id="$inputId"
+            :name="$fieldName"
+            variant="ajax"
+            :url="$dataUrl"
+            :placeholder="$placeholder"
+            :data-depends-on="$dependsOn"
+            :data-dependent-param="$dependentParam"
+            :data-dependent-result-field="$dependentResultField"
+            :data-preserve-dependent-values="$preserveDependentValues ? 'true' : null"
+            :data-disable-when-dependency-empty="$disableWhenDependencyEmpty ? 'true' : null"
+            :required="$required">
             @if ($selectedValue !== '' && $selectedText !== '')
                 <option value="{{ $selectedValue }}" selected>{{ $selectedText }}</option>
             @endif
-        </select>
+        </x-forms.select>
         @if ($canCreate && $createUrl)
             <a class="btn btn-falcon-default btn-sm" href="{{ $createUrl }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new') }}" data-bs-title="{{ __('hr.inline_lookup.add_new') }}">
                 <span class="fas fa-plus"></span>

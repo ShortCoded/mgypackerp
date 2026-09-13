@@ -4,7 +4,6 @@ namespace Modules\Purchases\Services;
 
 use App\Services\PostingAccountResolver;
 use DomainException;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
@@ -635,7 +634,7 @@ class PurchaseInvoiceService
             $existingSchedule = $publicId !== '' ? $existing->get($publicId) : null;
             $cashbox = $this->cashbox($context['company_id'], $row['cashbox_doc_num'] ?? null);
             $bankAccount = $this->bankAccount($context['company_id'], $row['bank_account_doc_num'] ?? null);
-            $sourceType = $row['payment_source_type'] ?? PurchaseInvoice::SourceScheduled;
+            $sourceType = $row['payment_source_type'] ?? PurchaseInvoice::SourceCashbox;
             $values = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
@@ -645,7 +644,7 @@ class PurchaseInvoiceService
                 'payment_source_type' => $sourceType,
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
-                'payment_date' => $row['payment_date'] ?? null,
+                'payment_date' => $sourceType === PurchaseInvoice::SourceCashbox ? $row['due_date'] : null,
                 'status' => $existingSchedule?->status ?? PurchaseInvoicePaymentSchedule::StatusScheduled,
                 'notes' => $row['notes'] ?? null,
             ];
@@ -706,29 +705,11 @@ class PurchaseInvoiceService
                 'payment_source_type' => PurchaseInvoice::SourceCashbox,
                 'cashbox_doc_num' => $data['cashbox_doc_num'] ?? null,
                 'bank_account_doc_num' => null,
-                'payment_date' => $data['invoice_date'],
                 'notes' => $data['notes'] ?? null,
             ]];
         }
 
-        $companyId = (int) ($this->operatingContext->snapshot(request())['company_id'] ?? 0);
-        $paymentTermsDays = Supplier::query()->forCompany($companyId)
-            ->where('doc_num', $data['supplier_doc_num'] ?? null)
-            ->value('payment_terms_days');
-        if ($paymentTermsDays === null) {
-            return [];
-        }
-
-        return [[
-            'public_id' => $publicId,
-            'due_date' => Carbon::parse($data['invoice_date'])->addDays((int) $paymentTermsDays)->toDateString(),
-            'amount' => $calculation['invoice']['total_amount'],
-            'payment_source_type' => PurchaseInvoice::SourceScheduled,
-            'cashbox_doc_num' => null,
-            'bank_account_doc_num' => null,
-            'payment_date' => null,
-            'notes' => __('Inherited from Supplier payment terms.'),
-        ]];
+        return [];
     }
 
     private function syncLinkedVoucher(PurchaseInvoice $record, PurchaseInvoicePaymentSchedule $schedule, ?Cashbox $cashbox): void
@@ -926,7 +907,14 @@ class PurchaseInvoiceService
                     PostingAccountResolver::GoodsReceivedNotInvoiced,
                     __('Purchase Invoice'),
                 );
-                $this->addPostingAmount($posting, $grniAccount, $provisionalAmount, true, __('GRNI clearing'));
+                $this->addPostingAmount(
+                    $posting,
+                    $grniAccount,
+                    $provisionalAmount,
+                    true,
+                    __('GRNI clearing'),
+                    branchId: (int) $receiptLine->branch_id,
+                );
 
                 $variance = bcsub($finalAmount, $provisionalAmount, 4);
                 if (bccomp($variance, '0', 4) !== 0) {
@@ -935,7 +923,14 @@ class PurchaseInvoiceService
                         PostingAccountResolver::PurchasePriceVariance,
                         __('Purchase Invoice'),
                     );
-                    $this->addPostingAmount($posting, $varianceAccount, ltrim($variance, '-'), bccomp($variance, '0', 4) > 0, __('Purchase price variance'));
+                    $this->addPostingAmount(
+                        $posting,
+                        $varianceAccount,
+                        ltrim($variance, '-'),
+                        bccomp($variance, '0', 4) > 0,
+                        __('Purchase price variance'),
+                        branchId: (int) $receiptLine->branch_id,
+                    );
                 }
             } else {
                 $this->addPostingAmount(
@@ -974,7 +969,7 @@ class PurchaseInvoiceService
                 'credit_amount' => $line['credit_amount'],
                 'description' => $line['description'],
                 'supplier_id' => $record->supplier_id,
-                'branch_id' => $record->branch_id,
+                'branch_id' => $line['branch_id'] ?? $record->branch_id,
                 'cost_center_id' => $line['cost_center_id'] ?? null,
             ])
             ->values()
@@ -1036,15 +1031,17 @@ class PurchaseInvoiceService
         bool $debit,
         string $description,
         ?int $costCenterId = null,
+        ?int $branchId = null,
     ): void {
         if (bccomp($amount, '0', 4) <= 0) {
             return;
         }
 
-        $key = ($debit ? 'd:' : 'c:').$account->getKey().':'.($costCenterId ?? 'none');
+        $key = ($debit ? 'd:' : 'c:').$account->getKey().':'.($costCenterId ?? 'none').':'.($branchId ?? 'default');
         $posting[$key] ??= [
             'account_id' => (int) $account->getKey(), 'debit_amount' => '0.0000',
             'credit_amount' => '0.0000', 'description' => $description, 'cost_center_id' => $costCenterId,
+            'branch_id' => $branchId,
         ];
         $column = $debit ? 'debit_amount' : 'credit_amount';
         $posting[$key][$column] = bcadd((string) $posting[$key][$column], $amount, 4);

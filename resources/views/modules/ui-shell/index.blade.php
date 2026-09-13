@@ -84,11 +84,11 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-5 col-xl-4">
                                 <label class="form-label" for="erp-ui-shell-prefix">{{ __('erp_ui_shell.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="erp-ui-shell-prefix" type="text" value="" placeholder="{{ __('erp_ui_shell.document_number_settings.prefix_placeholder') }}">
+                                <x-forms.input class="form-control" id="erp-ui-shell-prefix" type="text" value="" placeholder="{{ __('erp_ui_shell.document_number_settings.prefix_placeholder') }}" />
                             </div>
                             <div class="col-md-3 col-xl-2">
                                 <label class="form-label" for="erp-ui-shell-padding">{{ __('erp_ui_shell.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="erp-ui-shell-padding" type="number" min="0" max="10" value="5" dir="ltr">
+                                <x-forms.input class="form-control" id="erp-ui-shell-padding" type="number" min="0" max="10" value="5" dir="ltr" />
                             </div>
                             <div class="col-md-auto">
                                 <button class="btn btn-falcon-primary js-erp-ui-operational-action" type="button">
@@ -173,7 +173,7 @@
                                         ])>
                                             @if ($column['data'] === 'select')
                                                 <div class="mb-0 form-check d-flex justify-content-center">
-                                                    <input class="form-check-input" type="checkbox" aria-label="{{ __('erp_ui_shell.select_all') }}" disabled>
+                                                    <x-forms.input class="form-check-input" type="checkbox" aria-label="{{ __('erp_ui_shell.select_all') }}" disabled />
                                                 </div>
                                             @else
                                                 {{ $definition->localized($column['title']) }}

@@ -53,6 +53,7 @@ class UnpricedInventoryReceipt extends Model
         'supplier_id',
         'purchase_order_id',
         'supply_order_id',
+        'goods_receipt_inspection_id',
         'supplier_delivery_note',
         'received_at',
         'qc_status',
@@ -182,6 +183,22 @@ class UnpricedInventoryReceipt extends Model
     public function inspection(): HasOne
     {
         return $this->hasOne(GoodsReceiptInspection::class, 'receipt_id');
+    }
+
+    public function sourceInspection(): BelongsTo
+    {
+        return $this->belongsTo(GoodsReceiptInspection::class, 'goods_receipt_inspection_id');
+    }
+
+    public function hasBlockingInspection(): bool
+    {
+        $inspection = $this->inspection();
+
+        if ($this->goods_receipt_inspection_id !== null) {
+            $inspection->whereKeyNot($this->goods_receipt_inspection_id);
+        }
+
+        return $inspection->exists();
     }
 
     public function lines(): HasMany

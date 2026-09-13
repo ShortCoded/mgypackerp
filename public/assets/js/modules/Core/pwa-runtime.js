@@ -4,10 +4,101 @@
   var config = window.AppPwaRuntime || {};
   var updateNotice = document.querySelector('[data-erp-pwa-update]');
   var reloadButton = document.querySelector('[data-erp-pwa-reload]');
+  var navigationToolbar = document.querySelector('[data-erp-pwa-navigation]');
+  var backButton = document.querySelector('[data-erp-pwa-back]');
+  var forwardButton = document.querySelector('[data-erp-pwa-forward]');
+  var pageReloadButton = document.querySelector('[data-erp-pwa-page-reload]');
   var registration = null;
   var reloadRequested = false;
   var legacyServiceWorkerPath = '/service-worker.js';
   var disabledCleanupMarkerKey = 'erp-pwa-disabled-cleanup-v1';
+
+  function installedDisplayModeQuery() {
+    if (typeof window.matchMedia !== 'function') {
+      return null;
+    }
+
+    return window.matchMedia([
+      '(display-mode: standalone)',
+      '(display-mode: fullscreen)',
+      '(display-mode: minimal-ui)',
+      '(display-mode: window-controls-overlay)'
+    ].join(', '));
+  }
+
+  function isInstalledDisplayMode(displayModeQuery) {
+    return window.navigator.standalone === true || Boolean(displayModeQuery && displayModeQuery.matches);
+  }
+
+  function updateNavigationButtonAvailability() {
+    var navigationApi = window.navigation;
+    var canGoBack = navigationApi && typeof navigationApi.canGoBack === 'boolean'
+      ? navigationApi.canGoBack
+      : true;
+    var canGoForward = navigationApi && typeof navigationApi.canGoForward === 'boolean'
+      ? navigationApi.canGoForward
+      : true;
+
+    if (backButton) {
+      backButton.disabled = !canGoBack;
+    }
+
+    if (forwardButton) {
+      forwardButton.disabled = !canGoForward;
+    }
+  }
+
+  function initializePwaNavigation() {
+    if (!navigationToolbar) {
+      return;
+    }
+
+    var displayModeQuery = installedDisplayModeQuery();
+    var syncVisibility = function () {
+      var isInstalled = isInstalledDisplayMode(displayModeQuery);
+
+      navigationToolbar.hidden = !isInstalled;
+      document.documentElement.classList.toggle('erp-pwa-standalone', isInstalled);
+
+      if (isInstalled) {
+        updateNavigationButtonAvailability();
+      }
+    };
+
+    if (backButton) {
+      backButton.addEventListener('click', function () {
+        window.history.back();
+      });
+    }
+
+    if (forwardButton) {
+      forwardButton.addEventListener('click', function () {
+        window.history.forward();
+      });
+    }
+
+    if (pageReloadButton) {
+      pageReloadButton.addEventListener('click', function () {
+        window.location.reload();
+      });
+    }
+
+    if (displayModeQuery) {
+      if (typeof displayModeQuery.addEventListener === 'function') {
+        displayModeQuery.addEventListener('change', syncVisibility);
+      } else if (typeof displayModeQuery.addListener === 'function') {
+        displayModeQuery.addListener(syncVisibility);
+      }
+    }
+
+    if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+      window.navigation.addEventListener('currententrychange', updateNavigationButtonAvailability);
+    }
+
+    window.addEventListener('pageshow', updateNavigationButtonAvailability);
+    window.addEventListener('popstate', updateNavigationButtonAvailability);
+    syncVisibility();
+  }
 
   function scriptPath(value) {
     try {
@@ -157,6 +248,8 @@
 
     return register();
   }
+
+  initializePwaNavigation();
 
   if (!('serviceWorker' in window.navigator)) {
     return;

@@ -282,8 +282,8 @@ test('HR menu keeps detailed HR screens under its independent domain', function 
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
     expect($lookupOnlyHr)->not->toBeNull()
-        ->and(collect(mvpFlattenMenu([$lookupOnlyHr]))->pluck('label'))->toContain('hr_departments')
-        ->and(mvpMenuDestinations([$lookupOnlyHr]))->toHaveCount(1);
+        ->and(collect(mvpFlattenMenu([$lookupOnlyHr]))->pluck('label'))->toContain('employee_self_service', 'hr_departments')
+        ->and(mvpMenuDestinations([$lookupOnlyHr]))->toHaveCount(2);
 });
 
 test('legacy phase-gated permission still gates its route alias and remains assigned to admin', function (): void {
@@ -347,5 +347,29 @@ test('Tools keeps working utility and log screens as real links', function (): v
         expect(mvpFindMenuItem([$tools], $label)['route'])->toBe($route);
     }
 
-    expect(mvpFindMenuItem([$tools], 'tools_numbering_review')['route'])->toBe('admin.tools.numbering-review.index');
+    foreach ([
+        'tools_workflow_designer',
+        'tools_approval_matrix',
+        'tools_notification_center_settings',
+        'tools_email_template_settings',
+        'tools_sms_template_settings',
+        'tools_whatsapp_template_settings',
+        'tools_import_templates',
+        'tools_data_import',
+        'tools_data_export',
+        'tools_integration_settings',
+        'tools_api_settings',
+        'tools_barcode_settings',
+        'tools_label_templates',
+        'tools_print_template_designer',
+        'tools_integration_logs',
+        'tools_background_job_monitor',
+        'tools_system_health',
+        'tools_backup_settings',
+        'tools_numbering_review',
+        'tools_permission_review',
+        'tools_menu_review',
+    ] as $removedLabel) {
+        expect(mvpFindMenuItem([$tools], $removedLabel))->toBeNull();
+    }
 });

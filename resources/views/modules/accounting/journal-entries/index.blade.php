@@ -12,11 +12,11 @@
                 <div class="col-auto ms-auto d-flex align-items-center gap-2">
                     @can('journal_entries.view_trashed')
                         <label class="form-label mb-0 fs-10" for="journal_entries_trash_filter">{{ __('journal_entries.filters.records') }}</label>
-                        <select class="form-select form-select-sm w-auto" id="journal_entries_trash_filter">
+                        <x-forms.select class="form-select form-select-sm w-auto" id="journal_entries_trash_filter">
                             <option value="active">{{ __('journal_entries.filters.active') }}</option>
                             <option value="trashed">{{ __('journal_entries.filters.trashed') }}</option>
                             <option value="all">{{ __('journal_entries.filters.all') }}</option>
-                        </select>
+                        </x-forms.select>
                     @endcan
                     <x-buttons.add-record :href="route('admin.accounting.journal-entries.create')" permission="journal_entries.create" />
                 </div>

@@ -53,11 +53,11 @@
     @if($method !== 'POST')
         @method($method)
     @endif
-    <input type="hidden" name="submit_action" value="save">
+    <x-forms.input type="hidden" name="submit_action" value="save" />
     @if($cloneSourceToken)
-        <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+        <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
     @endif
-    <input type="hidden" id="cashbox_account_doc_num_filter" class="js-cash-voucher-cashbox-account-doc-num" value="{{ $selectedCashboxAccountDocNum }}">
+    <x-forms.input type="hidden" id="cashbox_account_doc_num_filter" class="js-cash-voucher-cashbox-account-doc-num" value="{{ $selectedCashboxAccountDocNum }}" />
 
     <div class="card mb-3">
         <div class="card-header">
@@ -103,7 +103,7 @@
                                 @if($isReadonly)
                                     <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                                 @else
-                                    <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                    <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                     <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -119,7 +119,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="voucher_date" :value="$dateValue()" dir="ltr" input-class="date-value text-center" />
                             @else
-                                <input class="form-control text-center js-date-picker" id="voucher_date" name="voucher_date" type="text" value="{{ $dateValue() }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                                <x-forms.date-input class="form-control text-center js-date-picker" id="voucher_date" name="voucher_date" type="text" value="{{ $dateValue() }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="voucher_date"></div>
                         </div>
@@ -133,13 +133,13 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="cashbox_doc_num" :value="$cashboxOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax js-cash-voucher-cashbox" id="cashbox_doc_num" name="cashbox_doc_num" data-url="{{ route('admin.finance.select2.cash-voucher-cashboxes') }}" data-placeholder="{{ __($translationKey.'.js.select_cashbox') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax js-cash-voucher-cashbox" id="cashbox_doc_num" name="cashbox_doc_num" data-url="{{ route('admin.finance.select2.cash-voucher-cashboxes') }}" data-placeholder="{{ __($translationKey.'.js.select_cashbox') }}" data-allow-clear="true" required>
                                     @if($cashboxOption)
                                         <option value="{{ $cashboxOption['id'] }}" data-account-doc-num="{{ $cashboxOption['account_doc_num'] }}" data-account-label="{{ $cashboxOption['account_label'] }}" selected>{{ $cashboxOption['text'] }}</option>
                                     @elseif($selectedCashboxDocNum)
                                         <option value="{{ $selectedCashboxDocNum }}" selected>{{ $selectedCashboxDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="cashbox_doc_num"></div>
                         </div>
@@ -149,13 +149,13 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax js-cash-voucher-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.finance.select2.cash-voucher-currencies') }}" data-placeholder="{{ __($translationKey.'.js.select_currency') }}" data-allow-clear="true" data-depends-on="#cashbox_doc_num" data-dependent-param="cashbox" data-disable-when-dependency-empty="true" required @disabled($selectedCashboxDocNum === '')>
+                                <x-forms.select class="form-select js-select2-ajax js-cash-voucher-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.finance.select2.cash-voucher-currencies') }}" data-placeholder="{{ __($translationKey.'.js.select_currency') }}" data-allow-clear="true" data-depends-on="#cashbox_doc_num" data-dependent-param="cashbox" data-disable-when-dependency-empty="true" required :disabled="$selectedCashboxDocNum === ''">
                                     @if($currencyOption)
                                         <option value="{{ $currencyOption['id'] }}" data-is-main="{{ $currencyOption['is_main'] ? '1' : '0' }}" selected>{{ $currencyOption['text'] }}</option>
                                     @elseif($selectedCurrencyDocNum)
                                         <option value="{{ $selectedCurrencyDocNum }}" selected>{{ $selectedCurrencyDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                         </div>
@@ -185,7 +185,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="person_name" :value="$value('person_name')" />
                             @else
-                                <input class="form-control" id="person_name" name="person_name" value="{{ $value('person_name') }}" autocomplete="name" required>
+                                <x-forms.input class="form-control" id="person_name" name="person_name" value="{{ $value('person_name') }}" autocomplete="name" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="person_name"></div>
                         </div>
@@ -195,7 +195,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="person_national_id" :value="$value('person_national_id')" dir="ltr" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="person_national_id" name="person_national_id" value="{{ $value('person_national_id') }}" maxlength="50" dir="ltr" autocomplete="off">
+                                <x-forms.input class="form-control text-center" id="person_national_id" name="person_national_id" value="{{ $value('person_national_id') }}" maxlength="50" dir="ltr" autocomplete="off" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="person_national_id"></div>
                         </div>
@@ -205,7 +205,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="person_phone" :value="$value('person_phone')" dir="ltr" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="person_phone" name="person_phone" value="{{ $value('person_phone') }}" maxlength="50" dir="ltr" autocomplete="tel">
+                                <x-forms.input class="form-control text-center" id="person_phone" name="person_phone" value="{{ $value('person_phone') }}" maxlength="50" dir="ltr" autocomplete="tel" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="person_phone"></div>
                         </div>
@@ -215,7 +215,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="reason" :value="$value('reason')" />
                             @else
-                                <input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required>
+                                <x-forms.input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="reason"></div>
                         </div>
@@ -225,7 +225,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="description" as="textarea" :value="$value('description')" rows="3" />
                             @else
-                                <textarea class="form-control" id="description" name="description" rows="3">{{ $value('description') }}</textarea>
+                                <x-forms.textarea class="form-control" id="description" name="description" rows="3">{{ $value('description') }}</x-forms.textarea>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="description"></div>
                         </div>
@@ -272,11 +272,11 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['account_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.accounts') }}" data-placeholder="{{ __($translationKey.'.js.select_account') }}" data-allow-clear="true" data-extra-params='{"exclude":"#cashbox_account_doc_num_filter"}' required>
+                                                <x-forms.select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.accounts') }}" data-placeholder="{{ __($translationKey.'.js.select_account') }}" data-allow-clear="true" :data-extra-params="json_encode(['exclude' => '#cashbox_account_doc_num_filter'])" required>
                                                     @if(! empty($line['account_doc_num']))
                                                         <option value="{{ $line['account_doc_num'] }}" selected>{{ $line['account_label'] ?? $line['account_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.account_doc_num"></div>
                                             @endif
                                         </td>
@@ -292,7 +292,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['description'] ?? null }}</div>
                                             @else
-                                                <input class="form-control" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}">
+                                                <x-forms.input class="form-control" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.description"></div>
                                             @endif
                                         </td>
@@ -300,7 +300,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                             @else
-                                                <input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}">
+                                                <x-forms.input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                             @endif
                                         </td>

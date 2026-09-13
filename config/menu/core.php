@@ -1,5 +1,7 @@
 <?php
 
+$screenDataVisibilityRulesEnabled = (bool) config('erp_features.screen_data_visibility_rules.enabled', false);
+
 return [
     [
         'label' => 'dashboard',
@@ -25,7 +27,7 @@ return [
         'active' => [
             'admin.roles.*',
             'admin.users.*',
-            'admin.screen-data-visibility-rules.*',
+            ...($screenDataVisibilityRulesEnabled ? ['admin.screen-data-visibility-rules.*'] : []),
             'admin.companies.*',
             'admin.branches.*',
             'admin.financial-periods.*',
@@ -83,7 +85,7 @@ return [
                 ],
                 'children' => [],
             ],
-            [
+            ...($screenDataVisibilityRulesEnabled ? [[
                 'label' => 'screen_data_visibility_rules',
                 'title' => 'Data Visibility Rules',
                 'icon' => 'user-shield',
@@ -104,7 +106,7 @@ return [
                     'admin.screen-data-visibility-rules.*',
                 ],
                 'children' => [],
-            ],
+            ]] : []),
             [
                 'label' => 'companies',
                 'title' => 'Companies',

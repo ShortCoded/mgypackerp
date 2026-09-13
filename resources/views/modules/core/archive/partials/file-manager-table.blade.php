@@ -64,17 +64,17 @@
                 @can('file_manager.view_trashed')
                     <div class="d-flex align-items-center gap-2">
                         <label class="form-label mb-0 text-700 fs-10" for="{{ $trashFilterId }}">{{ __('archive.trash.filter_label') }}</label>
-                        <select class="form-select form-select-sm w-auto js-file-manager-trash-filter" id="{{ $trashFilterId }}" aria-label="{{ __('archive.trash.filter_label') }}">
+                        <x-forms.select class="form-select form-select-sm w-auto js-file-manager-trash-filter" id="{{ $trashFilterId }}" aria-label="{{ __('archive.trash.filter_label') }}">
                             <option value="active">{{ __('archive.trash.active') }}</option>
                             <option value="trashed">{{ __('archive.trash.trashed') }}</option>
                             <option value="all">{{ __('archive.trash.all') }}</option>
-                        </select>
+                        </x-forms.select>
                     </div>
                 @endcan
                 @if ($canBulkDownload || $canBulkDelete || $canBulkRestore || $canBulkMove)
                     <div class="d-none align-items-center gap-2 file-manager-bulk-actions-bar js-archive-bulk-actions-bar" id="{{ $bulkActionsBarId }}">
                         <span class="badge rounded-pill badge-subtle-primary js-archive-selected-count" id="{{ $selectedCountId }}">0</span>
-                        <select class="form-select form-select-sm w-auto js-archive-bulk-action-select" id="{{ $bulkActionSelectId }}" aria-label="{{ __('archive.bulk_actions') }}">
+                        <x-forms.select class="form-select form-select-sm w-auto js-archive-bulk-action-select" id="{{ $bulkActionSelectId }}" aria-label="{{ __('archive.bulk_actions') }}">
                             @if ($canBulkMove)
                                 <option value="bulk_move" data-visible-filters="active" data-shortcut-action="file-manager.bulk-move">{{ __('archive.move_selected') }}</option>
                             @endif
@@ -87,7 +87,7 @@
                             @if ($canBulkRestore)
                                 <option value="bulk_restore" data-visible-filters="trashed" data-shortcut-action="file-manager.bulk-restore">{{ __('archive.restore_selected') }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                         <button type="button"
                             class="btn btn-falcon-primary btn-sm js-archive-bulk-action-apply"
                             id="{{ $bulkActionApplyId }}"
@@ -109,12 +109,12 @@
                 <div class="col-12 col-md">
                     <label class="form-label mb-1" for="{{ $domIdPrefix }}_global_search">{{ __('archive.global_search') }}</label>
                     <div class="search-box">
-                        <input class="form-control search-input js-file-manager-global-search-input"
+                        <x-forms.input class="form-control search-input js-file-manager-global-search-input"
                             id="{{ $domIdPrefix }}_global_search"
                             type="search"
                             autocomplete="off"
                             placeholder="{{ __('archive.global_search_placeholder') }}"
-                            aria-label="{{ __('archive.global_search') }}">
+                            aria-label="{{ __('archive.global_search') }}" />
                         <span class="fas fa-search search-box-icon"></span>
                     </div>
                 </div>
@@ -154,7 +154,7 @@
                             <tr>
                                 <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                     <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                        <input class="form-check-input js-file-manager-select-all" type="checkbox" id="{{ $selectAllId }}" aria-label="{{ __('archive.select_all') }}">
+                                        <x-forms.input class="form-check-input js-file-manager-select-all" type="checkbox" id="{{ $selectAllId }}" aria-label="{{ __('archive.select_all') }}" />
                                     </div>
                                 </th>
                                 <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('common.fields.document_number') }}</th>

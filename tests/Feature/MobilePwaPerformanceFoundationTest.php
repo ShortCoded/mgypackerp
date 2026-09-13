@@ -22,7 +22,12 @@ test('authenticated layout uses one directional theme and one user stylesheet', 
         ->assertSee('assets/css/theme.min.css', false)
         ->assertDontSee('assets/css/theme-rtl.min.css', false)
         ->assertDontSee('fonts.googleapis.com', false)
-        ->assertDontSee('fonts.gstatic.com', false);
+        ->assertDontSee('fonts.gstatic.com', false)
+        ->assertSee('data-erp-pwa-navigation hidden', false)
+        ->assertSee('data-erp-pwa-back', false)
+        ->assertSee('data-erp-pwa-forward', false)
+        ->assertSee('data-erp-pwa-page-reload', false)
+        ->assertSee('aria-label="App navigation"', false);
 
     expect(substr_count($response->getContent(), 'assets/css/user.css'))->toBe(1);
 });
@@ -34,6 +39,8 @@ test('arabic layout sends only the rtl theme stylesheet', function () {
         ->assertOk()
         ->assertSee('assets/css/theme-rtl.min.css', false)
         ->assertDontSee('assets/css/theme.min.css', false);
+
+    $response->assertSee('aria-label="التنقل داخل التطبيق"', false);
 
     expect(substr_count($response->getContent(), 'assets/css/user.css'))->toBe(1);
 });
@@ -80,6 +87,11 @@ test('mobile and pwa assets expose the shared interaction contracts', function (
         ->and($pwaRuntime)
         ->toContain("registration.addEventListener('updatefound'")
         ->toContain("registration.waiting.postMessage({ type: 'SKIP_WAITING' })")
+        ->toContain("'(display-mode: standalone)'")
+        ->toContain('window.navigator.standalone === true')
+        ->toContain('window.history.back()')
+        ->toContain('window.history.forward()')
+        ->toContain('window.location.reload()')
         ->toContain('reloadRequested')
         ->and($notificationSound)
         ->toContain("return storedValue() === '1'")

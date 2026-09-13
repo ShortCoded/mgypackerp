@@ -11,8 +11,8 @@
     <div class="card mb-3">
         <div class="card-header py-2"><button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center justify-content-between" type="button" data-bs-toggle="collapse" data-bs-target="#quotation-filters" aria-expanded="false"><span class="fw-semibold">{{ __('Filters') }}</span><span class="fas fa-chevron-down fs-11"></span></button></div>
         <div class="collapse" id="quotation-filters"><div class="card-body"><form id="quotation-filter-form" class="row g-3 align-items-end">
-            <div class="col-md-4"><label for="quotation-filter-status" class="form-label">{{ __('Status') }}</label><select class="form-select" name="status" id="quotation-filter-status"><option value="">{{ __('All statuses') }}</option>@foreach(['draft','sent','accepted','rejected','expired','cancelled','converted'] as $status)<option value="{{ $status }}">{{ __('quotations.statuses.'.$status) }}</option>@endforeach</select></div>
-            <div class="col-md-4"><label class="form-label" for="quotation-filter-date">{{ __('From date') }}</label><input class="form-control js-date-picker" name="date_from" id="quotation-filter-date"></div>
+            <div class="col-md-4"><label for="quotation-filter-status" class="form-label">{{ __('Status') }}</label><x-forms.select class="form-select" name="status" id="quotation-filter-status"><option value="">{{ __('All statuses') }}</option>@foreach(['draft','sent','accepted','rejected','expired','cancelled','converted'] as $status)<option value="{{ $status }}">{{ __('quotations.statuses.'.$status) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-4"><label class="form-label" for="quotation-filter-date">{{ __('From date') }}</label><x-forms.date-input class="form-control js-date-picker" name="date_from" id="quotation-filter-date" /></div>
             <div class="col-md-4"><button class="btn btn-falcon-primary" type="submit">{{ __('Apply') }}</button> <button class="btn btn-falcon-default" type="reset">{{ __('Reset') }}</button></div>
         </form></div></div>
     </div>
@@ -42,12 +42,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6 col-lg-4">
                                 <label class="form-label" for="quotations-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="quotations-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="quotations-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label" for="quotations-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="quotations-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}" required>
+                                <x-forms.input class="form-control" id="quotations-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}" required />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -87,7 +87,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('quotations.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('quotations.select_all') }}" />
                                         </div>
                                     </th>
                                     @foreach ($columns as $index => $column)

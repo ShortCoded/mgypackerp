@@ -72,6 +72,15 @@ $hrEmployeePermissionLabels = [
     'hr.employees.documents.delete' => 'حذف مستندات الموظف',
 ];
 
+$hrAttendanceAndRequestPermissionLabels = [
+    'hr.employee_attendance.view' => 'عرض حضور وانصراف الموظفين',
+    'hr.employee_attendance.manage' => 'إدارة حركات حضور وانصراف الموظفين',
+    'hr.employee_attendance.correct' => 'تصحيح حركات حضور وانصراف الموظفين',
+    'hr.employee_attendance.export' => 'تصدير تقرير حضور وانصراف الموظفين',
+    'hr.hr_requests.view' => 'عرض طلبات الموارد البشرية',
+    'hr.hr_requests.manage' => 'مراجعة طلبات الموارد البشرية والموافقة عليها أو رفضها',
+];
+
 $costCenterPermissionLabels = [];
 
 foreach (['cost_centers' => ['مراكز التكلفة', 'مركز تكلفة']] as $prefix => [$plural, $singular]) {
@@ -121,26 +130,6 @@ $quotationPermissionLabels = [
     'quotations.print' => 'طباعة عروض الأسعار',
     'quotations.attachments.manage' => 'إدارة مرفقات عروض الأسعار',
 ];
-
-$projectStructurePermissionLabels = [];
-
-foreach ([
-    'project_structures' => ['هياكل المشاريع', 'هيكل المشروع'],
-    'project_structure_models' => ['نماذج الهيكل', 'نموذج الهيكل'],
-] as $prefix => [$plural, $singular]) {
-    $projectStructurePermissionLabels["{$prefix}.view"] = "عرض {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.create"] = "إنشاء {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.clone"] = "نسخ {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.edit"] = "تعديل {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.delete"] = "حذف {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.view_trashed"] = "عرض {$plural} المحذوفة";
-    $projectStructurePermissionLabels["{$prefix}.restore"] = "استعادة {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.document_number.control"] = "التحكم في رقم مستند {$singular}";
-    $projectStructurePermissionLabels["{$prefix}.document_number_settings.update"] = "تحديث إعدادات رقم مستند {$singular}";
-}
-
-$projectStructurePermissionLabels['project_structures.tree.view'] = 'عرض شجرة هياكل المشاريع';
-$projectStructurePermissionLabels['project_structures.tree.manage'] = 'إدارة شجرة هياكل المشاريع';
 
 $supplierPermissionLabels = [];
 
@@ -383,10 +372,10 @@ return [
     ...$hrFoundationPermissionLabels,
     ...$hrOrgStructurePermissionExtras,
     ...$hrEmployeePermissionLabels,
+    ...$hrAttendanceAndRequestPermissionLabels,
     ...$costCenterPermissionLabels,
     ...$customerPermissionLabels,
     ...$quotationPermissionLabels,
-    ...$projectStructurePermissionLabels,
     ...$supplierPermissionLabels,
     ...$productPermissionLabels,
     ...$reportPermissionLabels,

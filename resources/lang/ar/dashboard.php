@@ -210,10 +210,6 @@ return [
                 'title' => 'خامات بلا وحدات',
                 'meta' => ':count بلا تصنيف أو بلد منشأ',
             ],
-            'production_identifiers' => [
-                'title' => 'المعرفات النشطة',
-                'meta' => 'شجرة معرفات الإنتاج',
-            ],
             'customers' => [
                 'title' => 'العملاء النشطون',
                 'meta' => 'سجلات عملاء الشركة',
@@ -322,7 +318,6 @@ return [
             'branch_storage' => 'مخازن وقاعات الفروع',
             'product_components' => 'الأصناف والمكونات',
             'raw_materials' => 'الخامات',
-            'production_identifiers' => 'معرفات الإنتاج',
             'factory_branches' => 'فروع المصانع',
             'customers' => 'العملاء',
             'quotations' => 'عروض الأسعار',

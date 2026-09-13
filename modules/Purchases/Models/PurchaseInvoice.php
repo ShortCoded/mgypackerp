@@ -65,7 +65,6 @@ class PurchaseInvoice extends Model
     public static function scheduleSourceTypes(): array
     {
         return [
-            self::SourceScheduled,
             self::SourceCashbox,
             self::SourceBank,
         ];

@@ -8,23 +8,19 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
-use Modules\Core\Models\ItemUnit;
-use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\Production\DataTables\ProductionExecutionDataTable;
+use Modules\Production\Http\Requests\RecordProductionLaborRequest;
 use Modules\Production\Http\Requests\StoreProductionRunRequest;
-use Modules\Production\Models\ProductionMachine;
-use Modules\Production\Models\ProductionMold;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionRun;
-use Modules\Production\Models\ProductionShift;
-use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Services\ProductionCycleService;
 
 class ProductionRunController extends Controller
@@ -41,55 +37,21 @@ class ProductionRunController extends Controller
         $context = $this->requiredContext($request);
 
         return view('modules.production.runs.index', [
-            'records' => ProductionRun::query()
-                ->where('company_id', $context['company_id'])
-                ->where('financial_period_id', $context['financial_period_id'])
-                ->where('branch_id', $context['branch_id'])
-                ->with(['order', 'product', 'machine', 'mold'])
-                ->latest('planned_start_at')
-                ->paginate(30)
-                ->withQueryString(),
             'orders' => ProductionOrder::query()
                 ->where('company_id', $context['company_id'])
                 ->where('financial_period_id', $context['financial_period_id'])
                 ->where('branch_id', $context['branch_id'])
                 ->whereIn('status', [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted])
-                ->with('lines.product')
+                ->with(['lines.product', 'lines.stageSnapshots'])
                 ->orderByDesc('production_order_date')
                 ->get(),
-            'machines' => ProductionMachine::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('status', ProductionMachine::StatusAvailable)->orderBy('code')->get(),
-            'molds' => ProductionMold::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('status', ProductionMold::StatusAvailable)->orderBy('code')->get(),
-            'shifts' => ProductionShift::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('is_active', true)->orderBy('starts_at')->get(),
-            'finishedProducts' => Product::query()->forCompany($context['company_id'])->where('item_classification', Product::ClassificationFinishedProduct)->active()->with(['unit', 'equivalentUnit'])->orderBy('name')->get(),
-            'finishedUnits' => ItemUnit::query()->forCompany($context['company_id'])->active()->orderBy('name')->get(),
+            'assets' => FixedAsset::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('status', FixedAsset::StatusActive)->orderBy('asset_name')->get(),
         ]);
     }
 
-    public function storeMakeToStockOrder(Request $request): JsonResponse|RedirectResponse
+    public function data(Request $request, ProductionExecutionDataTable $dataTable): JsonResponse
     {
-        $context = $this->requiredContext($request);
-        $data = $request->validate([
-            'product_id' => ['required', 'integer', 'exists:products,id'],
-            'unit_id' => ['nullable', 'integer', 'exists:item_units,id'],
-            'quantity' => ['required', 'numeric', 'gt:0'],
-            'expected_start_date' => ['nullable', 'date'],
-            'expected_finish_date' => ['nullable', 'date', 'after_or_equal:expected_start_date'],
-            'priority' => ['required', 'in:low,normal,high,urgent'],
-            'overproduction_tolerance_percent' => ['required', 'numeric', 'min:0', 'max:100'],
-            'production_notes' => ['nullable', 'string'],
-        ]);
-        $order = $this->guard(fn (): ProductionOrder => $this->cycle->createMakeToStockOrder([
-            ...$context,
-            ...collect($data)->except(['product_id', 'unit_id', 'quantity'])->all(),
-        ], [[
-            'product_id' => $data['product_id'],
-            'unit_id' => $data['unit_id'] ?? null,
-            'quantity' => $data['quantity'],
-        ]]));
-
-        $url = route('admin.production.work-orders.show', $order);
-
-        return $this->respond($request, ['doc_num' => $order->doc_num, 'url' => $url], $url, 201);
+        return $dataTable->runs($request);
     }
 
     public function store(StoreProductionRunRequest $request): JsonResponse|RedirectResponse
@@ -115,17 +77,11 @@ class ProductionRunController extends Controller
 
         return view('modules.production.runs.show', [
             'record' => $productionRun->load([
-                'order.salesOrder', 'orderLine', 'product', 'machine', 'mold', 'shift',
+                'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
                 'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
-                'inventoryDocuments.journalEntry',
+                'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
             ]),
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
-            'qualityInspectionTypes' => QualityInspectionType::query()
-                ->where('company_id', $productionRun->company_id)
-                ->where('is_active', true)
-                ->orderByDesc('is_final_production')
-                ->orderBy('name')
-                ->get(),
         ]);
     }
 
@@ -153,7 +109,7 @@ class ProductionRunController extends Controller
     {
         $this->assertRunInCurrentContext($request, $productionRun);
         $record = $productionRun->load([
-            'order.company', 'order.salesOrder.customer', 'orderLine', 'product', 'machine', 'mold', 'shift',
+            'order.company', 'order.salesOrder', 'orderLine', 'product', 'fixedAsset', 'stageSnapshot',
             'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
         ]);
 
@@ -261,54 +217,16 @@ class ProductionRunController extends Controller
         return $this->respond($request, ['entry' => $entry->public_id], route('admin.production.runs.show', $productionRun));
     }
 
-    public function inspect(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    public function labor(RecordProductionLaborRequest $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
-        $data = $request->validate([
-            'quality_inspection_type_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('quality_inspection_types', 'id')->where(
-                    fn ($query) => $query
-                        ->where('company_id', $productionRun->company_id)
-                        ->where('is_active', true)
-                        ->whereNull('deleted_at'),
-                ),
-            ],
-            'result' => ['required', 'in:passed,failed,conditional'],
-            'defect_code' => ['nullable', 'string', 'max:100'],
-            'affected_base_quantity' => ['nullable', 'numeric', 'min:0'],
-            'corrective_action' => ['nullable', 'string'],
-            'evidence_file' => ['nullable', 'image', 'max:5120'],
-            'notes' => ['nullable', 'string'],
-            'results' => ['nullable', 'array'],
-            'results.*.quality_checkpoint_id' => [
-                'required',
-                'integer',
-                'distinct',
-                Rule::exists('quality_checkpoints', 'id')->where(
-                    fn ($query) => $query
-                        ->where('company_id', $productionRun->company_id)
-                        ->where('quality_inspection_type_id', $request->input('quality_inspection_type_id'))
-                        ->where('is_active', true)
-                        ->whereNull('deleted_at'),
-                ),
-            ],
-            'results.*.result' => ['required', 'string', 'max:30'],
-            'results.*.measured_value' => ['nullable', 'string', 'max:255'],
-            'results.*.notes' => ['nullable', 'string'],
-        ]);
-        if ($request->hasFile('evidence_file')) {
-            $data['evidence'] = [[
-                'disk' => 'public',
-                'path' => $request->file('evidence_file')->store('production-quality', 'public'),
-                'original_name' => $request->file('evidence_file')->getClientOriginalName(),
-            ]];
-        }
-        unset($data['evidence_file']);
-        $inspection = $this->guard(fn () => $this->cycle->recordInspection($productionRun, $data));
+        $record = $this->guard(fn (): ProductionRun => $this->cycle->recordLabor($productionRun, $request->validated()));
 
-        return $this->respond($request, ['doc_num' => $inspection->doc_num], route('admin.production.runs.show', $productionRun));
+        return $this->respond($request, [
+            'run_number' => $record->run_number,
+            'actual_labor_count' => $record->actual_labor_count,
+            'total_labor_hours' => $record->totalLaborHours(),
+        ], route('admin.production.runs.show', $record));
     }
 
     public function account(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse

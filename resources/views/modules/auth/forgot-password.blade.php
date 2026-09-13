@@ -61,7 +61,7 @@
                                             <span class="text-danger ms-1" aria-hidden="true">*</span>
                                             <span class="visually-hidden">{{ __('common.required') }}</span>
                                         </label>
-                                        <input id="email" name="email" type="email" class="form-control" value="{{ old('email') }}" placeholder="{{ __('auth.email_placeholder') }}" autocomplete="username" autofocus required aria-required="true">
+                                        <x-forms.input id="email" name="email" type="email" class="form-control" value="{{ old('email') }}" placeholder="{{ __('auth.email_placeholder') }}" autocomplete="username" autofocus required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="email"></div>
                                     </div>
 

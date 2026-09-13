@@ -34,12 +34,15 @@ class SalesProductionDemandService
             if (! $order->isApprovedForFulfillment()) {
                 throw new DomainException(__('Production demand requires an approved sales order.'));
             }
+            if (ProductionOrder::query()->where('company_id', $order->company_id)->where('sales_order_id', $order->getKey())->exists()) {
+                throw new DomainException(__('production_execution.messages.sales_order_already_linked'));
+            }
             $period = $this->periods->resolveOpenForPostingDate((int) $order->company_id, now()->toDateString(), lockForUpdate: true);
             BranchStore::query()->lockForUpdate()->findOrFail($order->branch_store_id);
             $numbers = $this->documents->nextForCompany('production_orders', ProductionOrder::class, (int) $order->company_id, fn ($query) => $query->where('financial_period_id', $period->getKey()));
             $production = ProductionOrder::query()->create([
                 ...$numbers, 'company_id' => $order->company_id, 'financial_period_id' => $period->getKey(),
-                'branch_id' => $order->branch_id, 'sales_order_id' => $order->getKey(), 'customer_id' => $order->customer_id,
+                'branch_id' => $order->branch_id, 'sales_order_id' => $order->getKey(),
                 'source_type' => 'sales_order', 'source_id' => $order->getKey(),
                 'production_order_date' => now()->toDateString(), 'expected_delivery_date' => $order->expected_delivery_date,
                 'status' => ProductionOrder::StatusDraft,
@@ -61,13 +64,14 @@ class SalesProductionDemandService
                 $plannedRemaining = bcsub((string) $line->production_requested_quantity, (string) $line->produced_quantity, 8);
                 $remaining = bcsub(bcsub($line->remainingDeliveryQuantity(), $available, 8), $plannedRemaining, 8);
                 $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Production demand exceeds the unplanned stock shortage.'));
-                $production->lines()->create([
+                $productionLine = $production->lines()->create([
                     'sales_order_line_id' => $line->getKey(), 'line_number' => $index + 1,
                     'product_id' => $line->product_id, 'unit_id' => $line->unit_id, 'description' => $line->description,
                     'quantity' => $quantity, 'conversion_factor' => $line->conversion_factor,
                     'base_quantity' => $baseQuantity, 'specifications' => $line->specifications,
                     'production_notes' => $line->production_notes, 'mandatory_specs_resolved' => true,
                 ]);
+                app(ProductionRoutingService::class)->snapshotLine($productionLine);
                 $line->increment('production_requested_quantity', $quantity);
                 $line->increment('production_requested_base_quantity', $baseQuantity);
             }

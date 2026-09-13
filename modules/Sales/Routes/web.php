@@ -7,8 +7,7 @@ use Modules\Finance\Services\FinanceSelect2Service;
 use Modules\Sales\Http\Controllers\CustomerController;
 use Modules\Sales\Http\Controllers\CustomerDataReportController;
 use Modules\Sales\Http\Controllers\CustomerTermsController;
-use Modules\Sales\Http\Controllers\ProjectStructureController;
-use Modules\Sales\Http\Controllers\ProjectStructureModelController;
+use Modules\Sales\Http\Controllers\PriceListController;
 use Modules\Sales\Http\Controllers\QuotationController;
 use Modules\Sales\Http\Controllers\SalesCycleController;
 use Modules\Sales\Http\Controllers\SalesCycleReportController;
@@ -146,9 +145,6 @@ Route::middleware('auth')
             ->name('select2.quotation-products');
         Route::get('/select2/customer-quotation-terms', [QuotationController::class, 'customerTerms'])
             ->name('select2.customer-quotation-terms');
-        Route::get('/select2/project-structures', [ProjectStructureController::class, 'select2'])
-            ->name('select2.project-structures');
-
         Route::prefix('customers')->name('customers.')->controller(CustomerController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:customers.view')->name('index');
             Route::get('/data', 'data')->middleware('can:customers.view')->name('data');
@@ -171,36 +167,17 @@ Route::middleware('auth')
             Route::put('/{customer}', 'update')->middleware('can:customers.edit')->name('update');
         });
 
-        Route::prefix('project-structures')->name('project-structures.')->controller(ProjectStructureController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:project_structures.view')->name('index');
-            Route::get('/data', 'data')->middleware('can:project_structures.view')->name('data');
-            Route::get('/select2', 'select2')->name('select2');
-            Route::get('/tree', 'tree')->middleware('can:project_structures.tree.view')->name('tree');
-            Route::get('/create', 'create')->middleware('can:project_structures.create')->name('create');
-            Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
-            Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:project_structures.delete')->name('bulk-delete');
-            Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:project_structures.document_number_settings.update')->name('document-number-settings.update');
-            Route::patch('/{projectStructure}/restore', 'restore')->middleware('can:project_structures.restore')->name('restore');
-            Route::get('/{projectStructure}/clone', 'clone')->middleware('can:project_structures.clone')->name('clone');
-            Route::get('/{projectStructure}', 'show')->middleware('can:project_structures.view')->name('show');
-            Route::get('/{projectStructure}/edit', 'edit')->middleware('can:project_structures.edit')->name('edit');
-            Route::put('/{projectStructure}', 'update')->middleware('can:project_structures.edit')->name('update');
-            Route::delete('/{projectStructure}', 'destroy')->middleware('can:project_structures.delete')->name('destroy');
-        });
-
-        Route::prefix('project-structure-models')->name('project-structure-models.')->controller(ProjectStructureModelController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:project_structure_models.view')->name('index');
-            Route::get('/data', 'data')->middleware('can:project_structure_models.view')->name('data');
-            Route::get('/create', 'create')->middleware('can:project_structure_models.create')->name('create');
-            Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
-            Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:project_structure_models.delete')->name('bulk-delete');
-            Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:project_structure_models.document_number_settings.update')->name('document-number-settings.update');
-            Route::patch('/{projectStructureModel}/restore', 'restore')->middleware('can:project_structure_models.restore')->name('restore');
-            Route::get('/{projectStructureModel}/clone', 'clone')->middleware('can:project_structure_models.clone')->name('clone');
-            Route::get('/{projectStructureModel}', 'show')->middleware('can:project_structure_models.view')->name('show');
-            Route::get('/{projectStructureModel}/edit', 'edit')->middleware('can:project_structure_models.edit')->name('edit');
-            Route::put('/{projectStructureModel}', 'update')->middleware('can:project_structure_models.edit')->name('update');
-            Route::delete('/{projectStructureModel}', 'destroy')->middleware('can:project_structure_models.delete')->name('destroy');
+        Route::prefix('price-lists')->name('price-lists.')->controller(PriceListController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:price_lists.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:price_lists.view')->name('data');
+            Route::get('/create', 'create')->middleware('can:price_lists.create')->name('create');
+            Route::post('/', 'store')->middleware(['can:price_lists.create', IdempotentDocumentSubmission::class])->name('store');
+            Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:price_lists.delete')->name('bulk-delete');
+            Route::patch('/{priceList}/restore', 'restore')->withTrashed()->middleware('can:price_lists.restore')->name('restore');
+            Route::get('/{priceList}', 'show')->withTrashed()->middleware('can:price_lists.view')->name('show');
+            Route::get('/{priceList}/edit', 'edit')->middleware('can:price_lists.edit')->name('edit');
+            Route::put('/{priceList}', 'update')->middleware('can:price_lists.edit')->name('update');
+            Route::delete('/{priceList}', 'destroy')->middleware('can:price_lists.delete')->name('destroy');
         });
 
         Route::prefix('quotations')->name('quotations.')->controller(QuotationController::class)->group(function (): void {

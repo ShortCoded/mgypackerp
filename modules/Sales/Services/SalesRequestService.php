@@ -22,6 +22,7 @@ class SalesRequestService
         private readonly FinancialPeriodService $periods,
         private readonly SalesUnitConversionService $units,
         private readonly SalesCycleAuditService $audit,
+        private readonly PriceListPricingService $priceLists,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -56,7 +57,8 @@ class SalesRequestService
                 if (! $product->isSalesEligible() || bccomp((string) $input['quantity'], '0', 8) <= 0) {
                     throw new DomainException(__('Choose a saleable item and a positive requested quantity.'));
                 }
-                $lines[] = [...collect($input)->only(['product_id', 'description', 'quantity', 'unit_price', 'specifications', 'notes'])->all(),
+                $lines[] = [...collect($input)->only(['product_id', 'description', 'quantity', 'specifications', 'notes'])->all(),
+                    'unit_price' => null,
                     ...collect($this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']))->except('base_unit_id')->all(), 'line_number' => $index + 1];
             }
             $record->fill([...$values, 'company_id' => $companyId, 'financial_period_id' => $period->id]);
@@ -271,9 +273,17 @@ class SalesRequestService
                 }
                 $lines[] = ['sales_request_line_id' => $line->id, 'product_id' => $line->product_id, 'product_doc_num' => $line->product->doc_num,
                     'unit_id' => $line->unit_id, 'unit_doc_num' => $line->unit->doc_num, 'description' => $line->description ?: $line->product->name,
-                    'quantity' => $input['quantity'], 'unit_price' => $line->unit_price ?? '0', 'specifications' => $line->specifications, 'notes' => $line->notes];
+                    'quantity' => $input['quantity'], 'specifications' => $line->specifications, 'notes' => $line->notes];
                 $line->increment('converted_quantity', $input['quantity']);
             }
+            $lines = $this->priceLists->applyToLines(
+                $lines,
+                (int) $record->company_id,
+                (int) $record->customer_id,
+                (int) $record->currency_id,
+                now()->toDateString(),
+                $target === 'quotation' ? 'quotation' : 'amount',
+            );
             $period = $this->periods->resolveOpenForPostingDate((int) $record->company_id, now()->toDateString(), lockForUpdate: true);
             if ($target === 'quotation') {
                 $document = app(QuotationService::class)->create(['branch_id' => $record->branch_id, 'sales_request_id' => $record->id, 'business_employee_id' => $record->business_employee_id,

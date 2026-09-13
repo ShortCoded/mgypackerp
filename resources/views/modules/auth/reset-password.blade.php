@@ -48,7 +48,7 @@
                                 <form method="POST" action="{{ route('password.store') }}" class="js-auth-form" novalidate>
                                     @csrf
 
-                                    <input type="hidden" name="token" value="{{ $request->route('token') }}">
+                                    <x-forms.input type="hidden" name="token" value="{{ $request->route('token') }}" />
 
                                     <div class="mb-3">
                                         <label class="form-label" for="email">
@@ -56,7 +56,7 @@
                                             <span class="text-danger ms-1" aria-hidden="true">*</span>
                                             <span class="visually-hidden">{{ __('common.required') }}</span>
                                         </label>
-                                        <input id="email" name="email" type="email" class="form-control" value="{{ old('email', $request->email) }}" placeholder="{{ __('auth.email_placeholder') }}" autocomplete="username" autofocus required aria-required="true">
+                                        <x-forms.input id="email" name="email" type="email" class="form-control" value="{{ old('email', $request->email) }}" placeholder="{{ __('auth.email_placeholder') }}" autocomplete="username" autofocus required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="email"></div>
                                     </div>
 
@@ -66,7 +66,7 @@
                                             <span class="text-danger ms-1" aria-hidden="true">*</span>
                                             <span class="visually-hidden">{{ __('common.required') }}</span>
                                         </label>
-                                        <input id="password" name="password" type="password" class="form-control" placeholder="{{ __('auth.new_password_placeholder') }}" autocomplete="new-password" required aria-required="true">
+                                        <x-forms.input id="password" name="password" type="password" class="form-control" placeholder="{{ __('auth.new_password_placeholder') }}" autocomplete="new-password" required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="password"></div>
                                     </div>
 
@@ -76,7 +76,7 @@
                                             <span class="text-danger ms-1" aria-hidden="true">*</span>
                                             <span class="visually-hidden">{{ __('common.required') }}</span>
                                         </label>
-                                        <input id="password_confirmation" name="password_confirmation" type="password" class="form-control" placeholder="{{ __('auth.password_confirmation_placeholder') }}" autocomplete="new-password" required aria-required="true">
+                                        <x-forms.input id="password_confirmation" name="password_confirmation" type="password" class="form-control" placeholder="{{ __('auth.password_confirmation_placeholder') }}" autocomplete="new-password" required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="password_confirmation"></div>
                                     </div>
 

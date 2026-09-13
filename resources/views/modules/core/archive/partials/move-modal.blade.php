@@ -13,17 +13,17 @@
                 <div class="mb-3">
                     <label class="form-label" for="archive-move-folder-search">{{ __('archive.search_folders') }}</label>
                     <div class="search-box">
-                        <input id="archive-move-folder-search"
+                        <x-forms.input id="archive-move-folder-search"
                             class="form-control search-input js-archive-move-folder-search"
                             type="search"
                             autocomplete="off"
-                            placeholder="{{ __('archive.search_folders') }}">
+                            placeholder="{{ __('archive.search_folders') }}" />
                         <span class="fas fa-search search-box-icon"></span>
                     </div>
                 </div>
                 <div>
                     <label class="form-label" for="archive-move-destination-folder">{{ __('archive.destination_folder') }}</label>
-                    <select id="archive-move-destination-folder" class="form-select js-archive-move-destination-folder"></select>
+                    <x-forms.select id="archive-move-destination-folder" class="form-select js-archive-move-destination-folder"></x-forms.select>
                     <div class="invalid-feedback d-block js-archive-move-destination-error"></div>
                 </div>
             </div>

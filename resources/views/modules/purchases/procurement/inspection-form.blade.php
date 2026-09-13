@@ -47,11 +47,11 @@
                 <div class="row g-3">
                     <div class="col-12 col-md-4">
                         <label class="form-label" for="inspection_at">{{ __('Inspection date/time') }}</label>
-                        <input class="form-control" type="datetime-local" id="inspection_at" name="inspection_at" value="{{ old('inspection_at', now()->format('Y-m-d\TH:i')) }}">
+                        <x-forms.date-input id="inspection_at" name="inspection_at" :value="old('inspection_at', now()->format('Y-m-d\TH:i'))" enable-time />
                     </div>
                     <div class="col-12 col-md-8">
                         <label class="form-label" for="observations">{{ __('Observations') }}</label>
-                        <input class="form-control" id="observations" name="observations" value="{{ old('observations') }}">
+                        <x-forms.input class="form-control" id="observations" name="observations" value="{{ old('observations') }}" />
                     </div>
                 </div>
             </div>
@@ -88,20 +88,20 @@
                                     <td>
                                         <div class="fw-semibold">{{ $line->product?->doc_num }} / {{ $line->product?->name }}</div>
                                         @if($isSupplyOrder)
-                                            <input type="hidden" name="lines[{{ $index }}][supply_order_line_public_id]" value="{{ $line->public_id }}">
+                                            <x-forms.input type="hidden" name="lines[{{ $index }}][supply_order_line_public_id]" value="{{ $line->public_id }}" />
                                         @else
-                                            <input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line->public_id }}">
+                                            <x-forms.input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line->public_id }}" />
                                         @endif
                                     </td>
                                     <td>{{ $line->unit?->name }}</td>
                                     <td>
                                         @if($orderLine?->deliverySchedules?->isNotEmpty())
-                                            <select class="form-select js-select2-local" name="lines[{{ $index }}][delivery_schedule_public_id]">
+                                            <x-forms.select class="form-select js-select2-local" name="lines[{{ $index }}][delivery_schedule_public_id]">
                                                 <option value="">{{ __('Unscheduled') }}</option>
                                                 @foreach($orderLine->deliverySchedules->whereNotIn('status', ['received', 'cancelled']) as $schedule)
                                                     <option value="{{ $schedule->public_id }}">{{ $schedule->scheduled_date?->format('Y-m-d') }} / {{ $numbers->format((float) $schedule->scheduled_quantity - (float) $schedule->received_quantity) }}</option>
                                                 @endforeach
-                                            </select>
+                                            </x-forms.select>
                                         @else
                                             <span class="text-500">—</span>
                                         @endif
@@ -116,22 +116,22 @@
                                     <td>
                                         <x-forms.numeric-input name="lines[{{ $index }}][rejected_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.rejected_quantity', 0)" required />
                                     </td>
-                                    <td><input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number') }}"></td>
+                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number') }}" /></td>
                                     <td @if(!$line->product?->tracks_expiry) hidden @endif>
-                                        <input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][manufacture_date]" value="{{ old('lines.'.$index.'.manufacture_date') }}">
+                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][manufacture_date]" value="{{ old('lines.'.$index.'.manufacture_date') }}" />
                                     </td>
                                     <td @if(!$line->product?->tracks_expiry) hidden @endif>
-                                        <input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][expiry_date]" value="{{ old('lines.'.$index.'.expiry_date') }}">
+                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][expiry_date]" value="{{ old('lines.'.$index.'.expiry_date') }}" />
                                     </td>
                                     <td>
-                                        <select class="form-select" name="lines[{{ $index }}][disposition]">
+                                        <x-forms.select class="form-select" name="lines[{{ $index }}][disposition]">
                                             <option value="quarantine">{{ __('Quarantine') }}</option>
                                             <option value="return_supplier">{{ __('Return to supplier') }}</option>
                                             <option value="reinspect">{{ __('Reinspect') }}</option>
                                             <option value="conditional_acceptance">{{ __('Conditional acceptance') }}</option>
-                                        </select>
+                                        </x-forms.select>
                                     </td>
-                                    <td><input class="form-control" name="lines[{{ $index }}][reason]" value="{{ old('lines.'.$index.'.reason') }}"></td>
+                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][reason]" value="{{ old('lines.'.$index.'.reason') }}" /></td>
                                     <td>@include('modules.purchases.procurement.line-attachments', ['attachmentLine' => null, 'attachmentCompanyId' => $record->company_id, 'index' => $index])</td>
                                 </tr>
                             @empty

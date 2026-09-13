@@ -6,8 +6,8 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{{ __('common.actions.close') }}"></button>
             </div>
             <div class="modal-body">
-                <input type="hidden" name="status_url" value="">
-                <input type="hidden" name="record_type" value="">
+                <x-forms.input type="hidden" name="status_url" value="" />
+                <x-forms.input type="hidden" name="record_type" value="" />
 
                 <div class="alert alert-danger d-none js-my-board-table-status-alert" role="alert"></div>
 
@@ -18,11 +18,11 @@
 
                 <div class="mb-0">
                     <x-forms.label for="my-board-table-status-new" :label="__('user_tasks.attributes.new_status')" required />
-                    <select id="my-board-table-status-new" name="status" class="form-select js-my-board-table-status-select" required>
+                    <x-forms.select id="my-board-table-status-new" name="status" class="form-select js-my-board-table-status-select" required>
                         @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                             <option value="{{ $status }}">{{ __("user_tasks.statuses.{$status}") }}</option>
                         @endforeach
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback" data-error-for="status"></div>
                 </div>
             </div>

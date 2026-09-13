@@ -75,9 +75,9 @@
         @if($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if($cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -124,7 +124,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                 <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -140,7 +140,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="document_date" :value="$dateValue" dir="ltr" input-class="date-value text-center" />
                         @else
-                            <input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ old('document_date', $dateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                            <x-forms.date-input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ old('document_date', $dateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="document_date"></div>
                     </div>
@@ -151,11 +151,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="branch_hall_uuid" as="display" :value="$record?->branchHall?->name ?: __('common.empty_value')" />
                             @else
-                                <select class="form-select js-select2-ajax" id="branch_hall_uuid" name="branch_hall_uuid" data-url="{{ route('admin.inventory.select2.branch-halls') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_hall') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax" id="branch_hall_uuid" name="branch_hall_uuid" data-url="{{ route('admin.inventory.select2.branch-halls') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_hall') }}" data-allow-clear="true">
                                     @if($selectedHallUuid && $hallOption)
                                         <option value="{{ $hallOption['id'] }}" selected>{{ $hallOption['text'] }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="branch_hall_uuid"></div>
                         </div>
@@ -167,11 +167,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="branch_store_uuid" as="display" :value="$record?->branchStore?->name ?: __('common.empty_value')" />
                             @else
-                                <select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.inventory.select2.branch-stores') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_store') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.inventory.select2.branch-stores') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_store') }}" data-allow-clear="true">
                                     @if($selectedStoreUuid && $storeOption)
                                         <option value="{{ $storeOption['id'] }}" selected>{{ $storeOption['text'] }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="branch_store_uuid"></div>
                         </div>
@@ -179,7 +179,7 @@
 
                     <div class="col-12">
                         <label class="form-label" for="notes">{{ __('inventory.opening_stocks.attributes.notes') }}</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="2" @readonly($isReadonly)>{{ old('notes', $value('notes')) }}</textarea>
+                        <x-forms.textarea class="form-control" id="notes" name="notes" rows="2" :readonly='$isReadonly'>{{ old('notes', $value('notes')) }}</x-forms.textarea>
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
                     <div class="col-12">
@@ -231,8 +231,8 @@
                                 @endphp
                                 <tr class="js-opening-stock-line" data-index="{{ $index }}">
                                     <td>
-                                        <input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}">
-                                        <input type="hidden" name="lines[{{ $index }}][_delete]" value="0">
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}" />
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][_delete]" value="0" />
                                         @if($isReadonly)
                                             <div class="d-flex align-items-center gap-1 opening-stock-product-picker">
                                                 <div class="form-control-plaintext flex-grow-1 min-w-0 text-truncate" title="{{ $productLabel }}">{{ $productLabel }}</div>
@@ -240,16 +240,16 @@
                                                     <span class="fas fa-info-circle"></span>
                                                     <span class="visually-hidden">{{ __('inventory.opening_stocks.actions.view_product') }}</span>
                                                 </button>
-                                                <input type="hidden" class="js-opening-stock-product-value" value="{{ $productDocNum }}">
+                                                <x-forms.input type="hidden" class="js-opening-stock-product-value" value="{{ $productDocNum }}" />
                                             </div>
                                         @else
                                             <div class="d-flex align-items-start gap-1 opening-stock-product-picker">
                                                 <div class="flex-grow-1 min-w-0">
-                                                    <select class="form-select js-select2-ajax js-opening-stock-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image">
+                                                    <x-forms.select class="form-select js-select2-ajax js-opening-stock-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image">
                                                         @if($productDocNum)
                                                             <option value="{{ $productDocNum }}" data-unit-label="{{ $line['unit'] ?? '' }}" @if($imageUrl) data-image-url="{{ $imageUrl }}" @endif selected>{{ $productLabel }}</option>
                                                         @endif
-                                                    </select>
+                                                    </x-forms.select>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
                                                 </div>
                                                 <button class="btn btn-falcon-default btn-sm opening-stock-product-action js-opening-stock-product-info" type="button" title="{{ __('inventory.opening_stocks.js.product_info_title') }}" data-bs-title="{{ __('inventory.opening_stocks.js.product_info_title') }}" @disabled(! $productDocNum)>
@@ -266,10 +266,10 @@
                                         @endif
                                     </td>
                                     <td>
-                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['manufacture_date'] ?? null }}</div>@else<input class="form-control" name="lines[{{ $index }}][manufacture_date]" type="date" value="{{ $line['manufacture_date'] ?? '' }}"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.manufacture_date"></div>@endif
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['manufacture_date'] ?? null }}</div>@else<x-forms.date-input name="lines[{{ $index }}][manufacture_date]" :value="$line['manufacture_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.manufacture_date"></div>@endif
                                     </td>
                                     <td>
-                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['expiry_date'] ?? null }}</div>@else<input class="form-control" name="lines[{{ $index }}][expiry_date]" type="date" value="{{ $line['expiry_date'] ?? '' }}"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.expiry_date"></div>@endif
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['expiry_date'] ?? null }}</div>@else<x-forms.date-input name="lines[{{ $index }}][expiry_date]" :value="$line['expiry_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.expiry_date"></div>@endif
                                     </td>
                                     <td>
                                         @if($isReadonly)
@@ -290,11 +290,11 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ __(str($line['stock_status'] ?? 'available')->replace('_', ' ')->title()->toString()) }}</div>
                                         @else
-                                            <select class="form-select js-opening-stock-status" name="lines[{{ $index }}][stock_status]">
+                                            <x-forms.select class="form-select js-opening-stock-status" name="lines[{{ $index }}][stock_status]">
                                                 @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
                                                     <option value="{{ $status }}" @selected(($line['stock_status'] ?? 'available') === $status)>{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>
                                                 @endforeach
-                                            </select>
+                                            </x-forms.select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.stock_status"></div>
                                         @endif
                                     </td>
@@ -302,7 +302,7 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['batch_lot'] ?? null }}</div>
                                         @else
-                                            <input class="form-control js-opening-stock-batch" name="lines[{{ $index }}][batch_lot]" type="text" maxlength="100" value="{{ $line['batch_lot'] ?? '' }}">
+                                            <x-forms.input class="form-control js-opening-stock-batch" name="lines[{{ $index }}][batch_lot]" type="text" maxlength="100" value="{{ $line['batch_lot'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.batch_lot"></div>
                                         @endif
                                     </td>
@@ -310,7 +310,7 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                         @else
-                                            <input class="form-control js-opening-stock-line-notes" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}">
+                                            <x-forms.input class="form-control js-opening-stock-line-notes" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                         @endif
                                     </td>
@@ -384,11 +384,11 @@
         <template id="opening-stock-line-template">
             <tr class="js-opening-stock-line" data-index="__INDEX__">
                 <td>
-                    <input type="hidden" name="lines[__INDEX__][public_id]" value="">
-                    <input type="hidden" name="lines[__INDEX__][_delete]" value="0">
+                    <x-forms.input type="hidden" name="lines[__INDEX__][public_id]" value="" />
+                    <x-forms.input type="hidden" name="lines[__INDEX__][_delete]" value="0" />
                     <div class="d-flex align-items-start gap-1 opening-stock-product-picker">
                         <div class="flex-grow-1 min-w-0">
-                            <select class="form-select js-select2-ajax js-opening-stock-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image"></select>
+                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.inventory.select2.opening-stock-products') }}" data-placeholder="{{ __('inventory.opening_stocks.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image"></x-forms.select>
                             <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.product_doc_num"></div>
                         </div>
                         <button class="btn btn-falcon-default btn-sm opening-stock-product-action js-opening-stock-product-info" type="button" title="{{ __('inventory.opening_stocks.js.product_info_title') }}" data-bs-title="{{ __('inventory.opening_stocks.js.product_info_title') }}" disabled>
@@ -411,21 +411,21 @@
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
                 </td>
                 <td>
-                    <select class="form-select js-opening-stock-status" name="lines[__INDEX__][stock_status]">
+                    <x-forms.select class="form-select js-opening-stock-status" name="lines[__INDEX__][stock_status]">
                         @foreach(['available', 'qc_hold', 'quarantine', 'damaged'] as $status)
                             <option value="{{ $status }}" @selected($status === 'available')>{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>
                         @endforeach
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.stock_status"></div>
                 </td>
                 <td>
-                    <input class="form-control js-opening-stock-batch" name="lines[__INDEX__][batch_lot]" type="text" maxlength="100" value="">
+                    <x-forms.input class="form-control js-opening-stock-batch" name="lines[__INDEX__][batch_lot]" type="text" maxlength="100" value="" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.batch_lot"></div>
                 </td>
-                <td><input class="form-control" name="lines[__INDEX__][manufacture_date]" type="date"><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.manufacture_date"></div></td>
-                <td><input class="form-control" name="lines[__INDEX__][expiry_date]" type="date"><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.expiry_date"></div></td>
+                <td><x-forms.date-input name="lines[__INDEX__][manufacture_date]" /><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.manufacture_date"></div></td>
+                <td><x-forms.date-input name="lines[__INDEX__][expiry_date]" /><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.expiry_date"></div></td>
                 <td>
-                    <input class="form-control js-opening-stock-line-notes" name="lines[__INDEX__][notes]" type="text" value="">
+                    <x-forms.input class="form-control js-opening-stock-line-notes" name="lines[__INDEX__][notes]" type="text" value="" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
                 </td>
                 <td class="text-center">

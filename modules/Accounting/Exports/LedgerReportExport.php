@@ -83,6 +83,10 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
                 __('ledger_reports.columns.document'),
                 __('ledger_reports.columns.reference'),
                 __('ledger_reports.columns.description'),
+                ...($this->type === 'customer_statement' ? [
+                    __('ledger_reports.columns.collector'),
+                    __('ledger_reports.columns.collection_source'),
+                ] : []),
                 __('ledger_reports.columns.debit'),
                 __('ledger_reports.columns.credit'),
                 __('ledger_reports.columns.balance'),
@@ -112,7 +116,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
         $rows = [];
 
         if ($this->result['opening_movements'] !== []) {
-            $rows[] = ['', __('ledger_reports.summary.prior_details'), '', '', '', '', ''];
+            $rows[] = ['', __('ledger_reports.summary.prior_details'), '', '', ...$this->partnerCollectionCells(), '', '', ''];
 
             foreach ($this->result['opening_movements'] as $movement) {
                 $rows[] = [
@@ -120,6 +124,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
                     $movement['source_doc_num'] ?: $movement['doc_num'],
                     $movement['reference_no'] ?: '',
                     $movement['description'],
+                    ...$this->partnerCollectionCells($movement),
                     $movement['debit'],
                     $movement['credit'],
                     $this->balanceLabel($movement['running_debit'], $movement['running_credit']),
@@ -132,6 +137,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
             __('ledger_reports.summary.prior'),
             '',
             '',
+            ...$this->partnerCollectionCells(),
             (string) data_get($this->result, 'opening.debit'),
             (string) data_get($this->result, 'opening.credit'),
             $this->balanceLabel(
@@ -146,6 +152,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
                 $movement['source_doc_num'] ?: $movement['doc_num'],
                 $movement['reference_no'] ?: '',
                 $movement['description'],
+                ...$this->partnerCollectionCells($movement),
                 $movement['debit'],
                 $movement['credit'],
                 $this->balanceLabel($movement['running_debit'], $movement['running_credit']),
@@ -157,6 +164,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
             __('ledger_reports.summary.period'),
             '',
             '',
+            ...$this->partnerCollectionCells(),
             (string) data_get($this->result, 'period.debit'),
             (string) data_get($this->result, 'period.credit'),
             $this->balanceLabel(
@@ -171,6 +179,14 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
     private function isPartnerStatement(): bool
     {
         return in_array($this->type, ['customer_statement', 'supplier_statement'], true);
+    }
+
+    /** @param array<string, mixed> $movement @return list<string> */
+    private function partnerCollectionCells(array $movement = []): array
+    {
+        return $this->type === 'customer_statement'
+            ? [(string) ($movement['collector'] ?? ''), (string) ($movement['collection_source'] ?? '')]
+            : [];
     }
 
     private function balanceLabel(string $debit, string $credit): string

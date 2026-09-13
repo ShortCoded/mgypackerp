@@ -103,6 +103,8 @@ test('procurement migrations expose the reconciled purchase schema', function ()
             'receipt_line_id',
             'matched_quantity',
         ]))->toBeTrue()
+        ->and(Schema::hasColumn('unpriced_inventory_receipts', 'goods_receipt_inspection_id'))->toBeTrue()
+        ->and(Schema::hasColumn('unpriced_inventory_receipt_lines', 'goods_receipt_inspection_line_id'))->toBeTrue()
         ->and(Schema::hasColumns('purchase_returns', [
             'purchase_order_id',
             'receipt_id',
@@ -1095,8 +1097,7 @@ test('freight discount tax posting, invoice reversal, and period locks are exact
         ]],
     ])['record'];
 
-    expect($invoice->paymentSchedules)->toHaveCount(1)
-        ->and($invoice->paymentSchedules->first()->due_date->toDateString())->toBe(now()->addDays(30)->toDateString());
+    expect($invoice->paymentSchedules)->toBeEmpty();
 
     $invoice = app(PurchaseInvoiceService::class)->approve($invoice);
     $journal = $invoice->journalEntry()->with('lines.account')->firstOrFail();

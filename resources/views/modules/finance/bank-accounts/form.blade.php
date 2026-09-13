@@ -54,9 +54,9 @@
         @if($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if($cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3 bank-account-form-card">
@@ -75,7 +75,7 @@
                             @if($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
@@ -91,11 +91,11 @@
                             <x-forms.view-field for="bank_doc_num" :value="$bankOption['text'] ?? null" />
                         @else
                             <div class="bank-account-lookup-control">
-                                <select class="form-select js-select2-ajax js-bank-select" id="bank_doc_num" name="bank_doc_num" data-url="{{ route('admin.accounting.accounts.select2', ['classification' => 'bank', 'bank_accounts' => 1, 'group' => 1]) }}" data-placeholder="{{ __('common.placeholders.select') }}">
+                                <x-forms.select class="form-select js-select2-ajax js-bank-select" id="bank_doc_num" name="bank_doc_num" data-url="{{ route('admin.accounting.accounts.select2', ['classification' => 'bank', 'bank_accounts' => 1, 'group' => 1]) }}" data-placeholder="{{ __('common.placeholders.select') }}">
                                     @if($bankOption)
                                         <option value="{{ $bankOption['id'] }}" selected>{{ $bankOption['text'] }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                                 @if($canCreateAccounts)
                                     <button class="btn btn-falcon-default btn-sm js-bank-inline-create" type="button" data-modal="#bank-inline-modal">
                                         <span class="fas fa-plus"></span><span class="ms-1">{{ __('bank_accounts.actions.add_bank') }}</span>
@@ -108,10 +108,10 @@
 
                     <div class="col-md-3">
                         <x-forms.label for="status" :label="__('bank_accounts.attributes.status')" required />
-                        <select class="form-select" id="status" name="status" @disabled($isView) required>
+                        <x-forms.select class="form-select" id="status" name="status" :disabled='$isView' required>
                             <option value="active" @selected($value('status','active') === 'active')>{{ __('finance.statuses.active') }}</option>
                             <option value="inactive" @selected($value('status') === 'inactive')>{{ __('finance.statuses.inactive') }}</option>
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
 
@@ -120,48 +120,48 @@
                         @if($isView)
                             <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('common.placeholders.select') }}">
+                            <x-forms.select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('common.placeholders.select') }}">
                                 @if($currencyOption)
                                     <option value="{{ $currencyOption['id'] }}" selected>{{ $currencyOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                     </div>
                     <div class="col-md-4">
                         <x-forms.label for="account_name" :label="__('bank_accounts.attributes.account_name')" required />
-                        <input class="form-control" id="account_name" name="account_name" value="{{ $isView ? $linkedAccountDisplayName : $value('account_name') }}" @readonly($isView) @unless($isView) autofocus @endunless required>
+                                <x-forms.input class="form-control" id="account_name" name="account_name" value="{{ $isView ? $linkedAccountDisplayName : $value('account_name') }}" :readonly="$isView" :autofocus="! $isView" required />
                         <div class="invalid-feedback" data-error-for="account_name"></div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label" for="account_number">{{ __('bank_accounts.attributes.account_number') }}</label>
-                        <input class="form-control" id="account_number" name="account_number" value="{{ $value('account_number') }}" @readonly($isView)>
+                        <x-forms.input class="form-control" id="account_number" name="account_number" value="{{ $value('account_number') }}" :readonly='$isView' />
                         <div class="invalid-feedback" data-error-for="account_number"></div>
                     </div>
 
                     <div class="col-md-6">
                         <label class="form-label" for="iban">{{ __('bank_accounts.attributes.iban') }}</label>
-                        <input class="form-control" id="iban" name="iban" value="{{ $value('iban') }}" @readonly($isView)>
+                        <x-forms.input class="form-control" id="iban" name="iban" value="{{ $value('iban') }}" :readonly='$isView' />
                         <div class="invalid-feedback" data-error-for="iban"></div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="swift_code">{{ __('bank_accounts.attributes.swift_code') }}</label>
-                        <input class="form-control" id="swift_code" name="swift_code" value="{{ $value('swift_code') }}" @readonly($isView)>
+                        <x-forms.input class="form-control" id="swift_code" name="swift_code" value="{{ $value('swift_code') }}" :readonly='$isView' />
                         <div class="invalid-feedback" data-error-for="swift_code"></div>
                     </div>
 
                     <div class="col-md-6">
                         <label class="form-label" for="owner_name">{{ __('bank_accounts.attributes.owner_name') }}</label>
-                        <input class="form-control" id="owner_name" name="owner_name" value="{{ $value('owner_name') }}" @readonly($isView)>
+                        <x-forms.input class="form-control" id="owner_name" name="owner_name" value="{{ $value('owner_name') }}" :readonly='$isView' />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="bank_branch_name">{{ __('bank_accounts.attributes.bank_branch_name') }}</label>
-                        <input class="form-control" id="bank_branch_name" name="bank_branch_name" value="{{ $value('bank_branch_name') }}" @readonly($isView)>
+                        <x-forms.input class="form-control" id="bank_branch_name" name="bank_branch_name" value="{{ $value('bank_branch_name') }}" :readonly='$isView' />
                     </div>
 
                     <div class="col-12">
                         <label class="form-label" for="notes">{{ __('bank_accounts.attributes.notes') }}</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="3" @readonly($isView)>{{ $value('notes') }}</textarea>
+                        <x-forms.textarea class="form-control" id="notes" name="notes" rows="3" :readonly='$isView'>{{ $value('notes') }}</x-forms.textarea>
                     </div>
                 </div>
             </div>
@@ -182,12 +182,12 @@
                         <div class="alert d-none js-form-alert"><div class="js-form-alert-message"></div></div>
                         <div class="mb-3">
                             <x-forms.label for="bank_inline_name" :label="__('bank_accounts.attributes.bank_name')" required />
-                            <input class="form-control" id="bank_inline_name" name="name" type="text" required>
+                            <x-forms.input class="form-control" id="bank_inline_name" name="name" type="text" required />
                             <div class="invalid-feedback" data-error-for="name"></div>
                         </div>
                         <div>
                             <label class="form-label" for="bank_inline_notes">{{ __('bank_accounts.attributes.notes') }}</label>
-                            <textarea class="form-control" id="bank_inline_notes" name="notes" rows="3"></textarea>
+                            <x-forms.textarea class="form-control" id="bank_inline_notes" name="notes" rows="3"></x-forms.textarea>
                             <div class="invalid-feedback" data-error-for="notes"></div>
                         </div>
                     </div>

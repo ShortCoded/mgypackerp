@@ -10,8 +10,6 @@ return [
         'customers.messages.delete_blocked_transactions',
         'fixed_assets.messages.delete_blocked_lifecycle',
         'fixed_assets.messages.delete_blocked_transactions',
-        'project_structures.messages.delete_blocked_children',
-        'production_identifiers.messages.delete_blocked_children',
         'suppliers.messages.delete_blocked_transactions',
         'users.messages.related_data_exists',
     ],
@@ -24,12 +22,6 @@ return [
             'status' => 422,
         ],
         'branch_halls_branch_id_name_unique' => [
-            'error_code' => 'duplicate_name',
-            'translation_key' => 'erp_errors.duplicate_name',
-            'field' => 'name',
-            'status' => 422,
-        ],
-        'production_identifier_types_company_name_unique_active' => [
             'error_code' => 'duplicate_name',
             'translation_key' => 'erp_errors.duplicate_name',
             'field' => 'name',

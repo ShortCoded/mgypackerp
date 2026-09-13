@@ -49,12 +49,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-4">
                                 <label class="form-label" for="cost-centers-document-prefix">{{ __('cost_centers.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="cost-centers-document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? 'CC-' }}">
+                                <x-forms.input class="form-control" id="cost-centers-document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? 'CC-' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-2">
                                 <label class="form-label" for="cost-centers-document-padding">{{ __('cost_centers.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="cost-centers-document-padding" name="padding" type="number" value="{{ $documentNumberSettings['padding'] ?? 5 }}">
+                                <x-forms.input class="form-control" id="cost-centers-document-padding" name="padding" type="number" value="{{ $documentNumberSettings['padding'] ?? 5 }}" />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -107,28 +107,28 @@
         >
             <div class="col-12 col-md-6 col-xl-4 report-filter-field">
                 <label class="mb-1 form-label" for="cost-centers-search">{{ __('cost_centers.filters.search') }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="cost-centers-search" name="cost_center_search" type="search" data-filter-label="{{ __('cost_centers.filters.search') }}" placeholder="{{ __('cost_centers.placeholders.search') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="cost-centers-search" name="cost_center_search" type="search" data-filter-label="{{ __('cost_centers.filters.search') }}" placeholder="{{ __('cost_centers.placeholders.search') }}" />
             </div>
             <div class="col-12 col-md-6 col-xl-4 report-filter-field">
                 <label class="mb-1 form-label" for="cost-centers-status">{{ __('cost_centers.filters.status') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="cost-centers-status" name="status" data-filter-label="{{ __('cost_centers.filters.status') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="cost-centers-status" name="status" data-filter-label="{{ __('cost_centers.filters.status') }}">
                     <option value="">{{ __('cost_centers.filters.all') }}</option>
                     @foreach (['active', 'inactive'] as $status)
                         <option value="{{ $status }}">{{ __('cost_centers.statuses.' . $status) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-4 report-filter-field">
                 <label class="mb-1 form-label" for="cost-centers-hierarchy">{{ __('cost_centers.filters.hierarchy') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="cost-centers-hierarchy" name="hierarchy" data-filter-label="{{ __('cost_centers.filters.hierarchy') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="cost-centers-hierarchy" name="hierarchy" data-filter-label="{{ __('cost_centers.filters.hierarchy') }}">
                     <option value="">{{ __('cost_centers.hierarchy_filters.all') }}</option>
                     <option value="root">{{ __('cost_centers.hierarchy_filters.root') }}</option>
                     <option value="children">{{ __('cost_centers.hierarchy_filters.children') }}</option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-4 report-filter-field">
                 <label class="mb-1 form-label" for="cost-centers-linked-account">{{ __('cost_centers.filters.linked_account') }}</label>
-                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost-centers-linked-account" name="linked_account_doc_num" data-filter-label="{{ __('cost_centers.filters.linked_account') }}" data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true"></select>
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost-centers-linked-account" name="linked_account_doc_num" data-filter-label="{{ __('cost_centers.filters.linked_account') }}" data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true"></x-forms.select>
             </div>
         </x-admin.report.filter-panel>
 
@@ -150,19 +150,19 @@
                         @can('cost_centers.view_trashed')
                             <div class="gap-2 d-flex align-items-center">
                                 <label class="mb-0 form-label text-700 fs-10" for="cost_centers_trash_filter">{{ __('cost_centers.trash.filter_label') }}</label>
-                                <select class="w-auto form-select form-select-sm" id="cost_centers_trash_filter" aria-label="{{ __('cost_centers.trash.filter_label') }}">
+                                <x-forms.select class="w-auto form-select form-select-sm" id="cost_centers_trash_filter" aria-label="{{ __('cost_centers.trash.filter_label') }}">
                                     <option value="active">{{ __('cost_centers.trash.active') }}</option>
                                     <option value="trashed">{{ __('cost_centers.trash.trashed') }}</option>
                                     <option value="all">{{ __('cost_centers.trash.all') }}</option>
-                                </select>
+                                </x-forms.select>
                             </div>
                         @endcan
                         @can('cost_centers.delete')
                             <div class="gap-2 d-none align-items-center cost-centers-bulk-actions-bar" id="cost_centers_bulk_actions_bar">
                                 <span class="badge rounded-pill badge-subtle-primary" id="cost_centers_bulk_selected_count">0</span>
-                                <select class="w-auto form-select form-select-sm" id="cost_centers_bulk_action_select" aria-label="{{ __('cost_centers.bulk_action') }}">
+                                <x-forms.select class="w-auto form-select form-select-sm" id="cost_centers_bulk_action_select" aria-label="{{ __('cost_centers.bulk_action') }}">
                                     <option value="delete">{{ __('common.actions.delete') }}</option>
-                                </select>
+                                </x-forms.select>
                                 <button type="button" class="btn btn-falcon-danger btn-sm" id="cost_centers_bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                     <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                                 </button>
@@ -181,7 +181,7 @@
                                         <tr>
                                             <th class="align-middle text-900 no-sort white-space-nowrap all no-colvis dt-select" data-orderable="false" data-searchable="false" style="width: 2.25rem;">
                                                 <div class="mb-0 form-check d-flex align-items-center justify-content-center">
-                                                    <input class="form-check-input js-record-select-all" type="checkbox" id="cost_centers_select_all_records" aria-label="{{ __('cost_centers.select_all') }}">
+                                                    <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="cost_centers_select_all_records" aria-label="{{ __('cost_centers.select_all') }}" />
                                                 </div>
                                             </th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap all no-colvis dt-code">{{ __('cost_centers.attributes.doc_num') }}</th>

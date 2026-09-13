@@ -705,13 +705,12 @@
   }
 
   function updateScheduleSource($row) {
-    const sourceType = String($row.find('.js-purchase-invoice-schedule-source').val() || 'scheduled');
+    const sourceType = String($row.find('.js-purchase-invoice-schedule-source').val() || 'cashbox');
     const isCashbox = sourceType === 'cashbox';
     const isBank = sourceType === 'bank';
 
     $row.find('.js-purchase-invoice-schedule-cashbox').closest('td').toggle(isCashbox);
     $row.find('.js-purchase-invoice-schedule-bank').closest('td').toggle(isBank);
-    $row.find('.js-purchase-invoice-payment-date').closest('td').toggle(isCashbox || isBank);
   }
 
   function initRepeaterRow($row) {
@@ -743,9 +742,8 @@
     cleanSelect2($row);
     $row.find('input[type="hidden"]').val('');
     $row.find('input').not('[type="hidden"]').val('');
-    $row.find('select.js-purchase-invoice-schedule-source').val('scheduled');
+    $row.find('select.js-purchase-invoice-schedule-source').val('cashbox');
     $row.find('select.js-purchase-invoice-schedule-cashbox, select.js-purchase-invoice-schedule-bank').empty();
-    $row.find('.js-purchase-invoice-linked-voucher-cell').html('<span class="text-600">' + msg('empty_value', '-') + '</span>');
     initRepeaterRow($row);
   }
 
@@ -781,7 +779,6 @@
       resetScheduleRow($row);
     } else {
       $row.find('input[type="hidden"]').val('');
-      $row.find('.js-purchase-invoice-linked-voucher-cell').html('<span class="text-600">' + msg('empty_value', '-') + '</span>');
       initRepeaterRow($row);
     }
     renumberRows($tbody.find('.js-purchase-invoice-schedule'), 'payment_schedules');
@@ -954,7 +951,6 @@
       const $clone = $row.clone(false, false);
       cleanSelect2($clone);
       $clone.find('input[type="hidden"]').val('');
-      $clone.find('.js-purchase-invoice-linked-voucher-cell').html('<span class="text-600">' + msg('empty_value', '-') + '</span>');
       $row.after($clone);
       initRepeaterRow($clone);
       renumberRows($form.find('.js-purchase-invoice-schedule'), 'payment_schedules');

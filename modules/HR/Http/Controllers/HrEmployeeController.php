@@ -3,7 +3,6 @@
 namespace Modules\HR\Http\Controllers;
 
 use App\Models\User;
-use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +22,7 @@ use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\DataTables\HrEmployeesDataTable;
+use Modules\HR\Exceptions\HrEmployeeRestoreBlockedException;
 use Modules\HR\Http\Requests\Employees\BulkDeleteHrEmployeesRequest;
 use Modules\HR\Http\Requests\Employees\BulkRestoreHrEmployeesRequest;
 use Modules\HR\Http\Requests\Employees\BulkUpdateHrEmployeesStatusRequest;
@@ -58,6 +58,7 @@ class HrEmployeeController extends Controller
      * @var array<string, array{column: string, model: class-string, route?: string, lookup?: string, foundation?: string, create_route?: string, create_permission?: string}>
      */
     private array $selectFields = [
+        'user_doc_num' => ['column' => 'user_id', 'model' => User::class, 'route' => 'admin.select2.users'],
         'branch_doc_num' => ['column' => 'branch_id', 'model' => Branch::class, 'route' => 'admin.select2.branches', 'create_route' => 'admin.branches.create', 'create_permission' => 'branches.create'],
         'department_doc_num' => ['column' => 'department_id', 'model' => HrDepartment::class, 'foundation' => 'departments'],
         'section_doc_num' => ['column' => 'section_id', 'model' => HrSection::class, 'foundation' => 'sections'],
@@ -271,13 +272,10 @@ class HrEmployeeController extends Controller
 
         try {
             $restored = $this->employees->bulkRestore($publicUuids);
-        } catch (DomainException|QueryException $exception) {
-            return response()->json([
-                'success' => false,
-                'message' => $exception instanceof QueryException
-                    ? __('hr.employees.messages.restore_conflict')
-                    : $exception->getMessage(),
-            ], 422);
+        } catch (HrEmployeeRestoreBlockedException $exception) {
+            return $this->restoreError($exception);
+        } catch (QueryException) {
+            return $this->restorePersistenceError();
         }
 
         $this->logActivity($request, 'hr.employees.bulk_restore', [
@@ -329,13 +327,10 @@ class HrEmployeeController extends Controller
 
         try {
             $employee = $this->employees->restore($employee);
-        } catch (DomainException|QueryException $exception) {
-            return response()->json([
-                'success' => false,
-                'message' => $exception instanceof QueryException
-                    ? __('hr.employees.messages.restore_conflict')
-                    : $exception->getMessage(),
-            ], 422);
+        } catch (HrEmployeeRestoreBlockedException $exception) {
+            return $this->restoreError($exception);
+        } catch (QueryException) {
+            return $this->restorePersistenceError();
         }
 
         $this->logActivity($request, 'hr.employees.restore', ActivityLogProperties::crudRestored(
@@ -349,6 +344,34 @@ class HrEmployeeController extends Controller
             'success' => true,
             'message' => __('hr.employees.messages.restored'),
         ]);
+    }
+
+    private function restoreError(HrEmployeeRestoreBlockedException $exception): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $exception->getMessage(),
+            'errors' => ['restore' => [$exception->getMessage()]],
+            'data' => [
+                'conflict_type' => $exception->conflictType,
+                'conflict_fields' => $exception->conflictFields,
+            ],
+        ], $exception->conflictType === 'already_active' ? 422 : 409);
+    }
+
+    private function restorePersistenceError(): JsonResponse
+    {
+        $message = __('hr.employees.messages.restore_conflict');
+
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+            'errors' => ['restore' => [$message]],
+            'data' => [
+                'conflict_type' => 'persistence_conflict',
+                'conflict_fields' => [],
+            ],
+        ], 409);
     }
 
     public function updateDocumentNumberSettings(

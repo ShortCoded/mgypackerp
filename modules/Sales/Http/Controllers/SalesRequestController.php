@@ -3,6 +3,7 @@
 namespace Modules\Sales\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -107,7 +108,11 @@ class SalesRequestController extends Controller
         $this->assertBranch($request, $salesRequest);
         $target = $request->validated('target');
         abort_unless($request->user()->can($target === 'quotation' ? 'quotations.create' : 'sales_orders.create'), 403);
-        $document = $this->service->convert($salesRequest, $target, $request->validated('lines'), $request->safe()->only(['customer_doc_num', 'currency_doc_num', 'branch_store_uuid', 'exchange_rate']));
+        try {
+            $document = $this->service->convert($salesRequest, $target, $request->validated('lines'), $request->safe()->only(['customer_doc_num', 'currency_doc_num', 'branch_store_uuid', 'exchange_rate']));
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
 
         return response()->json(['data' => ['doc_num' => $document->doc_num, 'url' => route($target === 'quotation' ? 'admin.sales.quotations.show' : 'admin.sales.sales-orders.show', $document)]], 201);
     }
@@ -119,7 +124,7 @@ class SalesRequestController extends Controller
         return $pdf->stream('reports.sales.request', ['record' => $salesRequest->load('company', 'customer', 'salesEmployee', 'branchStore', 'lines.product.color', 'lines.unit'),
             'title' => __('Sales Request').' — '.$salesRequest->doc_num, 'documentHeaderTitle' => __('Sales Request'),
             'printIdentityPolicy' => 'report', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot ?: app(CompanyPrintIdentityService::class)->forCompany($salesRequest->company),
-            'showPrices' => $request->user()->can('sales_orders.view_prices'), 'customerFacing' => true], 'sales-request-'.$salesRequest->doc_num.'.pdf');
+            'showPrices' => false, 'customerFacing' => true], 'sales-request-'.$salesRequest->doc_num.'.pdf');
     }
 
     private function form(Request $request, ?SalesRequest $record = null): View

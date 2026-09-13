@@ -29,7 +29,6 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
-use Modules\Sales\Models\ProjectStructureModel;
 use Modules\Sales\Models\Quotation;
 
 class ScreenDataVisibilityRegistry
@@ -75,11 +74,9 @@ class ScreenDataVisibilityRegistry
             ]),
             'raw_materials' => $this->makeDefinition(Product::class, 'products', 'Core', 'البيانات الأساسية', 'Raw Materials', 'الخامات', 'raw_materials', 'admin.raw-materials.*', [
                 'admin.select2.raw-material-products',
-                'admin.select2.component-products',
             ], conditions: [['column' => 'item_classification', 'operator' => 'equal', 'value' => Product::ClassificationRawMaterial]]),
             'packaging_materials' => $this->makeDefinition(Product::class, 'products', 'Core', 'البيانات الأساسية', 'Packaging Materials', 'مواد التعبئة والتغليف', 'packaging_materials', 'admin.packaging-materials.*', conditions: [['column' => 'item_classification', 'operator' => 'equal', 'value' => Product::ClassificationPackaging]]),
             'quotations' => $this->makeDefinition(Quotation::class, 'quotations', 'Sales', 'المبيعات', 'Quotations', 'عروض الأسعار', 'quotations', 'admin.sales.quotations.*'),
-            'project_structure_models' => $this->makeDefinition(ProjectStructureModel::class, 'project_structure_models', 'Sales', 'المبيعات', 'Project Structure Models', 'نماذج تكوين المشروعات', 'project_structure_models', 'admin.sales.project-structure-models.*'),
             'purchase_orders' => $this->makeDefinition(PurchaseOrder::class, 'purchase_orders', 'Purchases', 'المشتريات', 'Purchase Orders', 'أوامر الشراء', 'purchase_orders', 'admin.purchases.purchase-orders.*', branch: 'branch_id', period: 'financial_period_id'),
             'purchase_invoices' => $this->makeDefinition(PurchaseInvoice::class, 'purchase_invoices', 'Purchases', 'المشتريات', 'Purchase Invoices', 'فواتير المشتريات', 'purchase_invoices', 'admin.purchases.purchase-invoices.*', branch: 'branch_id', period: 'financial_period_id'),
             'opening_stocks' => $this->makeDefinition(OpeningStock::class, 'inventory_opening_stocks', 'Inventory', 'المخزون', 'Opening Stock', 'الأرصدة الافتتاحية للمخزون', 'inventory.opening_stocks', 'admin.inventory.opening-stocks.*', [
@@ -129,8 +126,6 @@ class ScreenDataVisibilityRegistry
             'cost_centers' => $this->unsupportedDefinition('Accounting', 'الحسابات', 'Cost Centers Tree', 'شجرة مراكز التكلفة', 'cost_centers', 'hierarchical'),
             'item_categories' => $this->unsupportedDefinition('Core', 'البيانات الأساسية', 'Item Categories Tree', 'شجرة فئات الأصناف', 'item_categories', 'hierarchical'),
             'item_groups' => $this->unsupportedDefinition('Core', 'البيانات الأساسية', 'Item Groups Tree', 'شجرة مجموعات الأصناف', 'item_groups', 'hierarchical'),
-            'production_identifiers' => $this->unsupportedDefinition('Production', 'الإنتاج', 'Production Identifiers Tree', 'شجرة معرفات الإنتاج', 'production_identifiers', 'hierarchical'),
-            'project_structures' => $this->unsupportedDefinition('Sales', 'المبيعات', 'Project Structures Tree', 'شجرة تكوينات المشروعات', 'project_structures', 'hierarchical'),
         ];
     }
 

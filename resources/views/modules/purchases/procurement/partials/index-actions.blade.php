@@ -3,7 +3,7 @@
     $permission = 'purchases.'.$definition['permission'];
     $draft = $record->status === 'draft' && ($screen !== 'goods_receipts' || $record->posting_status === 'unposted');
     $editableDraft = $draft && ($screen !== 'goods_receipts' || (
-        in_array($record->qc_status, ['pending_inspection', 'not_required'], true)
+        (in_array($record->qc_status, ['pending_inspection', 'not_required'], true) || $record->sourceInspection !== null)
         && $record->inspection === null
     ));
     $isOwnBranch = (int) ($record->branch_id ?? 0) === (int) ($activeBranchId ?? 0);
@@ -37,7 +37,7 @@
         @if($isOwnBranch) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
     @endif
 @endif
-@if($screen === 'goods_receipt_inspections' && $isOwnBranch && $record->receipt_id === null && in_array($record->result, ['accepted', 'partially_accepted'], true))
+@if($screen === 'goods_receipt_inspections' && $isOwnBranch && $record->hasReceiptableQuantity() && in_array($record->result, ['accepted', 'partially_accepted'], true))
     @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>@endcan
 @endif
 @if($isOwnBranch && (($screen === 'goods_receipts' && $record->posting_status === 'posted') || ($screen === 'purchase_returns' && $record->status === 'posted'))) @can($permission.'.reverse')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.reverse', $record->doc_num) }}" data-reason-field="reversal_reason">{{ __('Reverse') }}</button>@endcan @endif

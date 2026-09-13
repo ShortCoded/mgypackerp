@@ -24,7 +24,7 @@ class InventoryReservationService
     ): InventoryReservation {
         return DB::transaction(function () use ($requirement, $branchStoreId, $quantity, $warehouseLocationId, $allowBeyondRequirement): InventoryReservation {
             $locked = ProductionMaterialRequirement::query()
-                ->with('run.order')
+                ->with('run.order.salesOrder')
                 ->lockForUpdate()
                 ->findOrFail($requirement->getKey());
             $run = $locked->run;
@@ -74,7 +74,7 @@ class InventoryReservationService
                 'production_order_id' => $order->getKey(),
                 'production_run_id' => $run->getKey(),
                 'production_material_requirement_id' => $locked->getKey(),
-                'customer_id' => $order->customer_id,
+                'customer_id' => $order->salesOrder?->customer_id,
                 'product_id' => $locked->product_id,
                 'unit_id' => $product->item_unit_id,
                 'transaction_unit_id' => $product->item_unit_id,

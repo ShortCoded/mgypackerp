@@ -43,9 +43,9 @@
         @if($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if($cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3 cashbox-form-card">
@@ -64,7 +64,7 @@
                             @if($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
@@ -76,16 +76,16 @@
 
                     <div class="{{ $canControlDocumentNumber || ! $isCreateLike ? 'col-md-7' : 'col-md-9' }}">
                         <x-forms.label for="name" :label="__('cashboxes.attributes.name')" required />
-                        <input class="form-control" id="name" name="name" value="{{ $value('name') }}" @readonly($isView) @unless($isView) autofocus @endunless required>
+                                <x-forms.input class="form-control" id="name" name="name" value="{{ $value('name') }}" :readonly="$isView" :autofocus="! $isView" required />
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
 
                     <div class="col-md-3">
                         <x-forms.label for="status" :label="__('cashboxes.attributes.status')" required />
-                        <select class="form-select" id="status" name="status" @disabled($isView) required>
+                        <x-forms.select class="form-select" id="status" name="status" :disabled='$isView' required>
                             <option value="active" @selected($value('status', 'active') === 'active')>{{ __('finance.statuses.active') }}</option>
                             <option value="inactive" @selected($value('status') === 'inactive')>{{ __('finance.statuses.inactive') }}</option>
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
 
@@ -95,11 +95,11 @@
                             <x-forms.view-field for="parent_account_doc_num" :value="$accountOption['text'] ?? null" />
                         @else
                             <div class="cashbox-account-group-control">
-                                <select class="form-select js-select2-ajax js-cashbox-group-select" id="parent_account_doc_num" name="parent_account_doc_num" data-url="{{ route('admin.finance.select2.cashbox-parent-accounts') }}" data-placeholder="{{ __('cashboxes.placeholders.cashbox_group') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax js-cashbox-group-select" id="parent_account_doc_num" name="parent_account_doc_num" data-url="{{ route('admin.finance.select2.cashbox-parent-accounts') }}" data-placeholder="{{ __('cashboxes.placeholders.cashbox_group') }}" data-allow-clear="true">
                                     @if($accountOption)
                                         <option value="{{ $accountOption['id'] }}" selected>{{ $accountOption['text'] }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                                 @if($canCreateAccounts)
                                     <button class="btn btn-falcon-default btn-sm js-cashbox-inline-create" type="button" data-modal="#cashbox-inline-modal">
                                         <span class="fas fa-plus"></span><span class="ms-1">{{ __('cashboxes.actions.add_group') }}</span>
@@ -116,11 +116,11 @@
                         @if($isView)
                             <x-forms.view-field for="branch_doc_num" :value="$branchOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="branch_doc_num" name="branch_doc_num" data-url="{{ route('admin.finance.select2.branches') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="branch_doc_num" name="branch_doc_num" data-url="{{ route('admin.finance.select2.branches') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                 @if($branchOption)
                                     <option value="{{ $branchOption['id'] }}" selected>{{ $branchOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_doc_num"></div>
                     </div>
@@ -130,11 +130,11 @@
                         @if($isView)
                             <x-forms.view-field for="currency_doc_nums" :value="$currenciesDisplay" />
                         @else
-                            <select class="form-select js-select2-ajax" id="currency_doc_nums" name="currency_doc_nums[]" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('common.placeholders.select') }}" multiple>
+                            <x-forms.select class="form-select js-select2-ajax" id="currency_doc_nums" name="currency_doc_nums[]" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('common.placeholders.select') }}" multiple>
                                 @foreach($currencyOptions as $option)
                                     <option value="{{ $option['id'] }}" selected>{{ $option['text'] }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                             <div class="form-text">{{ __('cashboxes.currency_help') }}</div>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="currency_doc_nums"></div>
@@ -142,7 +142,7 @@
 
                     <div class="col-12">
                         <label class="form-label" for="notes">{{ __('cashboxes.attributes.notes') }}</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="3" @readonly($isView)>{{ $value('notes') }}</textarea>
+                        <x-forms.textarea class="form-control" id="notes" name="notes" rows="3" :readonly='$isView'>{{ $value('notes') }}</x-forms.textarea>
                     </div>
                 </div>
             </div>
@@ -163,12 +163,12 @@
                         <div class="alert d-none js-form-alert"><div class="js-form-alert-message"></div></div>
                         <div class="mb-3">
                             <x-forms.label for="cashbox_inline_name" :label="__('cashboxes.attributes.account_group_name')" required />
-                            <input class="form-control" id="cashbox_inline_name" name="name" type="text" required>
+                            <x-forms.input class="form-control" id="cashbox_inline_name" name="name" type="text" required />
                             <div class="invalid-feedback" data-error-for="name"></div>
                         </div>
                         <div>
                             <label class="form-label" for="cashbox_inline_notes">{{ __('cashboxes.attributes.notes') }}</label>
-                            <textarea class="form-control" id="cashbox_inline_notes" name="notes" rows="3"></textarea>
+                            <x-forms.textarea class="form-control" id="cashbox_inline_notes" name="notes" rows="3"></x-forms.textarea>
                             <div class="invalid-feedback" data-error-for="notes"></div>
                         </div>
                     </div>

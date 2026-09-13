@@ -28,7 +28,7 @@ return [
     'screens' => [
         $screen('employee-contracts', 'Employee Contracts', 'عقود الموظفين', 'contracts'),
         $screen('employee-contract-renewals', 'Employee Contract Renewals', 'تجديدات عقود الموظفين', 'contracts'),
-        $screen('employee-attendance', 'Employee Attendance', 'حضور الموظفين', 'attendance'),
+        $screen('employee-attendance', 'Employee Attendance', 'حضور الموظفين', 'attendance', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'actions' => ['view', 'manage', 'correct', 'export']]),
         $screen('attendance-import', 'Attendance Import', 'استيراد الحضور', 'attendance'),
         $screen('attendance-corrections', 'Attendance Corrections', 'تصحيحات الحضور', 'attendance'),
         $screen('shift-assignments', 'Shift Assignments', 'تخصيص الورديات', 'attendance'),
@@ -54,7 +54,7 @@ return [
         $screen('payroll-payment', 'Payroll Payment', 'صرف الرواتب', 'payroll'),
         $screen('employee-settlement', 'Employee Settlement', 'تسوية الموظف', 'payroll'),
         $screen('end-of-service', 'End of Service', 'نهاية الخدمة', 'payroll'),
-        $screen('hr-requests', 'HR Requests', 'طلبات الموارد البشرية', 'requests'),
+        $screen('hr-requests', 'HR Requests', 'طلبات الموارد البشرية', 'requests', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'actions' => ['view', 'manage']]),
         $screen('hr-attachments', 'HR Attachments', 'مرفقات الموارد البشرية', 'requests'),
         $screen('hr-history', 'HR History', 'سجل الموارد البشرية', 'requests', 'inquiry'),
     ],

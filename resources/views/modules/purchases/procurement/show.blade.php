@@ -6,7 +6,7 @@
     $status = $record->status ?? $record->cashVoucher?->status ?? '—';
     $titleLabel = $type === 'purchase_return'
         ? __($record->purchase_invoice_id ? 'procurement.documents.types.purchase-return-invoiced' : 'procurement.documents.types.purchase-return')
-        : __(str($type)->replace('_', ' ')->title()->toString());
+        : __('procurement.documents.types.'.str($type)->replace('_', '-')->toString());
     $title = $titleLabel.' '.$document;
     $printType = str($type)->replace('_', '-')->toString();
     $printPermission = match ($type) {
@@ -86,9 +86,12 @@
     } elseif ($type === 'goods_receipt') {
         $addLineage(__('Supply Order'), $record->supplyOrder, 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
-        $addLineage(__('Purchase Inspection'), $record->inspection, 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
+        $addLineage(__('Purchase Inspection'), $record->sourceInspection ?? $record->inspection, 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
     } elseif ($type === 'goods_receipt_inspection') {
         $addLineage(__('Goods Receipt'), $record->receipt, 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
+        foreach ($record->receipts ?? [] as $receipt) {
+            $addLineage(__('Goods Receipt'), $receipt, 'admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view');
+        }
         $addLineage(__('Supply Order'), $record->supplyOrder, 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $addLineage(__('Purchase Order'), $record->purchaseOrder, 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
     } elseif ($type === 'purchase_return') {
@@ -112,7 +115,7 @@
         <div class="card-header py-2 d-flex flex-wrap align-items-start justify-content-between gap-2">
             <div>
                 <h5 class="mb-1">{{ $title }}</h5>
-                <x-status-indicator :status="$status" />
+                <x-status-indicator :status="$status" :label="__('procurement.statuses.'.$status)" />
             </div>
             <div class="d-flex flex-wrap gap-2">
                 <a class="btn btn-falcon-default btn-sm" href="{{ url()->previous() }}">
@@ -154,12 +157,12 @@
                 @if($type === 'purchase_requisition')
                     @if($record->status === 'pending_approval' && ($isAdministrativeBranch ?? false))
                         @can('purchases.purchase_requisition_approvals.reject')
-                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
+                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
                         @endcan
                     @endif
                     @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed']))
                         @can('purchases.purchase_requisitions.cancel')
-                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
+                        <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required /><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
                         @endcan
                     @endif
                     @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && in_array($record->status, ['approved', 'partially_converted', 'fully_converted']))
@@ -220,9 +223,9 @@
                 @endif
                 @if($type === 'supply_order' && in_array($record->status, ['issued', 'partially_received'], true))
                     @if((int) $record->branchStore?->branch_id === (int) ($activeBranchId ?? 0) && ! ($isAdministrativeBranch ?? false)) @can('purchases.goods_receipt_inspection.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.create', $record) }}">{{ __('Create Purchase Inspection') }}</a>@endcan @endif
-                    @if((int) $record->branch_id === (int) ($activeBranchId ?? 0)) @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan @endif
+                    @if((int) $record->branch_id === (int) ($activeBranchId ?? 0)) @can('purchases.supply_orders.cancel')<form method="POST" action="{{ route('admin.purchases.supply-orders.cancel', $record) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button></form>@endcan @endif
                 @endif
-                @if($type === 'goods_receipt_inspection' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->receipt_id === null && in_array($record->result, ['accepted', 'partially_accepted'], true))
+                @if($type === 'goods_receipt_inspection' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->hasReceiptableQuantity() && in_array($record->result, ['accepted', 'partially_accepted'], true))
                     @can('purchases.goods_receipt_notes.create')
                     <a class="btn btn-success btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.create', $record) }}">{{ __('Create Goods Receipt') }}</a>
                     @endcan
@@ -241,8 +244,8 @@
                     @endcan
                     @endif
                 @endif
-                @if($type === 'goods_receipt' && $record->status === 'draft' && $isOwnBranch && ! ($isAdministrativeBranch ?? false))
-                    @if(in_array($record->qc_status, ['pending_inspection', 'not_required'], true))
+                @if($type === 'goods_receipt' && $record->status === 'draft' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && ! $record->hasBlockingInspection())
+                    @if(in_array($record->qc_status, ['pending_inspection', 'not_required'], true) || $record->sourceInspection !== null)
                     @can('purchases.goods_receipt_notes.edit')
                     <a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.edit', $record->doc_num) }}">{{ __('Edit draft') }}</a>
                     @endcan
@@ -258,14 +261,14 @@
                 @endif
                 @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && in_array($record->posting_status, ['posted', 'partially_posted']))
                     @can('purchases.goods_receipt_notes.reverse')
-                    <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.reverse', $record->doc_num) }}" class="d-flex gap-2">@csrf<input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required><button class="btn btn-danger btn-sm">{{ __('Reverse receipt') }}</button></form>
+                    <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.reverse', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reverse receipt') }}</button></form>
                     @endcan
                 @endif
                 @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft' && $record->posting_status === 'unposted' && $record->qc_status === 'pending_inspection')
                     @can('purchases.goods_receipt_notes.edit')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
-                        <input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required>
+                        <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required />
                         <button class="btn btn-danger btn-sm">{{ __('Cancel before QC') }}</button>
                     </form>
                     @endcan
@@ -281,7 +284,7 @@
                     @can('purchases.purchase_returns.reverse')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.reverse', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
-                        <input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required>
+                        <x-forms.input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required />
                         <button class="btn btn-danger btn-sm">{{ __('Reverse return') }}</button>
                     </form>
                     @endcan
@@ -297,7 +300,7 @@
                     @can('supplier_payments.cancel')
                     <form method="POST" action="{{ route('admin.purchases.supplier-payments.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
-                        <input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Reversal reason') }}" required>
+                        <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Reversal reason') }}" required />
                         <button class="btn btn-danger btn-sm">{{ __('Reverse payment') }}</button>
                     </form>
                     @endcan
@@ -310,7 +313,7 @@
             @endif
             <div class="row g-3">
                 <div class="col-md-3"><div class="text-600 fs-10">{{ __('Document') }}</div><div class="fw-semibold" dir="ltr">{{ $document }}</div></div>
-                <div class="col-md-3"><div class="text-600 fs-10">{{ __('Status') }}</div><div>{{ __(str((string) $status)->replace('_', ' ')->title()->toString()) }}</div></div>
+                <div class="col-md-3"><div class="text-600 fs-10">{{ __('Status') }}</div><div>{{ __('procurement.statuses.'.$status) }}</div></div>
                 @if($record->supplier ?? $record->cashVoucher ?? null)
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Supplier') }}</div><div>{{ $record->supplier?->name ?? '—' }}</div></div>
                 @endif
@@ -321,8 +324,8 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Supply Order') }}</div><div dir="ltr">{{ $record->supplyOrder->doc_num }}</div></div>
                 @endif
                 @if($type === 'goods_receipt')
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ __(str($record->qc_status)->replace('_', ' ')->title()->toString()) }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Posting status') }}</div><div>{{ __(str($record->posting_status)->replace('_', ' ')->title()->toString()) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('QC status') }}</div><div>{{ __('procurement.statuses.'.$record->qc_status) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Posting status') }}</div><div>{{ __('procurement.statuses.'.$record->posting_status) }}</div></div>
                 @endif
                 @if($type === 'goods_receipt_inspection')
                     @php
@@ -332,8 +335,8 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Branch') }}</div><div>{{ $inspectionBranch?->name ?: '—' }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Warehouse') }}</div><div>{{ $inspectionStore?->name ?: '—' }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source document') }}</div><div dir="ltr">{{ $record->source_doc_num ?: '—' }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Inspection result') }}</div><div>{{ __(str($record->result)->replace('_', ' ')->title()->toString()) }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Warehouse receipt') }}</div><div dir="ltr">{{ $record->receipt?->doc_num ?: __('Not created yet') }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Inspection result') }}</div><div>{{ __('procurement.statuses.'.$record->result) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Warehouse receipt') }}</div><div dir="ltr">{{ collect([$record->receipt?->doc_num])->merge($record->receipts?->pluck('doc_num') ?? [])->filter()->unique()->join('، ') ?: __('Not created yet') }}</div></div>
                 @endif
                 @if($type === 'purchase_return')
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source Goods Receipt') }}</div><div dir="ltr">{{ $record->receipt?->doc_num ?: '—' }}</div></div>
@@ -341,7 +344,7 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Financial treatment') }}</div><div>{{ $record->purchase_invoice_id ? __('Supplier debit note') : __('Inventory / GRNI adjustment only') }}</div></div>
                 @endif
                 @if($type === 'supplier_payment')
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __(str($record->payment_method)->replace('_', ' ')->title()->toString()) }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __('procurement.statuses.'.$record->payment_method) }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment date') }}</div><div dir="ltr">{{ $record->payment_date?->format('Y-m-d') ?: '—' }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Amount') }}</div><div class="fw-semibold" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($record->amount) }}</div></div>
                     @if($record->bankAccount)
@@ -349,7 +352,7 @@
                     @endif
                     @if($record->cheque)
                         <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque') }}</div><div dir="ltr">{{ $record->cheque->doc_num }} / {{ $record->cheque->cheque_number }}</div></div>
-                        <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque status') }}</div><div>{{ __(str($record->cheque->status)->replace('_', ' ')->title()->toString()) }}</div></div>
+                        <div class="col-md-3"><div class="text-600 fs-10">{{ __('Cheque status') }}</div><div>{{ __('procurement.statuses.'.$record->cheque->status) }}</div></div>
                     @endif
                 @endif
                 @if($type === 'supplier_quotation' && filled($record->source_doc_num))
@@ -414,7 +417,7 @@
                         <thead class="bg-100"><tr>
                             <th>#</th><th>{{ __('Item / Invoice') }}</th><th>{{ __('Source') }}</th><th class="text-end">{{ __('Quantity') }}</th>
                             @if($type === 'purchase_requisition')<th>{{ __('Approved Quantity') }}</th><th>{{ __('Ordered Quantity') }}</th><th>{{ __('Remaining to order') }}</th>@endif
-                            @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th>@endif
+                            @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th><th class="text-end">{{ __('Received') }}</th><th class="text-end">{{ __('Remaining') }}</th>@endif
                             @if($showPrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
                             <th>{{ __('Disposition / Notes') }}</th>
                             @if($lineAttachmentsSupported)<th>{{ __('Attachments') }}</th>@endif
@@ -442,12 +445,14 @@
                                     @if($type === 'goods_receipt_inspection')
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->accepted_quantity) }}</td>
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->rejected_quantity) }}</td>
+                                        <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->receivedQuantity()) }}</td>
+                                        <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->remainingReceiptQuantity()) }}</td>
                                     @endif
                                     @if($showPrices)
                                         <td class="text-end" dir="ltr">{{ isset($line->unit_price) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->unit_price) : '—' }}</td>
                                         <td class="text-end" dir="ltr">{{ isset($line->line_total) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->line_total) : (isset($line->amount) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->amount) : '—') }}</td>
                                     @endif
-                                    <td>{{ $line->disposition ?? $line->reason ?? $line->specification ?? $line->notes ?? '—' }}</td>
+                                    <td>{{ filled($line->disposition) ? __('procurement.statuses.'.$line->disposition) : ($line->reason ?? $line->specification ?? $line->notes ?? '—') }}</td>
                                     @if($lineAttachmentsSupported)
                                         <td>
                                             @include('modules.purchases.procurement.line-attachments', [

@@ -21,3 +21,14 @@ test('unused interactive table exporters do not boot their application providers
             fn ($route): bool => str_starts_with($route->uri(), 'livewire'),
         ))->toBeFalse();
 });
+
+test('development profiling remains explicitly opt in', function (): void {
+    $telescopeConfiguration = file_get_contents(config_path('telescope.php'));
+    $debugbarConfiguration = file_get_contents(config_path('debugbar.php'));
+    $environmentExample = file_get_contents(base_path('.env.example'));
+
+    expect($telescopeConfiguration)->toContain("env('TELESCOPE_ENABLED', false)")
+        ->and($debugbarConfiguration)->toContain("env('DEBUGBAR_ENABLED', false)")
+        ->and($environmentExample)->toContain('TELESCOPE_ENABLED=false')
+        ->and($environmentExample)->toContain('DEBUGBAR_ENABLED=false');
+});

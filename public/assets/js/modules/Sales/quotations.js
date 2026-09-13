@@ -699,6 +699,7 @@
     syncMainCurrency($form);
     calculateTotals($form);
     loadCustomerTerms($form);
+    $form.find('.js-quotation-line').each(function () { window.AppSalesPricing?.suggest(this); });
 
     const $sourceRequest = $form.find('[data-quotation-source]');
     $sourceRequest.off('.quotationSource').on('select2:select.quotationSource select2:clear.quotationSource', function () {
@@ -788,8 +789,8 @@
         $details.text([data?.productData?.color, data?.productData?.model, data?.productData?.size].filter(Boolean).join(' · '));
         window.AppSalesPricing?.suggest($row[0]);
       })
-      .off('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]')
-      .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]', function () {
+      .off('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"], [name="quotation_date"]')
+      .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"], [name="quotation_date"]', function () {
         const $currentForm = $(this).closest('.js-quotation-form');
         syncMainCurrency($currentForm);
         if ($(this).is('[name="customer_doc_num"]')) loadCustomerTerms($currentForm);

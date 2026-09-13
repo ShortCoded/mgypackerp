@@ -17,10 +17,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
-use Modules\Inventory\Models\WarehouseLocation;
-use Modules\Production\Models\ProductionMachine;
-use Modules\Production\Models\ProductionMold;
-use Modules\Production\Models\ProductionShift;
+use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
 use Modules\Sales\Models\SalesOrder;
@@ -77,21 +74,6 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
                 'position' => 92,
                 'created_by' => $admin->getKey(),
             ]);
-            WarehouseLocation::query()->create([
-                'branch_store_id' => $rawStore->getKey(),
-                'code' => 'E2E-RAW-A',
-                'name' => 'E2E Raw Zone A',
-                'zone_code' => 'RAW',
-                'created_by' => $admin->getKey(),
-            ]);
-            WarehouseLocation::query()->create([
-                'branch_store_id' => $finishedStore->getKey(),
-                'code' => 'E2E-FG-A',
-                'name' => 'E2E Finished Zone A',
-                'zone_code' => 'FG',
-                'created_by' => $admin->getKey(),
-            ]);
-
             $kilogram = $this->unit($company, 996001, 'Unit-E2E-MFG-KG', 'Kilogram');
             $piece = $this->unit($company, 996002, 'Unit-E2E-MFG-PIECE', 'Piece');
             $carton = $this->unit($company, 996003, 'Unit-E2E-MFG-CARTON', 'Carton');
@@ -140,38 +122,28 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
                 'created_by' => $admin->getKey(),
             ]);
 
-            $machine = ProductionMachine::query()->create([
+            FixedAsset::query()->create([
+                'doc_number' => 996001,
+                'doc_num' => 'FixedAsset-E2E-MACHINE-01',
                 'company_id' => $company->getKey(),
                 'branch_id' => $branch->getKey(),
-                'code' => 'E2E-MACHINE-01',
-                'name' => 'E2E Injection Machine 1',
+                'period_id' => $period->getKey(),
+                'asset_date' => now()->toDateString(),
+                'asset_name' => 'E2E Injection Machine 1',
+                'status' => FixedAsset::StatusActive,
                 'created_by' => $admin->getKey(),
             ]);
-            $mold = ProductionMold::query()->create([
+            FixedAsset::query()->create([
+                'doc_number' => 996002,
+                'doc_num' => 'FixedAsset-E2E-PACK-LINE-02',
                 'company_id' => $company->getKey(),
                 'branch_id' => $branch->getKey(),
-                'code' => 'E2E-MOLD-01',
-                'name' => 'E2E Product Mold',
+                'period_id' => $period->getKey(),
+                'asset_date' => now()->toDateString(),
+                'asset_name' => 'E2E Customer Packing Line 02',
+                'status' => FixedAsset::StatusActive,
                 'created_by' => $admin->getKey(),
             ]);
-            $machine->molds()->attach($mold);
-            $mold->products()->attach($finishedProduct);
-
-            $packingMachine = ProductionMachine::query()->create([
-                'company_id' => $company->getKey(),
-                'branch_id' => $branch->getKey(),
-                'code' => 'E2E-PACK-LINE-02',
-                'name' => 'E2E Customer Packing Line 02',
-                'created_by' => $admin->getKey(),
-            ]);
-            $packingMold = ProductionMold::query()->create([
-                'company_id' => $company->getKey(),
-                'branch_id' => $branch->getKey(),
-                'code' => 'E2E-PACK-FORMAT-KIT',
-                'name' => 'E2E Customer Kit Format',
-                'created_by' => $admin->getKey(),
-            ]);
-            $packingMachine->molds()->attach($packingMold);
 
             $kit = $this->product(
                 $company,
@@ -181,7 +153,6 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
                 Product::ClassificationFinishedProduct,
                 $piece,
             );
-            $packingMold->products()->attach($kit);
             foreach ([
                 'TEST Printed Wrapper — Customer A',
                 'TEST Kit Napkin',
@@ -218,7 +189,6 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
                 Product::ClassificationFinishedProduct,
                 $piece,
             );
-            $mold->products()->attach($stressProduct);
             foreach (range(1, 25) as $number) {
                 $component = $this->product(
                     $company,
@@ -238,15 +208,6 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
                     'created_by' => $admin->getKey(),
                 ]);
             }
-
-            ProductionShift::query()->create([
-                'company_id' => $company->getKey(),
-                'branch_id' => $branch->getKey(),
-                'code' => 'E2E-SHIFT-A',
-                'name' => 'E2E Morning Shift',
-                'starts_at' => '08:00',
-                'ends_at' => '16:00',
-            ]);
 
             Auth::login($admin);
             $primaryCustomer = $this->customer($company, $currency, 996001, 'E2E Sales-Origin Customer');
@@ -277,10 +238,13 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
             ]);
             $this->restrictedUser($company, $branch, $period, 996011, 'e2e_planner', [
                 'dashboard.view', 'production.orders.view', 'production.orders.plan', 'production.orders.release',
-                'production.runs.view', 'production.runs.plan', 'production.resources.view',
+                'production.runs.view', 'production.runs.plan',
             ]);
             $this->restrictedUser($company, $branch, $period, 996012, 'e2e_quality', [
-                'dashboard.view', 'production.runs.view', 'production.runs.qc',
+                'dashboard.view', 'production.runs.view', 'production.runs.qc', 'production.quality.view',
+                'production.quality.create', 'production.quality.receive', 'production.quality.start',
+                'production.quality.submit', 'production.quality.review', 'production.quality.close',
+                'production.quality.reinspect',
             ]);
             $this->restrictedUser($company, $branch, $period, 996013, 'e2e_cost', [
                 'dashboard.view', 'inventory.reports.operational', 'inventory.reports.financial', 'inventory.reports.export',

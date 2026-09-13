@@ -60,7 +60,7 @@
         @if($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
 
         <div class="card mb-3">
             <div class="card-header py-2">
@@ -128,9 +128,9 @@
                 @unless($isReadonly)
                 <div class="mb-3">
                     <label class="form-label" for="purchase_requisition_doc_nums">{{ __('procurement.ui.source_requisitions') }}</label>
-                    <select id="purchase_requisition_doc_nums" class="form-select js-select2-ajax js-order-requisitions" name="purchase_requisition_doc_nums[]" multiple data-url="{{ route('admin.purchases.select2.requisitions') }}" data-placeholder="{{ __('procurement.ui.select_approved_requests') }}">
+                    <x-forms.select id="purchase_requisition_doc_nums" class="form-select js-select2-ajax js-order-requisitions" name="purchase_requisition_doc_nums[]" multiple data-url="{{ route('admin.purchases.select2.requisitions') }}" data-placeholder="{{ __('procurement.ui.select_approved_requests') }}">
                         @foreach($sourceRequests ?? [] as $sourceRequest)<option selected value="{{ $sourceRequest->doc_num }}">{{ $sourceRequest->doc_num }}</option>@endforeach
-                    </select>
+                    </x-forms.select>
                     <div class="form-text" data-source-loading aria-live="polite"></div>
                 </div>
                 @endunless
@@ -142,7 +142,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
@@ -165,7 +165,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="document_date" :value="$plainDate($record?->document_date)" dir="ltr" input-class="date-value text-center" />
                         @else
-                            <input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ $dateValue('document_date', $isCreateLike ? now() : $record?->document_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                            <x-forms.date-input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ $dateValue('document_date', $isCreateLike ? now() : $record?->document_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="document_date"></div>
                     </div>
@@ -175,11 +175,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="supplier_doc_num" :value="$supplierOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-placeholder="{{ __('purchase_orders.placeholders.supplier') }}" data-allow-clear="true" required>
+                            <x-forms.select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-placeholder="{{ __('purchase_orders.placeholders.supplier') }}" data-allow-clear="true" required>
                                 @if($selectedSupplier)
                                     <option value="{{ $selectedSupplier }}" selected>{{ $supplierOption['text'] ?? $selectedSupplier }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="supplier_doc_num"></div>
                     </div>
@@ -189,11 +189,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="branch_store_uuid" :value="$storeOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.purchases.select2.branch-stores') }}" data-placeholder="{{ __('purchase_orders.placeholders.branch_store') }}" data-allow-clear="true" required>
+                            <x-forms.select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.purchases.select2.branch-stores') }}" data-placeholder="{{ __('purchase_orders.placeholders.branch_store') }}" data-allow-clear="true" required>
                                 @if($selectedStore)
                                     <option value="{{ $selectedStore }}" selected>{{ $storeOption['text'] ?? $selectedStore }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_store_uuid"></div>
                     </div>
@@ -203,11 +203,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax js-purchase-order-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.purchases.select2.currencies') }}" data-placeholder="{{ __('purchase_orders.placeholders.currency') }}" data-allow-clear="true" required>
+                            <x-forms.select class="form-select js-select2-ajax js-purchase-order-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.purchases.select2.currencies') }}" data-placeholder="{{ __('purchase_orders.placeholders.currency') }}" data-allow-clear="true" required>
                                 @if($selectedCurrency)
                                     <option value="{{ $selectedCurrency }}" data-is-main="{{ ($currencyOption['is_main'] ?? false) ? '1' : '0' }}" selected>{{ $currencyOption['text'] ?? $selectedCurrency }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                     </div>
@@ -237,7 +237,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="expected_delivery_date" :value="$plainDate($record?->expected_delivery_date)" dir="ltr" input-class="date-value text-center" />
                         @else
-                            <input class="form-control text-center js-date-picker" id="expected_delivery_date" name="expected_delivery_date" type="text" value="{{ $dateValue('expected_delivery_date', $record?->expected_delivery_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                            <x-forms.date-input class="form-control text-center js-date-picker" id="expected_delivery_date" name="expected_delivery_date" type="text" value="{{ $dateValue('expected_delivery_date', $record?->expected_delivery_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="expected_delivery_date"></div>
                     </div>
@@ -247,7 +247,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="supplier_reference" :value="$record?->supplier_reference ?: __('common.empty_value')" />
                         @else
-                            <input class="form-control" id="supplier_reference" name="supplier_reference" value="{{ $value('supplier_reference') }}" maxlength="120" autocomplete="off">
+                            <x-forms.input class="form-control" id="supplier_reference" name="supplier_reference" value="{{ $value('supplier_reference') }}" maxlength="120" autocomplete="off" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="supplier_reference"></div>
                     </div>
@@ -257,7 +257,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="payment_terms" :value="$record?->payment_terms ?: __('common.empty_value')" />
                         @else
-                            <input class="form-control" id="payment_terms" name="payment_terms" value="{{ old('payment_terms', $record?->payment_terms) }}" maxlength="255" placeholder="{{ __('purchase_orders.placeholders.payment_terms_supplier_default') }}">
+                            <x-forms.input class="form-control" id="payment_terms" name="payment_terms" value="{{ old('payment_terms', $record?->payment_terms) }}" maxlength="255" placeholder="{{ __('purchase_orders.placeholders.payment_terms_supplier_default') }}" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="payment_terms"></div>
                     </div>
@@ -267,7 +267,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="notes" as="textarea" :value="$record?->notes ?: __('common.empty_value')" />
                         @else
-                            <textarea class="form-control" id="notes" name="notes" rows="2">{{ $value('notes') }}</textarea>
+                            <x-forms.textarea class="form-control" id="notes" name="notes" rows="2">{{ $value('notes') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
@@ -330,9 +330,9 @@
                                 <tr class="js-purchase-order-line">
                                     <td class="text-center text-700 js-line-number">{{ $index + 1 }}</td>
                                     <td class="purchase-order-product-picker">
-                                        <input type="hidden" name="lines[{{ $index }}][purchase_requisition_line_id]" value="{{ $line['purchase_requisition_line_id'] ?? '' }}">
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][purchase_requisition_line_id]" value="{{ $line['purchase_requisition_line_id'] ?? '' }}" />
                                         @if(filled($line['source_doc_num'] ?? null))<div class="small text-600" dir="ltr">{{ $line['source_doc_num'] }}</div>@endif
-                                        <input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}">
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}" />
                                         @if($isReadonly)
                                             <div class="d-flex align-items-center gap-2">
                                                 @if($imageUrl)
@@ -341,11 +341,11 @@
                                                 <span>{{ $productText ?: __('common.empty_value') }}</span>
                                             </div>
                                         @else
-                                            <select class="form-select js-select2-ajax js-purchase-order-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_orders.placeholders.product') }}" data-allow-clear="true" required>
+                                            <x-forms.select class="form-select js-select2-ajax js-purchase-order-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_orders.placeholders.product') }}" data-allow-clear="true" required>
                                                 @if($productDocNum)
                                                     <option value="{{ $productDocNum }}" data-unit-options='@json($unitOptions)' data-image-url="{{ $imageUrl }}" selected>{{ $productText ?: $productDocNum }}</option>
                                                 @endif
-                                            </select>
+                                            </x-forms.select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
                                         @endif
                                     </td>
@@ -353,11 +353,11 @@
                                         @if($isReadonly)
                                             <span>{{ $unitText ?: __('common.empty_value') }}</span>
                                         @else
-                                            <select class="form-select js-select2-local js-purchase-order-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required>
+                                            <x-forms.select class="form-select js-select2-local js-purchase-order-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required>
                                                 @if($unitDocNum)
                                                     <option value="{{ $unitDocNum }}" selected>{{ $unitText ?: $unitDocNum }}</option>
                                                 @endif
-                                            </select>
+                                            </x-forms.select>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
                                         @endif
                                     </td>
@@ -381,10 +381,10 @@
                                         @if($isReadonly)
                                             <span>{{ __(str($line['discount_type'] ?? 'fixed')->replace('_', ' ')->title()->toString()) }}</span>
                                         @else
-                                            <select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
+                                            <x-forms.select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
                                                 <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('purchase_orders.discount_types.fixed') }}</option>
                                                 <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('purchase_orders.discount_types.percentage') }}</option>
-                                            </select>
+                                            </x-forms.select>
                                         @endif
                                     </td>
                                     <td>
@@ -410,7 +410,7 @@
                                         @if($isReadonly)
                                             <span>{{ $line['notes'] ?? __('common.empty_value') }}</span>
                                         @else
-                                            <input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}">
+                                            <x-forms.input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                         @endif
                                     </td>
@@ -540,7 +540,7 @@
             @can('purchase_orders.submit')<form method="POST" action="{{ route('admin.purchases.purchase-orders.submit', $record->doc_num) }}">@csrf<button class="btn btn-primary">{{ __('Submit for approval') }}</button></form>@endcan
         @elseif($record->status === 'submitted')
             @can('purchase_orders.approve')<button type="button" class="btn btn-success js-purchase-order-row-action" data-url="{{ route('admin.purchases.purchase-orders.approve', $record->doc_num) }}" data-method="POST" data-action="approve">{{ __('Approve') }}</button>@endcan
-            @can('purchase_orders.reject')<form class="d-flex flex-wrap gap-2" method="POST" action="{{ route('admin.purchases.purchase-orders.reject', $record->doc_num) }}">@csrf<input class="form-control" name="reason" required placeholder="{{ __('Rejection reason') }}" aria-label="{{ __('Rejection reason') }}"><button class="btn btn-outline-danger">{{ __('Reject') }}</button></form>@endcan
+            @can('purchase_orders.reject')<form class="d-flex flex-wrap gap-2" method="POST" action="{{ route('admin.purchases.purchase-orders.reject', $record->doc_num) }}">@csrf<x-forms.input class="form-control" name="reason" required placeholder="{{ __('Rejection reason') }}" aria-label="{{ __('Rejection reason') }}" /><button class="btn btn-outline-danger">{{ __('Reject') }}</button></form>@endcan
         @else
             <div class="alert alert-warning mb-0">{{ $record->rejection_reason }}</div>
         @endif
@@ -558,12 +558,12 @@
         <tr class="js-purchase-order-line">
             <td class="text-center text-700 js-line-number">__NUMBER__</td>
             <td class="purchase-order-product-picker">
-                <input type="hidden" name="lines[__INDEX__][public_id]" value=""><input type="hidden" name="lines[__INDEX__][purchase_requisition_line_id]" value=""><div class="small text-600" data-source-label></div>
-                <select class="form-select js-select2-ajax js-purchase-order-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_orders.placeholders.product') }}" data-allow-clear="true" required></select>
+                <x-forms.input type="hidden" name="lines[__INDEX__][public_id]" value="" /><x-forms.input type="hidden" name="lines[__INDEX__][purchase_requisition_line_id]" value="" /><div class="small text-600" data-source-label></div>
+                <x-forms.select class="form-select js-select2-ajax js-purchase-order-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_orders.placeholders.product') }}" data-allow-clear="true" required></x-forms.select>
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.product_doc_num"></div>
             </td>
             <td>
-                <select class="form-select js-select2-local js-purchase-order-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required></select>
+                <x-forms.select class="form-select js-select2-local js-purchase-order-unit" name="lines[__INDEX__][unit_doc_num]" data-placeholder="{{ __('purchase_orders.placeholders.unit') }}" required></x-forms.select>
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
             </td>
             <td>
@@ -575,7 +575,7 @@
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
             </td>
             <td>
-                <select class="form-select js-line-discount-type" name="lines[__INDEX__][discount_type]"><option value="fixed">{{ __('purchase_orders.discount_types.fixed') }}</option><option value="percentage">{{ __('purchase_orders.discount_types.percentage') }}</option></select>
+                <x-forms.select class="form-select js-line-discount-type" name="lines[__INDEX__][discount_type]"><option value="fixed">{{ __('purchase_orders.discount_types.fixed') }}</option><option value="percentage">{{ __('purchase_orders.discount_types.percentage') }}</option></x-forms.select>
             </td>
             <td>
                 <x-forms.numeric-input class="text-end js-line-discount-value" name="lines[__INDEX__][discount_value]" :scale="4" min="0" step="0.0001" value="0" />
@@ -589,7 +589,7 @@
             <td class="text-end text-700 js-line-received">0</td>
             <td class="text-end text-700 js-line-remaining">0</td>
             <td>
-                <input class="form-control" name="lines[__INDEX__][notes]">
+                <x-forms.input class="form-control" name="lines[__INDEX__][notes]" />
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
             </td>
             <td>

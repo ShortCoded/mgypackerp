@@ -44,55 +44,55 @@
                 <div class="row g-2 align-items-end">
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_assignee" :label="__('user_tasks.attributes.assigned_to')" />
-                        <select class="form-select form-select-sm js-select2-ajax js-team-board-filter" id="team_board_tasks_assignee" data-type="{{ $taskType }}" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_assignee') }}" data-allow-clear="true"></select>
+                        <x-forms.select class="form-select form-select-sm js-select2-ajax js-team-board-filter" id="team_board_tasks_assignee" data-type="{{ $taskType }}" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_assignee') }}" data-allow-clear="true"></x-forms.select>
                     </div>
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_creator" :label="__('user_tasks.attributes.creator')" />
-                        <select class="form-select form-select-sm js-select2-ajax js-team-board-filter" id="team_board_tasks_creator" data-type="{{ $taskType }}" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></select>
+                        <x-forms.select class="form-select form-select-sm js-select2-ajax js-team-board-filter" id="team_board_tasks_creator" data-type="{{ $taskType }}" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></x-forms.select>
                     </div>
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_status" :label="__('user_tasks.attributes.status')" />
-                        <select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_status" data-type="{{ $taskType }}" name="status">
+                        <x-forms.select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_status" data-type="{{ $taskType }}" name="status">
                             <option value="">{{ __('user_tasks.filters.all') }}</option>
                             @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                 <option value="{{ $status }}">{{ __("user_tasks.statuses.{$status}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_list" :label="__('user_tasks.attributes.board')" />
-                        <select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_list" data-type="{{ $taskType }}" name="board_list_doc_num">
+                        <x-forms.select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_list" data-type="{{ $taskType }}" name="board_list_doc_num">
                             <option value="">{{ __('user_tasks.filters.all') }}</option>
                             @foreach ($boardConfig['boards'][$taskType] ?? [] as $list)
                                 <option value="{{ $list['doc_num'] }}">{{ $list['name'] }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_priority" :label="__('user_tasks.attributes.priority')" />
-                        <select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_priority" data-type="{{ $taskType }}" name="priority">
+                        <x-forms.select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_priority" data-type="{{ $taskType }}" name="priority">
                             <option value="">{{ __('user_tasks.filters.all') }}</option>
                             @foreach (\Modules\Core\Models\UserTask::Priorities as $priority)
                                 <option value="{{ $priority }}">{{ __("user_tasks.priorities.{$priority}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="col-md-6 col-xl-2">
                         <x-forms.label for="team_board_tasks_completion" :label="__('user_tasks.filters.completion')" />
-                        <select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_completion" data-type="{{ $taskType }}" name="completion">
+                        <x-forms.select class="form-select form-select-sm js-team-board-filter" id="team_board_tasks_completion" data-type="{{ $taskType }}" name="completion">
                             <option value="">{{ __('user_tasks.filters.all') }}</option>
                             <option value="open">{{ __('user_tasks.filters.open') }}</option>
                             <option value="completed">{{ __('user_tasks.filters.completed') }}</option>
-                        </select>
+                        </x-forms.select>
                     </div>
                     @foreach (['due_at', 'created_at', 'updated_at'] as $dateField)
                         <div class="col-md-6 col-xl-2">
                             <x-forms.label :for="'team_board_tasks_'.$dateField.'_from'" :label="__('user_tasks.filters.'.$dateField.'_from')" />
-                            <input class="form-control form-control-sm js-date-picker js-team-board-filter" id="team_board_tasks_{{ $dateField }}_from" data-type="{{ $taskType }}" name="{{ $dateField }}_from" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr">
+                            <x-forms.date-input class="form-control form-control-sm js-date-picker js-team-board-filter" id="team_board_tasks_{{ $dateField }}_from" data-type="{{ $taskType }}" name="{{ $dateField }}_from" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr" />
                         </div>
                         <div class="col-md-6 col-xl-2">
                             <x-forms.label :for="'team_board_tasks_'.$dateField.'_to'" :label="__('user_tasks.filters.'.$dateField.'_to')" />
-                            <input class="form-control form-control-sm js-date-picker js-team-board-filter" id="team_board_tasks_{{ $dateField }}_to" data-type="{{ $taskType }}" name="{{ $dateField }}_to" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr">
+                            <x-forms.date-input class="form-control form-control-sm js-date-picker js-team-board-filter" id="team_board_tasks_{{ $dateField }}_to" data-type="{{ $taskType }}" name="{{ $dateField }}_to" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr" />
                         </div>
                     @endforeach
                     <div class="col-md-auto">
@@ -119,27 +119,27 @@
                         <div class="d-flex flex-wrap justify-content-xl-end align-items-center gap-2">
                             <div class="d-flex align-items-center gap-2">
                                 <label class="form-label mb-0 text-700 fs-10" for="team_board_record_filter">{{ __('user_tasks.records.filter_label') }}</label>
-                                <select class="form-select form-select-sm w-auto js-team-board-record-filter" id="team_board_record_filter" aria-label="{{ __('user_tasks.records.filter_label') }}">
+                                <x-forms.select class="form-select form-select-sm w-auto js-team-board-record-filter" id="team_board_record_filter" aria-label="{{ __('user_tasks.records.filter_label') }}">
                                     <option value="active">{{ __('user_tasks.records.active') }}</option>
                                     <option value="inactive">{{ __('user_tasks.records.inactive') }}</option>
                                     @if ($canViewTrashed)
                                         <option value="trashed">{{ __('user_tasks.records.trashed') }}</option>
                                         <option value="all">{{ __('user_tasks.records.all') }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             </div>
 
                             @if ($hasBulkActions)
                                 <div class="d-none align-items-center gap-2 js-team-board-bulk-actions-bar" data-type="{{ $taskType }}">
                                     <span class="badge rounded-pill badge-subtle-primary js-team-board-selected-count">0</span>
-                                    <select class="form-select form-select-sm w-auto js-team-board-bulk-action" aria-label="{{ __('user_tasks.bulk_action') }}">
+                                    <x-forms.select class="form-select form-select-sm w-auto js-team-board-bulk-action" aria-label="{{ __('user_tasks.bulk_action') }}">
                                         @if ($canBulkDelete)
                                             <option value="delete" data-visible-filters="active inactive all">{{ __('user_tasks.actions.delete_selected') }}</option>
                                         @endif
                                         @if ($canBulkRestore)
                                             <option value="restore" data-visible-filters="trashed all">{{ __('user_tasks.actions.restore_selected') }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <button type="button" class="btn btn-falcon-default btn-sm js-team-board-bulk-apply" data-type="{{ $taskType }}" disabled>
                                         <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                                     </button>
@@ -175,7 +175,7 @@
                                             @if ($loop->first)
                                                 <th class="{{ $column['class'] }}" data-orderable="false" style="{{ $column['style'] ?? '' }}">
                                                     <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                                        <input class="form-check-input js-team-board-select-all" type="checkbox" data-type="{{ $taskType }}" aria-label="{{ __('user_tasks.select_all') }}">
+                                                        <x-forms.input class="form-check-input js-team-board-select-all" type="checkbox" data-type="{{ $taskType }}" aria-label="{{ __('user_tasks.select_all') }}" />
                                                     </div>
                                                 </th>
                                             @else

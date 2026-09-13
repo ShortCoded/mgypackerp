@@ -29,6 +29,7 @@ class CustomerInvoiceService
         private readonly SalesAccountingService $accounting,
         private readonly SalesCycleAuditService $audit,
         private readonly SalesUnitConversionService $unitConversions,
+        private readonly PriceListPricingService $priceLists,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -50,6 +51,7 @@ class CustomerInvoiceService
             }
 
             $prepared = [];
+            $unpricedProducts = [];
             $sourceLineIds = [];
             foreach ($data['lines'] as $input) {
                 $product = Product::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $input['product_doc_num'])->firstOrFail();
@@ -65,7 +67,14 @@ class CustomerInvoiceService
                 }
 
                 $quantity = (string) $input['quantity'];
-                $unitPrice = (string) $input['unit_price'];
+                try {
+                    $price = $this->priceLists->resolve((int) $data['company_id'], $customer->getKey(), $currency->getKey(), $product, $unit->getKey(), $quantity, (string) $data['invoice_date']);
+                } catch (DomainException) {
+                    $unpricedProducts[] = $product->doc_num.' / '.$product->name;
+
+                    continue;
+                }
+                $unitPrice = $price['unit_price'];
                 $discount = (string) ($input['discount_amount'] ?? '0');
                 $tax = (string) ($input['tax_amount'] ?? '0');
                 $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
@@ -75,6 +84,7 @@ class CustomerInvoiceService
                 }
                 $gross = $this->amounts->multiply($quantity, $unitPrice);
                 $this->amounts->assertNotGreaterThan($discount, $gross, __('Line discount cannot exceed its gross amount.'));
+                $this->amounts->assertNotGreaterThan($discount, $price['maximum_discount_amount'], __('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $price['maximum_discount_amount']]));
                 $conversion = $this->unitConversions->snapshot($product, $unit->getKey(), $quantity);
                 if ($sourceLine) {
                     $sourceLineIds[] = $sourceLine->getKey();
@@ -89,8 +99,12 @@ class CustomerInvoiceService
                     'tax' => $tax,
                     'gross' => $gross,
                     'conversion' => $conversion,
+                    'price' => $price,
                     'line_total' => $this->amounts->add($this->amounts->subtract($gross, $discount), $tax),
                 ];
+            }
+            if ($unpricedProducts !== []) {
+                throw new DomainException(__('price_lists.messages.unpriced_products', ['products' => implode('، ', $unpricedProducts)]));
             }
             if ($prepared === []) {
                 throw new DomainException(__('A sales invoice requires at least one line.'));
@@ -122,6 +136,9 @@ class CustomerInvoiceService
                     'description' => $product->name, 'quantity' => $row['quantity'],
                     'conversion_factor' => $row['conversion']['conversion_factor'], 'base_quantity' => $row['conversion']['base_quantity'],
                     'unit_price' => $row['unit_price'], 'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
+                    'price_list_line_id' => $row['price']['price_list_line_id'],
+                    'allowed_discount_type' => $row['price']['allowed_discount_type'],
+                    'allowed_discount_value' => $row['price']['allowed_discount_value'],
                     'line_total' => $row['line_total'], 'is_service' => $product->isService(), 'unit_cost' => 0,
                     'source_snapshot' => array_filter([
                         'source_type' => $source ? 'sales_request' : 'direct',
@@ -219,6 +236,9 @@ class CustomerInvoiceService
                     'description' => $line->description, 'quantity' => $row['quantity'],
                     'base_quantity' => bcmul((string) $row['quantity'], (string) $line->conversion_factor, 8),
                     'unit_price' => $line->unit_price,
+                    'price_list_line_id' => $line->price_list_line_id,
+                    'allowed_discount_type' => $line->allowed_discount_type,
+                    'allowed_discount_value' => $line->allowed_discount_value,
                     'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'], 'line_total' => $row['line_total'],
                     'is_service' => $line->isService(), 'unit_cost' => $row['delivery_line']?->unit_cost ?? 0,
                     'source_snapshot' => [

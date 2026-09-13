@@ -125,7 +125,6 @@
         $scheduleRows = $record?->paymentSchedules?->map(function ($schedule) use ($isCreateLike, $mode, $dates, $numbers): array {
             $cashboxLabel = $schedule->cashbox ? trim(implode(' / ', array_filter([$schedule->cashbox->doc_num, $schedule->cashbox->name]))) : null;
             $bankLabel = $schedule->bankAccount ? trim(implode(' / ', array_filter([$schedule->bankAccount->doc_num, $schedule->bankAccount->bank_name, $schedule->bankAccount->account_name]))) : null;
-            $voucher = $schedule->cashVoucher;
 
             return [
                 'public_id' => $isCreateLike || $mode === 'clone' ? null : $schedule->public_id,
@@ -134,15 +133,13 @@
                 'paid_amount' => $numbers->format($schedule->paid_amount),
                 'credited_amount' => $numbers->format($schedule->credited_amount),
                 'outstanding_amount' => $numbers->format($schedule->outstanding_amount),
-                'status' => $schedule->status,
-                'payment_source_type' => $schedule->payment_source_type,
+                'payment_source_type' => in_array($schedule->payment_source_type, PurchaseInvoice::scheduleSourceTypes(), true)
+                    ? $schedule->payment_source_type
+                    : null,
                 'cashbox_doc_num' => $schedule->cashbox?->doc_num,
                 'cashbox_label' => $cashboxLabel,
                 'bank_account_doc_num' => $schedule->bankAccount?->doc_num,
                 'bank_account_label' => $bankLabel,
-                'payment_date' => $schedule->payment_date ? $dates->formatDate($schedule->payment_date, '') : null,
-                'cash_voucher_doc_num' => $mode === 'clone' ? null : $voucher?->doc_num,
-                'cash_voucher_status' => $mode === 'clone' ? null : $voucher?->status,
                 'notes' => $schedule->notes,
             ];
         })->values()->all() ?? [];
@@ -152,14 +149,11 @@
             'public_id' => null,
             'due_date' => '',
             'amount' => '',
-            'payment_source_type' => PurchaseInvoice::SourceScheduled,
+            'payment_source_type' => PurchaseInvoice::SourceCashbox,
             'cashbox_doc_num' => null,
             'cashbox_label' => null,
             'bank_account_doc_num' => null,
             'bank_account_label' => null,
-            'payment_date' => null,
-            'cash_voucher_doc_num' => null,
-            'cash_voucher_status' => null,
             'notes' => null,
         ]];
     }
@@ -237,9 +231,9 @@
     @if($method !== 'POST')
         @method($method)
     @endif
-    <input type="hidden" name="submit_action" value="save">
+    <x-forms.input type="hidden" name="submit_action" value="save" />
     @if($cloneSourceToken)
-        <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+        <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
     @endif
 
     <div class="card mb-3">
@@ -300,7 +294,7 @@
                                 @if($isReadonly)
                                     <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                                 @else
-                                    <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                    <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                             </div>
@@ -328,7 +322,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="invoice_date" :value="$plainDate($record?->invoice_date)" dir="ltr" input-class="date-value text-center" />
                             @else
-                                <input class="form-control text-center js-date-picker" id="invoice_date" name="invoice_date" type="text" value="{{ $dateValue('invoice_date', $isCreateLike && $mode !== 'clone' ? now() : $record?->invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                                <x-forms.date-input class="form-control text-center js-date-picker" id="invoice_date" name="invoice_date" type="text" value="{{ $dateValue('invoice_date', $isCreateLike && $mode !== 'clone' ? now() : $record?->invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="invoice_date"></div>
                         </div>
@@ -338,11 +332,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="financial_period_doc_num" :value="$periodOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax" id="financial_period_doc_num" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods') }}" data-placeholder="{{ __('purchase_invoices.placeholders.financial_period') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax" id="financial_period_doc_num" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods') }}" data-placeholder="{{ __('purchase_invoices.placeholders.financial_period') }}" data-allow-clear="true" required>
                                     @if($periodOption || $selectedPeriod)
                                         <option value="{{ $selectedPeriod }}" selected>{{ $periodOption['text'] ?? $selectedPeriod }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="financial_period_doc_num"></div>
                         </div>
@@ -352,11 +346,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="supplier_doc_num" :value="$supplierOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-placeholder="{{ __('purchase_invoices.placeholders.supplier') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-placeholder="{{ __('purchase_invoices.placeholders.supplier') }}" data-allow-clear="true" required>
                                     @if($supplierOption || $selectedSupplier)
                                         <option value="{{ $selectedSupplier }}" selected>{{ $supplierOption['text'] ?? $selectedSupplier }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="supplier_doc_num"></div>
                         </div>
@@ -366,7 +360,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="purchase_order_doc_num" :value="$record?->purchaseOrder?->doc_num ?: __('common.empty_value')" />
                             @else
-                                <select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders', ['purpose' => 'invoice']) }}" data-placeholder="{{ __('Select') }}">
+                                <x-forms.select class="form-select js-select2-ajax" id="purchase_order_doc_num" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.select2.purchase-orders', ['purpose' => 'invoice']) }}" data-placeholder="{{ __('Select') }}">
                                     <option value="">{{ __('Select') }}</option>
                                     @foreach($procurementPurchaseOrders as $purchaseOrder)
                                         <option value="{{ $purchaseOrder->doc_num }}"
@@ -379,12 +373,12 @@
                                             data-exchange-rate="{{ $purchaseOrder->exchange_rate }}"
                                             @selected($selectedPurchaseOrder === $purchaseOrder->doc_num)>{{ $purchaseOrder->doc_num }} / {{ $purchaseOrder->supplier?->name }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="purchase_order_doc_num"></div>
                             <div class="form-text">{{ __('purchase_invoices.messages.purchase_order_source_help') }}</div>
                             @if($mode === 'create')
-                            <label class="form-label mt-2" for="source_receipts">{{ __('purchase_invoices.attributes.goods_receipt_source') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label><select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-disable-when-dependency-empty="true" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</select>
+                            <label class="form-label mt-2" for="source_receipts">{{ __('purchase_invoices.attributes.goods_receipt_source') }} <span class="text-500">({{ __('purchase_invoices.attributes.optional') }})</span></label><x-forms.select id="source_receipts" class="form-select js-select2-ajax" multiple data-url="{{ route('admin.purchases.select2.receipts', ['purpose' => 'invoice']) }}" data-depends-on="#purchase_order_doc_num" data-dependent-param="purchase_order" data-disable-when-dependency-empty="true" data-placeholder="{{ __('Select') }}">@foreach($eligibleReceiptLines->pluck('receipt')->filter()->unique('id') as $sourceReceipt)<option value="{{ $sourceReceipt->doc_num }}" selected>{{ $sourceReceipt->doc_num }}</option>@endforeach</x-forms.select>
                             <div class="form-text">{{ __('purchase_invoices.messages.receipt_filter_optional') }}</div>
                             <button class="btn btn-falcon-primary btn-sm mt-2" type="button" data-load-invoice-source="{{ route('admin.purchases.purchase-invoices.create') }}">{{ __('procurement.ui.load_received_lines') }}</button>
                             @endif
@@ -395,7 +389,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="supplier_invoice_number" :value="$value('supplier_invoice_number')" />
                             @else
-                                <input class="form-control" id="supplier_invoice_number" name="supplier_invoice_number" value="{{ $value('supplier_invoice_number') }}" maxlength="100" dir="ltr" autocomplete="off">
+                                <x-forms.input class="form-control" id="supplier_invoice_number" name="supplier_invoice_number" value="{{ $value('supplier_invoice_number') }}" maxlength="100" dir="ltr" autocomplete="off" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="supplier_invoice_number"></div>
                         </div>
@@ -405,7 +399,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="supplier_invoice_date" :value="$plainDate($record?->supplier_invoice_date)" dir="ltr" input-class="date-value text-center" />
                             @else
-                                <input class="form-control text-center js-date-picker" id="supplier_invoice_date" name="supplier_invoice_date" type="text" value="{{ $dateValue('supplier_invoice_date', $record?->supplier_invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control text-center js-date-picker" id="supplier_invoice_date" name="supplier_invoice_date" type="text" value="{{ $dateValue('supplier_invoice_date', $record?->supplier_invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="supplier_invoice_date"></div>
                         </div>
@@ -415,11 +409,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax js-purchase-invoice-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.purchases.select2.currencies') }}" data-placeholder="{{ __('purchase_invoices.placeholders.currency') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax js-purchase-invoice-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.purchases.select2.currencies') }}" data-placeholder="{{ __('purchase_invoices.placeholders.currency') }}" data-allow-clear="true" required>
                                     @if($currencyOption || $selectedCurrency)
                                         <option value="{{ $selectedCurrency }}" data-is-main="{{ ($currencyOption['is_main'] ?? false) ? '1' : '0' }}" selected>{{ $currencyOption['text'] ?? $selectedCurrency }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                         </div>
@@ -439,11 +433,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="payment_type" :value="__('purchase_invoices.payment_types.'.($record?->payment_type ?? PurchaseInvoice::PaymentTypeCredit))" />
                             @else
-                                <select class="form-select js-purchase-invoice-payment-type" id="payment_type" name="payment_type" required>
+                                <x-forms.select class="form-select js-purchase-invoice-payment-type" id="payment_type" name="payment_type" required>
                                     @foreach(PurchaseInvoice::paymentTypes() as $type)
                                         <option value="{{ $type }}" @selected($selectedPaymentType === $type)>{{ __('purchase_invoices.payment_types.'.$type) }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="payment_type"></div>
                         </div>
@@ -453,10 +447,10 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="payment_source_type" :value="$record?->payment_source_type ? __('purchase_invoices.source_types.'.$record->payment_source_type) : null" />
                             @else
-                                <select class="form-select js-purchase-invoice-source-type" id="payment_source_type" name="payment_source_type">
+                                <x-forms.select class="form-select js-purchase-invoice-source-type" id="payment_source_type" name="payment_source_type">
                                     <option value="{{ PurchaseInvoice::SourceCashbox }}" @selected($selectedPaymentSource === PurchaseInvoice::SourceCashbox)>{{ __('purchase_invoices.source_types.cashbox') }}</option>
                                     <option value="{{ PurchaseInvoice::SourceBank }}" @selected($selectedPaymentSource === PurchaseInvoice::SourceBank)>{{ __('purchase_invoices.source_types.bank') }}</option>
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="payment_source_type"></div>
                         </div>
@@ -466,11 +460,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="cashbox_doc_num" :value="$cashboxOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax" id="cashbox_doc_num" name="cashbox_doc_num" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax" id="cashbox_doc_num" name="cashbox_doc_num" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true">
                                     @if($cashboxOption || $selectedCashbox)
                                         <option value="{{ $selectedCashbox }}" selected>{{ $cashboxOption['text'] ?? $selectedCashbox }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="cashbox_doc_num"></div>
                         </div>
@@ -480,11 +474,11 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="bank_account_doc_num" :value="$bankOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax" id="bank_account_doc_num" name="bank_account_doc_num" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax" id="bank_account_doc_num" name="bank_account_doc_num" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true">
                                     @if($bankOption || $selectedBank)
                                         <option value="{{ $selectedBank }}" selected>{{ $bankOption['text'] ?? $selectedBank }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="bank_account_doc_num"></div>
                         </div>
@@ -494,10 +488,10 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="header_discount_type" :value="$record?->header_discount_type ? __('purchase_invoices.discount_types.'.$record->header_discount_type) : null" />
                             @else
-                                <select class="form-select js-purchase-invoice-header-discount-type" id="header_discount_type" name="header_discount_type">
+                                <x-forms.select class="form-select js-purchase-invoice-header-discount-type" id="header_discount_type" name="header_discount_type">
                                     <option value="fixed" @selected($selectedHeaderDiscountType === 'fixed')>{{ __('purchase_invoices.discount_types.fixed') }}</option>
                                     <option value="percentage" @selected($selectedHeaderDiscountType === 'percentage')>{{ __('purchase_invoices.discount_types.percentage') }}</option>
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="header_discount_type"></div>
                         </div>
@@ -538,7 +532,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="notes" as="textarea" :value="$value('notes')" rows="2" />
                             @else
-                                <textarea class="form-control" id="notes" name="notes" rows="2">{{ $value('notes') }}</textarea>
+                                <x-forms.textarea class="form-control" id="notes" name="notes" rows="2">{{ $value('notes') }}</x-forms.textarea>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="notes"></div>
                         </div>
@@ -548,7 +542,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="internal_notes" as="textarea" :value="$value('internal_notes')" rows="2" />
                             @else
-                                <textarea class="form-control" id="internal_notes" name="internal_notes" rows="2">{{ $value('internal_notes') }}</textarea>
+                                <x-forms.textarea class="form-control" id="internal_notes" name="internal_notes" rows="2">{{ $value('internal_notes') }}</x-forms.textarea>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="internal_notes"></div>
                         </div>
@@ -609,24 +603,24 @@
                                         @endphp
                                         <td @if(!$sourceOrderLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceOrderLine)<a href="{{ route('admin.purchases.purchase-orders.show', $sourceOrderLine->purchaseOrder->doc_num) }}">{{ $sourceOrderLine->purchaseOrder->doc_num }}</a>@endif
-                                            <input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line['purchase_order_line_public_id'] ?? '' }}">
+                                            <x-forms.input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line['purchase_order_line_public_id'] ?? '' }}" />
                                         </td>
                                         <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceReceiptLine)<a href="{{ route('admin.purchases.goods-receipt-notes.show', $sourceReceiptLine->receipt->doc_num) }}">{{ $sourceReceiptLine->receipt->doc_num }}</a>
                                                 <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->product?->cost_as_inventory ? $sourceReceiptLine->inventory_posted_quantity : $sourceReceiptLine->accepted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceipt($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
                                             @endif
-                                            <input type="hidden" name="lines[{{ $index }}][receipt_line_public_id]" value="{{ $line['receipt_line_public_id'] ?? '' }}">
+                                            <x-forms.input type="hidden" name="lines[{{ $index }}][receipt_line_public_id]" value="{{ $line['receipt_line_public_id'] ?? '' }}" />
                                         </td>
                                         <td>
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['product_label'] ?? null }}</div>
                                             @else
-                                                <input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}">
-                                                <select class="form-select js-select2-ajax js-purchase-invoice-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_invoices.placeholders.product') }}" data-allow-clear="true" required>
+                                                <x-forms.input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}" />
+                                                <x-forms.select class="form-select js-select2-ajax js-purchase-invoice-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.purchases.select2.products') }}" data-placeholder="{{ __('purchase_invoices.placeholders.product') }}" data-allow-clear="true" required>
                                                     @if(! empty($line['product_doc_num']))
                                                         <option value="{{ $line['product_doc_num'] }}" selected>{{ $line['product_label'] ?? $line['product_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
                                             @endif
                                         </td>
@@ -634,14 +628,14 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['unit_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select js-select2-local js-purchase-invoice-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_invoices.placeholders.unit') }}" required>
+                                                <x-forms.select class="form-select js-select2-local js-purchase-invoice-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('purchase_invoices.placeholders.unit') }}" required>
                                                     @foreach(($line['unit_options'] ?? []) as $option)
                                                         <option value="{{ $option['id'] }}" @selected(($line['unit_doc_num'] ?? null) === $option['id'])>{{ $option['text'] }}</option>
                                                     @endforeach
                                                     @if(! empty($line['unit_doc_num']) && collect($line['unit_options'] ?? [])->where('id', $line['unit_doc_num'])->isEmpty())
                                                         <option value="{{ $line['unit_doc_num'] }}" selected>{{ $line['unit_label'] ?? $line['unit_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
                                             @endif
                                         </td>
@@ -665,10 +659,10 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ __('purchase_invoices.discount_types.'.(($line['discount_type'] ?? null) ?: 'fixed')) }}</div>
                                             @else
-                                                <select class="form-select js-purchase-invoice-discount-type" name="lines[{{ $index }}][discount_type]">
+                                                <x-forms.select class="form-select js-purchase-invoice-discount-type" name="lines[{{ $index }}][discount_type]">
                                                     <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('purchase_invoices.discount_types.fixed') }}</option>
                                                     <option value="percentage" @selected(($line['discount_type'] ?? 'fixed') === 'percentage')>{{ __('purchase_invoices.discount_types.percentage') }}</option>
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.discount_type"></div>
                                             @endif
                                         </td>
@@ -696,7 +690,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                             @else
-                                                <input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}">
+                                                <x-forms.input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                             @endif
                                         </td>
@@ -853,16 +847,16 @@
                                                 @if($record->isDraft() && $assetEligible && ($canManageInCurrentBranch ?? false))
                                                     <div class="js-asset-treatment-editor text-start" data-endpoint="{{ route('admin.purchases.purchase-invoices.asset-treatment', $record->doc_num) }}" data-line-public-id="{{ $invoiceLine->public_id }}">
                                                         <label class="form-label small mb-1">{{ __('fixed_assets.purchase_source.treatment') }}</label>
-                                                        <select class="form-select form-select-sm js-asset-treatment mb-2">
+                                                        <x-forms.select class="form-select form-select-sm js-asset-treatment mb-2">
                                                             <option value="none" @selected($assetTreatment === 'none')>{{ __('fixed_assets.purchase_source.treatment_none') }}</option>
                                                             @can('fixed_assets.create')<option value="new_asset" @selected($assetTreatment === 'new_asset')>{{ __('fixed_assets.purchase_source.treatment_new_asset') }}</option>@endcan
                                                             @can('fixed_assets.improvement.post')<option value="capital_improvement" @selected($assetTreatment === 'capital_improvement')>{{ __('fixed_assets.purchase_source.treatment_improvement') }}</option>@endcan
-                                                        </select>
+                                                        </x-forms.select>
                                                         <div class="js-asset-improvement-fields {{ $assetTreatment === 'capital_improvement' ? '' : 'd-none' }}">
-                                                            <select class="form-select form-select-sm js-select2-ajax js-asset-improvement-target mb-2" data-url="{{ route('admin.fixed-assets.select2.assets', ['purchasable_improvement' => 1, 'branch_doc_num' => $record->branch?->doc_num]) }}" data-placeholder="{{ __('fixed_assets.purchase_source.select_existing_asset') }}" data-allow-clear="true">
+                                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-asset-improvement-target mb-2" data-url="{{ route('admin.fixed-assets.select2.assets', ['purchasable_improvement' => 1, 'branch_doc_num' => $record->branch?->doc_num]) }}" data-placeholder="{{ __('fixed_assets.purchase_source.select_existing_asset') }}" data-allow-clear="true">
                                                                 @if($targetAsset)<option value="{{ $targetAsset->doc_num }}" selected>{{ $targetAsset->doc_num }} / {{ $targetAsset->asset_name }}</option>@endif
-                                                            </select>
-                                                            <input class="form-control form-control-sm js-date-picker js-asset-improvement-date mb-2" type="text" value="{{ $plainDate($invoiceLine->asset_effective_date ?: $record->invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" placeholder="{{ __('fixed_assets.purchase_source.effective_date') }}">
+                                                            </x-forms.select>
+                                                            <x-forms.date-input class="form-control form-control-sm js-date-picker js-asset-improvement-date mb-2" type="text" value="{{ $plainDate($invoiceLine->asset_effective_date ?: $record->invoice_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" placeholder="{{ __('fixed_assets.purchase_source.effective_date') }}" />
                                                         </div>
                                                         <div class="d-flex flex-wrap justify-content-end gap-1">
                                                             <button class="btn btn-falcon-default btn-sm js-save-asset-treatment" type="button"><span class="fas fa-save me-1"></span>{{ __('common.actions.save') }}</button>
@@ -950,13 +944,10 @@
                                         <th>{{ __('purchase_invoices.totals.paid') }}</th>
                                         <th>{{ __('purchase_invoices.totals.credited') }}</th>
                                         <th>{{ __('purchase_invoices.totals.remaining') }}</th>
-                                        <th>{{ __('purchase_invoices.attributes.status') }}</th>
                                     @endif
                                     <th>{{ __('purchase_invoices.attributes.payment_source_type') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.cashbox') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.bank_account') }}</th>
-                                    <th>{{ __('purchase_invoices.attributes.payment_date') }}</th>
-                                    <th>{{ __('purchase_invoices.attributes.linked_payment_voucher') }}</th>
                                     <th class="purchase-invoice-notes-cell">{{ __('purchase_invoices.attributes.notes') }}</th>
                                     @unless($isReadonly)
                                         <th class="text-center purchase-invoice-actions-cell">{{ __('common.fields.actions') }}</th>
@@ -970,8 +961,8 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext text-center date-value" dir="ltr">{{ $schedule['due_date'] ?? null }}</div>
                                             @else
-                                                <input type="hidden" name="payment_schedules[{{ $index }}][public_id]" value="{{ $schedule['public_id'] ?? '' }}">
-                                                <input class="form-control form-control-sm text-center js-date-picker" name="payment_schedules[{{ $index }}][due_date]" type="text" value="{{ $schedule['due_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                                                <x-forms.input type="hidden" name="payment_schedules[{{ $index }}][public_id]" value="{{ $schedule['public_id'] ?? '' }}" />
+                                                <x-forms.date-input class="form-control form-control-sm text-center js-date-picker" name="payment_schedules[{{ $index }}][due_date]" type="text" value="{{ $schedule['due_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.due_date"></div>
                                             @endif
                                         </td>
@@ -987,17 +978,16 @@
                                             <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['paid_amount'] ?? 0) }}</div></td>
                                             <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['credited_amount'] ?? 0) }}</div></td>
                                             <td><div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['outstanding_amount'] ?? 0) }}</div></td>
-                                            <td><div class="form-control-plaintext">{{ __('purchase_invoices.schedule_statuses.'.($schedule['status'] ?? \Modules\Purchases\Models\PurchaseInvoicePaymentSchedule::StatusScheduled)) }}</div></td>
                                         @endif
                                         <td>
                                             @if($isReadonly)
-                                                <div class="form-control-plaintext">{{ __('purchase_invoices.source_types.'.($schedule['payment_source_type'] ?? PurchaseInvoice::SourceScheduled)) }}</div>
+                                                <div class="form-control-plaintext">{{ filled($schedule['payment_source_type'] ?? null) ? __('purchase_invoices.source_types.'.$schedule['payment_source_type']) : __('common.empty_value') }}</div>
                                             @else
-                                                <select class="form-select form-select-sm js-purchase-invoice-schedule-source" name="payment_schedules[{{ $index }}][payment_source_type]">
+                                                <x-forms.select class="form-select form-select-sm js-purchase-invoice-schedule-source" name="payment_schedules[{{ $index }}][payment_source_type]">
                                                     @foreach(PurchaseInvoice::scheduleSourceTypes() as $source)
-                                                        <option value="{{ $source }}" @selected(($schedule['payment_source_type'] ?? PurchaseInvoice::SourceScheduled) === $source)>{{ __('purchase_invoices.source_types.'.$source) }}</option>
+                                                        <option value="{{ $source }}" @selected(($schedule['payment_source_type'] ?? PurchaseInvoice::SourceCashbox) === $source)>{{ __('purchase_invoices.source_types.'.$source) }}</option>
                                                     @endforeach
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.payment_source_type"></div>
                                             @endif
                                         </td>
@@ -1005,11 +995,11 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $schedule['cashbox_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-cashbox" name="payment_schedules[{{ $index }}][cashbox_doc_num]" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true">
+                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-cashbox" name="payment_schedules[{{ $index }}][cashbox_doc_num]" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true">
                                                     @if(! empty($schedule['cashbox_doc_num']))
                                                         <option value="{{ $schedule['cashbox_doc_num'] }}" selected>{{ $schedule['cashbox_label'] ?? $schedule['cashbox_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.cashbox_doc_num"></div>
                                             @endif
                                         </td>
@@ -1017,37 +1007,19 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $schedule['bank_account_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-bank" name="payment_schedules[{{ $index }}][bank_account_doc_num]" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true">
+                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-bank" name="payment_schedules[{{ $index }}][bank_account_doc_num]" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true">
                                                     @if(! empty($schedule['bank_account_doc_num']))
                                                         <option value="{{ $schedule['bank_account_doc_num'] }}" selected>{{ $schedule['bank_account_label'] ?? $schedule['bank_account_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.bank_account_doc_num"></div>
-                                            @endif
-                                        </td>
-                                        <td>
-                                            @if($isReadonly)
-                                                <div class="form-control-plaintext text-center date-value" dir="ltr">{{ $schedule['payment_date'] ?? null }}</div>
-                                            @else
-                                                <input class="form-control form-control-sm text-center js-date-picker js-purchase-invoice-payment-date" name="payment_schedules[{{ $index }}][payment_date]" type="text" value="{{ $schedule['payment_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
-                                                <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.payment_date"></div>
-                                            @endif
-                                        </td>
-                                        <td class="js-purchase-invoice-linked-voucher-cell">
-                                            @if(! empty($schedule['cash_voucher_doc_num']))
-                                                <a class="fw-semibold" href="{{ route('admin.finance.cash-payment-vouchers.show', $schedule['cash_voucher_doc_num']) }}" target="_blank" rel="noopener">{{ $schedule['cash_voucher_doc_num'] }}</a>
-                                                @if(! empty($schedule['cash_voucher_status']))
-                                                    <div class="text-600 fs-11">{{ __('cash_payment_vouchers.statuses.'.$schedule['cash_voucher_status']) }}</div>
-                                                @endif
-                                            @else
-                                                <span class="text-600">{{ __('common.empty_value') }}</span>
                                             @endif
                                         </td>
                                         <td>
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $schedule['notes'] ?? null }}</div>
                                             @else
-                                                <input class="form-control form-control-sm" name="payment_schedules[{{ $index }}][notes]" value="{{ $schedule['notes'] ?? '' }}">
+                                                <x-forms.input class="form-control form-control-sm" name="payment_schedules[{{ $index }}][notes]" value="{{ $schedule['notes'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.notes"></div>
                                             @endif
                                         </td>
@@ -1066,7 +1038,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="{{ $isReadonly ? 12 : 9 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td>
+                                        <td colspan="{{ $isReadonly ? 9 : 7 }}" class="text-center text-600 py-4">{{ __('purchase_invoices.messages.no_payment_schedule') }}</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -1074,12 +1046,12 @@
                                 <tr>
                                     <th class="text-nowrap text-end">{{ __('purchase_invoices.totals.schedule_total') }}</th>
                                     <th class="text-end{{ $isReadonly ? '' : ' js-purchase-invoice-schedule-total' }}" dir="ltr" style="min-width: 100px">{{ $isReadonly ? $numbers->format($readonlyScheduleTotal) : '0' }}</th>
-                                    <th colspan="{{ $isReadonly ? 10 : 7 }}"></th>
+                                    <th colspan="{{ $isReadonly ? 7 : 5 }}"></th>
                                 </tr>
                                 <tr>
                                     <th class="text-nowrap text-end">{{ __('purchase_invoices.totals.schedule_difference') }}</th>
                                     <th class="text-end{{ $isReadonly ? '' : ' js-purchase-invoice-schedule-difference' }}" dir="ltr" style="min-width: 100px">{{ $isReadonly ? $numbers->format($readonlyScheduleDifference) : '0' }}</th>
-                                    <th colspan="{{ $isReadonly ? 10 : 7 }}"></th>
+                                    <th colspan="{{ $isReadonly ? 7 : 5 }}"></th>
                                 </tr>
                             </tfoot>
                         </table>

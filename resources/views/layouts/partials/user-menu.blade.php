@@ -33,7 +33,7 @@
             @endif
             <form method="POST" action="{{ route('lock-screen.store') }}" data-lock-screen-form>
                 @csrf
-                <input type="hidden" name="return_url" value="{{ request()->getRequestUri() }}">
+                <x-forms.input type="hidden" name="return_url" value="{{ request()->getRequestUri() }}" />
                 <button class="dropdown-item" id="btn_lock_screen" type="submit" title="{{ __('common.shortcuts.lock_screen') }}" data-bs-title="{{ __('common.shortcuts.lock_screen') }}">
                     {{ __('auth.lock_screen.action') }}
                 </button>

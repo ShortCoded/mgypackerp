@@ -76,6 +76,7 @@ await client.ready;
 
 let loadCount = 0;
 let csrfToken = '';
+let mobileQualityCapture = null;
 const errors = { javascript: [], console: [], failedXhr: [], dataTable: [], select2: [], responses500: [], sqlState: [] };
 client.on('Page.loadEventFired', () => { loadCount += 1; });
 client.on('Runtime.exceptionThrown', ({ exceptionDetails }) => errors.javascript.push(exceptionDetails?.exception?.description || exceptionDetails?.text || 'Unhandled JavaScript exception'));
@@ -162,13 +163,13 @@ async function post(route, entries = [], { expectedError = false, file = false }
     for (const [name, value] of ${JSON.stringify(entries)}) data.append(name, value);
     if (${file}) {
       const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n0sAAAAASUVORK5CYII='), (character) => character.charCodeAt(0));
-      data.append('evidence_file', new File([bytes], 'qc-evidence.png', { type: 'image/png' }));
+      data.append('evidence_files[]', new File([bytes], 'qc-evidence.png', { type: 'image/png' }));
     }
     const response = await fetch(${JSON.stringify(`${baseUrl}${route}`)}, { method: 'POST', body: data, headers: { Accept: 'application/json', 'X-CSRF-TOKEN': requestCsrfToken } });
     const text = await response.text();
     let payload = null;
     try { payload = JSON.parse(text); } catch (error) {}
-    return { status: response.status, payload, text: text.slice(0, 2000) };
+    return { status: response.status, payload, text: text.slice(0, 2000), url: response.url };
   })()`);
   if (/SQLSTATE\[/i.test(result.text)) errors.sqlState.push(route);
   if (expectedError) {
@@ -287,6 +288,56 @@ async function createProductionRequirement(customerName, quantity) {
   return { salesOrderUrl, productionUrl, productionDoc: productionUrl.split('/').pop() };
 }
 
+async function submitQualityInspection(inspectionUrl, { result = 'passed', evidence = false, notes = 'Quality sample completed' } = {}) {
+  await post(`${inspectionUrl}/receive`);
+  await post(`${inspectionUrl}/start`);
+  if (evidence) {
+    await client.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await navigate(inspectionUrl);
+    mobileQualityCapture = await evaluate(`(() => { const input = document.querySelector('input[name="evidence_files[]"][capture="environment"]'); const actions = input?.closest('.quality-capture-actions'); const rect = actions?.getBoundingClientRect(); return { exists: Boolean(input), right: rect?.right || 0, width: innerWidth, capture: input?.getAttribute('capture'), overflow: document.documentElement.scrollWidth - innerWidth }; })()`);
+    assert(mobileQualityCapture.exists && mobileQualityCapture.right <= mobileQualityCapture.width + 1 && mobileQualityCapture.capture === 'environment' && mobileQualityCapture.overflow <= 1, `Mobile QC capture failed: ${JSON.stringify(mobileQualityCapture)}`);
+    if (!mobileQa) {
+      await client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    }
+  }
+  await post(inspectionUrl + '/submit', [
+    ['result', result],
+    ['disposition', result === 'passed' ? 'release' : 'rework'],
+    ['defect_code', result === 'passed' ? '' : 'E2E-QC'],
+    ['affected_base_quantity', result === 'passed' ? '0' : '5'],
+    ['corrective_action', result === 'passed' ? '' : 'Adjust the machine and inspect a new sample'],
+    ['notes', notes],
+  ], { file: evidence });
+  if (result === 'passed') {
+    await post(`${inspectionUrl}/approve`);
+  } else {
+    await post(`${inspectionUrl}/reject`, [['reason', 'Corrective action and reinspection are required']]);
+  }
+  await post(`${inspectionUrl}/close`, [['close_notes', 'Inspection reviewed and closed']]);
+  return inspectionUrl;
+}
+
+async function createQualityInspection(runUrl, options = {}) {
+  await navigate(runUrl);
+  const createUrl = await evaluate(`document.querySelector('a[href*="/admin/production/quality/create"]')?.href || null`);
+  assert(createUrl, `${runUrl}: controlled Quality request action was not available.`);
+  await navigate(createUrl);
+  const requestValues = await evaluate(`(() => {
+    const run = document.querySelector('[name="production_run_id"]')?.value;
+    return { run, type: '' };
+  })()`);
+  assert(requestValues.run, `${runUrl}: Quality request did not preselect its Production run.`);
+  const created = await post('/admin/production/quality', [
+    ['production_run_id', requestValues.run],
+    ['quality_inspection_type_id', requestValues.type],
+    ['affected_base_quantity', options.result === 'failed' ? '5' : '0'],
+    ['notes', options.notes || 'Production requested a controlled Quality sample'],
+  ]);
+  const inspectionUrl = new URL(created.url).pathname;
+  assert(/\/admin\/production\/quality\/\d+$/.test(inspectionUrl), `Quality request did not redirect to an inspection: ${created.url}`);
+  return submitQualityInspection(inspectionUrl, options);
+}
+
 async function logoutCurrentUser() {
   const status = await evaluate(`(async () => {
     const data = new FormData();
@@ -350,9 +401,9 @@ if (process.env.MFG_E2E_POSTCHECK_ONLY === '1') {
     await streamPdf(`/admin/inventory/documents/${receiptDoc}/print`, 'finished-goods-receipt-ar.pdf');
 
     await client.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-    await navigate(`/admin/production/runs/${run1Id}`);
-    const mobileQc = await evaluate(`(() => { const input = document.querySelector('input[name="evidence_file"]'); const rect = input?.getBoundingClientRect(); return { exists: Boolean(input), right: rect?.right || 0, width: innerWidth, capture: input?.getAttribute('capture') }; })()`);
-    assert(mobileQc.exists && mobileQc.right <= mobileQc.width + 1 && mobileQc.capture === 'environment', `Mobile QC control failed: ${JSON.stringify(mobileQc)}`);
+    await navigate('/admin/production/quality');
+    const mobileQc = await evaluate(`(() => { const table = document.querySelector('.erp-datatable'); const rect = table?.getBoundingClientRect(); return { exists: Boolean(table), right: rect?.right || 0, width: innerWidth, overflow: document.documentElement.scrollWidth - innerWidth }; })()`);
+    assert(mobileQc.exists && mobileQc.right <= mobileQc.width + 1 && mobileQc.overflow <= 1, `Mobile Quality list failed: ${JSON.stringify(mobileQc)}`);
 
     for (const [category, values] of Object.entries(errors)) assert(values.length === 0, `${category} errors: ${JSON.stringify(values)}`);
     const result = { orderDoc, runs: [run1Number, run2Number], receiptDoc, mobileQc, errors };
@@ -376,8 +427,8 @@ try {
   await navigate('/lang/en');
 
   const visibleRoutes = [
-    '/admin/inventory/warehouse-locations', '/admin/inventory/documents', '/admin/inventory/stock-counts', '/admin/inventory/reports/operations',
-    '/admin/production/resources', '/admin/production/work-orders', '/admin/production/runs', '/admin/production/reports/operations',
+    '/admin/inventory/documents', '/admin/inventory/stock-counts', '/admin/inventory/reports/operations',
+    '/admin/production/stages', '/admin/production/work-orders', '/admin/production/runs', '/admin/production/quality', '/admin/production/reports/operations',
   ];
   for (const route of visibleRoutes) {
     await navigate(route);
@@ -386,6 +437,9 @@ try {
   }
 
   assert((await browserResponseStatus('/admin/inventory/accounting')) === 404, 'Removed Inventory accounting mapping screen is still reachable.');
+  assert((await browserResponseStatus('/admin/inventory/warehouse-locations')) === 404, 'Removed Warehouse Locations shell is still reachable.');
+  assert((await browserResponseStatus('/admin/production/resources')) === 404, 'Removed Production Resources shell is still reachable.');
+  assert((await browserResponseStatus('/admin/production/identifiers')) === 404, 'Removed Production Identifiers shell is still reachable.');
 
   const openingProducts = [
     ['Product-E2E-MFG-PP', '1000', 'E2E-PP-OPENING'],
@@ -478,17 +532,17 @@ try {
   await navigate('/admin/production/runs');
   const planningIds = await evaluate(`(() => {
     const option = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((item) => item.text.includes(text))?.value;
-    return { line: option('production_order_line_id', ${JSON.stringify(orderDoc)}), machine: option('production_machine_id', 'E2E-MACHINE-01'), mold: option('production_mold_id', 'E2E-MOLD-01'), shift: option('production_shift_id', 'E2E-SHIFT-A') };
+    return { line: option('production_order_line_id', ${JSON.stringify(orderDoc)}), asset: option('fixed_asset_id', 'E2E Injection Machine 1') };
   })()`);
   assert(Object.values(planningIds).every(Boolean), `Planning options incomplete: ${JSON.stringify(planningIds)}`);
   const run1Result = await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '4'], ['planned_start_at', localDateTime(7, 8)], ['planned_end_at', localDateTime(7, 11)], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-1'],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '4'], ['planned_start_at', localDateTime(7, 8)], ['planned_end_at', localDateTime(7, 11)], ['fixed_asset_id', planningIds.asset], ['batch_lot', 'E2E-RUN-1'],
   ]);
   const run2Result = await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '6'], ['planned_start_at', localDateTime(7, 11)], ['planned_end_at', localDateTime(7, 16)], ['production_shift_id', planningIds.shift], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold], ['batch_lot', 'E2E-RUN-2'],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '6'], ['planned_start_at', localDateTime(7, 11)], ['planned_end_at', localDateTime(7, 16)], ['fixed_asset_id', planningIds.asset], ['batch_lot', 'E2E-RUN-2'],
   ]);
   await post('/admin/production/runs', [
-    ['production_order_line_id', planningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(7, 10)], ['planned_end_at', localDateTime(7, 12)], ['production_machine_id', planningIds.machine], ['production_mold_id', planningIds.mold],
+    ['production_order_line_id', planningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(7, 10)], ['planned_end_at', localDateTime(7, 12)], ['fixed_asset_id', planningIds.asset],
   ], { expectedError: true });
   const run1Url = new URL(run1Result.payload.data.url).pathname;
   const run2Url = new URL(run2Result.payload.data.url).pathname;
@@ -512,8 +566,8 @@ try {
   const run1Stores = await prepareRun(run1Url, run1Doc);
   await post(`/admin/production/runs/${run1Doc}/progress`, [['good_base_quantity', '200'], ['notes', 'Run 1 progress 1']]);
   await post(`/admin/production/runs/${run1Doc}/progress`, [['good_base_quantity', '200'], ['notes', 'Run 1 progress 2']]);
-  await post(`/admin/production/runs/${run1Doc}/inspect`, [['result', 'passed'], ['notes', 'Run 1 normal sample']]);
-  await post(`/admin/production/runs/${run1Doc}/inspect`, [['result', 'passed'], ['notes', 'Run 1 observation with mobile evidence']], { file: true });
+  await createQualityInspection(run1Url, { notes: 'Run 1 normal sample' });
+  const run1QualityUrl = await createQualityInspection(run1Url, { notes: 'Run 1 observation with mobile evidence', evidence: true });
   await navigate(run1Url);
   await postVisibleForm('/account-materials');
   const receipt1 = await post(`/admin/production/runs/${run1Doc}/receive`, [['branch_store_id', run1Stores.finished], ['base_quantity', '200']]);
@@ -528,8 +582,10 @@ try {
   await post(`/admin/production/runs/${run2Doc}/return`, [['branch_store_id', run2Stores.raw], ['lines[0][requirement_id]', requirementIds[0]], ['lines[0][quantity]', '0.5']]);
   await post(`/admin/production/runs/${run2Doc}/progress`, [['good_base_quantity', '300'], ['notes', 'Run 2 progress 1']]);
   await post(`/admin/production/runs/${run2Doc}/progress`, [['good_base_quantity', '300'], ['notes', 'Run 2 progress 2']]);
-  await post(`/admin/production/runs/${run2Doc}/inspect`, [['result', 'failed'], ['defect_code', 'E2E-QC'], ['affected_base_quantity', '5'], ['corrective_action', 'Adjust mold and resample']]);
-  await post(`/admin/production/runs/${run2Doc}/inspect`, [['result', 'passed'], ['notes', 'Corrective action verified']]);
+  const failedQualityUrl = await createQualityInspection(run2Url, { result: 'failed', notes: 'Adjust machine and resample' });
+  const reinspectionResult = await post(`${failedQualityUrl}/reinspect`);
+  const passedReinspectionUrl = new URL(reinspectionResult.payload.redirect_url).pathname;
+  await submitQualityInspection(passedReinspectionUrl, { notes: 'Corrective action verified' });
   await post(`/admin/production/runs/${run2Doc}/resume`);
   await navigate(run2Url);
   const accountOverrides = await evaluate(`(() => {
@@ -553,20 +609,18 @@ try {
     return {
       lineA: option('production_order_line_id', ${JSON.stringify(packingDemandA.productionDoc)}),
       lineB: option('production_order_line_id', ${JSON.stringify(packingDemandB.productionDoc)}),
-      machine: option('production_machine_id', 'E2E-PACK-LINE-02'),
-      mold: option('production_mold_id', 'E2E-PACK-FORMAT-KIT'),
-      shift: option('production_shift_id', 'E2E-SHIFT-A'),
+      asset: option('fixed_asset_id', 'E2E Customer Packing Line 02'),
     };
   })()`);
   assert(Object.values(packingPlanningIds).every(Boolean), `Packing planning options incomplete: ${JSON.stringify(packingPlanningIds)}`);
   const packingRun1Result = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '400'], ['planned_start_at', localDateTime(8, 8)], ['planned_end_at', localDateTime(8, 11)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-400'],
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '400'], ['planned_start_at', localDateTime(8, 8)], ['planned_end_at', localDateTime(8, 11)], ['fixed_asset_id', packingPlanningIds.asset], ['batch_lot', 'KIT-A-RUN-400'],
   ]);
   const packingRun2Result = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '600'], ['planned_start_at', localDateTime(8, 11)], ['planned_end_at', localDateTime(8, 16)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-A-RUN-600'],
+    ['production_order_line_id', packingPlanningIds.lineA], ['planned_quantity', '600'], ['planned_start_at', localDateTime(8, 11)], ['planned_end_at', localDateTime(8, 16)], ['fixed_asset_id', packingPlanningIds.asset], ['batch_lot', 'KIT-A-RUN-600'],
   ]);
   const packingRunBResult = await post('/admin/production/runs', [
-    ['production_order_line_id', packingPlanningIds.lineB], ['planned_quantity', '1000'], ['planned_start_at', localDateTime(9, 8)], ['planned_end_at', localDateTime(9, 16)], ['production_shift_id', packingPlanningIds.shift], ['production_machine_id', packingPlanningIds.machine], ['production_mold_id', packingPlanningIds.mold], ['batch_lot', 'KIT-B-BLOCKED'],
+    ['production_order_line_id', packingPlanningIds.lineB], ['planned_quantity', '1000'], ['planned_start_at', localDateTime(9, 8)], ['planned_end_at', localDateTime(9, 16)], ['fixed_asset_id', packingPlanningIds.asset], ['batch_lot', 'KIT-B-BLOCKED'],
   ]);
   const packingRun1Url = new URL(packingRun1Result.payload.data.url).pathname;
   const packingRun2Url = new URL(packingRun2Result.payload.data.url).pathname;
@@ -611,7 +665,7 @@ try {
       return [[consumed.name, String(Number(consumed.value) - 5)], [waste.name, '5']];
     })()`) : [];
     await postVisibleForm('/account-materials', materialOverrides);
-    await post(`/admin/production/runs/${runDoc}/inspect`, [['result', 'passed'], ['notes', 'Packing final inspection passed']]);
+    await createQualityInspection(runUrl, { notes: 'Packing final inspection passed' });
     const receipts = [];
     if (String(goodQuantity) === '400') {
       receipts.push(await post(`/admin/production/runs/${runDoc}/receive`, [['branch_store_id', packingStores.finished], ['base_quantity', '200']]));
@@ -673,11 +727,11 @@ try {
   await navigate('/admin/production/runs');
   const stressPlanningIds = await evaluate(`(() => {
     const option = (name, text) => Array.from(document.querySelector('[name="' + name + '"]').options).find((item) => item.text.includes(text))?.value;
-    return { line: option('production_order_line_id', ${JSON.stringify(stressDemand.productionDoc)}), machine: option('production_machine_id', 'E2E-MACHINE-01'), mold: option('production_mold_id', 'E2E-MOLD-01') };
+    return { line: option('production_order_line_id', ${JSON.stringify(stressDemand.productionDoc)}), asset: option('fixed_asset_id', 'E2E Injection Machine 1') };
   })()`);
   assert(Object.values(stressPlanningIds).every(Boolean), `25-component planning options incomplete: ${JSON.stringify(stressPlanningIds)}`);
   const stressRunResult = await post('/admin/production/runs', [
-    ['production_order_line_id', stressPlanningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(10, 8)], ['planned_end_at', localDateTime(10, 10)], ['production_machine_id', stressPlanningIds.machine], ['production_mold_id', stressPlanningIds.mold], ['batch_lot', 'E2E-25-COMPONENT-RUN'],
+    ['production_order_line_id', stressPlanningIds.line], ['planned_quantity', '1'], ['planned_start_at', localDateTime(10, 8)], ['planned_end_at', localDateTime(10, 10)], ['fixed_asset_id', stressPlanningIds.asset], ['batch_lot', 'E2E-25-COMPONENT-RUN'],
   ]);
   const stressRunUrl = new URL(stressRunResult.payload.data.url).pathname;
   const stressRunDoc = stressRunUrl.split('/').pop();
@@ -807,10 +861,7 @@ try {
   await streamPdf(`${run1Url}/print`, 'production-run-ar.pdf');
   await streamPdf(`/admin/inventory/documents/${receiptDocs[0]}/print`, 'finished-goods-receipt-ar.pdf');
 
-  await client.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-  await navigate(run1Url);
-  const mobileQc = await evaluate(`(() => { const input = document.querySelector('input[name="evidence_file"]'); const rect = input?.getBoundingClientRect(); return { exists: Boolean(input), right: rect?.right || 0, width: innerWidth, capture: input?.getAttribute('capture') }; })()`);
-  assert(mobileQc.exists && mobileQc.right <= mobileQc.width + 1 && mobileQc.capture === 'environment', `Mobile QC control failed: ${JSON.stringify(mobileQc)}`);
+  assert(mobileQualityCapture?.exists, 'The live mobile Quality capture step was not exercised.');
 
   const result = {
     navigation: { opened: visibleRoutes.length, routes: visibleRoutes },
@@ -824,7 +875,7 @@ try {
     secondFactory: { order: packingDemandA.productionDoc, blocked_cross_order_run: packingRunBResult.payload.data.run_number, runs: [packingRun1Result.payload.data.run_number, packingRun2Result.payload.data.run_number], finished_goods_receipts: packingReceiptDocs, customer_specific_wrapper: true, additional_fork_issue: '5', waste: '5' },
     stress: { inventory_document: stressDocumentDoc, inventory_lines: 25, production_run: stressRunResult.payload.data.run_number, bom_requirements: 25, material_issue_posted: true },
     inventoryOperations: { transfer: '5 packaging cartons', damage: '1 kg', scrap: '1 kg', count_variance: '-1 kg', over_issue_rejected: true },
-    quality: { samples: 4, failed_hold_pass_resume: true, image_uploaded: true, mobile: mobileQc },
+    quality: { samples: 4, failed_hold_pass_resume: true, image_uploaded: true, mobile: mobileQualityCapture },
     permissions: { warehouse: 'financial values hidden', planner: 'warehouse blocked', quality: 'QC-only workspace', cost: 'financial reports visible, warehouse blocked' },
     exports: ['inventory-operations.xlsx', 'production-operations.xlsx'],
     prints: [

@@ -27,9 +27,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if (! empty($cloneSourceToken))
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -45,7 +45,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" inputmode="numeric" value="{{ $documentNumberValue }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" inputmode="numeric" value="{{ $documentNumberValue }}" />
                             @endif
                             <div class="form-text">{{ __('financial_periods.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -67,7 +67,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name" :value="$fieldValue('name')" />
                         @else
-                            <input class="form-control" id="name" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus>
+                            <x-forms.input class="form-control" id="name" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -80,10 +80,10 @@
                                 :value="$record?->is_closed ? __('financial_periods.statuses.closed') : __('financial_periods.statuses.open')"
                             />
                         @else
-                            <select class="form-select" id="is_closed" name="is_closed" required>
+                            <x-forms.select class="form-select" id="is_closed" name="is_closed" required>
                                 <option value="0" @selected((string) $statusValue === '0')>{{ __('financial_periods.statuses.open') }}</option>
                                 <option value="1" @selected((string) $statusValue === '1')>{{ __('financial_periods.statuses.closed') }}</option>
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="is_closed"></div>
                     </div>
@@ -93,7 +93,7 @@
                         @if ($isView)
                             <x-forms.view-field for="from_date" :value="$dateValue('from_date')" dir="ltr" input-class="date-value" />
                         @else
-                            <input class="form-control js-date-picker" id="from_date" name="from_date" type="text" value="{{ $dateValue('from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                            <x-forms.date-input class="form-control js-date-picker" id="from_date" name="from_date" type="text" value="{{ $dateValue('from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="from_date"></div>
                     </div>
@@ -103,7 +103,7 @@
                         @if ($isView)
                             <x-forms.view-field for="to_date" :value="$dateValue('to_date')" dir="ltr" input-class="date-value" />
                         @else
-                            <input class="form-control js-date-picker" id="to_date" name="to_date" type="text" value="{{ $dateValue('to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                            <x-forms.date-input class="form-control js-date-picker" id="to_date" name="to_date" type="text" value="{{ $dateValue('to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="to_date"></div>
                     </div>
@@ -113,7 +113,7 @@
                         @if ($isView)
                             <x-forms.view-field for="notes" as="textarea" :value="old('notes', $record?->notes)" rows="4" />
                         @else
-                            <textarea class="form-control" id="notes" name="notes" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea class="form-control" id="notes" name="notes" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

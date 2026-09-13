@@ -22,7 +22,6 @@ use Modules\Finance\Models\OpeningBalance;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
-use Modules\Production\Models\ProductionIdentifier;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\Supplier;
@@ -385,24 +384,6 @@ class ExpandedDashboardService
             }
 
             $dashboard['sources'][] = __('dashboard.expanded.sources.raw_materials');
-        }
-
-        if ($this->can($user, 'production.identifiers.view')) {
-            $activeIdentifiers = ProductionIdentifier::query()
-                ->where('company_id', $context['company_id'])
-                ->where('status', 'active')
-                ->count();
-
-            $dashboard['kpis'][] = $this->kpi(
-                __('dashboard.expanded.kpis.production_identifiers.title'),
-                $activeIdentifiers,
-                __('dashboard.expanded.kpis.production_identifiers.meta'),
-                'tags',
-                'secondary',
-                $this->routeUrl('admin.production.identifiers.index'),
-            );
-
-            $dashboard['sources'][] = __('dashboard.expanded.sources.production_identifiers');
         }
 
         if ($this->can($user, 'branches.view')) {

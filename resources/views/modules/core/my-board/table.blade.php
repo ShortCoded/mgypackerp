@@ -45,21 +45,21 @@
                     <div class="d-flex flex-wrap justify-content-xl-end align-items-center gap-2">
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="my_board_table_record_filter">{{ __('user_tasks.records.filter_label') }}</label>
-                            <select class="form-select form-select-sm w-auto" id="my_board_table_record_filter" aria-label="{{ __('user_tasks.records.filter_label') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="my_board_table_record_filter" aria-label="{{ __('user_tasks.records.filter_label') }}">
                                 <option value="active">{{ __('user_tasks.records.active') }}</option>
                                 <option value="inactive">{{ __('user_tasks.records.inactive') }}</option>
                                 @if ($canViewTrashed)
                                     <option value="trashed">{{ __('user_tasks.records.trashed') }}</option>
                                     <option value="all">{{ __('user_tasks.records.all') }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         </div>
 
                         @if ($hasBulkActions)
                             @foreach ([$taskType, $noteType] as $type)
                                 <div class="d-none align-items-center gap-2 js-my-board-table-bulk-actions-bar" data-type="{{ $type }}">
                                     <span class="badge rounded-pill badge-subtle-primary js-my-board-table-selected-count">0</span>
-                                    <select class="form-select form-select-sm w-auto js-my-board-table-bulk-action" aria-label="{{ __('user_tasks.bulk_action') }}">
+                                    <x-forms.select class="form-select form-select-sm w-auto js-my-board-table-bulk-action" aria-label="{{ __('user_tasks.bulk_action') }}">
                                         @if ($canBulkDelete)
                                             <option value="delete" data-visible-filters="active inactive all">{{ __('user_tasks.actions.delete_selected') }}</option>
                                         @endif
@@ -72,7 +72,7 @@
                                         @if ($canBulkRestore)
                                             <option value="restore" data-visible-filters="trashed all">{{ __('user_tasks.actions.restore_selected') }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <button type="button" class="btn btn-falcon-default btn-sm js-my-board-table-bulk-apply" data-type="{{ $type }}" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                         <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                                     </button>
@@ -134,7 +134,7 @@
                                                     <th class="{{ $column['class'] }}" @if (($column['orderable'] ?? true) === false) data-orderable="false" @endif @if (! empty($column['style'])) style="{{ $column['style'] }}" @endif>
                                                         @if ($loop->first)
                                                             <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                                                <input class="form-check-input js-record-select-all js-my-board-table-select-all" type="checkbox" data-type="{{ $type }}" aria-label="{{ __('user_tasks.select_all') }}">
+                                                                <x-forms.input class="form-check-input js-record-select-all js-my-board-table-select-all" type="checkbox" data-type="{{ $type }}" aria-label="{{ __('user_tasks.select_all') }}" />
                                                             </div>
                                                         @else
                                                             {{ $column['label'] }}

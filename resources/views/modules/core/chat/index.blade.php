@@ -154,7 +154,7 @@
 
                     <form class="contacts-search-wrapper" data-chat-search-form>
                         <div class="form-group mb-0 position-relative d-md-none d-lg-block w-100 h-100">
-                            <input class="form-control form-control-sm chat-contacts-search border-0 h-100" type="search" data-chat-search placeholder="{{ __('chat.search_conversations') }}" aria-label="{{ __('chat.search_conversations') }}">
+                            <x-forms.input class="form-control form-control-sm chat-contacts-search border-0 h-100" type="search" data-chat-search placeholder="{{ __('chat.search_conversations') }}" aria-label="{{ __('chat.search_conversations') }}" />
                             <span class="fas fa-search contacts-search-icon"></span>
                         </div>
                         <button class="btn btn-sm btn-transparent d-none d-md-inline-block d-lg-none" type="submit" aria-label="{{ __('chat.search_conversations') }}">
@@ -225,9 +225,9 @@
                                 <div class="chat-reply-preview chat-reply-preview-card rounded-2 shadow-sm p-2 mb-2 d-none" data-chat-reply-preview></div>
                                 <div class="chat-attachment-preview d-none" data-chat-attachment-preview></div>
                             </div>
-                            <input type="hidden" name="reply_to_message_id" data-chat-reply-input>
-                            <textarea class="emojiarea-editor outline-none scrollbar" rows="1" name="body" data-chat-input placeholder="{{ __('chat.type_message') }}" aria-label="{{ __('chat.type_message') }}"></textarea>
-                            <input class="d-none" type="file" id="chat-file-upload" data-chat-attachment-input name="attachments[]" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx">
+                            <x-forms.input type="hidden" name="reply_to_message_id" data-chat-reply-input />
+                            <x-forms.textarea class="emojiarea-editor outline-none scrollbar" rows="1" name="body" data-chat-input placeholder="{{ __('chat.type_message') }}" aria-label="{{ __('chat.type_message') }}"></x-forms.textarea>
+                            <x-forms.input class="d-none" type="file" id="chat-file-upload" data-chat-attachment-input name="attachments[]" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx" />
                             <label class="chat-file-upload cursor-pointer" for="chat-file-upload" title="{{ __('chat.attach_file') }}" data-bs-title="{{ __('chat.attach_file') }}">
                                 <span class="fas fa-paperclip"></span>
                             </label>
@@ -255,7 +255,7 @@
                     <div class="modal-body">
                         <div data-form-alert></div>
                         <label class="form-label" for="chat_user_doc_num">{{ __('chat.select_user') }}</label>
-                        <select class="form-select js-select2-ajax" id="chat_user_doc_num" name="user_doc_num" data-url="{{ route('admin.select2.users', ['exclude_self' => 1]) }}" data-placeholder="{{ __('chat.search_user') }}" data-allow-clear="true"></select>
+                        <x-forms.select class="form-select js-select2-ajax" id="chat_user_doc_num" name="user_doc_num" data-url="{{ route('admin.select2.users', ['exclude_self' => 1]) }}" data-placeholder="{{ __('chat.search_user') }}" data-allow-clear="true"></x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="user_doc_num"></div>
                     </div>
                     <div class="modal-footer">
@@ -275,9 +275,9 @@
                     </div>
                     <div class="modal-body">
                         <div data-form-alert></div>
-                        <input type="hidden" name="message_id" data-chat-forward-message-id>
+                        <x-forms.input type="hidden" name="message_id" data-chat-forward-message-id />
                         <label class="form-label" for="chat_forward_user_doc_num">{{ __('chat.select_forward_user') }}</label>
-                        <select class="form-select js-select2-ajax" id="chat_forward_user_doc_num" name="user_doc_num" data-url="{{ route('admin.select2.users', ['exclude_self' => 1]) }}" data-placeholder="{{ __('chat.search_user') }}" data-allow-clear="true"></select>
+                        <x-forms.select class="form-select js-select2-ajax" id="chat_forward_user_doc_num" name="user_doc_num" data-url="{{ route('admin.select2.users', ['exclude_self' => 1]) }}" data-placeholder="{{ __('chat.search_user') }}" data-allow-clear="true"></x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="user_doc_num"></div>
                     </div>
                     <div class="modal-footer">

@@ -12,29 +12,29 @@
                 @if($readonly)
                     <span>{{ $line[$labelKey] ?? $line[$name] ?? '—' }}</span>
                 @else
-                    <select class="form-select form-select-sm js-journal-entry-select" name="lines[{{ $index }}][{{ $name }}]" data-kind="{{ $kind }}" required>
+                    <x-forms.select class="form-select form-select-sm js-journal-entry-select" name="lines[{{ $index }}][{{ $name }}]" data-kind="{{ $kind }}" required>
                         @if(! empty($line[$name]))<option value="{{ $line[$name] }}" selected>{{ $line[$labelKey] ?? $line[$name] }}</option>@endif
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.{{ $name }}"></div>
                 @endif
             </td>
             <td>
-                @if($readonly)<span class="d-block text-end" dir="ltr">{{ $numbers->format($line['debit_amount'] ?? 0) }}</span>@else<input class="form-control form-control-sm text-end js-journal-entry-amount" name="lines[{{ $index }}][debit_amount]" value="{{ $line['debit_amount'] ?? 0 }}" inputmode="decimal" dir="ltr"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.debit_amount"></div>@endif
+                @if($readonly)<span class="d-block text-end" dir="ltr">{{ $numbers->format($line['debit_amount'] ?? 0) }}</span>@else<x-forms.input class="form-control form-control-sm text-end js-journal-entry-amount" name="lines[{{ $index }}][debit_amount]" value="{{ $line['debit_amount'] ?? 0 }}" inputmode="decimal" dir="ltr" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.debit_amount"></div>@endif
             </td>
             <td>
-                @if($readonly)<span class="d-block text-end" dir="ltr">{{ $numbers->format($line['credit_amount'] ?? 0) }}</span>@else<input class="form-control form-control-sm text-end js-journal-entry-amount" name="lines[{{ $index }}][credit_amount]" value="{{ $line['credit_amount'] ?? 0 }}" inputmode="decimal" dir="ltr"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.credit_amount"></div>@endif
+                @if($readonly)<span class="d-block text-end" dir="ltr">{{ $numbers->format($line['credit_amount'] ?? 0) }}</span>@else<x-forms.input class="form-control form-control-sm text-end js-journal-entry-amount" name="lines[{{ $index }}][credit_amount]" value="{{ $line['credit_amount'] ?? 0 }}" inputmode="decimal" dir="ltr" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.credit_amount"></div>@endif
             </td>
             <td>
-                @if($readonly)<span>{{ $line['description'] ?? '—' }}</span>@else<input class="form-control form-control-sm" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}"><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.description"></div>@endif
+                @if($readonly)<span>{{ $line['description'] ?? '—' }}</span>@else<x-forms.input class="form-control form-control-sm" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.description"></div>@endif
             </td>
         @else
             <td data-line-field="{{ $kind }}">
                 @if($readonly)
                     <span>{{ $line[$labelKey] ?? $line[$name] ?? '—' }}</span>
                 @else
-                    <select class="form-select form-select-sm js-journal-entry-select" name="lines[{{ $index }}][{{ $name }}]" data-kind="{{ $kind }}" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-journal-entry-select" name="lines[{{ $index }}][{{ $name }}]" data-kind="{{ $kind }}" data-allow-clear="true">
                         @if(! empty($line[$name]))<option value="{{ $line[$name] }}" selected>{{ $line[$labelKey] ?? $line[$name] }}</option>@endif
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.{{ $name }}"></div>
                 @endif
             </td>

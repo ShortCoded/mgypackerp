@@ -85,8 +85,8 @@ class SalesAccountingService
         }
 
         return $this->journals->createPostedFromSource($this->header($receipt, $receipt->reversal_journal_entry_id ? 'customer_receipt_clearing' : 'customer_receipt', 'Customer receipt '.$receipt->doc_num), [
-            ['account_id' => (int) $cashAccountId, 'debit_amount' => $receipt->amount, 'credit_amount' => 0, 'description' => 'Cash / bank receipt', 'bank_account_id' => $receipt->bank_account_id],
-            ['account_id' => (int) $receipt->customer->account_id, 'debit_amount' => 0, 'credit_amount' => $receipt->amount, 'description' => 'Customer receivable settlement', 'customer_id' => $receipt->customer_id],
+            ['account_id' => (int) $cashAccountId, 'debit_amount' => $receipt->amount, 'credit_amount' => 0, 'description' => 'Cash / bank receipt', 'bank_account_id' => $receipt->bank_account_id, 'employee_id' => $receipt->received_by_employee_id],
+            ['account_id' => (int) $receipt->customer->account_id, 'debit_amount' => 0, 'credit_amount' => $receipt->amount, 'description' => 'Customer receivable settlement', 'customer_id' => $receipt->customer_id, 'employee_id' => $receipt->received_by_employee_id],
         ]);
     }
 

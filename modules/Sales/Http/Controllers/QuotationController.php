@@ -11,6 +11,7 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
@@ -39,6 +40,7 @@ use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\QuotationRevisionLine;
 use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Services\CustomerTermsService;
+use Modules\Sales\Services\PriceListPricingService;
 use Modules\Sales\Services\QuotationService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesRequestService;
@@ -52,6 +54,7 @@ class QuotationController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
         private readonly ActivityLogger $activityLogger,
         private readonly NumericFormatService $numbers,
+        private readonly PriceListPricingService $priceLists,
     ) {}
 
     public function index(DocumentNumberSettingsService $settings): View
@@ -105,6 +108,7 @@ class QuotationController extends Controller
     public function store(StoreQuotationRequest $request, SalesRequestService $salesRequests): JsonResponse
     {
         try {
+            $payload = $this->pricedPayload($request, $request->validated());
             if ($request->filled('source_request_doc_num')) {
                 abort_unless($request->user()?->can('sales_requests.view'), 403);
                 $context = app(OperatingContextService::class)->snapshot($request);
@@ -113,9 +117,9 @@ class QuotationController extends Controller
                     ->where('branch_id', $context['branch_id'])
                     ->where('doc_num', $request->validated('source_request_doc_num'))
                     ->firstOrFail();
-                $record = $salesRequests->convertToQuotation($sourceRequest, $request->validated());
+                $record = $salesRequests->convertToQuotation($sourceRequest, $payload);
             } else {
-                $record = $this->service->create($request->validated(), $request)['record'];
+                $record = $this->service->create($payload, $request)['record'];
             }
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
@@ -143,7 +147,7 @@ class QuotationController extends Controller
     public function update(UpdateQuotationRequest $request, Quotation $quotation): JsonResponse
     {
         try {
-            $result = $this->service->update($quotation, $request->validated());
+            $result = $this->service->update($quotation, $this->pricedPayload($request, $request->validated()));
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -788,7 +792,28 @@ class QuotationController extends Controller
         return (bool) $user?->can('quotations.view')
             || (bool) $user?->can('quotations.create')
             || (bool) $user?->can('quotations.edit')
-            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create', 'reports.sales.sales_orders.view']);
+            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create', 'price_lists.view', 'price_lists.create', 'price_lists.edit', 'reports.sales.sales_orders.view']);
+    }
+
+    /** @param array<string, mixed> $data @return array<string, mixed> */
+    private function pricedPayload(Request $request, array $data): array
+    {
+        $context = app(OperatingContextService::class)->snapshot($request);
+        $customerId = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->valueOrFail('id');
+        $currencyId = Currency::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->valueOrFail('id');
+        $lines = collect($data['lines'])->map(function (array $line) use ($context): array {
+            $product = Product::query()->forCompany($context['company_id'])->active()->where('doc_num', $line['product_doc_num'])->firstOrFail();
+            $unitId = empty($line['unit_doc_num']) ? $product->item_unit_id : ItemUnit::query()->forCompany($context['company_id'])->active()->where('doc_num', $line['unit_doc_num'])->valueOrFail('id');
+
+            return [...$line, 'product_id' => $product->getKey(), 'unit_id' => $unitId];
+        })->all();
+
+        return [
+            ...$data,
+            'discount_type' => null,
+            'discount_value' => 0,
+            'lines' => $this->priceLists->applyToLines($lines, $context['company_id'], $customerId, $currencyId, $data['quotation_date'], 'quotation'),
+        ];
     }
 
     /**

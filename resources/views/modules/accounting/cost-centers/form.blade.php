@@ -50,9 +50,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -69,7 +69,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="old('doc_number', ! $isCreateLike ? $record?->doc_number : '')" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" value="{{ old('doc_number', ! $isCreateLike ? $record?->doc_number : '') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" value="{{ old('doc_number', ! $isCreateLike ? $record?->doc_number : '') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
@@ -84,7 +84,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name" :value="$value('name')" />
                         @else
-                            <input class="form-control" id="name" name="name" value="{{ $value('name') }}" required autofocus>
+                            <x-forms.input class="form-control" id="name" name="name" value="{{ $value('name') }}" required autofocus />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -94,7 +94,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name_en" :value="$value('name_en')" />
                         @else
-                            <input class="form-control" id="name_en" name="name_en" value="{{ $value('name_en') }}" dir="ltr">
+                            <x-forms.input class="form-control" id="name_en" name="name_en" value="{{ $value('name_en') }}" dir="ltr" />
                         @endif
                         <div class="invalid-feedback" data-error-for="name_en"></div>
                     </div>
@@ -104,7 +104,7 @@
                         @if ($isView)
                             <x-forms.view-field for="cost_center_code" :value="$isCreateLike && $mode === 'clone' ? '' : $value('cost_center_code')" input-class="text-center" />
                         @else
-                            <input class="form-control" id="cost_center_code" name="cost_center_code" value="{{ $isCreateLike && $mode === 'clone' ? '' : $value('cost_center_code') }}">
+                            <x-forms.input class="form-control" id="cost_center_code" name="cost_center_code" value="{{ $isCreateLike && $mode === 'clone' ? '' : $value('cost_center_code') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="cost_center_code"></div>
                     </div>
@@ -114,11 +114,11 @@
                         @if ($isView)
                             <x-forms.view-field for="parent_doc_num" :value="$parentDisplay ?? __('cost_centers.attributes.no_parent')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="parent_doc_num" name="parent_doc_num" data-url="{{ route('admin.accounting.select2.cost-centers') }}?exclude={{ $record?->doc_num }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="parent_doc_num" name="parent_doc_num" data-url="{{ route('admin.accounting.select2.cost-centers') }}?exclude={{ $record?->doc_num }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                 @if ($parentOption)
                                     <option value="{{ $parentOption['id'] }}" selected>{{ $parentOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="parent_doc_num"></div>
                     </div>
@@ -128,11 +128,11 @@
                         @if ($isView)
                             <x-forms.view-field for="status" :value="__('cost_centers.statuses.' . ($record?->status ?? 'active'))" />
                         @else
-                            <select class="form-select" id="status" name="status" required>
+                            <x-forms.select class="form-select" id="status" name="status" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected($value('status', 'active') === $status)>{{ __('cost_centers.statuses.' . $status) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -156,11 +156,11 @@
                                 @endforelse
                             </div>
                         @else
-                            <select class="form-select js-select2-ajax" id="linked_account_doc_nums" name="linked_account_doc_nums[]" multiple data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="linked_account_doc_nums" name="linked_account_doc_nums[]" multiple data-url="{{ route('admin.accounting.select2.accounts', ['hierarchy' => 1]) }}" data-placeholder="{{ __('cost_centers.placeholders.linked_accounts') }}" data-allow-clear="true">
                                 @foreach ($linkedAccountOptions as $option)
                                     <option value="{{ $option['id'] }}" selected>{{ $option['text'] }}@if ($option['is_stale']) — {{ __('cost_centers.messages.unavailable') }}@endif</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                             <div class="form-text">{{ __('cost_centers.messages.linked_accounts_help') }}</div>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="linked_account_doc_nums"></div>
@@ -175,9 +175,9 @@
                                 </span>
                             </div>
                         @else
-                            <input type="hidden" name="is_group" value="0">
+                            <x-forms.input type="hidden" name="is_group" value="0" />
                             <div class="mb-0 form-check form-switch">
-                                <input class="form-check-input" id="is_group" name="is_group" type="checkbox" value="1" @checked(old('is_group', $record?->is_group ?? false))>
+                                <x-forms.input class="form-check-input" id="is_group" name="is_group" type="checkbox" value="1" :checked="old('is_group', $record?->is_group ?? false)" />
                                 <label class="form-check-label text-700 fs-10" for="is_group">{{ __('cost_centers.attributes.is_group') }}</label>
                             </div>
                         @endif
@@ -189,7 +189,7 @@
                         @if ($isView)
                             <x-forms.view-field for="notes" as="textarea" :value="$value('notes')" rows="4" />
                         @else
-                            <textarea class="form-control" id="notes" name="notes" rows="4">{{ $value('notes') }}</textarea>
+                            <x-forms.textarea class="form-control" id="notes" name="notes" rows="4">{{ $value('notes') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

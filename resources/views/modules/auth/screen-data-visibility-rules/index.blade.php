@@ -26,7 +26,7 @@
                             <thead class="bg-100 text-900">
                                 <tr>
                                     <th class="no-sort all no-colvis dt-select" data-orderable="false" style="width:2.25rem">
-                                        <div class="form-check mb-0 d-flex justify-content-center"><input class="form-check-input js-record-select-all" id="select_all_records" type="checkbox" aria-label="{{ __('screen_data_visibility_rules.select_all') }}"></div>
+                                        <div class="form-check mb-0 d-flex justify-content-center"><x-forms.input class="form-check-input js-record-select-all" id="select_all_records" type="checkbox" aria-label="{{ __('screen_data_visibility_rules.select_all') }}" /></div>
                                     </th>
                                     <th class="sort all no-colvis dt-code">{{ __('screen_data_visibility_rules.attributes.doc_num') }}</th>
                                     <th class="sort dt-text">{{ __('screen_data_visibility_rules.attributes.user_doc_num') }}</th>

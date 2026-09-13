@@ -48,4 +48,9 @@ class ProductionOrderLine extends Model
     {
         return $this->hasMany(ProductionRun::class, 'production_order_line_id')->orderBy('planned_start_at');
     }
+
+    public function stageSnapshots(): HasMany
+    {
+        return $this->hasMany(ProductionOrderStageSnapshot::class, 'production_order_line_id')->orderBy('sequence');
+    }
 }

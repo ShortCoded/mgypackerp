@@ -292,7 +292,10 @@ class ProcurementCycleReport
                 ->orWhereIn('purchase_requisition_id', $requestIds)
                 ->orWhereIn('purchase_order_id', $orders->modelKeys());
         })->get();
-        $allDocuments = $requests->concat($rfqs)->concat($quotations)->concat($orders)->concat($supplyOrders)->concat($inspections)->concat($receipts)->concat($invoices)->concat($fixedAssets)->concat($assetImprovementMovements)->concat($payments)->concat($returns);
+        $selections = $scope(SupplierSelection::query())
+            ->whereIn('request_for_quotation_id', $rfqs->modelKeys())
+            ->get();
+        $allDocuments = $requests->concat($rfqs)->concat($quotations)->concat($selections)->concat($orders)->concat($supplyOrders)->concat($inspections)->concat($receipts)->concat($invoices)->concat($fixedAssets)->concat($assetImprovementMovements)->concat($payments)->concat($returns);
         $users = User::query()->whereIn('id', $allDocuments->flatMap(fn ($record) => [$record->posted_by, $record->approved_by, $record->finalized_by, $record->inspected_by, $record->created_by, $record->requested_by])->filter()->unique())->pluck('name', 'id');
         $nodes = collect();
         $append = function ($records, string $label, string $route, string $permission) use ($nodes, $users): void {
@@ -308,6 +311,7 @@ class ProcurementCycleReport
         $append($requests, 'Purchase Requisition', 'admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view');
         $append($rfqs, 'Request for Quotation', 'admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view');
         $append($quotations, 'Supplier Quotation', 'admin.purchases.supplier-quotation-entry.show', 'purchases.supplier_quotation_entry.view');
+        $append($selections, 'Supplier Selection', 'admin.purchases.supplier-selection.show', 'purchases.supplier_selection.view');
         $append($orders, 'Purchase Order', 'admin.purchases.purchase-orders.show', 'purchase_orders.view');
         $append($supplyOrders, 'Supply Order', 'admin.purchases.supply-orders.show', 'purchases.supply_orders.view');
         $append($inspections, 'Purchase Inspection', 'admin.purchases.goods-receipt-inspection.show', 'purchases.goods_receipt_inspection.view');
@@ -403,7 +407,10 @@ class ProcurementCycleReport
             self::OverduePoDeliveries => $this->purchaseOrderStatus($companyId, $financialPeriodId, true)->where('overdue', true)->values(),
             self::DeliverySchedule => $this->deliverySchedule($companyId, $financialPeriodId),
             self::IncomingQcPending => $this->purchaseInspectionStatus($companyId, $financialPeriodId)->where('receipt_pending', true)->values(),
-            self::QcRejection => $this->purchaseInspectionStatus($companyId, $financialPeriodId)->filter(fn (array $row): bool => (float) $row['rejected'] > 0)->values(),
+            self::QcRejection => $this->purchaseInspectionStatus($companyId, $financialPeriodId)
+                ->filter(fn (array $row): bool => (float) $row['rejected'] > 0)
+                ->map(fn (array $row): array => [...$row, 'outstanding' => $row['rejected']])
+                ->values(),
             self::GoodsReceivedNotInvoiced => $this->goodsReceivedNotInvoiced($companyId, $financialPeriodId),
             self::OutstandingSupplierInvoices, self::SupplierAging => $this->supplierPayables($companyId, $financialPeriodId, $filters, true)->filter(fn (array $row): bool => (float) $row['outstanding'] > 0)->values(),
             self::DueSupplierInstallments => $this->supplierInstallments($companyId, $financialPeriodId, false),
@@ -855,7 +862,7 @@ class ProcurementCycleReport
         return GoodsReceiptInspectionLine::query()
             ->with([
                 'inspection.branch', 'inspection.purchaseOrder.supplier', 'inspection.purchaseOrder.branchStore',
-                'inspection.supplyOrder', 'inspection.receipt', 'product', 'unit',
+                'inspection.supplyOrder', 'inspection.receipt', 'inspection.receipts', 'receiptLines.receipt', 'product', 'unit',
             ])
             ->whereHas('inspection', fn ($query) => $query
                 ->where('company_id', $companyId)
@@ -864,6 +871,12 @@ class ProcurementCycleReport
             ->map(function (GoodsReceiptInspectionLine $line): array {
                 $inspection = $line->inspection;
                 $order = $inspection?->purchaseOrder;
+                $remainingReceiptQuantity = $line->remainingReceiptQuantity();
+                $receiptDocuments = collect([$inspection?->receipt?->doc_num])
+                    ->merge($inspection?->receipts?->pluck('doc_num') ?? [])
+                    ->filter()
+                    ->unique()
+                    ->join('، ');
 
                 return $this->row([
                     'date' => $inspection?->inspection_at?->toDateString(),
@@ -876,7 +889,7 @@ class ProcurementCycleReport
                     'unit' => $line->unit?->name,
                     'purchase_order' => $order?->doc_num,
                     'supply_order' => $inspection?->supplyOrder?->doc_num,
-                    'goods_receipt' => $inspection?->receipt?->doc_num,
+                    'goods_receipt' => $receiptDocuments,
                     'branch_id' => $inspection?->branch_id,
                     'branch' => $inspection?->branch?->name,
                     'warehouse_uuid' => $order?->branchStore?->public_uuid,
@@ -885,8 +898,8 @@ class ProcurementCycleReport
                     'quantity' => $line->inspected_quantity,
                     'accepted' => $line->accepted_quantity,
                     'rejected' => $line->rejected_quantity,
-                    'outstanding' => $line->rejected_quantity,
-                    'receipt_pending' => $inspection?->receipt_id === null && (float) $line->accepted_quantity > 0,
+                    'outstanding' => $remainingReceiptQuantity,
+                    'receipt_pending' => $remainingReceiptQuantity > 0.00000001,
                 ]);
             });
     }

@@ -135,6 +135,17 @@ class Product extends Model
     /**
      * @return list<string>
      */
+    public static function componentItemClassifications(): array
+    {
+        return [
+            ...self::materialClassifications(),
+            self::ClassificationFinishedProduct,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
     public static function salesItemClassifications(): array
     {
         return [
@@ -513,6 +524,15 @@ class Product extends Model
     public function scopeMaterialItems(Builder $query): Builder
     {
         return $query->whereIn($this->getTable().'.item_classification', self::materialClassifications());
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @return Builder<Product>
+     */
+    public function scopeComponentItems(Builder $query): Builder
+    {
+        return $query->whereIn($this->getTable().'.item_classification', self::componentItemClassifications());
     }
 
     /**

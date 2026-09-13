@@ -75,7 +75,7 @@
                                             </label>
                                             <div class="row gx-2">
                                                 <div class="col">
-                                                    <input class="form-control" id="lock_screen_password" name="password" type="password" placeholder="{{ __('auth.password_placeholder') }}" autocomplete="current-password" required aria-required="true">
+                                                    <x-forms.input class="form-control" id="lock_screen_password" name="password" type="password" placeholder="{{ __('auth.password_placeholder') }}" autocomplete="current-password" required aria-required="true" />
                                                     <div class="invalid-feedback" data-error-for="password"></div>
                                                 </div>
                                                 <div class="col-4">

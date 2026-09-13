@@ -541,7 +541,7 @@ test('CashVoucher UI uses localized headers shared select2 centered dates and st
             ->toContain('form-select js-select2-ajax js-cash-voucher-currency')
             ->toContain('form-select js-select2-ajax js-cash-voucher-account')
             ->toContain('data-dependent-param="cashbox"')
-            ->toContain('data-extra-params=\'{"exclude":"#cashbox_account_doc_num_filter"}\'')
+            ->toContain('data-extra-params="{&quot;exclude&quot;:&quot;#cashbox_account_doc_num_filter&quot;}"')
             ->toContain('form-control text-center js-date-picker')
             ->toContain('name="person_name"')
             ->toContain('اسم الشخص')

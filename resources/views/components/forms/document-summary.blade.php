@@ -1,14 +1,14 @@
-@props(['showAdjustments' => true])
+@props(['showAdjustments' => true, 'showFinancials' => true])
 
 <div class="card-footer erp-document-summary" data-document-summary>
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <h6 class="mb-0 text-700">{{ __('sales_ui.financial_summary') }}</h6>
+        <h6 class="mb-0 text-700">{{ $showFinancials ? __('sales_ui.financial_summary') : __('Sales lines') }}</h6>
         <button class="btn btn-falcon-default btn-sm" type="button" data-sales-add-line>
             <span class="fas fa-plus me-1"></span>{{ __('Add line') }}
         </button>
     </div>
     <div class="row g-3 align-items-start">
-        <div class="col-lg-6">
+        <div class="{{ $showFinancials ? 'col-lg-6' : 'col-12' }}">
             <div class="row g-2">
                 <div class="col-12 col-sm-4">
                     <div class="border rounded p-2 h-100">
@@ -30,6 +30,7 @@
                 </div>
             </div>
         </div>
+        @if($showFinancials)
         <div class="col-lg-6">
             <div class="table-responsive erp-document-total-box ms-lg-auto">
                 <table class="table table-sm mb-0">
@@ -63,5 +64,6 @@
                 </table>
             </div>
         </div>
+        @endif
     </div>
 </div>

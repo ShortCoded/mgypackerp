@@ -628,7 +628,8 @@ test('account form hides editable account type and keeps statement type read onl
         ->assertDontSee('<select class="form-select" id="account_type"', false)
         ->assertSee('type="hidden" id="account_type" name="account_type"', false)
         ->assertSee('id="statement_type_display"', false)
-        ->assertSee('disabled required', false)
+        ->assertSee('required="required"', false)
+        ->assertSee('disabled="disabled"', false)
         ->assertSee(__('accounts.attributes.statement_type'))
         ->assertDontSee('نوع القائمة');
 });

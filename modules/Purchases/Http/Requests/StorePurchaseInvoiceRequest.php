@@ -181,7 +181,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 }
             }],
             'payment_schedules.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
-            'payment_schedules.*.payment_source_type' => ['required', Rule::in([PurchaseInvoice::SourceScheduled, PurchaseInvoice::SourceCashbox, PurchaseInvoice::SourceBank])],
+            'payment_schedules.*.payment_source_type' => ['required', Rule::in(PurchaseInvoice::scheduleSourceTypes())],
             'payment_schedules.*.cashbox_doc_num' => [
                 'nullable',
                 'string',
@@ -194,11 +194,6 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 Rule::exists('bank_accounts', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
-            'payment_schedules.*.payment_date' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
-                if (! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
-                    $fail(__('purchase_invoices.messages.payment_date_invalid'));
-                }
-            }],
             'payment_schedules.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
             'clone_source_token' => ['nullable', 'string'],
@@ -221,15 +216,16 @@ class StorePurchaseInvoiceRequest extends FormRequest
         return __('purchase_invoices.attributes');
     }
 
-    public function withValidator(Validator $validator): void
+    /** @return list<callable> */
+    public function after(): array
     {
-        $validator->after(function (Validator $validator): void {
+        return [function (Validator $validator): void {
             $this->validatePeriod($validator);
             $this->validateLines($validator, $this->currentRecord());
             $this->validateDiscountsAndSchedule($validator);
             $this->validatePaymentSources($validator);
             $this->validateDirectProcurementOverride($validator);
-        });
+        }];
     }
 
     public function validated($key = null, $default = null): mixed
@@ -247,10 +243,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
         }
 
         foreach ($data['payment_schedules'] ?? [] as $index => $row) {
-            foreach (['due_date', 'payment_date'] as $field) {
-                if (array_key_exists($field, $row)) {
-                    $data['payment_schedules'][$index][$field] = app(DateFormatService::class)->normalizeForStorage($row[$field]);
-                }
+            if (array_key_exists('due_date', $row)) {
+                $data['payment_schedules'][$index]['due_date'] = app(DateFormatService::class)->normalizeForStorage($row['due_date']);
             }
         }
 
@@ -424,22 +418,14 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 continue;
             }
 
-            $sourceType = $row['payment_source_type'] ?? PurchaseInvoice::SourceScheduled;
+            $sourceType = $row['payment_source_type'] ?? PurchaseInvoice::SourceCashbox;
 
             if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCash && $sourceType !== PurchaseInvoice::SourceCashbox) {
                 $validator->errors()->add("payment_schedules.{$index}.payment_source_type", __('purchase_invoices.messages.cashbox_required_for_cash_invoice'));
             }
 
-            if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCash && empty($row['payment_date'])) {
-                $validator->errors()->add("payment_schedules.{$index}.payment_date", __('purchase_invoices.messages.payment_date_required_for_cash_invoice'));
-            }
-
             if ($sourceType === PurchaseInvoice::SourceCashbox && empty($row['cashbox_doc_num'])) {
                 $validator->errors()->add("payment_schedules.{$index}.cashbox_doc_num", __('purchase_invoices.messages.cashbox_required_for_paid_row'));
-            }
-
-            if ($sourceType === PurchaseInvoice::SourceBank && ! empty($row['payment_date'])) {
-                $validator->errors()->add("payment_schedules.{$index}.bank_account_doc_num", __('purchase_invoices.messages.bank_payment_voucher_unavailable'));
             }
 
             if ($sourceType === PurchaseInvoice::SourceBank && empty($row['bank_account_doc_num'])) {
@@ -528,10 +514,9 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'public_id' => trim((string) ($row['public_id'] ?? '')) ?: null,
                 'due_date' => trim((string) ($row['due_date'] ?? '')) ?: null,
                 'amount' => $this->decimalValue($row['amount'] ?? null),
-                'payment_source_type' => trim((string) ($row['payment_source_type'] ?? '')) ?: PurchaseInvoice::SourceScheduled,
+                'payment_source_type' => trim((string) ($row['payment_source_type'] ?? '')) ?: PurchaseInvoice::SourceCashbox,
                 'cashbox_doc_num' => trim((string) ($row['cashbox_doc_num'] ?? '')) ?: null,
                 'bank_account_doc_num' => trim((string) ($row['bank_account_doc_num'] ?? '')) ?: null,
-                'payment_date' => trim((string) ($row['payment_date'] ?? '')) ?: null,
                 'notes' => trim((string) ($row['notes'] ?? '')) ?: null,
             ])
             ->reject(fn (array $row): bool => $row['due_date'] === null && $row['amount'] === null)

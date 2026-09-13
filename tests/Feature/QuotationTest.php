@@ -15,6 +15,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\PriceList;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
@@ -142,8 +143,33 @@ function quotationProductFixture(Company $company): array
         'item_unit_id' => $unit->getKey(),
         'status' => 'active',
     ]);
+    $currency = Currency::query()->where('company_id', $company->getKey())->orderByDesc('is_main')->orderBy('id')->firstOrFail();
+    quotationSetPrice($product, $currency, '100');
 
     return compact('unit', 'product');
+}
+
+function quotationSetPrice(Product $product, Currency $currency, string $price): PriceList
+{
+    $priceList = PriceList::query()->firstOrCreate([
+        'company_id' => $product->company_id,
+        'customer_id' => null,
+        'currency_id' => $currency->getKey(),
+        'valid_from' => '2026-01-01',
+    ], [
+        'doc_number' => PriceList::query()->count() + 1,
+        'doc_num' => 'PL-'.str_pad((string) (PriceList::query()->count() + 1), 5, '0', STR_PAD_LEFT),
+        'price_list_date' => '2026-01-01',
+        'valid_until' => null,
+    ]);
+    $priceList->lines()->updateOrCreate(['product_id' => $product->getKey()], [
+        'line_number' => 1,
+        'unit_price' => $price,
+        'allowed_discount_type' => null,
+        'allowed_discount_value' => 0,
+    ]);
+
+    return $priceList;
 }
 
 /**
@@ -222,6 +248,11 @@ function createQuotationThroughHttp(array $extraPermissions = [], array $payload
 {
     $context = quotationContext();
     ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    foreach ($payloadOverrides['lines'] ?? [] as $line) {
+        if (($line['product_doc_num'] ?? null) === $product->doc_num && filled($line['unit_price'] ?? null)) {
+            quotationSetPrice($product, $context['currency'], (string) $line['unit_price']);
+        }
+    }
     $permissions = array_values(array_unique([
         'quotations.view',
         'quotations.create',
@@ -319,6 +350,7 @@ test('quotation grouped numeric input persists canonically and displays grouped 
     $context = quotationContext();
     ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
     $actor = quotationActor(['quotations.view', 'quotations.create', 'quotations.edit']);
+    quotationSetPrice($product, $context['currency'], '2.5');
     $payload = quotationPayload($product, $unit, $context['currency'], [
         'lines' => [[
             'product_doc_num' => $product->doc_num,
@@ -395,6 +427,7 @@ test('quotation project and discount contracts reject contradictory input', func
 test('draft revision can be updated in place', function (): void {
     ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp();
     $originalRevisionId = $quotation->current_revision_id;
+    quotationSetPrice($product, $currency, '120');
 
     $this->actingAs($actor)
         ->putJson(route('admin.sales.quotations.update', $quotation->doc_num), quotationPayload($product, $unit, $currency, [
@@ -551,6 +584,9 @@ test('accepted quotation converts once into a fully linked sales order without r
         ->and($order->total_amount)->toBe($quotation->currentRevision->total)
         ->and($order->lines)->toHaveCount(1)
         ->and($order->lines->sole()->quotation_revision_line_id)->toBe($sourceLine->getKey())
+        ->and($order->lines->sole()->price_list_line_id)->toBe($sourceLine->price_list_line_id)
+        ->and($order->lines->sole()->allowed_discount_type)->toBe($sourceLine->allowed_discount_type)
+        ->and($order->lines->sole()->allowed_discount_value)->toBe($sourceLine->allowed_discount_value)
         ->and($order->lines->sole()->base_quantity)->toBe('2.00000000')
         ->and($order->lines->sole()->specifications)->toBe(['packaging' => 'Export carton', 'customer_specification' => 'Approved finish'])
         ->and($order->lines->sole()->warehouse_notes)->toBe('Keep dry')
@@ -801,6 +837,7 @@ test('quotation exchange rate keeps maximum accepted precision before persistenc
         'is_main' => false,
         'status' => 'active',
     ]);
+    quotationSetPrice($product, $currency, '100');
     $capturedExchangeRate = null;
 
     Quotation::creating(function (Quotation $quotation) use (&$capturedExchangeRate): void {

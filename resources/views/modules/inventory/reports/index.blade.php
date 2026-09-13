@@ -10,9 +10,9 @@
 
 <form class="card card-body mb-3" method="GET">
     <div class="row g-2 align-items-end">
-        <div class="col-md-3"><label class="form-label" for="inventory-report-as-of">{{ __('As of') }}</label><input class="form-control" id="inventory-report-as-of" type="date" name="as_of" value="{{ request('as_of', today()->toDateString()) }}"></div>
-        <div class="col-md-3"><label class="form-label" for="inventory-report-batch">{{ __('Batch / lot') }}</label><input class="form-control" id="inventory-report-batch" name="batch_lot" value="{{ request('batch_lot') }}"></div>
-        <div class="col-md-3"><label class="form-label" for="inventory-report-expiry">{{ __('Expiry horizon') }}</label><select class="form-select" id="inventory-report-expiry" name="expiry_within_days">@foreach([30, 60, 90] as $days)<option value="{{ $days }}" @selected((int) request('expiry_within_days', 90) === $days)>{{ trans_choice(':count day|:count days', $days, ['count' => $days]) }}</option>@endforeach</select></div>
+        <div class="col-md-3"><label class="form-label" for="inventory-report-as-of">{{ __('As of') }}</label><x-forms.date-input id="inventory-report-as-of" name="as_of" :value="request('as_of', today()->toDateString())" /></div>
+        <div class="col-md-3"><label class="form-label" for="inventory-report-batch">{{ __('Batch / lot') }}</label><x-forms.input class="form-control" id="inventory-report-batch" name="batch_lot" value="{{ request('batch_lot') }}" /></div>
+        <div class="col-md-3"><label class="form-label" for="inventory-report-expiry">{{ __('Expiry horizon') }}</label><x-forms.select class="form-select" id="inventory-report-expiry" name="expiry_within_days">@foreach([30, 60, 90] as $days)<option value="{{ $days }}" @selected((int) request('expiry_within_days', 90) === $days)>{{ trans_choice(':count day|:count days', $days, ['count' => $days]) }}</option>@endforeach</x-forms.select></div>
         <div class="col-md-3"><button class="btn btn-primary w-100" type="submit">{{ __('Apply filters') }}</button></div>
     </div>
 </form>

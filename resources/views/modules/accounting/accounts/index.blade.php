@@ -49,12 +49,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-4">
                                 <label class="form-label" for="accounts-document-prefix">{{ __('accounts.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="accounts-document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? 'ACC-' }}">
+                                <x-forms.input class="form-control" id="accounts-document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? 'ACC-' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-2">
                                 <label class="form-label" for="accounts-document-padding">{{ __('accounts.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="accounts-document-padding" name="padding" type="number" value="{{ $documentNumberSettings['padding'] ?? 5 }}">
+                                <x-forms.input class="form-control" id="accounts-document-padding" name="padding" type="number" value="{{ $documentNumberSettings['padding'] ?? 5 }}" />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -111,52 +111,52 @@
         >
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-search">{{ __('accounts.filters.search') }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="accounts-search" name="account_search" type="search" data-filter-label="{{ __('accounts.filters.search') }}" placeholder="{{ __('accounts.placeholders.search') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="accounts-search" name="account_search" type="search" data-filter-label="{{ __('accounts.filters.search') }}" placeholder="{{ __('accounts.placeholders.search') }}" />
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-statement-type">{{ __('accounts.filters.statement_type') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="accounts-statement-type" name="statement_type" data-filter-label="{{ __('accounts.filters.statement_type') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="accounts-statement-type" name="statement_type" data-filter-label="{{ __('accounts.filters.statement_type') }}">
                     <option value="">{{ __('accounts.filters.all') }}</option>
                     @foreach (\Modules\Accounting\Models\Account::statementTypes() as $type)
                         <option value="{{ $type }}">{{ __('accounts.statement_types.' . $type) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-normal-balance">{{ __('accounts.filters.normal_balance') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="accounts-normal-balance" name="normal_balance" data-filter-label="{{ __('accounts.filters.normal_balance') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="accounts-normal-balance" name="normal_balance" data-filter-label="{{ __('accounts.filters.normal_balance') }}">
                     <option value="">{{ __('accounts.filters.all') }}</option>
                     @foreach (\Modules\Accounting\Models\Account::normalBalances() as $balance)
                         <option value="{{ $balance }}">{{ __('accounts.normal_balances.' . $balance) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-classification">{{ __('accounts.filters.classification') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="accounts-classification" name="classification" data-filter-label="{{ __('accounts.filters.classification') }}" data-url="{{ route('admin.accounting.select2.account-classifications', ['include_inactive' => 1]) }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="accounts-classification" name="classification" data-filter-label="{{ __('accounts.filters.classification') }}" data-url="{{ route('admin.accounting.select2.account-classifications', ['include_inactive' => 1]) }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-status">{{ __('accounts.filters.status') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="accounts-status" name="status" data-filter-label="{{ __('accounts.filters.status') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="accounts-status" name="status" data-filter-label="{{ __('accounts.filters.status') }}">
                     <option value="">{{ __('accounts.filters.all') }}</option>
                     @foreach (['active', 'inactive'] as $status)
                         <option value="{{ $status }}">{{ __('accounts.statuses.' . $status) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-hierarchy">{{ __('accounts.filters.hierarchy') }}</label>
-                <select class="form-select form-select-sm js-report-filter-control" id="accounts-hierarchy" name="hierarchy" data-filter-label="{{ __('accounts.filters.hierarchy') }}">
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="accounts-hierarchy" name="hierarchy" data-filter-label="{{ __('accounts.filters.hierarchy') }}">
                     <option value="">{{ __('accounts.hierarchy_filters.all') }}</option>
                     <option value="root">{{ __('accounts.hierarchy_filters.root') }}</option>
                     <option value="children">{{ __('accounts.hierarchy_filters.children') }}</option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="mb-1 form-label" for="accounts-level">{{ __('accounts.filters.level') }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="accounts-level" name="level" type="number" min="1" data-filter-label="{{ __('accounts.filters.level') }}" placeholder="{{ __('accounts.placeholders.level') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="accounts-level" name="level" type="number" min="1" data-filter-label="{{ __('accounts.filters.level') }}" placeholder="{{ __('accounts.placeholders.level') }}" />
             </div>
         </x-admin.report.filter-panel>
 
@@ -178,19 +178,19 @@
                         @can('accounts.view_trashed')
                             <div class="gap-2 d-flex align-items-center">
                                 <label class="mb-0 form-label text-700 fs-10" for="accounts_trash_filter">{{ __('accounts.trash.filter_label') }}</label>
-                                <select class="w-auto form-select form-select-sm" id="accounts_trash_filter" aria-label="{{ __('accounts.trash.filter_label') }}">
+                                <x-forms.select class="w-auto form-select form-select-sm" id="accounts_trash_filter" aria-label="{{ __('accounts.trash.filter_label') }}">
                                     <option value="active">{{ __('accounts.trash.active') }}</option>
                                     <option value="trashed">{{ __('accounts.trash.trashed') }}</option>
                                     <option value="all">{{ __('accounts.trash.all') }}</option>
-                                </select>
+                                </x-forms.select>
                             </div>
                         @endcan
                         @can('accounts.delete')
                             <div class="gap-2 d-none align-items-center accounts-bulk-actions-bar" id="bulk_actions_bar">
                                 <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                                <select class="w-auto form-select form-select-sm" id="bulk_action_select" aria-label="{{ __('accounts.bulk_action') }}">
+                                <x-forms.select class="w-auto form-select form-select-sm" id="bulk_action_select" aria-label="{{ __('accounts.bulk_action') }}">
                                     <option value="delete">{{ __('common.actions.delete') }}</option>
-                                </select>
+                                </x-forms.select>
                                 <button type="button" class="btn btn-falcon-danger btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                     <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                                 </button>
@@ -209,7 +209,7 @@
                                         <tr>
                                             <th class="align-middle text-900 no-sort white-space-nowrap all no-colvis dt-select" data-orderable="false" data-searchable="false" style="width: 2.25rem;">
                                                 <div class="mb-0 form-check d-flex align-items-center justify-content-center">
-                                                    <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('accounts.select_all') }}">
+                                                    <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('accounts.select_all') }}" />
                                                 </div>
                                             </th>
                                             <th class="align-middle text-900 sort pe-1 white-space-nowrap all no-colvis dt-code">{{ __('accounts.attributes.doc_num') }}</th>

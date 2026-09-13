@@ -7,6 +7,7 @@ use App\Services\EffectivePermissionResolver;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -14,6 +15,7 @@ use Modules\Auth\Notifications\QueuedResetPasswordNotification;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\HR\Models\HrEmployee;
 use NotificationChannels\WebPush\HasPushSubscriptions;
 use Spatie\Permission\Contracts\Permission;
 use Spatie\Permission\Traits\HasRoles;
@@ -159,6 +161,14 @@ class User extends Authenticatable
     public function defaultFinancialPeriod(): BelongsTo
     {
         return $this->belongsTo(FinancialPeriod::class, 'default_financial_period_id');
+    }
+
+    /**
+     * @return HasOne<HrEmployee, $this>
+     */
+    public function hrEmployee(): HasOne
+    {
+        return $this->hasOne(HrEmployee::class, 'user_id');
     }
 
     public function sendPasswordResetNotification($token): void

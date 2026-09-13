@@ -111,6 +111,7 @@ test('new delivery invoice and production demand use their date period after sou
 
 test('approved requests convert partially through quotations without losing source quantities', function (): void {
     $fixture = salesCycleFixture();
+    createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
     $permissions = ['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_requests.approve', 'sales_requests.convert', 'sales_requests.print', 'quotations.create', 'sales_orders.create'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
@@ -300,6 +301,7 @@ test('canonical cheque collection settles only on clearing and bounced receipts 
 
 test('an approved internal request can receive its customer currency and store during conversion', function (): void {
     $fixture = salesCycleFixture();
+    createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
     $requests = app(SalesRequestService::class);
     $request = $requests->save(['company_id' => $fixture['company']->id, 'branch_id' => $fixture['branch']->id, 'request_date' => now()->toDateString(),
         'lines' => [['product_id' => $fixture['finished']->id, 'unit_id' => $fixture['unit']->id, 'quantity' => '5', 'unit_price' => '10']]]);
@@ -308,14 +310,14 @@ test('an approved internal request can receive its customer currency and store d
     expect($order->customer_id)->toBe($fixture['customer']->id)->and($order->branch_store_id)->toBe($fixture['store']->id)->and($request->fresh()->status)->toBe('converted');
 });
 
-test('price suggestions use the posted customer price only for the same unit currency and branch', function (): void {
+test('price suggestions use the latest applicable price list', function (): void {
     $fixture = salesCycleFixture();
-    $invoice = salesPostedServiceInvoice($fixture, '100', '0', '10');
+    $list = createSalesPriceList($fixture, $fixture['customer']->id, [['product' => $fixture['service'], 'price' => '10']]);
     Permission::findOrCreate('sales_orders.create', 'web');
     $fixture['user']->givePermissionTo('sales_orders.create');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     $query = ['customer_doc_num' => $fixture['customer']->doc_num, 'product_doc_num' => $fixture['service']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num];
-    $this->getJson(route('admin.sales.price-suggestion', $query))->assertOk()->assertJsonPath('data.unit_price', '10.0000')->assertJsonPath('data.source', $invoice->doc_num);
+    $this->getJson(route('admin.sales.price-suggestion', $query))->assertOk()->assertJsonPath('data.unit_price', '10.0000')->assertJsonPath('data.source', $list->doc_num);
     $this->getJson(route('admin.sales.price-suggestion', [...$query, 'product_doc_num' => $fixture['finished']->doc_num]))->assertOk()->assertJsonPath('data', null);
 });
 

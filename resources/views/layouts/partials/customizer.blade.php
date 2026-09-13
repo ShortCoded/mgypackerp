@@ -19,19 +19,19 @@
         <div class="btn-group d-block w-100 btn-group-navbar-style">
             <div class="row gx-2">
                 <div class="col-4">
-                    <input class="btn-check" id="themeSwitcherLight" name="theme-color" type="radio" value="light" data-theme-control="theme">
+                    <x-forms.input class="btn-check" id="themeSwitcherLight" name="theme-color" type="radio" value="light" data-theme-control="theme" />
                     <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherLight">
                         <span class="label-text">{{ __('layout.light') }}</span>
                     </label>
                 </div>
                 <div class="col-4">
-                    <input class="btn-check" id="themeSwitcherDark" name="theme-color" type="radio" value="dark" data-theme-control="theme">
+                    <x-forms.input class="btn-check" id="themeSwitcherDark" name="theme-color" type="radio" value="dark" data-theme-control="theme" />
                     <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherDark">
                         <span class="label-text">{{ __('layout.dark') }}</span>
                     </label>
                 </div>
                 <div class="col-4">
-                    <input class="btn-check" id="themeSwitcherAuto" name="theme-color" type="radio" value="auto" data-theme-control="theme">
+                    <x-forms.input class="btn-check" id="themeSwitcherAuto" name="theme-color" type="radio" value="auto" data-theme-control="theme" />
                     <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherAuto">
                         <span class="label-text">{{ __('layout.auto') }}</span>
                     </label>
@@ -44,7 +44,7 @@
             <div class="flex-1">
                 <h5 class="fs-9">{{ __('layout.language') }}</h5>
                 <p class="mb-2 fs-10">{{ __('layout.language_help') }}</p>
-                <select class="form-select form-select-sm js-app-language-select"
+                <x-forms.select class="form-select form-select-sm js-app-language-select"
                     aria-label="{{ __('layout.language') }}"
                     data-language-switch-url="{{ route('lang.switch', ['locale' => '__LOCALE__']) }}">
                     @foreach (config('languages.available', []) as $locale => $language)
@@ -52,7 +52,7 @@
                             {{ $language['native'] ?? $language['name'] ?? strtoupper($locale) }}
                         </option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
         </div>
         <hr>
@@ -64,7 +64,7 @@
                     <p class="mb-0 fs-10">{{ __('layout.fluid_layout_help') }}</p>
                 </div>
             </div>
-            <div class="form-check form-switch"><input class="form-check-input ms-0" id="mode-fluid" type="checkbox" data-theme-control="isFluid"></div>
+            <div class="form-check form-switch"><x-forms.input class="form-check-input ms-0" id="mode-fluid" type="checkbox" data-theme-control="isFluid" /></div>
         </div>
         <hr>
         <div class="d-flex align-items-start">
@@ -72,12 +72,12 @@
             <div class="flex-1">
                 <h5 class="fs-9 d-flex align-items-center">{{ __('layout.navigation_position') }}</h5>
                 <p class="mb-2 fs-10">{{ __('layout.navigation_position_help') }}</p>
-                <select class="form-select form-select-sm" aria-label="{{ __('layout.navigation_position') }}" data-theme-control="navbarPosition">
+                <x-forms.select class="form-select form-select-sm" aria-label="{{ __('layout.navigation_position') }}" data-theme-control="navbarPosition">
                     <option value="vertical">{{ __('layout.vertical') }}</option>
                     <option value="top">{{ __('layout.top') }}</option>
                     <option value="combo">{{ __('layout.combo') }}</option>
                     <option value="double-top">{{ __('layout.double_top') }}</option>
-                </select>
+                </x-forms.select>
             </div>
         </div>
         <hr>
@@ -85,10 +85,10 @@
         <p class="mb-3 fs-10">{{ __('layout.vertical_navbar_style_help') }}</p>
         <div class="btn-group d-block w-100 btn-group-navbar-style">
             <div class="row gx-2">
-                <div class="col-6"><input class="btn-check" id="navbar-style-transparent" type="radio" name="navbarStyle" value="transparent" data-theme-control="navbarStyle"><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-transparent"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/default.png') }}" alt=""><span class="label-text">{{ __('layout.transparent') }}</span></label></div>
-                <div class="col-6"><input class="btn-check" id="navbar-style-inverted" type="radio" name="navbarStyle" value="inverted" data-theme-control="navbarStyle"><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-inverted"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/inverted.png') }}" alt=""><span class="label-text">{{ __('layout.inverted') }}</span></label></div>
-                <div class="col-6"><input class="btn-check" id="navbar-style-card" type="radio" name="navbarStyle" value="card" data-theme-control="navbarStyle"><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-card"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/card.png') }}" alt=""><span class="label-text">{{ __('layout.card') }}</span></label></div>
-                <div class="col-6"><input class="btn-check" id="navbar-style-vibrant" type="radio" name="navbarStyle" value="vibrant" data-theme-control="navbarStyle"><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-vibrant"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/vibrant.png') }}" alt=""><span class="label-text">{{ __('layout.vibrant') }}</span></label></div>
+                <div class="col-6"><x-forms.input class="btn-check" id="navbar-style-transparent" type="radio" name="navbarStyle" value="transparent" data-theme-control="navbarStyle" /><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-transparent"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/default.png') }}" alt=""><span class="label-text">{{ __('layout.transparent') }}</span></label></div>
+                <div class="col-6"><x-forms.input class="btn-check" id="navbar-style-inverted" type="radio" name="navbarStyle" value="inverted" data-theme-control="navbarStyle" /><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-inverted"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/inverted.png') }}" alt=""><span class="label-text">{{ __('layout.inverted') }}</span></label></div>
+                <div class="col-6"><x-forms.input class="btn-check" id="navbar-style-card" type="radio" name="navbarStyle" value="card" data-theme-control="navbarStyle" /><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-card"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/card.png') }}" alt=""><span class="label-text">{{ __('layout.card') }}</span></label></div>
+                <div class="col-6"><x-forms.input class="btn-check" id="navbar-style-vibrant" type="radio" name="navbarStyle" value="vibrant" data-theme-control="navbarStyle" /><label class="btn d-block w-100 btn-navbar-style fs-10" for="navbar-style-vibrant"><img class="img-fluid img-prototype" src="{{ asset('assets/img/generic/vibrant.png') }}" alt=""><span class="label-text">{{ __('layout.vibrant') }}</span></label></div>
             </div>
         </div>
     </div>

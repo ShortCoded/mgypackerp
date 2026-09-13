@@ -16,9 +16,9 @@
 <form method="POST" action="{{ $record ? route('admin.purchases.supply-orders.update', $record) : route('admin.purchases.supply-orders.store') }}">
     @csrf
     @if($record) @method('PUT') @endif
-    <input type="hidden" name="submit_action" value="save_view">
-    <input type="hidden" name="source_type" value="{{ $sourceType }}">
-    <input type="hidden" name="source_doc_num" value="{{ $source->doc_num }}">
+    <x-forms.input type="hidden" name="submit_action" value="save_view" />
+    <x-forms.input type="hidden" name="source_type" value="{{ $sourceType }}" />
+    <x-forms.input type="hidden" name="source_doc_num" value="{{ $source->doc_num }}" />
 
     <div class="card mb-3">
         <div class="card-header py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -34,12 +34,12 @@
         <div class="card-body">
             @if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
             <div class="row g-3">
-                <div class="col-md-3"><label class="form-label">{{ __('Supply Order Number') }}</label><input class="form-control" value="{{ $record?->doc_num ?? __('Generated automatically') }}" dir="ltr" readonly></div>
-                <div class="col-md-3"><label class="form-label" for="issue_date">{{ __('Issue date') }}</label><input class="form-control js-date-picker" id="issue_date" name="issue_date" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('issue_date', $dates->formatDate($record?->issue_date ?? now())) }}" required></div>
-                <div class="col-md-3"><label class="form-label" for="expected_delivery_date">{{ __('Expected delivery date') }}</label><input class="form-control js-date-picker" id="expected_delivery_date" name="expected_delivery_date" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('expected_delivery_date', $dates->formatDate($record?->expected_delivery_date ?? $sourceOrder?->expected_delivery_date, '')) }}"></div>
-                <div class="col-md-3"><label class="form-label">{{ __('Supplier') }}</label><input class="form-control" value="{{ $source->supplier?->name }}" readonly></div>
-                <div class="col-md-6"><label class="form-label">{{ __('Receiving Warehouse') }}</label><input class="form-control" value="{{ $sourceOrder?->branchStore?->name }}" readonly></div>
-                <div class="col-md-6"><label class="form-label" for="notes">{{ __('Notes') }}</label><input class="form-control" id="notes" name="notes" value="{{ old('notes', $record?->notes) }}"></div>
+                <div class="col-md-3"><label class="form-label">{{ __('Supply Order Number') }}</label><x-forms.input class="form-control" value="{{ $record?->doc_num ?? __('Generated automatically') }}" dir="ltr" readonly /></div>
+                <div class="col-md-3"><label class="form-label" for="issue_date">{{ __('Issue date') }}</label><x-forms.date-input class="form-control js-date-picker" id="issue_date" name="issue_date" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('issue_date', $dates->formatDate($record?->issue_date ?? now())) }}" required /></div>
+                <div class="col-md-3"><label class="form-label" for="expected_delivery_date">{{ __('Expected delivery date') }}</label><x-forms.date-input class="form-control js-date-picker" id="expected_delivery_date" name="expected_delivery_date" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('expected_delivery_date', $dates->formatDate($record?->expected_delivery_date ?? $sourceOrder?->expected_delivery_date, '')) }}" /></div>
+                <div class="col-md-3"><label class="form-label">{{ __('Supplier') }}</label><x-forms.input class="form-control" value="{{ $source->supplier?->name }}" readonly /></div>
+                <div class="col-md-6"><label class="form-label">{{ __('Receiving Warehouse') }}</label><x-forms.input class="form-control" value="{{ $sourceOrder?->branchStore?->name }}" readonly /></div>
+                <div class="col-md-6"><label class="form-label" for="notes">{{ __('Notes') }}</label><x-forms.input class="form-control" id="notes" name="notes" value="{{ old('notes', $record?->notes) }}" /></div>
             </div>
         </div>
     </div>
@@ -63,13 +63,13 @@
                             <span class="text-600 fs-10">{{ __('Available from source') }}: <span dir="ltr">{{ $numbers->format($remaining) }}</span></span>
                         </div>
                         <div class="card-body">
-                            <input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line->public_id }}">
+                            <x-forms.input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line->public_id }}" />
                             <div class="row g-3 align-items-end">
-                                <div class="col-12 col-md-5"><label class="form-label">{{ __('Item') }}</label><input class="form-control" value="{{ $line->product?->doc_num }} / {{ $line->product?->name }}" readonly></div>
-                                <div class="col-6 col-md-2"><label class="form-label">{{ __('Unit') }}</label><input class="form-control" value="{{ $line->unit?->name }}" readonly></div>
-                                <div class="col-6 col-md-2"><label class="form-label">{{ __('PO Remaining') }}</label><input class="form-control" value="{{ $numbers->format($line->quantityProgress()['remaining']) }}" dir="ltr" readonly></div>
+                                <div class="col-12 col-md-5"><label class="form-label">{{ __('Item') }}</label><x-forms.input class="form-control" value="{{ $line->product?->doc_num }} / {{ $line->product?->name }}" readonly /></div>
+                                <div class="col-6 col-md-2"><label class="form-label">{{ __('Unit') }}</label><x-forms.input class="form-control" value="{{ $line->unit?->name }}" readonly /></div>
+                                <div class="col-6 col-md-2"><label class="form-label">{{ __('PO Remaining') }}</label><x-forms.input class="form-control" value="{{ $numbers->format($line->quantityProgress()['remaining']) }}" dir="ltr" readonly /></div>
                                 <div class="col-12 col-md-3"><label class="form-label" for="supply_quantity_{{ $index }}">{{ __('Supply quantity') }}</label><x-forms.numeric-input id="supply_quantity_{{ $index }}" name="lines[{{ $index }}][ordered_quantity]" :scale="8" min="0" step="0.00000001" :value="$quantity" required /></div>
-                                <div class="col-12"><label class="form-label" for="supply_notes_{{ $index }}">{{ __('Notes') }}</label><input class="form-control" id="supply_notes_{{ $index }}" name="lines[{{ $index }}][notes]" value="{{ old('lines.'.$index.'.notes', $savedLine?->notes) }}"></div>
+                                <div class="col-12"><label class="form-label" for="supply_notes_{{ $index }}">{{ __('Notes') }}</label><x-forms.input class="form-control" id="supply_notes_{{ $index }}" name="lines[{{ $index }}][notes]" value="{{ old('lines.'.$index.'.notes', $savedLine?->notes) }}" /></div>
                                 <div class="col-12">
                                     <label class="form-label">{{ __('Attachments') }}</label>
                                     @include('modules.purchases.procurement.line-attachments', ['attachmentLine' => $savedLine, 'attachmentCompanyId' => $record?->company_id ?? $sourceOrder->company_id, 'index' => $index])

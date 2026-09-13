@@ -41,7 +41,7 @@
                 @php($hasValue = filled(old($field, $customer->{$field})))
                 <div class="col-12 col-xl-6"><div class="card customer-term-editor-card h-100">
                     <div class="card-header bg-white d-flex align-items-start justify-content-between gap-2 py-3"><div class="d-flex gap-2"><span class="text-primary mt-1"><span class="fas {{ $section['icon'] }}"></span></span><div><label class="fw-semibold text-900 mb-1" for="{{ $field }}">{{ __('quotations.attributes.'.$section['quotation']) }}</label><div class="small text-600">{{ __('customer_terms.field_help.'.$field) }}</div></div></div><span class="badge badge-subtle-{{ $hasValue ? 'success' : 'secondary' }} white-space-nowrap">{{ __('customer_terms.'.($hasValue ? 'section_ready' : 'section_empty')) }}</span></div>
-                    <div class="card-body p-0"><textarea class="form-control js-customer-terms-editor" id="{{ $field }}" name="{{ $field }}" rows="6" data-direction="{{ config('languages.available.'.app()->getLocale().'.dir', 'ltr') }}">{{ old($field, $customer->{$field}) }}</textarea></div>
+                    <div class="card-body p-0"><x-forms.textarea class="form-control js-customer-terms-editor" id="{{ $field }}" name="{{ $field }}" rows="6" data-direction="{{ config('languages.available.'.app()->getLocale().'.dir', 'ltr') }}">{{ old($field, $customer->{$field}) }}</x-forms.textarea></div>
                     @error($field)<div class="alert alert-danger rounded-0 border-0 mb-0 py-2">{{ $message }}</div>@enderror
                 </div></div>
             @endforeach

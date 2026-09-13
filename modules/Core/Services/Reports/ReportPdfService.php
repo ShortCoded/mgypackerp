@@ -45,6 +45,7 @@ class ReportPdfService
         $generatedAt = now();
         $generatedBy = auth()->user()?->name ?: '';
         $direction = config('languages.available.'.app()->getLocale().'.dir', 'ltr');
+        $localizedPrintDate = $this->localizedDateTime($generatedAt);
         $shared = [
             'branding' => $branding,
             'companyName' => (string) ($identity['legal_name'] ?? $identity['name'] ?? $branding['name']),
@@ -52,9 +53,9 @@ class ReportPdfService
             'direction' => $direction,
             'pdfFontFamily' => 'dejavusans',
             'generatedAt' => $generatedAt,
-            'generatedAtLabel' => $this->dates->formatDateTime($generatedAt),
+            'generatedAtLabel' => $localizedPrintDate,
             'generatedByName' => $generatedBy,
-            'printDate' => $this->dates->formatDateTime($generatedAt),
+            'printDate' => $localizedPrintDate,
             'reportTitle' => $data['title'] ?? __('reports.report_title'),
         ];
         $payload = $data + $shared;
@@ -158,5 +159,15 @@ class ReportPdfService
         }
 
         return $source;
+    }
+
+    private function localizedDateTime(mixed $date): string
+    {
+        return strtr($this->dates->formatDateTime($date), [
+            'AM' => __('reports.meridiem.am'),
+            'PM' => __('reports.meridiem.pm'),
+            'am' => __('reports.meridiem.am'),
+            'pm' => __('reports.meridiem.pm'),
+        ]);
     }
 }

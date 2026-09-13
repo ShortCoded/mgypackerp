@@ -1,0 +1,29 @@
+<?php
+
+namespace Modules\Production\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class SaveProductionStageRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return (bool) $this->user()?->can($this->isMethod('post') ? 'production.stages.create' : 'production.stages.edit');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'code' => ['required', 'string', 'max:80'],
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:5000'],
+            'output_type' => ['nullable', 'string', 'max:80'],
+            'standard_duration_value' => ['nullable', 'numeric', 'gt:0'],
+            'standard_duration_unit' => ['nullable', Rule::in(['hours', 'days']), 'required_with:standard_duration_value'],
+            'display_order' => ['required', 'integer', 'min:1', 'max:100000'],
+            'status' => ['required', Rule::in(['active', 'inactive'])],
+            'submit_intent' => ['nullable', Rule::in(['save_and_new', 'save_and_edit', 'save_and_back'])],
+        ];
+    }
+}

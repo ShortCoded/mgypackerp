@@ -939,7 +939,7 @@ trait ValidatesProductPayload
             ->forCompany($this->companyId())
             ->active()
             ->with(['unit', 'equivalentUnit'])
-            ->materialItems()
+            ->componentItems()
             ->where('doc_num', $docNum)
             ->first();
     }

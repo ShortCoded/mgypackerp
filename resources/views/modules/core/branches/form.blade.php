@@ -62,6 +62,11 @@
         'name' => $fieldValue('name'),
         'type' => $branchTypeValue,
         'address' => $fieldValue('address'),
+        'attendance_latitude' => $fieldValue('attendance_latitude'),
+        'attendance_longitude' => $fieldValue('attendance_longitude'),
+        'attendance_radius_meters' => $fieldValue('attendance_radius_meters', 200),
+        'attendance_max_accuracy_meters' => $fieldValue('attendance_max_accuracy_meters', 100),
+        'attendance_location_policy' => $fieldValue('attendance_location_policy', 'warn'),
         'camera_url' => $fieldValue('camera_url'),
         'phone' => $fieldValue('phone'),
         'mobile' => $fieldValue('mobile'),
@@ -84,9 +89,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if (! empty($cloneSourceToken))
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -125,7 +130,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center js-branch-doc-number" />
                             @else
-                                <input id="doc_number" class="text-center form-control js-branch-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}">
+                                <x-forms.input id="doc_number" class="text-center form-control js-branch-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" />
                             @endif
                             <div class="form-text">{{ __('branches.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -147,11 +152,11 @@
                         @if ($isView)
                             <x-forms.view-field for="company_doc_num" :value="$companyOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="company_doc_num" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'branch_form']) }}" data-placeholder="{{ __('branches.placeholders.company') }}" data-allow-clear="true" required>
+                            <x-forms.select class="form-select js-select2-ajax" id="company_doc_num" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'branch_form']) }}" data-placeholder="{{ __('branches.placeholders.company') }}" data-allow-clear="true" required>
                                 @if ($companyOption)
                                     <option value="{{ $companyOption['id'] }}" selected>{{ $companyOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="company_doc_num"></div>
                     </div>
@@ -161,7 +166,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name" :value="$fieldValue('name')" />
                         @else
-                            <input id="name" class="form-control" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus>
+                            <x-forms.input id="name" class="form-control" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -171,11 +176,11 @@
                         @if ($isView)
                             <x-forms.view-field for="type" :value="$branchTypeValue ? __('branches.types.'.$branchTypeValue) : null" />
                         @else
-                            <select class="form-select" id="type" name="type" required>
+                            <x-forms.select class="form-select" id="type" name="type" required>
                                 @foreach (\Modules\Core\Models\Branch::types() as $type)
                                     <option value="{{ $type }}" @selected($branchTypeValue === $type)>{{ __("branches.types.{$type}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="type"></div>
                     </div>
@@ -185,11 +190,11 @@
                         @if ($isView)
                             <x-forms.view-field for="status" :value="$branchStatusValue ? __('branches.statuses.'.$branchStatusValue) : null" />
                         @else
-                            <select class="form-select" id="status" name="status" required>
+                            <x-forms.select class="form-select" id="status" name="status" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected($branchStatusValue === $status)>{{ __("branches.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -206,7 +211,7 @@
                         @elseif ($isView)
                             <x-forms.view-field for="phone" :value="$phoneValue" />
                         @else
-                            <input class="form-control" id="phone" name="phone" type="tel" value="{{ $phoneValue }}">
+                            <x-forms.input class="form-control" id="phone" name="phone" type="tel" value="{{ $phoneValue }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="phone"></div>
                     </div>
@@ -223,7 +228,7 @@
                         @elseif ($isView)
                             <x-forms.view-field for="mobile" :value="$mobileValue" />
                         @else
-                            <input class="form-control" id="mobile" name="mobile" type="tel" value="{{ $mobileValue }}">
+                            <x-forms.input class="form-control" id="mobile" name="mobile" type="tel" value="{{ $mobileValue }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="mobile"></div>
                     </div>
@@ -240,7 +245,7 @@
                         @elseif ($isView)
                             <x-forms.view-field for="email" :value="$emailValue" />
                         @else
-                            <input class="form-control" id="email" name="email" type="email" value="{{ $emailValue }}">
+                            <x-forms.input class="form-control" id="email" name="email" type="email" value="{{ $emailValue }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="email"></div>
                     </div>
@@ -257,7 +262,7 @@
                         @elseif ($isView)
                             <x-forms.view-field for="hotline" :value="$hotlineValue" />
                         @else
-                            <input class="form-control" id="hotline" name="hotline" type="tel" value="{{ $hotlineValue }}">
+                            <x-forms.input class="form-control" id="hotline" name="hotline" type="tel" value="{{ $hotlineValue }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="hotline"></div>
                     </div>
@@ -267,7 +272,7 @@
                         @if ($isView)
                             <x-forms.view-field for="contact_person" :value="$fieldValue('contact_person')" />
                         @else
-                            <input class="form-control" id="contact_person" name="contact_person" type="text" value="{{ $fieldValue('contact_person') }}">
+                            <x-forms.input class="form-control" id="contact_person" name="contact_person" type="text" value="{{ $fieldValue('contact_person') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="contact_person"></div>
                     </div>
@@ -277,7 +282,7 @@
                         @if ($isView)
                             <x-forms.view-field for="camera_url" :value="$fieldValue('camera_url')" link />
                         @else
-                            <input class="form-control" id="camera_url" name="camera_url" type="url" value="{{ $fieldValue('camera_url') }}">
+                            <x-forms.input class="form-control" id="camera_url" name="camera_url" type="url" value="{{ $fieldValue('camera_url') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="camera_url"></div>
                     </div>
@@ -287,9 +292,49 @@
                         @if ($isView)
                             <x-forms.view-field for="address" as="textarea" :value="$fieldValue('address')" rows="3" />
                         @else
-                            <textarea class="form-control" id="address" name="address" rows="3">{{ $fieldValue('address') }}</textarea>
+                            <x-forms.textarea class="form-control" id="address" name="address" rows="3">{{ $fieldValue('address') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="address"></div>
+                    </div>
+
+                    <div class="col-12"><hr><h6 class="mb-0">{{ __('branches.attendance_location.title') }}</h6><div class="form-text">{{ __('branches.attendance_location.help') }}</div></div>
+
+                    @foreach (['attendance_latitude', 'attendance_longitude'] as $locationField)
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="{{ $locationField }}">{{ __('branches.attributes.'.$locationField) }}</label>
+                            @if ($isView)
+                                <x-forms.view-field :for="$locationField" :value="$fieldValue($locationField)" numeric dir="ltr" />
+                            @else
+                                <x-forms.input class="form-control" id="{{ $locationField }}" name="{{ $locationField }}" type="number" step="0.0000001" value="{{ $fieldValue($locationField) }}" dir="ltr" />
+                            @endif
+                            <div class="invalid-feedback" data-error-for="{{ $locationField }}"></div>
+                        </div>
+                    @endforeach
+
+                    @foreach (['attendance_radius_meters' => 200, 'attendance_max_accuracy_meters' => 100] as $locationField => $defaultValue)
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="{{ $locationField }}">{{ __('branches.attributes.'.$locationField) }}</label>
+                            @if ($isView)
+                                <x-forms.view-field :for="$locationField" :value="$fieldValue($locationField, $defaultValue)" numeric />
+                            @else
+                                <x-forms.input class="form-control" id="{{ $locationField }}" name="{{ $locationField }}" type="number" min="1" step="1" value="{{ $fieldValue($locationField, $defaultValue) }}" />
+                            @endif
+                            <div class="invalid-feedback" data-error-for="{{ $locationField }}"></div>
+                        </div>
+                    @endforeach
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="attendance_location_policy">{{ __('branches.attributes.attendance_location_policy') }}</label>
+                        @if ($isView)
+                            <x-forms.view-field for="attendance_location_policy" :value="__('branches.attendance_location.policies.'.$fieldValue('attendance_location_policy', 'warn'))" />
+                        @else
+                            <x-forms.select class="form-select" id="attendance_location_policy" name="attendance_location_policy">
+                                @foreach (['allow', 'warn', 'reject'] as $policy)
+                                    <option value="{{ $policy }}" @selected($fieldValue('attendance_location_policy', 'warn') === $policy)>{{ __('branches.attendance_location.policies.'.$policy) }}</option>
+                                @endforeach
+                            </x-forms.select>
+                        @endif
+                        <div class="invalid-feedback" data-error-for="attendance_location_policy"></div>
                     </div>
 
                     <div class="col-12">
@@ -297,7 +342,7 @@
                         @if ($isView)
                             <x-forms.view-field for="notes" as="textarea" :value="$fieldValue('notes')" rows="4" />
                         @else
-                            <textarea class="form-control" id="notes" name="notes" rows="4">{{ $fieldValue('notes') }}</textarea>
+                            <x-forms.textarea class="form-control" id="notes" name="notes" rows="4">{{ $fieldValue('notes') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>
@@ -343,8 +388,8 @@
                             <div class="js-station-halls-list">
                                 @foreach (($stationHallRows === [] ? [['key' => null, 'name' => '']] : $stationHallRows) as $hallIndex => $hall)
                                     <div class="input-group input-group-sm mb-2 js-station-hall-row" data-station-hall-index="{{ $hallIndex }}">
-                                        <input type="hidden" name="station_halls[{{ $hallIndex }}][key]" value="{{ $hall['key'] ?? '' }}">
-                                        <input class="form-control js-station-hall-input" name="station_halls[{{ $hallIndex }}][name]" type="text" value="{{ $hall['name'] ?? '' }}" placeholder="{{ __('branches.station_halls.placeholder') }}">
+                                        <x-forms.input type="hidden" name="station_halls[{{ $hallIndex }}][key]" value="{{ $hall['key'] ?? '' }}" />
+                                        <x-forms.input class="form-control js-station-hall-input" name="station_halls[{{ $hallIndex }}][name]" type="text" value="{{ $hall['name'] ?? '' }}" placeholder="{{ __('branches.station_halls.placeholder') }}" />
                                         <button class="btn btn-falcon-default js-remove-station-hall" type="button" aria-label="{{ __('branches.station_halls.remove') }}">
                                             <span class="fas fa-times"></span>
                                         </button>
@@ -388,20 +433,20 @@
                             <div class="js-branch-stores-list">
                                 @foreach (($branchStoreRows === [] ? [['key' => null, 'name' => '', 'classification' => '']] : $branchStoreRows) as $storeIndex => $store)
                                     <div class="row g-2 align-items-stretch mb-2 js-branch-store-row" data-branch-store-index="{{ $storeIndex }}">
-                                        <input type="hidden" name="branch_stores[{{ $storeIndex }}][key]" value="{{ $store['key'] ?? '' }}">
+                                        <x-forms.input type="hidden" name="branch_stores[{{ $storeIndex }}][key]" value="{{ $store['key'] ?? '' }}" />
                                         <div class="col-12 col-md-5">
                                             <label class="form-label small" for="branch-store-name-{{ $storeIndex }}">{{ __('branches.branch_stores.name') }}</label>
-                                            <input class="form-control form-control-sm js-branch-store-input" id="branch-store-name-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][name]" type="text" value="{{ $store['name'] ?? '' }}" placeholder="{{ __('branches.branch_stores.placeholder') }}">
+                                            <x-forms.input class="form-control form-control-sm js-branch-store-input" id="branch-store-name-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][name]" type="text" value="{{ $store['name'] ?? '' }}" placeholder="{{ __('branches.branch_stores.placeholder') }}" />
                                             <div class="invalid-feedback" data-error-for="branch_stores.{{ $storeIndex }}.name"></div>
                                         </div>
                                         <div class="col">
                                             <label class="form-label small" for="branch-store-classification-{{ $storeIndex }}">{{ __('branches.branch_stores.classification') }}</label>
-                                            <select class="form-select form-select-sm js-branch-store-classification" id="branch-store-classification-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][classification]">
+                                            <x-forms.select class="form-select form-select-sm js-branch-store-classification" id="branch-store-classification-{{ $storeIndex }}" name="branch_stores[{{ $storeIndex }}][classification]">
                                                 <option value="">{{ __('branches.branch_stores.classification_placeholder') }}</option>
                                                 @foreach (\Modules\Core\Models\BranchStore::classifications() as $classification)
                                                     <option value="{{ $classification }}" @selected(($store['classification'] ?? '') === $classification)>{{ $branchStoreClassificationLabel($classification) }}</option>
                                                 @endforeach
-                                            </select>
+                                            </x-forms.select>
                                             <div class="invalid-feedback" data-error-for="branch_stores.{{ $storeIndex }}.classification"></div>
                                         </div>
                                         <div class="col-auto d-flex align-items-end">

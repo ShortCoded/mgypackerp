@@ -57,9 +57,9 @@
     @if($method !== 'POST')
         @method($method)
     @endif
-    <input type="hidden" name="submit_action" value="save">
+    <x-forms.input type="hidden" name="submit_action" value="save" />
     @if($cloneSourceToken)
-        <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+        <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
     @endif
 
     <div class="card mb-3">
@@ -110,7 +110,7 @@
                                 @if($isReadonly)
                                     <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                                 @else
-                                    <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                    <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                     <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -126,14 +126,14 @@
                             @if($isReadonly || (! $isCreateLike && $record))
                                 <x-forms.view-field for="cheque_type_display" :value="__('cheques.types.'.$selectedType)" />
                                 @unless($isReadonly)
-                                    <input type="hidden" name="cheque_type" value="{{ $selectedType }}">
+                                    <x-forms.input type="hidden" name="cheque_type" value="{{ $selectedType }}" />
                                 @endunless
                             @else
-                                <select class="form-select js-cheque-type" id="cheque_type" name="cheque_type" required>
+                                <x-forms.select class="form-select js-cheque-type" id="cheque_type" name="cheque_type" required>
                                     @foreach(\Modules\Finance\Models\Cheque::types() as $type)
                                         <option value="{{ $type }}" @selected($selectedType === $type)>{{ __('cheques.types.'.$type) }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="cheque_type"></div>
                         </div>
@@ -143,7 +143,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="cheque_number" :value="$value('cheque_number')" dir="ltr" />
                             @else
-                                <input class="form-control" id="cheque_number" name="cheque_number" value="{{ $value('cheque_number') }}" dir="ltr" required>
+                                <x-forms.input class="form-control" id="cheque_number" name="cheque_number" value="{{ $value('cheque_number') }}" dir="ltr" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="cheque_number"></div>
                         </div>
@@ -153,7 +153,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="cheque_date" :value="$dateValue('cheque_date')" dir="ltr" input-class="date-value" />
                             @else
-                                <input class="form-control text-center js-date-picker" id="cheque_date" name="cheque_date" type="text" value="{{ $dateValue('cheque_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control text-center js-date-picker" id="cheque_date" name="cheque_date" type="text" value="{{ $dateValue('cheque_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="cheque_date"></div>
                         </div>
@@ -163,7 +163,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="due_date" :value="$dateValue('due_date')" dir="ltr" input-class="date-value" />
                             @else
-                                <input class="form-control text-center js-date-picker" id="due_date" name="due_date" type="text" value="{{ $dateValue('due_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control text-center js-date-picker" id="due_date" name="due_date" type="text" value="{{ $dateValue('due_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="due_date"></div>
                         </div>
@@ -175,7 +175,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="external_bank_name" :value="$value('external_bank_name')" />
                             @else
-                                <input class="form-control" id="external_bank_name" name="external_bank_name" value="{{ $value('external_bank_name') }}">
+                                <x-forms.input class="form-control" id="external_bank_name" name="external_bank_name" value="{{ $value('external_bank_name') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="external_bank_name"></div>
                         </div>
@@ -185,7 +185,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="external_bank_branch" :value="$value('external_bank_branch')" />
                             @else
-                                <input class="form-control" id="external_bank_branch" name="external_bank_branch" value="{{ $value('external_bank_branch') }}">
+                                <x-forms.input class="form-control" id="external_bank_branch" name="external_bank_branch" value="{{ $value('external_bank_branch') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="external_bank_branch"></div>
                         </div>
@@ -195,12 +195,12 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="party_type" :value="$value('party_type') ? __('cheques.party_types.'.$value('party_type')) : null" />
                             @else
-                                <select class="form-select js-cheque-party-type" id="party_type" name="party_type">
+                                <x-forms.select class="form-select js-cheque-party-type" id="party_type" name="party_type">
                                     <option value=""></option>
                                     @foreach(['customer', 'supplier', 'other'] as $type)
                                         <option value="{{ $type }}" @selected($value('party_type') === $type)>{{ __('cheques.party_types.'.$type) }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="party_type"></div>
                         </div>
@@ -212,25 +212,25 @@
                         @else
                             <div @class(['col-md-3 js-cheque-party-field js-cheque-party-customer', 'd-none' => $selectedPartyType !== 'customer']) data-party-field="customer">
                                 <x-forms.label for="customer_party_doc_num" :label="__('cheques.attributes.customer')" required />
-                                <select class="form-select js-select2-ajax js-cheque-party-select js-cheque-customer-party" id="customer_party_doc_num" name="party_doc_num" data-url="{{ route('admin.finance.select2.customers') }}" data-placeholder="{{ __('cheques.js.select_customer') }}" data-allow-clear="true" @disabled($selectedPartyType !== 'customer')>
+                                <x-forms.select class="form-select js-select2-ajax js-cheque-party-select js-cheque-customer-party" id="customer_party_doc_num" name="party_doc_num" data-url="{{ route('admin.finance.select2.customers') }}" data-placeholder="{{ __('cheques.js.select_customer') }}" data-allow-clear="true" :disabled="$selectedPartyType !== 'customer'">
                                     @if(($partyOption['type'] ?? null) === 'customer')
                                         <option value="{{ $partyOption['id'] }}" data-party-name="{{ $partyOption['name'] }}" selected>{{ $partyOption['text'] }}</option>
                                     @elseif($value('party_type') === 'customer' && $selectedPartyDocNum)
                                         <option value="{{ $selectedPartyDocNum }}" selected>{{ $selectedPartyDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback d-block" data-error-for="party_doc_num"></div>
                             </div>
 
                             <div @class(['col-md-3 js-cheque-party-field js-cheque-party-supplier', 'd-none' => $selectedPartyType !== 'supplier']) data-party-field="supplier">
                                 <x-forms.label for="supplier_party_doc_num" :label="__('cheques.attributes.supplier')" required />
-                                <select class="form-select js-select2-ajax js-cheque-party-select js-cheque-supplier-party" id="supplier_party_doc_num" name="party_doc_num" data-url="{{ route('admin.finance.select2.suppliers') }}" data-placeholder="{{ __('cheques.js.select_supplier') }}" data-allow-clear="true" @disabled($selectedPartyType !== 'supplier')>
+                                <x-forms.select class="form-select js-select2-ajax js-cheque-party-select js-cheque-supplier-party" id="supplier_party_doc_num" name="party_doc_num" data-url="{{ route('admin.finance.select2.suppliers') }}" data-placeholder="{{ __('cheques.js.select_supplier') }}" data-allow-clear="true" :disabled="$selectedPartyType !== 'supplier'">
                                     @if(($partyOption['type'] ?? null) === 'supplier')
                                         <option value="{{ $partyOption['id'] }}" data-party-name="{{ $partyOption['name'] }}" selected>{{ $partyOption['text'] }}</option>
                                     @elseif($value('party_type') === 'supplier' && $selectedPartyDocNum)
                                         <option value="{{ $selectedPartyDocNum }}" selected>{{ $selectedPartyDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback d-block" data-error-for="party_doc_num"></div>
                             </div>
                         @endif
@@ -240,7 +240,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="party_name" :value="$value('party_name')" />
                             @else
-                                <input class="form-control" id="party_name" name="party_name" value="{{ $value('party_name') }}" required @disabled(! $showPartyNameField)>
+                                <x-forms.input class="form-control" id="party_name" name="party_name" value="{{ $value('party_name') }}" required :disabled='! $showPartyNameField' />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="party_name"></div>
                         </div>
@@ -252,13 +252,13 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="bank_account_doc_num" :value="$bankAccountOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax js-cheque-bank-account" id="bank_account_doc_num" name="bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-placeholder="{{ __('cheques.js.select_bank_account') }}" data-allow-clear="true">
+                                <x-forms.select class="form-select js-select2-ajax js-cheque-bank-account" id="bank_account_doc_num" name="bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-placeholder="{{ __('cheques.js.select_bank_account') }}" data-allow-clear="true">
                                     @if($bankAccountOption)
                                         <option value="{{ $bankAccountOption['id'] }}" data-currency-doc-num="{{ $bankAccountOption['currency_doc_num'] }}" data-currency-text="{{ $bankAccountOption['currency_text'] }}" data-currency-is-main="{{ $bankAccountOption['currency_is_main'] ? '1' : '0' }}" selected>{{ $bankAccountOption['text'] }}</option>
                                     @elseif($selectedBankAccountDocNum)
                                         <option value="{{ $selectedBankAccountDocNum }}" selected>{{ $selectedBankAccountDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="bank_account_doc_num"></div>
                         </div>
@@ -268,13 +268,13 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax js-cheque-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" data-extra-params='@json(['holder_type' => 'bank_account', 'holder' => '#bank_account_doc_num'])' data-placeholder="{{ __('cheques.js.select_currency') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax js-cheque-currency" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" :data-extra-params="json_encode(['holder_type' => 'bank_account', 'holder' => '#bank_account_doc_num'])" data-placeholder="{{ __('cheques.js.select_currency') }}" data-allow-clear="true" required>
                                     @if($currencyOption)
                                         <option value="{{ $currencyOption['id'] }}" data-is-main="{{ $currencyOption['is_main'] ? '1' : '0' }}" selected>{{ $currencyOption['text'] }}</option>
                                     @elseif($selectedCurrencyDocNum)
                                         <option value="{{ $selectedCurrencyDocNum }}" selected>{{ $selectedCurrencyDocNum }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                         </div>
@@ -304,7 +304,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="reason" :value="$value('reason')" />
                             @else
-                                <input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required>
+                                <x-forms.input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="reason"></div>
                         </div>
@@ -314,7 +314,7 @@
                             @if($isReadonly)
                                 <div class="form-control-plaintext">{{ $value('description') }}</div>
                             @else
-                                <textarea class="form-control" id="description" name="description" rows="2">{{ $value('description') }}</textarea>
+                                <x-forms.textarea class="form-control" id="description" name="description" rows="2">{{ $value('description') }}</x-forms.textarea>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="description"></div>
                         </div>
@@ -361,11 +361,11 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['account_label'] ?? null }}</div>
                                             @else
-                                                <select class="form-select js-select2-ajax js-cheque-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.accounts') }}" data-placeholder="{{ __('cheques.js.select_account') }}" data-allow-clear="true">
+                                                <x-forms.select class="form-select js-select2-ajax js-cheque-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.accounts') }}" data-placeholder="{{ __('cheques.js.select_account') }}" data-allow-clear="true">
                                                     @if(! empty($line['account_doc_num']))
                                                         <option value="{{ $line['account_doc_num'] }}" selected>{{ $line['account_label'] ?? $line['account_doc_num'] }}</option>
                                                     @endif
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.account_doc_num"></div>
                                             @endif
                                         </td>
@@ -381,7 +381,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['description'] ?? null }}</div>
                                             @else
-                                                <input class="form-control" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}">
+                                                <x-forms.input class="form-control" name="lines[{{ $index }}][description]" value="{{ $line['description'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.description"></div>
                                             @endif
                                         </td>
@@ -389,7 +389,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                             @else
-                                                <input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}">
+                                                <x-forms.input class="form-control" name="lines[{{ $index }}][notes]" value="{{ $line['notes'] ?? '' }}" />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                             @endif
                                         </td>

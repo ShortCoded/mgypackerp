@@ -155,9 +155,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card hr-employee-form-card">
@@ -188,7 +188,7 @@
                                     @if ($isView)
                                         <x-forms.view-field for="hr-employee-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-hr-employees-doc-number" />
                                     @else
-                                        <input id="hr-employee-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-employees-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}">
+                                        <x-forms.input id="hr-employee-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-employees-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}" />
                                     @endif
                                     <div class="form-text">{{ __('hr.document_number_control.helper') }}</div>
                                     <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -210,7 +210,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-employee-code" :value="$fieldValue('employee_code')" />
                                 @else
-                                    <input id="hr-employee-employee-code" name="employee_code" type="text" class="form-control" value="{{ $fieldValue('employee_code') }}">
+                                    <x-forms.input id="hr-employee-employee-code" name="employee_code" type="text" class="form-control" value="{{ $fieldValue('employee_code') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="employee_code"></div>
                             </div>
@@ -220,7 +220,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-full-name" :value="$fieldValue('full_name')" />
                                 @else
-                                    <input id="hr-employee-full-name" autofocus name="full_name" type="text" class="form-control" value="{{ $fieldValue('full_name') }}" required>
+                                    <x-forms.input id="hr-employee-full-name" autofocus name="full_name" type="text" class="form-control" value="{{ $fieldValue('full_name') }}" required />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="full_name"></div>
                             </div>
@@ -231,11 +231,11 @@
                                     <x-forms.view-field for="hr-employee-person-type" :label="__('hr.employees.attributes.person_type')" :value="$personTypeValue ? __('hr.employees.person_types.' . $personTypeValue) : null" required />
                                 @else
                                     <x-forms.label for="hr-employee-person-type" :label="__('hr.employees.attributes.person_type')" required />
-                                    <select id="hr-employee-person-type" name="person_type" class="form-select" required>
+                                    <x-forms.select id="hr-employee-person-type" name="person_type" class="form-select" required>
                                         @foreach ($personTypeOptions as $personType)
                                             <option value="{{ $personType }}" @selected($personTypeValue === $personType)>{{ __("hr.employees.person_types.{$personType}") }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="person_type"></div>
                             </div>
@@ -246,11 +246,11 @@
                                     <x-forms.view-field for="hr-employee-status" :label="__('common.fields.status')" :value="$statusValue ? __('hr.employees.statuses.' . $statusValue) : null" required />
                                 @else
                                     <x-forms.label for="hr-employee-status" :label="__('common.fields.status')" required />
-                                    <select id="hr-employee-status" name="status" class="form-select" required>
+                                    <x-forms.select id="hr-employee-status" name="status" class="form-select" required>
                                         @foreach ($statusOptions as $status)
                                             <option value="{{ $status }}" @selected($statusValue === $status)>{{ __("hr.employees.statuses.{$status}") }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="status"></div>
                             </div>
@@ -261,12 +261,12 @@
                                     <x-forms.view-field for="hr-employee-gender" :label="__('hr.employees.attributes.gender')" :value="$genderValue ? __('hr.employees.genders.' . $genderValue) : null" />
                                 @else
                                     <label class="form-label" for="hr-employee-gender">{{ __('hr.employees.attributes.gender') }}</label>
-                                    <select id="hr-employee-gender" name="gender" class="form-select">
+                                    <x-forms.select id="hr-employee-gender" name="gender" class="form-select">
                                         <option value="">{{ __('common.placeholders.select') }}</option>
                                         @foreach (['male', 'female'] as $gender)
                                             <option value="{{ $gender }}" @selected($genderValue === $gender)>{{ __("hr.employees.genders.{$gender}") }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="gender"></div>
                             </div>
@@ -297,7 +297,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-birth-date" :value="$dateValue('birth_date')" />
                                 @else
-                                    <input id="hr-employee-birth-date" name="birth_date" type="text" class="form-control js-date-picker" value="{{ $dateValue('birth_date') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                    <x-forms.date-input id="hr-employee-birth-date" name="birth_date" type="text" class="form-control js-date-picker" value="{{ $dateValue('birth_date') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="birth_date"></div>
                             </div>
@@ -308,12 +308,12 @@
                                     <x-forms.view-field for="hr-employee-marital-status" :label="__('hr.employees.attributes.marital_status')" :value="$maritalStatusValue ? __('hr.employees.marital_statuses.' . $maritalStatusValue) : null" />
                                 @else
                                     <label class="form-label" for="hr-employee-marital-status">{{ __('hr.employees.attributes.marital_status') }}</label>
-                                    <select id="hr-employee-marital-status" name="marital_status" class="form-select">
+                                    <x-forms.select id="hr-employee-marital-status" name="marital_status" class="form-select">
                                         <option value="">{{ __('common.placeholders.select') }}</option>
                                         @foreach (['single', 'married', 'divorced', 'widowed'] as $maritalStatus)
                                             <option value="{{ $maritalStatus }}" @selected($maritalStatusValue === $maritalStatus)>{{ __("hr.employees.marital_statuses.{$maritalStatus}") }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="marital_status"></div>
                             </div>
@@ -323,7 +323,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-national-id" :value="$fieldValue('national_id')" />
                                 @else
-                                    <input id="hr-employee-national-id" name="national_id" type="text" class="form-control" value="{{ $fieldValue('national_id') }}">
+                                    <x-forms.input id="hr-employee-national-id" name="national_id" type="text" class="form-control" value="{{ $fieldValue('national_id') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="national_id"></div>
                             </div>
@@ -343,7 +343,7 @@
                                         @endphp
                                         <x-forms.label :for="$isView ? 'hr-employee-photo-preview' : 'hr-employee-photo-picker-button'" :label="__('hr.employees.attributes.photo_archive_file_doc_num')" />
                                         @unless ($isView)
-                                            <input type="hidden" id="hr-employee-photo-archive-file-doc-num" name="photo_archive_file_doc_num" value="{{ $photoValue }}">
+                                            <x-forms.input type="hidden" id="hr-employee-photo-archive-file-doc-num" name="photo_archive_file_doc_num" value="{{ $photoValue }}" />
                                         @endunless
                                         <div id="hr-employee-photo-picker-field"
                                             class="p-3 border rounded-2 bg-body-tertiary product-image-picker-panel js-product-image-picker-field @if ($isView) opacity-75 @endif"
@@ -422,7 +422,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-phone" :value="$fieldValue('phone')" />
                                 @else
-                                    <input id="hr-employee-phone" name="phone" type="text" class="form-control" value="{{ $fieldValue('phone') }}">
+                                    <x-forms.input id="hr-employee-phone" name="phone" type="text" class="form-control" value="{{ $fieldValue('phone') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="phone"></div>
                             </div>
@@ -432,7 +432,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-mobile" :value="$fieldValue('mobile')" />
                                 @else
-                                    <input id="hr-employee-mobile" name="mobile" type="text" class="form-control" value="{{ $fieldValue('mobile') }}">
+                                    <x-forms.input id="hr-employee-mobile" name="mobile" type="text" class="form-control" value="{{ $fieldValue('mobile') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="mobile"></div>
                             </div>
@@ -442,7 +442,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-alternate-phone" :value="$fieldValue('alternate_phone')" />
                                 @else
-                                    <input id="hr-employee-alternate-phone" name="alternate_phone" type="text" class="form-control" value="{{ $fieldValue('alternate_phone') }}">
+                                    <x-forms.input id="hr-employee-alternate-phone" name="alternate_phone" type="text" class="form-control" value="{{ $fieldValue('alternate_phone') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="alternate_phone"></div>
                             </div>
@@ -452,7 +452,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-email" :value="$fieldValue('email')" />
                                 @else
-                                    <input id="hr-employee-email" name="email" type="email" class="form-control" value="{{ $fieldValue('email') }}">
+                                    <x-forms.input id="hr-employee-email" name="email" type="email" class="form-control" value="{{ $fieldValue('email') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="email"></div>
                             </div>
@@ -462,7 +462,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-personal-email" :value="$fieldValue('personal_email')" />
                                 @else
-                                    <input id="hr-employee-personal-email" name="personal_email" type="email" class="form-control" value="{{ $fieldValue('personal_email') }}">
+                                    <x-forms.input id="hr-employee-personal-email" name="personal_email" type="email" class="form-control" value="{{ $fieldValue('personal_email') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="personal_email"></div>
                             </div>
@@ -472,7 +472,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-emergency-contact-name" :value="$fieldValue('emergency_contact_name')" />
                                 @else
-                                    <input id="hr-employee-emergency-contact-name" name="emergency_contact_name" type="text" class="form-control" value="{{ $fieldValue('emergency_contact_name') }}">
+                                    <x-forms.input id="hr-employee-emergency-contact-name" name="emergency_contact_name" type="text" class="form-control" value="{{ $fieldValue('emergency_contact_name') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="emergency_contact_name"></div>
                             </div>
@@ -482,7 +482,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-emergency-contact-phone" :value="$fieldValue('emergency_contact_phone')" />
                                 @else
-                                    <input id="hr-employee-emergency-contact-phone" name="emergency_contact_phone" type="text" class="form-control" value="{{ $fieldValue('emergency_contact_phone') }}">
+                                    <x-forms.input id="hr-employee-emergency-contact-phone" name="emergency_contact_phone" type="text" class="form-control" value="{{ $fieldValue('emergency_contact_phone') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="emergency_contact_phone"></div>
                             </div>
@@ -492,7 +492,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-address" as="textarea" :value="$fieldValue('address')" rows="3" />
                                 @else
-                                    <textarea id="hr-employee-address" name="address" class="form-control" rows="3">{{ $fieldValue('address') }}</textarea>
+                                    <x-forms.textarea id="hr-employee-address" name="address" class="form-control" rows="3">{{ $fieldValue('address') }}</x-forms.textarea>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="address"></div>
                             </div>
@@ -501,7 +501,7 @@
 
                     <div class="tab-pane fade" id="pane-work-info" role="tabpanel" aria-labelledby="tab-work-info">
                         <div class="row g-3 align-items-start hr-employee-form-grid">
-                            @foreach (['branch_doc_num', 'department_doc_num', 'section_doc_num', 'job_doc_num', 'employment_type_doc_num', 'hiring_status_doc_num'] as $fieldName)
+                            @foreach (['user_doc_num', 'branch_doc_num', 'department_doc_num', 'section_doc_num', 'job_doc_num', 'employment_type_doc_num', 'hiring_status_doc_num'] as $fieldName)
                                 @php
                                     $option = $selectOption($fieldName) ?? [];
                                     $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName);
@@ -515,7 +515,9 @@
                                         'placeholder' => __('hr.employees.placeholders.' . $fieldName),
                                         'selectedValue' => $selectValue($fieldName),
                                         'selectedText' => (string) ($option['text'] ?? ''),
-                                        'dataUrl' => (string) ($option['url'] ?? ''),
+                                        'dataUrl' => $fieldName === 'user_doc_num'
+                                            ? (string) ($option['url'] ?? '') . '?' . http_build_query(array_filter(['available_for_employee' => 1, 'employee_doc_num' => $employee?->doc_num]))
+                                            : (string) ($option['url'] ?? ''),
                                         'canCreate' => (bool) ($option['can_create'] ?? false),
                                         'createUrl' => $option['create_url'] ?? null,
                                         'inlineUrl' => null,
@@ -536,7 +538,7 @@
                                     @if ($isView)
                                         <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
                                     @else
-                                        <input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                        <x-forms.date-input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                                     @endif
                                     <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                                 </div>
@@ -547,7 +549,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-work-email" :value="$fieldValue('work_email')" />
                                 @else
-                                    <input id="hr-employee-work-email" name="work_email" type="email" class="form-control" value="{{ $fieldValue('work_email') }}">
+                                    <x-forms.input id="hr-employee-work-email" name="work_email" type="email" class="form-control" value="{{ $fieldValue('work_email') }}" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="work_email"></div>
                             </div>
@@ -562,9 +564,9 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-attendance-tracking-enabled" :value="__('hr.employees.booleans.' . ($attendanceTrackingEnabled ? 'yes' : 'no'))" />
                                 @else
-                                    <input type="hidden" name="attendance_tracking_enabled" value="0">
+                                    <x-forms.input type="hidden" name="attendance_tracking_enabled" value="0" />
                                     <div class="form-check form-switch pt-2">
-                                        <input id="hr-employee-attendance-tracking-enabled" name="attendance_tracking_enabled" type="checkbox" class="form-check-input" value="1" @checked($attendanceTrackingEnabled)>
+                                        <x-forms.input id="hr-employee-attendance-tracking-enabled" name="attendance_tracking_enabled" type="checkbox" class="form-check-input" value="1" :checked='$attendanceTrackingEnabled' />
                                     </div>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="attendance_tracking_enabled"></div>
@@ -576,12 +578,12 @@
                                     <x-forms.view-field for="hr-employee-attendance-policy-type" :label="__('hr.employees.attributes.attendance_policy_type')" :value="$attendancePolicyValue !== '' ? __('hr.employees.attendance_policies.' . $attendancePolicyValue) : null" />
                                 @else
                                     <label class="form-label" for="hr-employee-attendance-policy-type">{{ __('hr.employees.attributes.attendance_policy_type') }}</label>
-                                    <select id="hr-employee-attendance-policy-type" name="attendance_policy_type" class="form-select">
+                                    <x-forms.select id="hr-employee-attendance-policy-type" name="attendance_policy_type" class="form-select">
                                         <option value="">{{ __('common.placeholders.select') }}</option>
                                         @foreach ($attendancePolicyOptions as $policy)
                                             <option value="{{ $policy }}" @selected($attendancePolicyValue === $policy)>{{ __('hr.employees.attendance_policies.' . $policy) }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="attendance_policy_type"></div>
                             </div>
@@ -613,7 +615,7 @@
                                     @if ($isView)
                                         <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" numeric dir="ltr" />
                                     @else
-                                        <input id="{{ $inputId }}" name="{{ $fieldName }}" type="number" min="0" step="1" class="form-control text-center" value="{{ $fieldValue($fieldName, 0) }}">
+                                        <x-forms.input id="{{ $inputId }}" name="{{ $fieldName }}" type="number" min="0" step="1" class="form-control text-center" value="{{ $fieldValue($fieldName, 0) }}" />
                                     @endif
                                     <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                                 </div>
@@ -625,9 +627,9 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-overtime-enabled" :value="__('hr.employees.booleans.' . ($overtimeEnabled ? 'yes' : 'no'))" />
                                 @else
-                                    <input type="hidden" name="overtime_enabled" value="0">
+                                    <x-forms.input type="hidden" name="overtime_enabled" value="0" />
                                     <div class="form-check form-switch pt-2">
-                                        <input id="hr-employee-overtime-enabled" name="overtime_enabled" type="checkbox" class="form-check-input" value="1" @checked($overtimeEnabled)>
+                                        <x-forms.input id="hr-employee-overtime-enabled" name="overtime_enabled" type="checkbox" class="form-check-input" value="1" :checked='$overtimeEnabled' />
                                     </div>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="overtime_enabled"></div>
@@ -684,12 +686,12 @@
                                     <x-forms.view-field for="hr-employee-pay-basis" :label="__('hr.employees.attributes.pay_basis')" :value="$payBasisValue !== '' ? __('hr.employees.pay_basis.' . $payBasisValue) : null" required />
                                 @else
                                     <x-forms.label for="hr-employee-pay-basis" :label="__('hr.employees.attributes.pay_basis')" required />
-                                    <select id="hr-employee-pay-basis" name="pay_basis" class="form-select js-hr-pay-basis" required>
+                                    <x-forms.select id="hr-employee-pay-basis" name="pay_basis" class="form-select js-hr-pay-basis" required>
                                         <option value="">{{ __('common.placeholders.select') }}</option>
                                         @foreach ($payBasisOptions as $basis)
                                             <option value="{{ $basis }}" @selected($payBasisValue === $basis)>{{ __('hr.employees.pay_basis.' . $basis) }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="pay_basis"></div>
                             </div>
@@ -747,12 +749,12 @@
                                     <x-forms.view-field for="hr-employee-payment-method" :label="__('hr.employees.attributes.payment_method')" :value="$paymentMethodValue !== '' ? __('hr.employees.payment_methods.' . $paymentMethodValue) : null" />
                                 @else
                                     <label class="form-label" for="hr-employee-payment-method">{{ __('hr.employees.attributes.payment_method') }}</label>
-                                    <select id="hr-employee-payment-method" name="payment_method" class="form-select">
+                                    <x-forms.select id="hr-employee-payment-method" name="payment_method" class="form-select">
                                         <option value="">{{ __('common.placeholders.select') }}</option>
                                         @foreach ($paymentMethodOptions as $method)
                                             <option value="{{ $method }}" @selected($paymentMethodValue === $method)>{{ __('hr.employees.payment_methods.' . $method) }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="payment_method"></div>
                             </div>
@@ -849,11 +851,11 @@
                                                 <x-forms.view-field for="hr-employee-insurance-status" :label="__('hr.employees.attributes.insurance_status')" :value="__('hr.employees.statutory_statuses.'.$insuranceStatus)" required />
                                             @else
                                                 <x-forms.label for="hr-employee-insurance-status" :label="__('hr.employees.attributes.insurance_status')" required />
-                                                <select id="hr-employee-insurance-status" name="insurance_status" class="form-select js-hr-statutory-status" data-statutory-target="insurance" required>
+                                                <x-forms.select id="hr-employee-insurance-status" name="insurance_status" class="form-select js-hr-statutory-status" data-statutory-target="insurance" required>
                                                     @foreach ($statutoryStatusOptions as $status)
                                                         <option value="{{ $status }}" @selected($insuranceStatus === $status)>{{ __('hr.employees.statutory_statuses.'.$status) }}</option>
                                                     @endforeach
-                                                </select>
+                                                </x-forms.select>
                                             @endif
                                             <div class="invalid-feedback" data-error-for="insurance_status"></div>
                                         </div>
@@ -863,7 +865,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="hr-employee-social-insurance-number" :value="$fieldValue('social_insurance_number')" dir="ltr" />
                                             @else
-                                                <input id="hr-employee-social-insurance-number" name="social_insurance_number" type="text" class="form-control" value="{{ $fieldValue('social_insurance_number') }}" maxlength="60" dir="ltr">
+                                                <x-forms.input id="hr-employee-social-insurance-number" name="social_insurance_number" type="text" class="form-control" value="{{ $fieldValue('social_insurance_number') }}" maxlength="60" dir="ltr" />
                                             @endif
                                             <div class="invalid-feedback" data-error-for="social_insurance_number"></div>
                                         </div>
@@ -895,7 +897,7 @@
                                                 @if ($isView)
                                                     <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
                                                 @else
-                                                    <input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                                    <x-forms.date-input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                                                 @endif
                                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                                             </div>
@@ -916,7 +918,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="hr-employee-insurance-non-coverage-reason" :value="$fieldValue('insurance_non_coverage_reason')" />
                                             @else
-                                                <input id="hr-employee-insurance-non-coverage-reason" name="insurance_non_coverage_reason" type="text" class="form-control" value="{{ $fieldValue('insurance_non_coverage_reason') }}">
+                                                <x-forms.input id="hr-employee-insurance-non-coverage-reason" name="insurance_non_coverage_reason" type="text" class="form-control" value="{{ $fieldValue('insurance_non_coverage_reason') }}" />
                                             @endif
                                             <div class="invalid-feedback" data-error-for="insurance_non_coverage_reason"></div>
                                         </div>
@@ -926,7 +928,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="hr-employee-insurance-notes" as="textarea" :value="$fieldValue('insurance_notes')" rows="3" />
                                             @else
-                                                <textarea id="hr-employee-insurance-notes" name="insurance_notes" class="form-control" rows="3">{{ $fieldValue('insurance_notes') }}</textarea>
+                                                <x-forms.textarea id="hr-employee-insurance-notes" name="insurance_notes" class="form-control" rows="3">{{ $fieldValue('insurance_notes') }}</x-forms.textarea>
                                             @endif
                                             <div class="invalid-feedback" data-error-for="insurance_notes"></div>
                                         </div>
@@ -1033,11 +1035,11 @@
                                                 <x-forms.view-field for="hr-employee-tax-status" :label="__('hr.employees.attributes.tax_status')" :value="__('hr.employees.statutory_statuses.'.$taxStatus)" required />
                                             @else
                                                 <x-forms.label for="hr-employee-tax-status" :label="__('hr.employees.attributes.tax_status')" required />
-                                                <select id="hr-employee-tax-status" name="tax_status" class="form-select js-hr-statutory-status" data-statutory-target="tax" required>
+                                                <x-forms.select id="hr-employee-tax-status" name="tax_status" class="form-select js-hr-statutory-status" data-statutory-target="tax" required>
                                                     @foreach ($statutoryStatusOptions as $status)
                                                         <option value="{{ $status }}" @selected($taxStatus === $status)>{{ __('hr.employees.statutory_statuses.'.$status) }}</option>
                                                     @endforeach
-                                                </select>
+                                                </x-forms.select>
                                             @endif
                                             <div class="invalid-feedback" data-error-for="tax_status"></div>
                                         </div>
@@ -1049,7 +1051,7 @@
                                                 @if ($isView)
                                                     <x-forms.view-field :for="$inputId" :value="$dateValue($fieldName)" />
                                                 @else
-                                                    <input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                                                    <x-forms.date-input id="{{ $inputId }}" name="{{ $fieldName }}" type="text" class="form-control js-date-picker" value="{{ $dateValue($fieldName) }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                                                 @endif
                                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                                             </div>
@@ -1060,7 +1062,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="hr-employee-tax-special-treatment-reason" :value="$fieldValue('tax_special_treatment_reason')" />
                                             @else
-                                                <input id="hr-employee-tax-special-treatment-reason" name="tax_special_treatment_reason" type="text" class="form-control" value="{{ $fieldValue('tax_special_treatment_reason') }}">
+                                                <x-forms.input id="hr-employee-tax-special-treatment-reason" name="tax_special_treatment_reason" type="text" class="form-control" value="{{ $fieldValue('tax_special_treatment_reason') }}" />
                                             @endif
                                             <div class="invalid-feedback" data-error-for="tax_special_treatment_reason"></div>
                                         </div>
@@ -1070,7 +1072,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="hr-employee-tax-notes" as="textarea" :value="$fieldValue('tax_notes')" rows="3" />
                                             @else
-                                                <textarea id="hr-employee-tax-notes" name="tax_notes" class="form-control" rows="3">{{ $fieldValue('tax_notes') }}</textarea>
+                                                <x-forms.textarea id="hr-employee-tax-notes" name="tax_notes" class="form-control" rows="3">{{ $fieldValue('tax_notes') }}</x-forms.textarea>
                                             @endif
                                             <div class="invalid-feedback" data-error-for="tax_notes"></div>
                                         </div>
@@ -1133,7 +1135,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="hr-employee-notes" as="textarea" :value="$fieldValue('notes')" rows="5" />
                                 @else
-                                    <textarea id="hr-employee-notes" name="notes" class="form-control" rows="5">{{ $fieldValue('notes') }}</textarea>
+                                    <x-forms.textarea id="hr-employee-notes" name="notes" class="form-control" rows="5">{{ $fieldValue('notes') }}</x-forms.textarea>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="notes"></div>
                             </div>

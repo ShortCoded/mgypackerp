@@ -33,7 +33,7 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
 
         <div class="card">
             @include('modules.core.task-boards.partials.form-header')
@@ -63,7 +63,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name" :value="old('name', $record?->name)" />
                         @else
-                            <input class="form-control" id="name" name="name" type="text" value="{{ old('name', $record?->name) }}" maxlength="255" placeholder="{{ __('task_boards.placeholders.name') }}" required autofocus>
+                            <x-forms.input class="form-control" id="name" name="name" type="text" value="{{ old('name', $record?->name) }}" maxlength="255" placeholder="{{ __('task_boards.placeholders.name') }}" required autofocus />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -76,10 +76,10 @@
                                 :value="$record?->is_active ? __('task_boards.statuses.active') : __('task_boards.statuses.inactive')"
                             />
                         @else
-                            <input name="is_active" type="hidden" value="0">
+                            <x-forms.input name="is_active" type="hidden" value="0" />
                             <label class="form-label d-block" for="is_active">{{ __('task_boards.attributes.operational_status') }}</label>
                             <div class="form-check form-switch mb-0 pt-1">
-                                <input class="form-check-input" id="is_active" name="is_active" type="checkbox" value="1" @checked(old('is_active', $record?->is_active ?? true))>
+                                <x-forms.input class="form-check-input" id="is_active" name="is_active" type="checkbox" value="1" :checked="old('is_active', $record?->is_active ?? true)" />
                                 <label class="form-check-label" for="is_active">{{ __('task_boards.statuses.active') }}</label>
                             </div>
                         @endif
@@ -91,7 +91,7 @@
                         @if ($isView)
                             <x-forms.view-field for="description" as="textarea" :value="old('description', $record?->description)" rows="4" />
                         @else
-                            <textarea class="form-control" id="description" name="description" rows="4" placeholder="{{ __('task_boards.placeholders.description') }}">{{ old('description', $record?->description) }}</textarea>
+                            <x-forms.textarea class="form-control" id="description" name="description" rows="4" placeholder="{{ __('task_boards.placeholders.description') }}">{{ old('description', $record?->description) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="description"></div>
                     </div>
@@ -107,11 +107,11 @@
                         @if ($isView)
                             <x-forms.view-field for="user_doc_nums" :value="$selectedUserLabel" />
                         @else
-                            <select class="form-select js-select2-ajax" id="user_doc_nums" name="user_doc_nums[]" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('task_boards.placeholders.users') }}" data-allow-clear="true" multiple>
+                            <x-forms.select class="form-select js-select2-ajax" id="user_doc_nums" name="user_doc_nums[]" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('task_boards.placeholders.users') }}" data-allow-clear="true" multiple>
                                 @foreach ($selectedUsers as $option)
                                     <option value="{{ $option['id'] }}" selected>{{ $option['text'] }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="user_doc_nums"></div>
                     </div>
@@ -121,11 +121,11 @@
                         @if ($isView)
                             <x-forms.view-field for="role_doc_nums" :value="$selectedRoleLabel" />
                         @else
-                            <select class="form-select js-select2-ajax" id="role_doc_nums" name="role_doc_nums[]" data-url="{{ route('admin.select2.roles') }}" data-placeholder="{{ __('task_boards.placeholders.user_groups') }}" data-allow-clear="true" multiple>
+                            <x-forms.select class="form-select js-select2-ajax" id="role_doc_nums" name="role_doc_nums[]" data-url="{{ route('admin.select2.roles') }}" data-placeholder="{{ __('task_boards.placeholders.user_groups') }}" data-allow-clear="true" multiple>
                                 @foreach ($selectedRoles as $option)
                                     <option value="{{ $option['id'] }}" selected>{{ $option['text'] }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="role_doc_nums"></div>
                     </div>
@@ -140,7 +140,7 @@
                         <div class="col-12">
                             <x-forms.label for="display_url" :label="__('task_boards.attributes.display_url')" />
                             <div class="input-group">
-                                <input class="form-control" id="display_url" type="text" value="{{ $displayUrl }}" readonly dir="ltr">
+                                <x-forms.input class="form-control" id="display_url" type="text" value="{{ $displayUrl }}" readonly dir="ltr" />
                                 @if (! $isTrashed)
                                     @can('task_boards.display')
                                         <button class="btn btn-falcon-default js-copy-task-board-url" type="button" data-task-board-public-link="display" data-display-url="{{ $displayUrl }}">
@@ -157,7 +157,7 @@
                         <div class="col-12">
                             <x-forms.label for="user_display_url" :label="__('task_boards.attributes.user_display_url')" />
                             <div class="input-group">
-                                <input class="form-control" id="user_display_url" type="text" value="{{ $userDisplayUrl }}" readonly dir="ltr">
+                                <x-forms.input class="form-control" id="user_display_url" type="text" value="{{ $userDisplayUrl }}" readonly dir="ltr" />
                                 @if (! $isTrashed)
                                     @can('task_boards.display')
                                         <button class="btn btn-falcon-default js-copy-task-board-url" type="button" data-task-board-public-link="user-display" data-display-url="{{ $userDisplayUrl }}">
@@ -180,10 +180,10 @@
                                 :value="$record?->is_public ? __('task_boards.statuses.public') : __('task_boards.statuses.private')"
                             />
                         @else
-                            <input name="is_public" type="hidden" value="0">
+                            <x-forms.input name="is_public" type="hidden" value="0" />
                             <label class="form-label d-block" for="is_public">{{ __('task_boards.attributes.public_status') }}</label>
                             <div class="form-check form-switch mb-0 pt-1">
-                                <input class="form-check-input" id="is_public" name="is_public" type="checkbox" value="1" @checked(old('is_public', $record?->is_public ?? false))>
+                                <x-forms.input class="form-check-input" id="is_public" name="is_public" type="checkbox" value="1" :checked="old('is_public', $record?->is_public ?? false)" />
                                 <label class="form-check-label" for="is_public">{{ __('task_boards.statuses.public') }}</label>
                             </div>
                         @endif
@@ -198,10 +198,10 @@
                                 :value="$record?->requires_password ? __('task_boards.statuses.requires_access_code') : __('task_boards.statuses.no_access_code_required')"
                             />
                         @else
-                            <input name="requires_password" type="hidden" value="0">
+                            <x-forms.input name="requires_password" type="hidden" value="0" />
                             <label class="form-label d-block" for="requires_password">{{ __('task_boards.attributes.access_code_status') }}</label>
                             <div class="form-check form-switch mb-0 pt-1">
-                                <input class="form-check-input" id="requires_password" name="requires_password" type="checkbox" value="1" @checked(old('requires_password', $record?->requires_password ?? false))>
+                                <x-forms.input class="form-check-input" id="requires_password" name="requires_password" type="checkbox" value="1" :checked="old('requires_password', $record?->requires_password ?? false)" />
                                 <label class="form-check-label" for="requires_password">{{ __('task_boards.statuses.requires_access_code') }}</label>
                             </div>
                         @endif
@@ -217,11 +217,11 @@
                             />
                         @else
                             <x-forms.label for="display_theme" :label="__('task_boards.attributes.display_theme')" />
-                            <select class="form-select" id="display_theme" name="display_theme">
+                            <x-forms.select class="form-select" id="display_theme" name="display_theme">
                                 @foreach (TaskBoard::DisplayThemes as $theme)
                                     <option value="{{ $theme }}" @selected($displayTheme === $theme)>{{ __('task_boards.display_themes.' . $theme) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="display_theme"></div>
                     </div>
@@ -229,14 +229,14 @@
                     @if (! $isView && $canManagePublicSettings)
                         <div class="col-md-4">
                             <x-forms.label for="access_code" :label="__('task_boards.attributes.access_code')" />
-                            <input class="form-control" id="access_code" name="access_code" type="password" value="" maxlength="100" placeholder="{{ __('task_boards.placeholders.access_code') }}" autocomplete="new-password">
+                            <x-forms.input class="form-control" id="access_code" name="access_code" type="password" value="" maxlength="100" placeholder="{{ __('task_boards.placeholders.access_code') }}" autocomplete="new-password" />
                             <div class="invalid-feedback" data-error-for="access_code"></div>
                         </div>
 
                         @if (! $isCreate && $record?->public_password_hash)
                             <div class="col-md-8 d-flex align-items-end">
                                 <div class="form-check mb-2">
-                                    <input class="form-check-input" id="clear_access_code" name="clear_access_code" type="checkbox" value="1">
+                                    <x-forms.input class="form-check-input" id="clear_access_code" name="clear_access_code" type="checkbox" value="1" />
                                     <label class="form-check-label" for="clear_access_code">{{ __('common.actions.clear') }} {{ __('task_boards.attributes.access_code') }}</label>
                                 </div>
                             </div>

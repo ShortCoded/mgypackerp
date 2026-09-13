@@ -2,6 +2,7 @@
 
 namespace Modules\Core\Http\Controllers\Select2;
 
+use App\Models\User;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,6 +12,7 @@ use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\ScreenDataVisibilityService;
 use Modules\Core\Services\Select2ResponseService;
 
 class ProductRawMaterialSelect2Controller extends Controller
@@ -21,6 +23,7 @@ class ProductRawMaterialSelect2Controller extends Controller
         private readonly Select2ResponseService $select2,
         private readonly ProductImageResolver $productImages,
         private readonly ProductComponentUnitConversionService $unitConversions,
+        private readonly ScreenDataVisibilityService $visibility,
     ) {}
 
     public function __invoke(Request $request): JsonResponse
@@ -34,13 +37,27 @@ class ProductRawMaterialSelect2Controller extends Controller
         $query = Product::query()
             ->with('mainImageUsage.file')
             ->active()
-            ->forCompany($companyId)
-            ->materialItems()
-            ->leftJoin('item_units', function (JoinClause $join) use ($companyId): void {
-                $join->on('item_units.id', '=', 'products.item_unit_id')
-                    ->where('item_units.company_id', $companyId)
-                    ->whereNull('item_units.deleted_at');
-            })
+            ->forCompany($companyId);
+
+        if ($request->routeIs('admin.select2.component-products')) {
+            $query->componentItems();
+
+            if ($request->user() instanceof User) {
+                $query = $this->visibility->applyAnyScreenToEloquent($query, $request->user(), [
+                    Product::ContextProducts,
+                    Product::ContextRawMaterials,
+                    Product::ContextPackagingMaterials,
+                ]);
+            }
+        } else {
+            $query->materialItems();
+        }
+
+        $query->leftJoin('item_units', function (JoinClause $join) use ($companyId): void {
+            $join->on('item_units.id', '=', 'products.item_unit_id')
+                ->where('item_units.company_id', $companyId)
+                ->whereNull('item_units.deleted_at');
+        })
             ->leftJoin('item_units as equivalent_units', function (JoinClause $join) use ($companyId): void {
                 $join->on('equivalent_units.id', '=', 'products.equivalent_unit_id')
                     ->where('equivalent_units.company_id', $companyId)

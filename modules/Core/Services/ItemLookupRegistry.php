@@ -11,7 +11,6 @@ use Modules\Core\Models\ItemModel;
 use Modules\Core\Models\ItemOriginCountry;
 use Modules\Core\Models\ItemSize;
 use Modules\Core\Models\ItemUnit;
-use Modules\Production\Models\ProductionIdentifierType;
 
 class ItemLookupRegistry
 {
@@ -108,18 +107,6 @@ class ItemLookupRegistry
                 translationKey: 'item_origin_countries',
                 viewPath: 'modules.core.item-lookups',
                 jsNamespace: 'itemOriginCountries',
-            ),
-            'production_identifier_types' => new ItemLookupDefinition(
-                key: 'production_identifier_types',
-                routeKey: 'production-identifier-types',
-                documentKey: 'production_identifier_types',
-                permissionPrefix: 'production.identifier_types',
-                table: 'production_identifier_types',
-                modelClass: ProductionIdentifierType::class,
-                translationKey: 'production_identifier_types',
-                viewPath: 'modules.core.item-lookups',
-                jsNamespace: 'productionIdentifierTypes',
-                routeNamePrefix: 'production.identifier-types',
             ),
         ];
     }

@@ -6,15 +6,19 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Inventory\Models\InventoryDocument;
 
 class ProductionRun extends Model
 {
+    use SoftDeletes;
+
     public const StatusPlanned = 'planned';
 
     public const StatusSetup = 'setup';
@@ -31,14 +35,15 @@ class ProductionRun extends Model
 
     protected $fillable = [
         'public_id', 'run_number', 'company_id', 'financial_period_id', 'branch_id',
-        'production_order_id', 'production_order_line_id', 'product_id', 'unit_id',
+        'production_order_id', 'production_order_line_id', 'production_order_stage_snapshot_id', 'product_id', 'unit_id',
         'cost_center_id',
         'conversion_factor', 'planned_quantity', 'planned_base_quantity', 'good_base_quantity',
         'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity',
         'received_base_quantity', 'planned_start_at', 'planned_end_at', 'actual_start_at',
-        'actual_end_at', 'production_shift_id', 'production_machine_id', 'production_mold_id',
-        'batch_lot', 'status', 'setup_status', 'setup_started_at', 'setup_completed_at',
-        'notes', 'created_by', 'updated_by', 'started_by', 'completed_by',
+        'actual_end_at', 'production_shift_id', 'production_machine_id', 'production_mold_id', 'fixed_asset_id',
+        'batch_lot', 'work_description', 'planned_labor_count', 'actual_labor_count', 'labor_details',
+        'status', 'setup_status', 'setup_started_at', 'setup_completed_at',
+        'notes', 'created_by', 'updated_by', 'started_by', 'completed_by', 'deleted_by', 'restored_by', 'restored_at',
     ];
 
     protected $attributes = ['status' => self::StatusPlanned, 'setup_status' => 'pending'];
@@ -58,6 +63,8 @@ class ProductionRun extends Model
             'planned_start_at' => 'datetime', 'planned_end_at' => 'datetime',
             'actual_start_at' => 'datetime', 'actual_end_at' => 'datetime',
             'setup_started_at' => 'datetime', 'setup_completed_at' => 'datetime',
+            'labor_details' => 'array', 'planned_labor_count' => 'integer', 'actual_labor_count' => 'integer',
+            'restored_at' => 'datetime',
         ];
     }
 
@@ -87,6 +94,32 @@ class ProductionRun extends Model
         ));
     }
 
+    public function actualDurationMinutes(): ?int
+    {
+        if ($this->actual_start_at === null) {
+            return null;
+        }
+
+        return max(0, (int) round($this->actual_start_at->diffInSeconds($this->actual_end_at ?? now()) / 60));
+    }
+
+    public function actualDurationHours(): ?string
+    {
+        $minutes = $this->actualDurationMinutes();
+
+        return $minutes === null ? null : number_format($minutes / 60, 2, '.', '');
+    }
+
+    public function totalLaborHours(): string
+    {
+        $total = collect($this->labor_details ?? [])->reduce(
+            fn (string $sum, array $labor): string => bcadd($sum, (string) ($labor['actual_hours'] ?? 0), 2),
+            '0.00',
+        );
+
+        return number_format((float) $total, 2, '.', '');
+    }
+
     public function order(): BelongsTo
     {
         return $this->belongsTo(ProductionOrder::class, 'production_order_id');
@@ -95,6 +128,16 @@ class ProductionRun extends Model
     public function orderLine(): BelongsTo
     {
         return $this->belongsTo(ProductionOrderLine::class, 'production_order_line_id');
+    }
+
+    public function stageSnapshot(): BelongsTo
+    {
+        return $this->belongsTo(ProductionOrderStageSnapshot::class, 'production_order_stage_snapshot_id');
+    }
+
+    public function fixedAsset(): BelongsTo
+    {
+        return $this->belongsTo(FixedAsset::class)->withTrashed();
     }
 
     public function product(): BelongsTo
@@ -145,5 +188,15 @@ class ProductionRun extends Model
     public function inventoryDocuments(): HasMany
     {
         return $this->hasMany(InventoryDocument::class, 'production_run_id')->orderBy('document_date')->orderBy('id');
+    }
+
+    public function materialRequests(): HasMany
+    {
+        return $this->hasMany(ProductionMaterialRequest::class)->orderBy('request_date')->orderBy('id');
+    }
+
+    public function expenseRequests(): HasMany
+    {
+        return $this->hasMany(ProductionExpenseRequest::class)->orderBy('request_date')->orderBy('id');
     }
 }

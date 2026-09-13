@@ -88,12 +88,12 @@
                             <div class="row g-2 justify-content-md-end align-items-center">
                                 @if (($boardConfig['can']['viewAny'] ?? false) === true)
                                     <div class="col-md-5 col-xl-4">
-                                        <select class="form-select form-select-sm js-select2-ajax js-board-user-selector"
+                                        <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-user-selector"
                                             data-url="{{ route('admin.select2.users') }}"
                                             data-placeholder="{{ __('user_tasks.placeholders.board_user') }}"
                                             data-allow-clear="false">
                                             <option value="{{ $boardUser->doc_num }}" selected>{{ trim(implode(' / ', array_filter([$boardUser->name, $boardUser->doc_num]))) }}</option>
-                                        </select>
+                                        </x-forms.select>
                                     </div>
                                 @endif
                                 <div class="col-md-auto">
@@ -172,30 +172,30 @@
                                     <div class="row g-2 align-items-end">
                                         <div class="col-md-6 col-xl-2">
                                             <x-forms.label for="board_all_tasks_status" :label="__('user_tasks.attributes.status')" />
-                                            <select class="form-select form-select-sm js-board-all-tasks-filter" id="board_all_tasks_status" name="status">
+                                            <x-forms.select class="form-select form-select-sm js-board-all-tasks-filter" id="board_all_tasks_status" name="status">
                                                 <option value="">{{ __('user_tasks.filters.all') }}</option>
                                                 @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                                     <option value="{{ $status }}">{{ __("user_tasks.statuses.{$status}") }}</option>
                                                 @endforeach
-                                            </select>
+                                            </x-forms.select>
                                         </div>
                                         <div class="col-md-6 col-xl-2">
                                             <x-forms.label for="board_all_tasks_list_doc_num" :label="__('user_tasks.attributes.board_list')" />
-                                            <select class="form-select form-select-sm js-board-all-tasks-filter js-board-all-tasks-list-filter" id="board_all_tasks_list_doc_num" name="board_list_doc_num">
+                                            <x-forms.select class="form-select form-select-sm js-board-all-tasks-filter js-board-all-tasks-list-filter" id="board_all_tasks_list_doc_num" name="board_list_doc_num">
                                                 <option value="">{{ __('user_tasks.filters.all') }}</option>
-                                            </select>
+                                            </x-forms.select>
                                         </div>
                                         <div class="col-md-6 col-xl-2">
                                             <x-forms.label for="board_all_tasks_owner_doc_num" :label="__('user_tasks.attributes.board_owner')" />
-                                            <select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_owner_doc_num" name="board_owner_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_board_owner') }}" data-allow-clear="true"></select>
+                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_owner_doc_num" name="board_owner_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_board_owner') }}" data-allow-clear="true"></x-forms.select>
                                         </div>
                                         <div class="col-md-6 col-xl-2">
                                             <x-forms.label for="board_all_tasks_assigned_user_doc_num" :label="__('user_tasks.attributes.assignees')" />
-                                            <select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_assigned_user_doc_num" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_assignee') }}" data-allow-clear="true"></select>
+                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_assigned_user_doc_num" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_assignee') }}" data-allow-clear="true"></x-forms.select>
                                         </div>
                                         <div class="col-md-6 col-xl-2">
                                             <x-forms.label for="board_all_tasks_creator_doc_num" :label="__('user_tasks.attributes.creator')" />
-                                            <select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_creator_doc_num" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></select>
+                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-all-tasks-filter" id="board_all_tasks_creator_doc_num" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></x-forms.select>
                                         </div>
                                         <div class="col-md-6 col-xl-auto">
                                             <button class="btn btn-falcon-default btn-sm w-100 js-board-all-tasks-refresh" type="button">
@@ -211,17 +211,17 @@
                                     <div class="row g-2 align-items-end">
                                         <div class="col-md-4">
                                             <x-forms.label for="board_all_notes_list_doc_num" :label="__('user_tasks.attributes.board_list')" />
-                                            <select class="form-select form-select-sm js-board-all-notes-filter js-board-all-notes-list-filter" id="board_all_notes_list_doc_num" name="board_list_doc_num">
+                                            <x-forms.select class="form-select form-select-sm js-board-all-notes-filter js-board-all-notes-list-filter" id="board_all_notes_list_doc_num" name="board_list_doc_num">
                                                 <option value="">{{ __('user_tasks.filters.all') }}</option>
-                                            </select>
+                                            </x-forms.select>
                                         </div>
                                         <div class="col-md-4">
                                             <x-forms.label for="board_all_notes_owner_doc_num" :label="__('user_tasks.attributes.board_owner')" />
-                                            <select class="form-select form-select-sm js-select2-ajax js-board-all-notes-filter" id="board_all_notes_owner_doc_num" name="board_owner_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_board_owner') }}" data-allow-clear="true"></select>
+                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-all-notes-filter" id="board_all_notes_owner_doc_num" name="board_owner_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_board_owner') }}" data-allow-clear="true"></x-forms.select>
                                         </div>
                                         <div class="col-md-3">
                                             <x-forms.label for="board_all_notes_creator_doc_num" :label="__('user_tasks.attributes.creator')" />
-                                            <select class="form-select form-select-sm js-select2-ajax js-board-all-notes-filter" id="board_all_notes_creator_doc_num" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></select>
+                                            <x-forms.select class="form-select form-select-sm js-select2-ajax js-board-all-notes-filter" id="board_all_notes_creator_doc_num" name="creator_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.filter_creator') }}" data-allow-clear="true"></x-forms.select>
                                         </div>
                                         <div class="col-md-1">
                                             <button class="btn btn-falcon-default btn-sm w-100 js-board-all-notes-refresh" type="button">
@@ -255,74 +255,74 @@
                     </div>
                     <div class="modal-body">
                         <div class="alert alert-danger d-none js-board-errors"></div>
-                        <input type="hidden" name="doc_num">
-                        <input type="hidden" name="board_user_doc_num" value="{{ $boardUser->doc_num }}">
+                        <x-forms.input type="hidden" name="doc_num" />
+                        <x-forms.input type="hidden" name="board_user_doc_num" value="{{ $boardUser->doc_num }}" />
                         <div class="row g-3">
                             <div class="col-12">
                                 <h6 class="mb-0 text-700">{{ __('user_tasks.sections.details') }}</h6>
                             </div>
                             <div class="col-12">
                                 <x-forms.label for="board_title" :label="__('user_tasks.attributes.title')" required />
-                                <input class="form-control" id="board_title" name="title" type="text" required>
+                                <x-forms.input class="form-control" id="board_title" name="title" type="text" required />
                                 <div class="invalid-feedback" data-error-for="title"></div>
                             </div>
                             <div class="col-md-4">
                                 <x-forms.label for="board_type" :label="__('user_tasks.attributes.type')" required />
-                                <select class="form-select" id="board_type" name="type" required>
+                                <x-forms.select class="form-select" id="board_type" name="type" required>
                                     @foreach (\Modules\Core\Models\UserTask::Types as $type)
                                         <option value="{{ $type }}">{{ __("user_tasks.types.{$type}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="type"></div>
                             </div>
                             <div class="col-md-4">
                                 <x-forms.label for="board_list_doc_num" :label="__('user_tasks.attributes.board_list')" required />
-                                <select class="form-select" id="board_list_doc_num" name="board_list_doc_num" required></select>
+                                <x-forms.select class="form-select" id="board_list_doc_num" name="board_list_doc_num" required></x-forms.select>
                                 <div class="invalid-feedback" data-error-for="board_list_doc_num"></div>
                             </div>
                             <div class="col-md-4">
                                 <x-forms.label for="board_status" :label="__('user_tasks.attributes.status')" required />
-                                <select class="form-select" id="board_status" name="status" required>
+                                <x-forms.select class="form-select" id="board_status" name="status" required>
                                     @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                         <option value="{{ $status }}">{{ __("user_tasks.statuses.{$status}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="status"></div>
                             </div>
                             <div class="col-md-4 js-board-task-field">
                                 <x-forms.label for="board_priority" :label="__('user_tasks.attributes.priority')" required />
-                                <select class="form-select" id="board_priority" name="priority" required>
+                                <x-forms.select class="form-select" id="board_priority" name="priority" required>
                                     @foreach (\Modules\Core\Models\UserTask::Priorities as $priority)
                                         <option value="{{ $priority }}">{{ __("user_tasks.priorities.{$priority}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="priority"></div>
                             </div>
                             <div class="col-md-4 js-board-task-field">
                                 <x-forms.label for="board_due_at" :label="__('user_tasks.attributes.due_at')" />
-                                <input class="form-control js-date-picker" id="board_due_at" name="due_at" type="text" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker" id="board_due_at" name="due_at" type="text" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" dir="ltr" />
                                 <div class="invalid-feedback" data-error-for="due_at"></div>
                             </div>
                             @if (($boardConfig['can']['assign'] ?? false) === true)
                                 <div class="col-md-4 js-board-task-field">
                                     <x-forms.label for="board_assignee_doc_nums" :label="__('user_tasks.attributes.assignees')" />
-                                    <select class="form-select js-select2-ajax" id="board_assignee_doc_nums" name="assignee_doc_nums[]" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assignees') }}" data-allow-clear="true" multiple></select>
+                                    <x-forms.select class="form-select js-select2-ajax" id="board_assignee_doc_nums" name="assignee_doc_nums[]" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assignees') }}" data-allow-clear="true" multiple></x-forms.select>
                                     <div class="invalid-feedback d-block" data-error-for="assignee_doc_nums"></div>
                                 </div>
                             @endif
                             <div class="col-md-4">
                                 <x-forms.label for="board_color" :label="__('user_tasks.attributes.color')" />
-                                <select class="form-select" id="board_color" name="color">
+                                <x-forms.select class="form-select" id="board_color" name="color">
                                     <option value="">{{ __('common.empty_value') }}</option>
                                     @foreach (\Modules\Core\Models\UserTask::Colors as $color)
                                         <option value="{{ $color }}">{{ __("user_tasks.colors.{$color}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="color"></div>
                             </div>
                             <div class="col-12">
                                 <x-forms.label for="board_description" :label="__('user_tasks.attributes.description')" />
-                                <textarea class="form-control js-board-rich-editor" id="board_description" name="description" rows="6" placeholder="{{ __('user_tasks.placeholders.description') }}"></textarea>
+                                <x-forms.textarea class="form-control js-board-rich-editor" id="board_description" name="description" rows="6" placeholder="{{ __('user_tasks.placeholders.description') }}"></x-forms.textarea>
                                 <div class="invalid-feedback" data-error-for="description"></div>
                             </div>
                             <div class="col-12 d-none js-board-edit-comments-section">
@@ -332,7 +332,7 @@
                                     @if (($boardConfig['can']['commentCreate'] ?? false) === true)
                                         <div class="mt-3">
                                             <div class="alert alert-danger d-none js-board-edit-comment-errors"></div>
-                                            <textarea class="form-control js-board-edit-comment-editor" id="board_edit_comment_body" name="edit_body_html" rows="4" placeholder="{{ __('user_tasks.placeholders.comment') }}"></textarea>
+                                            <x-forms.textarea class="form-control js-board-edit-comment-editor" id="board_edit_comment_body" name="edit_body_html" rows="4" placeholder="{{ __('user_tasks.placeholders.comment') }}"></x-forms.textarea>
                                             <div class="invalid-feedback d-block" data-error-for="body_html"></div>
                                             <div class="mt-2 text-end">
                                                 <button class="btn btn-primary btn-sm js-board-edit-comment-save" type="button">
@@ -386,7 +386,7 @@
                         @if (($boardConfig['can']['commentCreate'] ?? false) === true)
                             <form class="mt-3 js-board-comment-form" novalidate>
                                 <div class="alert alert-danger d-none js-board-comment-errors"></div>
-                                <textarea class="form-control js-board-comment-editor" id="board_comment_body" name="body_html" rows="4" placeholder="{{ __('user_tasks.placeholders.comment') }}"></textarea>
+                                <x-forms.textarea class="form-control js-board-comment-editor" id="board_comment_body" name="body_html" rows="4" placeholder="{{ __('user_tasks.placeholders.comment') }}"></x-forms.textarea>
                                 <div class="invalid-feedback d-block" data-error-for="body_html"></div>
                                 <div class="mt-2 text-end">
                                     <button class="btn btn-primary btn-sm" type="submit">
@@ -420,38 +420,38 @@
                     </div>
                     <div class="modal-body">
                         <div class="alert alert-danger d-none js-board-list-errors"></div>
-                        <input type="hidden" name="doc_num">
+                        <x-forms.input type="hidden" name="doc_num" />
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <x-forms.label for="board_list_type" :label="__('user_tasks.attributes.type')" required />
-                                <select class="form-select" id="board_list_type" name="type" required>
+                                <x-forms.select class="form-select" id="board_list_type" name="type" required>
                                     @foreach (\Modules\Core\Models\UserTask::Types as $type)
                                         <option value="{{ $type }}">{{ __("user_tasks.types.{$type}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="type"></div>
                             </div>
                             <div class="col-md-6">
                                 <x-forms.label for="board_list_status" :label="__('user_tasks.attributes.status')" required />
-                                <select class="form-select" id="board_list_status" name="status" required>
+                                <x-forms.select class="form-select" id="board_list_status" name="status" required>
                                     @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                         <option value="{{ $status }}">{{ __("user_tasks.statuses.{$status}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="status"></div>
                             </div>
                             <div class="col-12">
                                 <x-forms.label for="board_list_name" :label="__('user_tasks.attributes.name')" required />
-                                <input class="form-control" id="board_list_name" name="name" type="text" required>
+                                <x-forms.input class="form-control" id="board_list_name" name="name" type="text" required />
                                 <div class="invalid-feedback" data-error-for="name"></div>
                             </div>
                             <div class="col-12">
                                 <x-forms.label for="board_list_color" :label="__('user_tasks.attributes.color')" />
-                                <select class="form-select" id="board_list_color" name="color">
+                                <x-forms.select class="form-select" id="board_list_color" name="color">
                                     @foreach (\Modules\Core\Models\UserTask::Colors as $color)
                                         <option value="{{ $color }}">{{ __("user_tasks.colors.{$color}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="color"></div>
                             </div>
                         </div>

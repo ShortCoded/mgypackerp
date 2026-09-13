@@ -41,42 +41,42 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-date-from">{{ __('reports.from_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-date-to">{{ __('reports.to_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-user">{{ __('auth_logs.filters.user') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-user" name="user" data-filter-label="{{ __('auth_logs.filters.user') }}" data-url="{{ route('admin.auth-logs.filter-options.users') }}" data-placeholder="{{ __('auth_logs.placeholders.select_user') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-user" name="user" data-filter-label="{{ __('auth_logs.filters.user') }}" data-url="{{ route('admin.auth-logs.filter-options.users') }}" data-placeholder="{{ __('auth_logs.placeholders.select_user') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-event">{{ __('auth_logs.filters.event') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-event" name="event" data-filter-label="{{ __('auth_logs.filters.event') }}" data-url="{{ route('admin.auth-logs.filter-options.events') }}" data-placeholder="{{ __('auth_logs.placeholders.select_event') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-event" name="event" data-filter-label="{{ __('auth_logs.filters.event') }}" data-url="{{ route('admin.auth-logs.filter-options.events') }}" data-placeholder="{{ __('auth_logs.placeholders.select_event') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-status">{{ __('auth_logs.filters.status') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-status" name="status" data-filter-label="{{ __('auth_logs.filters.status') }}" data-url="{{ route('admin.auth-logs.filter-options.statuses') }}" data-placeholder="{{ __('auth_logs.placeholders.select_result') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-status" name="status" data-filter-label="{{ __('auth_logs.filters.status') }}" data-url="{{ route('admin.auth-logs.filter-options.statuses') }}" data-placeholder="{{ __('auth_logs.placeholders.select_result') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-ip">{{ __('auth_logs.filters.ip') }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="auth-ip" name="ip" type="text" data-filter-label="{{ __('auth_logs.filters.ip') }}" placeholder="{{ __('auth_logs.placeholders.ip_address') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="auth-ip" name="ip" type="text" data-filter-label="{{ __('auth_logs.filters.ip') }}" placeholder="{{ __('auth_logs.placeholders.ip_address') }}" />
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-failure-reason">{{ __('auth_logs.filters.failure_reason') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-failure-reason" name="failure_reason" data-filter-label="{{ __('auth_logs.filters.failure_reason') }}" data-url="{{ route('admin.auth-logs.filter-options.failure-reasons') }}" data-placeholder="{{ __('auth_logs.placeholders.select_failure_reason') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="auth-failure-reason" name="failure_reason" data-filter-label="{{ __('auth_logs.filters.failure_reason') }}" data-url="{{ route('admin.auth-logs.filter-options.failure-reasons') }}" data-placeholder="{{ __('auth_logs.placeholders.select_failure_reason') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
         </x-admin.report.filter-panel>
 

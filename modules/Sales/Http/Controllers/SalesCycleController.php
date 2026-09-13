@@ -3,6 +3,7 @@
 namespace Modules\Sales\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
@@ -51,7 +53,6 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\CustomerInvoicePaymentSchedule;
 use Modules\Sales\Models\CustomerReceipt;
-use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -63,6 +64,7 @@ use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\CustomerReceiptService;
 use Modules\Sales\Services\CustomerReceiptSettlementService;
 use Modules\Sales\Services\ElectronicInvoiceService;
+use Modules\Sales\Services\PriceListPricingService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesRequestService;
@@ -282,7 +284,13 @@ class SalesCycleController extends Controller
             abort_unless($request->user()?->can('sales_requests.view'), 403);
         }
 
-        return $this->created($service->createDirect($request->validated(), $sourceRequest), 'admin.sales.sales-invoices.show');
+        try {
+            $invoice = $service->createDirect($request->validated(), $sourceRequest);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return $this->created($invoice, 'admin.sales.sales-invoices.show');
     }
 
     public function showInvoice(CustomerInvoice $customerInvoice): View
@@ -427,15 +435,19 @@ class SalesCycleController extends Controller
     public function storeOrder(StoreSalesOrderRequest $request, SalesOrderService $service, SalesRequestService $requestService): JsonResponse
     {
         $context = $this->requiredContext($request);
-        $payload = $this->salesOrderPayload($request->validated(), $context);
-        if ($request->filled('source_request_doc_num')) {
-            abort_unless($request->user()?->can('sales_requests.view'), 403);
-            $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
-                ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
-            $order = $requestService->convertToOrder($sourceRequest, $payload);
-        } else {
-            $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
-            $order = $service->create(collect($payload)->except('source_request_doc_num')->all());
+        try {
+            $payload = $this->salesOrderPayload($request->validated(), $context);
+            if ($request->filled('source_request_doc_num')) {
+                abort_unless($request->user()?->can('sales_requests.view'), 403);
+                $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                    ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
+                $order = $requestService->convertToOrder($sourceRequest, $payload);
+            } else {
+                $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+                $order = $service->create(collect($payload)->except('source_request_doc_num')->all());
+            }
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
         }
 
         return $this->created($order, 'admin.sales.sales-orders.show');
@@ -445,9 +457,13 @@ class SalesCycleController extends Controller
     {
         $context = $this->requiredContext($request);
         abort_unless((int) $salesOrder->financial_period_id === $context['financial_period_id'], 404);
-        $payload = $this->salesOrderPayload($request->validated(), $context, $salesOrder->business_employee_id);
-        $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
-        $order = $service->update($salesOrder, collect($payload)->except('source_request_doc_num')->all());
+        try {
+            $payload = $this->salesOrderPayload($request->validated(), $context, $salesOrder->business_employee_id, $salesOrder);
+            $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+            $order = $service->update($salesOrder, collect($payload)->except('source_request_doc_num')->all());
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
 
         return response()->json(['data' => ['doc_num' => $order->doc_num, 'url' => route('admin.sales.sales-orders.show', $order)]]);
     }
@@ -599,25 +615,23 @@ class SalesCycleController extends Controller
 
     public function priceSuggestion(Request $request): JsonResponse
     {
-        abort_unless($request->user()?->canAny(['sales_orders.create', 'sales_orders.edit', 'sales_requests.create', 'sales_requests.edit', 'quotations.create', 'quotations.edit']), 403);
+        abort_unless($request->user()?->canAny(['sales_orders.create', 'sales_orders.edit', 'sales_requests.create', 'sales_requests.edit', 'quotations.create', 'quotations.edit', 'customer_invoices.create']), 403);
         $context = $this->requiredContext($request);
-        $data = $request->validate(['customer_doc_num' => ['required', 'string'], 'product_doc_num' => ['required', 'string'], 'unit_doc_num' => ['required', 'string'], 'currency_doc_num' => ['required', 'string']]);
+        if ($request->filled('document_date')) {
+            $request->merge(['document_date' => app(DateFormatService::class)->normalizeForStorage($request->string('document_date')->toString())]);
+        }
+        $data = $request->validate(['customer_doc_num' => ['required', 'string'], 'product_doc_num' => ['required', 'string'], 'unit_doc_num' => ['required', 'string'], 'currency_doc_num' => ['required', 'string'], 'document_date' => ['nullable', 'date'], 'quantity' => ['nullable', 'numeric', 'gt:0']]);
         $customerId = Customer::query()->forCompany($context['company_id'])->where('doc_num', $data['customer_doc_num'])->valueOrFail('id');
-        $productId = Product::query()->forCompany($context['company_id'])->where('doc_num', $data['product_doc_num'])->valueOrFail('id');
+        $product = Product::query()->forCompany($context['company_id'])->where('doc_num', $data['product_doc_num'])->firstOrFail();
         $unitId = ItemUnit::query()->forCompany($context['company_id'])->where('doc_num', $data['unit_doc_num'])->valueOrFail('id');
         $currencyId = Currency::query()->forCompany($context['company_id'])->where('doc_num', $data['currency_doc_num'])->valueOrFail('id');
-        $quotation = Quotation::query()->with('currentRevision.lines')->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
-            ->where('customer_id', $customerId)->where('currency_id', $currencyId)->whereIn('status', ['accepted', 'converted'])
-            ->where(fn ($query) => $query->whereNull('valid_until')->orWhereDate('valid_until', '>=', today()))
-            ->whereHas('currentRevision.lines', fn ($query) => $query->where('product_id', $productId)->where('unit_id', $unitId))->latest('quotation_date')->latest('id')->first();
-        $quotationLine = $quotation?->currentRevision?->lines->first(fn ($line) => $line->product_id === $productId && $line->unit_id === $unitId);
-        if ($quotationLine) {
-            return response()->json(['data' => ['unit_price' => $quotationLine->unit_price, 'source' => $quotation->doc_num]]);
+        try {
+            $price = app(PriceListPricingService::class)->resolve($context['company_id'], $customerId, $currencyId, $product, $unitId, $data['quantity'] ?? 1, $data['document_date'] ?? now()->toDateString());
+        } catch (DomainException $exception) {
+            return response()->json(['data' => null, 'message' => $exception->getMessage()]);
         }
-        $line = CustomerInvoiceLine::query()->with('invoice')->where('product_id', $productId)->where('unit_id', $unitId)
-            ->whereHas('invoice', fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('customer_id', $customerId)->where('currency_id', $currencyId)->where('document_type', 'invoice')->where('posting_status', 'posted'))->latest('id')->first();
 
-        return response()->json(['data' => $line ? ['unit_price' => $line->unit_price, 'source' => $line->invoice->doc_num] : null]);
+        return response()->json(['data' => [...$price, 'source' => $price['price_list_doc_num'], 'scope' => $price['source']]]);
     }
 
     public function reverseReceipt(Request $request, CustomerReceipt $customerReceipt): JsonResponse
@@ -832,7 +846,7 @@ class SalesCycleController extends Controller
      * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
      * @return array<string, mixed>
      */
-    private function salesOrderPayload(array $data, array $context, ?int $preservedEmployeeId = null): array
+    private function salesOrderPayload(array $data, array $context, ?int $preservedEmployeeId = null, ?SalesOrder $existingOrder = null): array
     {
         $customer = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
         $currency = Currency::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
@@ -849,6 +863,11 @@ class SalesCycleController extends Controller
                 'description' => trim((string) ($line['description'] ?? '')) ?: $product->name,
             ];
         })->all();
+
+        $pricing = app(PriceListPricingService::class);
+        $lines = $existingOrder
+            ? $pricing->preserveStoredOrderPrices($lines, $existingOrder->lines()->orderBy('line_number')->get(), $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'])
+            : $pricing->applyToLines($lines, $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'], 'amount');
 
         return [
             ...collect($data)->except(['customer_doc_num', 'currency_doc_num', 'branch_store_uuid', 'sales_employee_doc_num', 'lines'])->all(),

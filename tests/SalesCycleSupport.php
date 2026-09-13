@@ -20,6 +20,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\PriceList;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\SalesOrderService;
 use Symfony\Component\Process\Process;
@@ -122,6 +123,33 @@ function salesCycleSession(array $fixture): array
         OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
+}
+
+/** @param array<string, mixed> $fixture @param list<array{product: Product, price: string|int|float, discount_type?: string|null, discount_value?: string|int|float}> $prices */
+function createSalesPriceList(array $fixture, ?int $customerId, array $prices, string $validFrom = '2026-01-01'): PriceList
+{
+    $number = PriceList::query()->count() + 1;
+    $list = PriceList::query()->create([
+        'doc_number' => $number,
+        'doc_num' => 'PL-'.str_pad((string) $number, 5, '0', STR_PAD_LEFT),
+        'company_id' => $fixture['company']->id,
+        'customer_id' => $customerId,
+        'currency_id' => $fixture['currency']->id,
+        'price_list_date' => $validFrom,
+        'valid_from' => $validFrom,
+        'valid_until' => null,
+    ]);
+    foreach ($prices as $index => $price) {
+        $list->lines()->create([
+            'line_number' => $index + 1,
+            'product_id' => $price['product']->id,
+            'unit_price' => $price['price'],
+            'allowed_discount_type' => $price['discount_type'] ?? null,
+            'allowed_discount_value' => $price['discount_value'] ?? 0,
+        ]);
+    }
+
+    return $list;
 }
 
 /** @param array<string, mixed> $fixture */

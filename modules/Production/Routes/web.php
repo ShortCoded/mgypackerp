@@ -1,39 +1,69 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Modules\Core\Http\Controllers\ItemLookupController;
-use Modules\Core\Http\Controllers\Select2\ItemLookupSelect2Controller;
-use Modules\Production\Http\Controllers\ProductionIdentifierController;
+use Modules\Production\Http\Controllers\ProductionExpenseRequestController;
+use Modules\Production\Http\Controllers\ProductionMaterialRequestController;
 use Modules\Production\Http\Controllers\ProductionOrderController;
+use Modules\Production\Http\Controllers\ProductionQualityController;
 use Modules\Production\Http\Controllers\ProductionReportController;
-use Modules\Production\Http\Controllers\ProductionResourceController;
 use Modules\Production\Http\Controllers\ProductionRunController;
+use Modules\Production\Http\Controllers\ProductionStageController;
+use Modules\Production\Http\Controllers\ProductProductionStageController;
 
 Route::middleware('auth')
     ->prefix('admin/production')
     ->as('admin.production.')
     ->group(function (): void {
-        Route::get('/resources', [ProductionResourceController::class, 'index'])
-            ->middleware('can:production.resources.view')
-            ->name('resources.index');
-        Route::post('/resources/machines', [ProductionResourceController::class, 'storeMachine'])
-            ->middleware('can:production.resources.manage')
-            ->name('resources.machines.store');
-        Route::post('/resources/molds', [ProductionResourceController::class, 'storeMold'])
-            ->middleware('can:production.resources.manage')
-            ->name('resources.molds.store');
-        Route::post('/resources/shifts', [ProductionResourceController::class, 'storeShift'])
-            ->middleware('can:production.resources.manage')
-            ->name('resources.shifts.store');
-        Route::get('/select2/identifier-types', ItemLookupSelect2Controller::class)
-            ->defaults('lookup', 'production-identifier-types')
-            ->name('select2.identifier-types');
-        Route::get('/select2/identifiers', [ProductionIdentifierController::class, 'select2Identifiers'])
-            ->middleware('can:production.identifiers.view')
-            ->name('select2.identifiers');
+        Route::prefix('stages')->name('stages.')->controller(ProductionStageController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:production.stages.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:production.stages.view')->name('data');
+            Route::get('/create', 'create')->middleware('can:production.stages.create')->name('create');
+            Route::post('/', 'store')->name('store');
+            Route::patch('/{productionStage}/restore', 'restore')->middleware('can:production.stages.restore')->name('restore');
+            Route::get('/{productionStage}/edit', 'edit')->middleware('can:production.stages.edit')->name('edit');
+            Route::put('/{productionStage}', 'update')->name('update');
+            Route::delete('/{productionStage}', 'destroy')->middleware('can:production.stages.delete')->name('destroy');
+        });
+        Route::get('/product-stages', [ProductProductionStageController::class, 'index'])->middleware('can:production.product_stages.view')->name('product-stages.index');
+        Route::get('/product-stages/{product}/edit', [ProductProductionStageController::class, 'edit'])->middleware('can:production.product_stages.manage')->name('product-stages.edit');
+        Route::put('/product-stages/{product}', [ProductProductionStageController::class, 'update'])->name('product-stages.update');
+
+        Route::get('/material-requests', [ProductionMaterialRequestController::class, 'index'])->middleware('can:production.material_requests.view')->name('material-requests.index');
+        Route::post('/material-requests', [ProductionMaterialRequestController::class, 'store'])->name('material-requests.store');
+        Route::post('/material-requests/{productionMaterialRequest}/approve', [ProductionMaterialRequestController::class, 'approve'])->middleware('can:production.material_requests.approve')->name('material-requests.approve');
+        Route::post('/material-requests/{productionMaterialRequest}/allocate-shortage', [ProductionMaterialRequestController::class, 'allocateShortage'])->middleware('can:production.material_requests.approve')->name('material-requests.allocate-shortage');
+        Route::post('/material-requests/{productionMaterialRequest}/issue', [ProductionMaterialRequestController::class, 'issue'])->middleware('can:production.material_requests.issue')->name('material-requests.issue');
+
+        Route::get('/expenses', [ProductionExpenseRequestController::class, 'index'])->middleware('can:production.expenses.view')->name('expenses.index');
+        Route::post('/expenses', [ProductionExpenseRequestController::class, 'store'])->name('expenses.store');
+        Route::post('/expenses/{productionExpenseRequest}/approve', [ProductionExpenseRequestController::class, 'approve'])->middleware('can:production.expenses.approve')->name('expenses.approve');
+        Route::post('/expenses/{productionExpenseRequest}/pay', [ProductionExpenseRequestController::class, 'pay'])->middleware('can:production.expenses.pay')->name('expenses.pay');
+        Route::post('/expenses/{productionExpenseRequest}/reverse', [ProductionExpenseRequestController::class, 'reverse'])->middleware('can:production.expenses.reverse')->name('expenses.reverse');
+
+        Route::get('/quality', [ProductionQualityController::class, 'index'])->middleware('can:production.quality.view')->name('quality.index');
+        Route::get('/quality/data', [ProductionQualityController::class, 'data'])->middleware('can:production.quality.view')->name('quality.data');
+        Route::get('/quality/active', [ProductionQualityController::class, 'active'])->middleware('can:production.quality.view')->name('quality.active');
+        Route::get('/quality/reports', [ProductionQualityController::class, 'reportsIndex'])->middleware('can:production.quality.view')->name('quality.reports.index');
+        Route::get('/quality/reports/data', [ProductionQualityController::class, 'reportsData'])->middleware('can:production.quality.view')->name('quality.reports.data');
+        Route::get('/quality/export.xlsx', [ProductionQualityController::class, 'export'])->middleware('can:production.quality.export')->name('quality.export');
+        Route::get('/quality/print', [ProductionQualityController::class, 'print'])->middleware('can:production.quality.print')->name('quality.print');
+        Route::get('/quality/create', [ProductionQualityController::class, 'create'])->middleware('can:production.quality.create')->name('quality.create');
+        Route::post('/quality', [ProductionQualityController::class, 'store'])->name('quality.store');
+        Route::get('/quality/{inspection}', [ProductionQualityController::class, 'show'])->middleware('can:production.quality.view')->name('quality.show');
+        Route::get('/quality/{inspection}/evidence/{evidence}', [ProductionQualityController::class, 'evidence'])->middleware('can:production.quality.view')->whereNumber('evidence')->name('quality.evidence');
+        Route::get('/quality/{inspection}/reports/{report}/evidence/{evidence}', [ProductionQualityController::class, 'reportEvidence'])->middleware('can:production.quality.view')->whereNumber(['report', 'evidence'])->name('quality.reports.evidence');
+        Route::post('/quality/{inspection}/receive', [ProductionQualityController::class, 'receive'])->middleware('can:production.quality.receive')->name('quality.receive');
+        Route::post('/quality/{inspection}/start', [ProductionQualityController::class, 'start'])->middleware('can:production.quality.start')->name('quality.start');
+        Route::post('/quality/{inspection}/reports', [ProductionQualityController::class, 'addReport'])->name('quality.reports.store');
+        Route::post('/quality/{inspection}/submit', [ProductionQualityController::class, 'submit'])->name('quality.submit');
+        Route::post('/quality/{inspection}/approve', [ProductionQualityController::class, 'approve'])->middleware('can:production.quality.review')->name('quality.approve');
+        Route::post('/quality/{inspection}/reject', [ProductionQualityController::class, 'reject'])->middleware('can:production.quality.review')->name('quality.reject');
+        Route::post('/quality/{inspection}/close', [ProductionQualityController::class, 'close'])->name('quality.close');
+        Route::post('/quality/{inspection}/reinspect', [ProductionQualityController::class, 'reinspect'])->middleware('can:production.quality.reinspect')->name('quality.reinspect');
 
         Route::prefix('work-orders')->name('work-orders.')->controller(ProductionOrderController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:production.orders.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:production.orders.view')->name('data');
             Route::get('/{productionOrder}', 'show')->middleware('can:production.orders.view')->name('show');
             Route::get('/{productionOrder}/print', 'print')->middleware('can:production.orders.print')->name('print');
             Route::get('/{productionOrder}/requirement/print', 'printRequirement')->middleware('can:production.orders.print')->name('requirement.print');
@@ -42,15 +72,13 @@ Route::middleware('auth')
         Route::post('/work-orders/{productionOrder}/release', [ProductionRunController::class, 'releaseOrder'])
             ->middleware('can:production.orders.release')
             ->name('work-orders.release');
-        Route::post('/work-orders/make-to-stock', [ProductionRunController::class, 'storeMakeToStockOrder'])
-            ->middleware('can:production.orders.plan')
-            ->name('work-orders.make-to-stock.store');
         Route::post('/work-orders/{productionOrder}/short-close', [ProductionRunController::class, 'shortClose'])
             ->middleware('can:production.orders.short_close')
             ->name('work-orders.short-close');
 
         Route::prefix('runs')->name('runs.')->controller(ProductionRunController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:production.runs.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:production.runs.view')->name('data');
             Route::post('/', 'store')->middleware('can:production.runs.plan')->name('store');
             Route::get('/{productionRun}/print', 'print')->middleware('can:production.runs.print')->name('print');
             Route::get('/{productionRun}/materials/print', 'printMaterials')->middleware('can:production.runs.print')->name('materials.print');
@@ -65,7 +93,7 @@ Route::middleware('auth')
             Route::post('/{productionRun}/resume', 'resume')->middleware('can:production.runs.qc')->name('resume');
             Route::post('/{productionRun}/cancel', 'cancel')->middleware('can:production.runs.cancel')->name('cancel');
             Route::post('/{productionRun}/progress', 'progress')->middleware('can:production.runs.progress')->name('progress');
-            Route::post('/{productionRun}/inspect', 'inspect')->middleware('can:production.runs.qc')->name('inspect');
+            Route::post('/{productionRun}/labor', 'labor')->middleware('can:production.runs.labor')->name('labor');
             Route::post('/{productionRun}/account-materials', 'account')->middleware('can:production.runs.account_materials')->name('account');
             Route::post('/{productionRun}/receive', 'receive')->middleware('can:production.runs.receive')->name('receive');
             Route::post('/{productionRun}/complete', 'complete')->middleware('can:production.runs.complete')->name('complete');
@@ -81,76 +109,4 @@ Route::middleware('auth')
             ->middleware(['can:production.reports.operational', 'can:production.reports.export'])
             ->name('reports.print');
 
-        Route::prefix('identifier-types')
-            ->name('identifier-types.')
-            ->controller(ItemLookupController::class)
-            ->group(function (): void {
-                Route::get('/', 'index')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.view')
-                    ->name('index');
-                Route::get('/data', 'data')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.view')
-                    ->name('data');
-                Route::get('/create', 'create')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.create')
-                    ->name('create');
-                Route::post('/', 'store')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->name('store');
-                Route::delete('/bulk-delete', 'bulkDelete')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.delete')
-                    ->name('bulk-delete');
-                Route::put('/document-number-settings', 'updateDocumentNumberSettings')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.document_number_settings.update')
-                    ->name('document-number-settings.update');
-                Route::patch('/{record}/restore', 'restore')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.restore')
-                    ->name('restore');
-                Route::get('/{record}/clone', 'clone')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.clone')
-                    ->name('clone');
-                Route::get('/{record}', 'show')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.view')
-                    ->name('show');
-                Route::get('/{record}/edit', 'edit')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.edit')
-                    ->name('edit');
-                Route::put('/{record}', 'update')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.edit')
-                    ->name('update');
-                Route::delete('/{record}', 'destroy')
-                    ->defaults('itemLookup', 'production_identifier_types')
-                    ->middleware('can:production.identifier_types.delete')
-                    ->name('destroy');
-            });
-
-        Route::prefix('identifiers')
-            ->name('identifiers.')
-            ->controller(ProductionIdentifierController::class)
-            ->group(function (): void {
-                Route::get('/', 'index')->middleware('can:production.identifiers.view')->name('index');
-                Route::get('/data', 'data')->middleware('can:production.identifiers.view')->name('data');
-                Route::get('/select2', 'select2Identifiers')->middleware('can:production.identifiers.view')->name('select2');
-                Route::get('/tree', 'tree')->middleware('can:production.identifiers.view')->name('tree');
-                Route::get('/create', 'create')->middleware('can:production.identifiers.create')->name('create');
-                Route::post('/', 'store')->name('store');
-                Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:production.identifiers.delete')->name('bulk-delete');
-                Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:production.identifiers.document_number_settings.update')->name('document-number-settings.update');
-                Route::patch('/{identifier}/restore', 'restore')->middleware('can:production.identifiers.restore')->name('restore');
-                Route::get('/{identifier}/clone', 'clone')->middleware('can:production.identifiers.clone')->name('clone');
-                Route::get('/{identifier}', 'show')->withTrashed()->middleware('can:production.identifiers.view')->name('show');
-                Route::get('/{identifier}/edit', 'edit')->middleware('can:production.identifiers.edit')->name('edit');
-                Route::put('/{identifier}', 'update')->middleware('can:production.identifiers.edit')->name('update');
-                Route::delete('/{identifier}', 'destroy')->middleware('can:production.identifiers.delete')->name('destroy');
-            });
     });

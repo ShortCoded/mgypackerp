@@ -182,6 +182,7 @@ function dataTablesHarness() {
     jQuery.extend = jqueryExtend;
 
     const window = {
+        addEventListener() {},
         AppShortcuts: {
             applyDataTableSearchTitles(root) {
                 shortcutRoots.push(root);
@@ -853,7 +854,7 @@ test('datatable draw enhancements stay scoped to the current card and bind deleg
     assert.deepEqual(harness.shortcutRoots, [harness.card]);
 
     const firstDrawBindingCount = harness.bindingCalls.length;
-    assert.equal(firstDrawBindingCount, 6);
+    assert.equal(firstDrawBindingCount, 8);
     assert.ok(harness.bindingCalls.some(({ eventName, method, selector }) => (
         eventName === 'click.erpDataTableSelectAll'
         && method === 'on'

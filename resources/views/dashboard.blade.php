@@ -1,8 +1,13 @@
 @extends('layouts.app')
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('title', __('dashboard.plastics.title'))
 
 @push('styles')
+    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/employee-self-service.css') }}">
     <style>
         .plastics-dashboard {
             --plastics-dashboard-section-gap: 1.5rem;
@@ -116,6 +121,33 @@
                 </div>
             </div>
         </header>
+
+        @if ($employeeAttendance['linked'])
+            <section class="card attendance-hero employee-self-service mb-3"
+                data-status-url="{{ route('employee.hr.attendance.status') }}"
+                data-punch-url="{{ route('employee.hr.attendance.punch') }}"
+                data-login-url="{{ route('login') }}"
+                data-messages='@json(__('hr_attendance.javascript'))'>
+                <div class="card-body p-3">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                        <div>
+                            <div class="small text-600">{{ __('hr_attendance.self_service.title') }} · {{ $employeeAttendance['employee']['branch'] ?: __('hr_attendance.labels.no_branch') }}</div>
+                            <h5 class="mb-1 js-attendance-state-label">{{ __('hr_attendance.states.'.$employeeAttendance['state']) }}</h5>
+                            <div class="small text-600 js-attendance-check-in">{{ $employeeAttendance['check_in_at'] ? __('hr_attendance.labels.checked_in_at', ['time' => $employeeAttendance['check_in_display']]) : __('hr_attendance.labels.not_checked_in') }}</div>
+                            <span class="d-none js-attendance-clock" data-check-in-at="{{ $employeeAttendance['check_in_at'] }}" data-state="{{ $employeeAttendance['state'] }}"></span>
+                            <span class="d-none js-worked-minutes">{{ $employeeAttendance['worked_minutes'] }}</span><span class="d-none js-break-minutes">{{ $employeeAttendance['break_minutes'] }}</span>
+                        </div>
+                        <div class="attendance-actions js-attendance-actions flex-grow-1">
+                            @foreach (\Modules\HR\Models\HrAttendanceEvent::types() as $action)
+                                <button type="button" class="btn attendance-action-btn js-attendance-punch {{ in_array($action, $employeeAttendance['allowed_actions'], true) ? '' : 'd-none' }}" data-event-type="{{ $action }}">{{ __('hr_attendance.actions.'.$action) }}</button>
+                            @endforeach
+                        </div>
+                        <a class="btn btn-falcon-default" href="{{ route('employee.hr.self-service.index') }}">{{ __('hr_requests.self_service.my_requests') }}</a>
+                    </div>
+                    <div class="js-attendance-feedback mt-2" role="status" aria-live="polite"></div>
+                </div>
+            </section>
+        @endif
 
         @if ($limitations !== [])
             <div class="py-2 mb-3 alert alert-info">
@@ -243,6 +275,10 @@
         </section>
     </div>
 @endsection
+
+@push('scripts')
+    <script src="{{ asset('assets/js/modules/HR/employee-self-service.js') }}"></script>
+@endpush
 
 @push('scripts')
     @php

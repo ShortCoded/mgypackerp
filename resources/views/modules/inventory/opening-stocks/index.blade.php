@@ -39,12 +39,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6 col-lg-4">
                                 <label class="form-label" for="opening-stocks-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="opening-stocks-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="opening-stocks-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label" for="opening-stocks-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="opening-stocks-document-padding" name="padding" type="number" min="1" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}" required>
+                                <x-forms.input class="form-control" id="opening-stocks-document-padding" name="padding" type="number" min="1" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}" required />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -69,11 +69,11 @@
                     @can('inventory.opening_stocks.view_trashed')
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="opening_stocks_trash_filter">{{ __('business_partners.trash.filter_label') }}</label>
-                            <select class="form-select form-select-sm w-auto js-opening-stocks-trash-filter" id="opening_stocks_trash_filter" aria-label="{{ __('business_partners.trash.filter_label') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto js-opening-stocks-trash-filter" id="opening_stocks_trash_filter" aria-label="{{ __('business_partners.trash.filter_label') }}">
                                 <option value="active">{{ __('business_partners.trash.active') }}</option>
                                 <option value="trashed">{{ __('business_partners.trash.trashed') }}</option>
                                 <option value="all">{{ __('business_partners.trash.all') }}</option>
-                            </select>
+                            </x-forms.select>
                         </div>
                     @endcan
                     @if($canUseCurrentBranch)
@@ -93,7 +93,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('finance.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('finance.select_all') }}" />
                                         </div>
                                     </th>
                                     @foreach($columns as $index => $column)

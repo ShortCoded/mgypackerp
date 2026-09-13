@@ -22,6 +22,8 @@ test('sales navigation exposes only canonical operational screens and no child s
 
     expect($menuRoutes)->toBe([
         'admin.sales.customers.index',
+        'admin.sales.customer-terms.index',
+        'admin.sales.price-lists.index',
         'admin.sales.customer-requests.index',
         'admin.sales.quotations.index',
         'admin.sales.sales-orders.index',
@@ -32,8 +34,8 @@ test('sales navigation exposes only canonical operational screens and no child s
         null,
     ]);
 
-    $reportRoutes = collect($menu[0]['children'][8]['children'])->pluck('route')->all();
-    expect($reportRoutes)->toHaveCount(12)
+    $reportRoutes = collect($menu[0]['children'][10]['children'])->pluck('route')->all();
+    expect($reportRoutes)->toHaveCount(13)
         ->and($reportRoutes[0])->toBe('admin.accounting.reports.customer-statement')
         ->and(collect($reportRoutes)->slice(1)->every(fn (?string $route): bool => $route === 'admin.reports.sales.sales-orders.index'))->toBeTrue();
 

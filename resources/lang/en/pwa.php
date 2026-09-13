@@ -79,6 +79,12 @@ return [
         'offline' => 'You are offline. Changes will not be submitted until the connection returns.',
         'online' => 'Connection restored.',
     ],
+    'navigation' => [
+        'label' => 'App navigation',
+        'back' => 'Back',
+        'forward' => 'Forward',
+        'reload' => 'Reload',
+    ],
     'update' => [
         'available' => 'A new version is available.',
         'reload' => 'Reload',

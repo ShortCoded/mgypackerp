@@ -71,9 +71,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -135,10 +135,10 @@
                                 @can('sales_requests.view')
                                     <div class="col-12">
                                         <x-forms.label for="source_request_doc_num" :label="__('sales_ui.source_sales_request')" />
-                                        <select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-quotation-source data-create-url="{{ route('admin.sales.quotations.create') }}" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.direct_quotation') }}" data-allow-clear="true">
+                                        <x-forms.select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-quotation-source data-create-url="{{ route('admin.sales.quotations.create') }}" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.direct_quotation') }}" data-allow-clear="true">
                                             <option value="">{{ __('sales_ui.direct_quotation') }}</option>
                                             @if($sourceRequest)<option value="{{ $sourceRequest->doc_num }}" selected>{{ $sourceRequest->doc_num }} / {{ $sourceRequest->customer?->name }}</option>@endif
-                                        </select>
+                                        </x-forms.select>
                                         <small class="text-muted">{{ __('sales_ui.source_quotation_request_help') }}</small>
                                     </div>
                                 @endcan
@@ -149,7 +149,7 @@
                                     @if ($isReadonly)
                                         <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                                     @else
-                                        <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                        <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                     @endif
                                     <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                                 </div>
@@ -173,7 +173,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="quotation_date" :value="$plainDate($record?->quotation_date)" dir="ltr" input-class="date-value text-center" />
                                 @else
-                                    <input class="form-control text-center js-date-picker" id="quotation_date" name="quotation_date" type="text" value="{{ $dateValue('quotation_date', $isCreateLike ? now() : $record?->quotation_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                                    <x-forms.date-input class="form-control text-center js-date-picker" id="quotation_date" name="quotation_date" type="text" value="{{ $dateValue('quotation_date', $isCreateLike ? now() : $record?->quotation_date) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="quotation_date"></div>
                             </div>
@@ -183,7 +183,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="valid_until" :value="$plainDate($record?->valid_until)" dir="ltr" input-class="date-value text-center" />
                                 @else
-                                    <input class="form-control text-center js-date-picker" id="valid_until" name="valid_until" type="text" value="{{ $dateValue('valid_until', $record?->valid_until) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                                    <x-forms.date-input class="form-control text-center js-date-picker" id="valid_until" name="valid_until" type="text" value="{{ $dateValue('valid_until', $record?->valid_until) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="valid_until"></div>
                             </div>
@@ -193,11 +193,11 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="customer_doc_num" :value="$customerOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('quotations.placeholders.customer') }}" data-allow-clear="true" required>
+                                    <x-forms.select class="form-select js-select2-ajax" id="customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('quotations.placeholders.customer') }}" data-allow-clear="true" required>
                                         @if ($customerOption)
                                             <option value="{{ $customerOption['id'] }}" selected>{{ $customerOption['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="customer_doc_num"></div>
                             </div>
@@ -207,11 +207,11 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="quotation_type" :value="__('quotations.types.'.($record?->quotation_type ?? Quotation::TypeStandard))" />
                                 @else
-                                    <select class="form-select" id="quotation_type" name="quotation_type" required>
+                                    <x-forms.select class="form-select" id="quotation_type" name="quotation_type" required>
                                         @foreach (Quotation::Types as $type)
                                             <option value="{{ $type }}" @selected(old('quotation_type', $record?->quotation_type ?? Quotation::TypeStandard) === $type)>{{ __("quotations.types.{$type}") }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 @unless($isReadonly)<small class="text-muted">{{ __('sales_ui.quotation_type_help') }}</small>@endunless
                                 <div class="invalid-feedback d-block" data-error-for="quotation_type"></div>
@@ -222,11 +222,11 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="currency_doc_num" :value="$currencyOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('quotations.placeholders.currency') }}" required>
+                                    <x-forms.select class="form-select js-select2-ajax" id="currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('quotations.placeholders.currency') }}" required>
                                         @if ($currencyOption)
                                             <option value="{{ $currencyOption['id'] }}" selected>{{ $currencyOption['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                             </div>
@@ -246,11 +246,11 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="sales_person_doc_num" :value="$salesPersonOption['text'] ?? null" />
                                 @else
-                                    <select class="form-select js-select2-ajax" id="sales_person_doc_num" name="sales_person_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-placeholder="{{ __('quotations.placeholders.sales_person') }}" data-allow-clear="true">
+                                    <x-forms.select class="form-select js-select2-ajax" id="sales_person_doc_num" name="sales_person_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-placeholder="{{ __('quotations.placeholders.sales_person') }}" data-allow-clear="true">
                                         @if ($salesPersonOption)
                                             <option value="{{ $salesPersonOption['id'] }}" selected>{{ $salesPersonOption['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <small class="text-muted">{{ __('sales_ui.employee_hint') }} @can('hr.employees.create')<a href="{{ route('admin.hr.employees.create') }}">{{ __('sales_ui.add_employee') }}</a>@endcan</small>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="sales_person_doc_num"></div>
@@ -261,7 +261,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="subject" :value="$record?->subject" />
                                 @else
-                                    <input class="form-control" id="subject" name="subject" type="text" value="{{ old('subject', $record?->subject) }}" maxlength="255">
+                                    <x-forms.input class="form-control" id="subject" name="subject" type="text" value="{{ old('subject', $record?->subject) }}" maxlength="255" />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="subject"></div>
                             </div>
@@ -271,7 +271,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="project_name" :value="$record?->project_name" />
                                 @else
-                                    <input class="form-control" id="project_name" name="project_name" type="text" value="{{ old('project_name', $record?->project_name) }}" maxlength="255" @required($isProjectQuotation)>
+                                    <x-forms.input class="form-control" id="project_name" name="project_name" type="text" value="{{ old('project_name', $record?->project_name) }}" maxlength="255" :required='$isProjectQuotation' />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="project_name"></div>
                             </div>
@@ -281,7 +281,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="customer_reference" :value="$record?->customer_reference" />
                                 @else
-                                    <input class="form-control" id="customer_reference" name="customer_reference" type="text" value="{{ old('customer_reference', $record?->customer_reference ?? $sourceRequest?->customer_reference) }}" maxlength="160">
+                                    <x-forms.input class="form-control" id="customer_reference" name="customer_reference" type="text" value="{{ old('customer_reference', $record?->customer_reference ?? $sourceRequest?->customer_reference) }}" maxlength="160" />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="customer_reference"></div>
                             </div>
@@ -291,7 +291,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="internal_notes" :value="$record?->internal_notes" />
                                 @else
-                                    <textarea class="form-control" id="internal_notes" name="internal_notes" rows="2">{{ old('internal_notes', $record?->internal_notes) }}</textarea>
+                                    <x-forms.textarea class="form-control" id="internal_notes" name="internal_notes" rows="2">{{ old('internal_notes', $record?->internal_notes) }}</x-forms.textarea>
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="internal_notes"></div>
                             </div>
@@ -302,7 +302,7 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="revision_date" :value="$plainDate($currentRevision?->revision_date)" dir="ltr" input-class="date-value text-center" />
                                 @else
-                                    <input class="form-control text-center js-date-picker" id="revision_date" name="revision_date" type="text" value="{{ $dateValue('revision_date', $currentRevision?->revision_date ?? now()) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                                    <x-forms.date-input class="form-control text-center js-date-picker" id="revision_date" name="revision_date" type="text" value="{{ $dateValue('revision_date', $currentRevision?->revision_date ?? now()) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="revision_date"></div>
                             </div>
@@ -312,13 +312,13 @@
                                 @if ($isReadonly)
                                     <x-forms.view-field for="change_reason" :value="$currentRevision?->change_reason" />
                                 @else
-                                    <input class="form-control" id="change_reason" name="change_reason" type="text" value="{{ old('change_reason', $currentRevision?->change_reason) }}">
+                                    <x-forms.input class="form-control" id="change_reason" name="change_reason" type="text" value="{{ old('change_reason', $currentRevision?->change_reason) }}" />
                                 @endif
                                 <div class="invalid-feedback d-block" data-error-for="change_reason"></div>
                             </div>
                             @elseif(! $isReadonly)
-                                <input type="hidden" name="revision_date" value="{{ $dateValue('revision_date', $currentRevision?->revision_date ?? now()) }}">
-                                <input type="hidden" name="change_reason" value="">
+                                <x-forms.input type="hidden" name="revision_date" value="{{ $dateValue('revision_date', $currentRevision?->revision_date ?? now()) }}" />
+                                <x-forms.input type="hidden" name="change_reason" value="" />
                             @endif
                         </div>
                     </div>
@@ -355,15 +355,15 @@
                                     @foreach ($lines as $index => $line)
                                         <tr class="js-quotation-line" data-index="{{ $index }}">
                                             <td>
-                                                @if(! empty($line['source_request_line_public_id']))<input type="hidden" name="lines[{{ $index }}][source_request_line_public_id]" value="{{ $line['source_request_line_public_id'] }}">@endif
+                                                @if(! empty($line['source_request_line_public_id']))<x-forms.input type="hidden" name="lines[{{ $index }}][source_request_line_public_id]" value="{{ $line['source_request_line_public_id'] }}" />@endif
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['product_label'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <select class="form-select js-select2-ajax js-quotation-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true" required>
+                                                    <x-forms.select class="form-select js-select2-ajax js-quotation-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('quotations.placeholders.product') }}" data-allow-clear="true" required>
                                                         @if (! empty($line['product_doc_num']))
                                                             <option value="{{ $line['product_doc_num'] }}" data-unit-doc-num="{{ $line['unit_doc_num'] ?? '' }}" data-unit-label="{{ $line['unit_label'] ?? '' }}" selected>{{ $line['product_label'] ?? $line['product_doc_num'] }}</option>
                                                         @endif
-                                                    </select>
+                                                    </x-forms.select>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
                                                 @endif
                                             </td>
@@ -371,7 +371,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['description'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <textarea class="form-control" name="lines[{{ $index }}][description]" rows="1">{{ $line['description'] ?? '' }}</textarea>
+                                                    <x-forms.textarea class="form-control" name="lines[{{ $index }}][description]" rows="1">{{ $line['description'] ?? '' }}</x-forms.textarea>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.description"></div>
                                                 @endif
                                             </td>
@@ -379,11 +379,11 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['unit_label'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <select class="form-select js-select2-local js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true" required><option value=""></option>@foreach($line['units'] ?? [] as $unitOption)<option value="{{ $unitOption['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $unitOption['id'])>{{ $unitOption['text'] }}</option>@endforeach
+                                                    <x-forms.select class="form-select js-select2-local js-quotation-unit" name="lines[{{ $index }}][unit_doc_num]" data-placeholder="{{ __('quotations.placeholders.unit') }}" data-allow-clear="true" required><option value=""></option>@foreach($line['units'] ?? [] as $unitOption)<option value="{{ $unitOption['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $unitOption['id'])>{{ $unitOption['text'] }}</option>@endforeach
                                                         @if (! empty($line['unit_doc_num']) && !collect($line['units'] ?? [])->contains('id', $line['unit_doc_num']))
                                                             <option value="{{ $line['unit_doc_num'] }}" selected>{{ $line['unit_label'] ?? $line['unit_doc_num'] }}</option>
                                                         @endif
-                                                    </select>
+                                                    </x-forms.select>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
                                                 @endif
                                             </td>
@@ -399,7 +399,8 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                                 @else
-                                                    <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
+                                                    <x-forms.input type="hidden" class="js-quotation-calc" name="lines[{{ $index }}][unit_price]" value="{{ $line['unit_price'] ?? '' }}" />
+                                                    <div class="form-control-plaintext text-center fw-semibold" dir="ltr" data-price-display>{{ filled($line['unit_price'] ?? null) ? $numbers->format($line['unit_price']) : __('price_lists.not_selected') }}</div>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                                 @endif
                                             </td>
@@ -408,11 +409,11 @@
                                                     <div class="form-control-plaintext">{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$numbers->format($line['discount_value']) : __('common.empty_value') }}</div>
                                                 @else
                                                     <div class="input-group input-group-sm">
-                                                        <select class="form-select js-quotation-calc" name="lines[{{ $index }}][discount_type]">
+                                                        <x-forms.select class="form-select js-quotation-calc" name="lines[{{ $index }}][discount_type]">
                                                             <option value="">{{ __('quotations.discount_types.none') }}</option>
                                                             <option value="fixed" @selected(($line['discount_type'] ?? null) === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
                                                             <option value="percentage" @selected(($line['discount_type'] ?? null) === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
-                                                        </select>
+                                                        </x-forms.select>
                                                     <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" :disabled="blank($line['discount_type'] ?? null)" />
                                                     </div>
                                                 @endif
@@ -431,14 +432,14 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['requested_date'] ?: __('common.empty_value') }}</div>
                                                 @else
-                                                    <input class="form-control js-date-picker" name="lines[{{ $index }}][requested_date]" value="{{ $line['requested_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off">
+                                                    <x-forms.date-input class="form-control js-date-picker" name="lines[{{ $index }}][requested_date]" value="{{ $line['requested_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" />
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['notes'] ?? __('common.empty_value') }}</div>
                                                 @else
-                                                    <input class="form-control" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}">
+                                                    <x-forms.input class="form-control" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}" />
                                                 @endif
                                             </td>
                                             @unless ($isReadonly)
@@ -461,14 +462,8 @@
                                     @if ($isReadonly)
                                         <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$numbers->format($currentRevision->discount_value) : __('common.empty_value') }}</div>
                                     @else
-                                        <div class="input-group input-group-sm">
-                                            <select class="form-select js-quotation-calc" name="discount_type">
-                                                <option value="">{{ __('quotations.discount_types.none') }}</option>
-                                                <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
-                                                <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
-                                            </select>
-                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" :disabled="blank($discountType)" />
-                                        </div>
+                                        <x-forms.input type="hidden" name="discount_type" value="" /><x-forms.input type="hidden" name="discount_value" value="0" />
+                                        <div class="form-control-plaintext">{{ __('quotations.discount_types.none') }}</div>
                                     @endif
                                 </div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>
@@ -565,7 +560,7 @@
                                     @if ($isReadonly)
                                         <div id="{{ $field }}" class="px-3 py-2 border form-control-plaintext rounded-2">{!! $richDisplay($currentRevision?->{$snapshot}) !!}</div>
                                     @else
-                                        <textarea class="form-control js-quotation-rich-editor" id="{{ $field }}" name="{{ $field }}" rows="5" data-direction="{{ $editorDirection }}">{{ $richValue($field, $currentRevision?->{$snapshot}) }}</textarea>
+                                        <x-forms.textarea class="form-control js-quotation-rich-editor" id="{{ $field }}" name="{{ $field }}" rows="5" data-direction="{{ $editorDirection }}">{{ $richValue($field, $currentRevision?->{$snapshot}) }}</x-forms.textarea>
                                     @endif
                                     <div class="invalid-feedback d-block" data-error-for="{{ $field }}"></div>
                                 </div>
@@ -739,7 +734,7 @@
                 <div class="card-header">{{ __('Convert selected quantities') }}</div>
                 <div class="card-body"><div class="alert alert-danger d-none js-sales-form-alert"></div>
                 @foreach($currentRevision->lines as $index => $line)
-                    <div class="row g-2 mb-3"><div class="col-md-8">{{ $line->product?->name }} · {{ __('Original quantity') }} {{ $line->quantity }} {{ $line->unit?->name }}</div><div class="col-md-4"><input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line->public_uuid }}"><input class="form-control" name="lines[{{ $index }}][quantity]" inputmode="decimal" value="0" aria-label="{{ __('Convert now') }}"></div></div>
+                    <div class="row g-2 mb-3"><div class="col-md-8">{{ $line->product?->name }} · {{ __('Original quantity') }} {{ $line->quantity }} {{ $line->unit?->name }}</div><div class="col-md-4"><x-forms.input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line->public_uuid }}" /><x-forms.input class="form-control" name="lines[{{ $index }}][quantity]" inputmode="decimal" value="0" aria-label="{{ __('Convert now') }}" /></div></div>
                 @endforeach
                 <button class="btn btn-primary" type="submit">{{ __('Create Sales Order') }}</button></div>
             </form>

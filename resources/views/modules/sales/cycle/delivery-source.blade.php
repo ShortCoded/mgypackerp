@@ -12,7 +12,7 @@
         <form method="GET" action="{{ route('admin.sales.delivery-notes.create') }}" class="row g-3 align-items-end">
             <div class="col-md-9">
                 <x-forms.label for="invoice_doc_num" :label="__('sales_ui.posted_invoice')" required />
-                <select class="form-select js-select2-ajax" id="invoice_doc_num" name="invoice_doc_num" data-url="{{ route('admin.sales.select2.deliverable-invoices') }}" data-placeholder="{{ __('sales_ui.posted_invoice') }}" required></select>
+                <x-forms.select class="form-select js-select2-ajax" id="invoice_doc_num" name="invoice_doc_num" data-url="{{ route('admin.sales.select2.deliverable-invoices') }}" data-placeholder="{{ __('sales_ui.posted_invoice') }}" required></x-forms.select>
             </div>
             <div class="col-md-3"><button class="btn btn-primary w-100" type="submit">{{ __('sales_ui.continue_delivery') }}</button></div>
         </form>

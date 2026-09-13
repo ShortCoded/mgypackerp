@@ -23,20 +23,20 @@
                 <div class="col-12 col-lg-auto ms-lg-auto d-flex flex-wrap justify-content-lg-end align-items-center gap-2">
                     <div class="d-flex align-items-center gap-2">
                         <label class="form-label mb-0 text-700 fs-10" for="task_boards_record_filter">{{ __('task_boards.records.filter_label') }}</label>
-                        <select class="form-select form-select-sm w-auto" id="task_boards_record_filter" aria-label="{{ __('task_boards.records.filter_label') }}">
+                        <x-forms.select class="form-select form-select-sm w-auto" id="task_boards_record_filter" aria-label="{{ __('task_boards.records.filter_label') }}">
                             <option value="active">{{ __('task_boards.records.active') }}</option>
                             <option value="inactive">{{ __('task_boards.records.inactive') }}</option>
                             @can('task_boards.view_trashed')
                                 <option value="trashed">{{ __('task_boards.records.trashed') }}</option>
                                 <option value="all">{{ __('task_boards.records.all') }}</option>
                             @endcan
-                        </select>
+                        </x-forms.select>
                     </div>
 
                     @if ($hasBulkActions)
                         <div class="d-none align-items-center gap-2 task-boards-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('task_boards.bulk_action') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('task_boards.bulk_action') }}">
                                 @if ($canBulkDelete)
                                     <option value="delete" data-visible-filters="active inactive all">{{ __('task_boards.actions.delete_selected') }}</option>
                                 @endif
@@ -49,7 +49,7 @@
                                 @if ($canBulkRestore)
                                     <option value="restore" data-visible-filters="trashed all">{{ __('task_boards.actions.restore_selected') }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                             <button type="button" class="btn btn-falcon-default btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
@@ -74,7 +74,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" data-searchable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('task_boards.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('task_boards.select_all') }}" />
                                         </div>
                                     </th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('task_boards.attributes.doc_num') }}</th>

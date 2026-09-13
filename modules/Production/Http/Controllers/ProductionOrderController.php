@@ -3,12 +3,14 @@
 namespace Modules\Production\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\View\View;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Models\ProductionOrder;
 
 class ProductionOrderController extends Controller
@@ -24,28 +26,21 @@ class ProductionOrderController extends Controller
         $context = $this->context->snapshot($request);
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Operating context is required.');
 
-        return view('modules.production.work-orders.index', [
-            'records' => ProductionOrder::query()
-                ->with(['salesOrder.customer'])
-                ->where('company_id', $context['company_id'])
-                ->where('financial_period_id', $context['financial_period_id'])
-                ->where('branch_id', $context['branch_id'])
-                ->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()))
-                ->latest('production_order_date')
-                ->paginate(30)
-                ->withQueryString(),
-        ]);
+        return view('modules.production.work-orders.index');
+    }
+
+    public function data(Request $request, ProductionExecutionDataTable $dataTable): JsonResponse
+    {
+        return $dataTable->orders($request);
     }
 
     public function show(Request $request, ProductionOrder $productionOrder): View
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['salesOrder.branchStore', 'lines.product', 'lines.unit', 'runs.product', 'runs.requirements.product', 'runs.inventoryDocuments']);
+        $record = $productionOrder->load(['salesOrder.branch', 'salesOrder.branchStore', 'lines.product', 'lines.unit', 'lines.stageSnapshots', 'runs.product', 'runs.stageSnapshot', 'runs.requirements.product', 'runs.inventoryDocuments']);
 
-        return view('modules.sales.cycle.show', [
-            'kind' => 'production_request',
+        return view('modules.production.work-orders.show', [
             'record' => $record,
-            'showPrices' => false,
             'relatedDocuments' => collect([
                 ['label' => __('Sales Requirement / Order'), 'number' => $record->salesOrder?->doc_num, 'url' => $record->salesOrder ? route('admin.sales.sales-orders.show', $record->salesOrder) : null, 'permission' => 'sales_orders.view'],
                 ...$record->runs->map(fn ($run) => ['label' => __('Production Run'), 'number' => $run->run_number, 'url' => route('admin.production.runs.show', $run), 'permission' => 'production.runs.view', 'meta' => $run->status])->all(),
@@ -67,13 +62,11 @@ class ProductionOrderController extends Controller
     private function printDocument(Request $request, ProductionOrder $productionOrder, string $documentTitle, string $filenamePrefix): Response
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['company', 'salesOrder.salesEmployee', 'lines.product', 'lines.unit']);
+        $record = $productionOrder->load(['company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'lines.product', 'lines.unit', 'lines.stageSnapshots']);
 
-        return $this->pdf->stream('reports.sales.document', [
+        return $this->pdf->stream('reports.production.order', [
             'title' => $documentTitle.' — '.$record->doc_num,
-            'kind' => 'production_request',
             'record' => $record,
-            'showPrices' => false,
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
         ], str($filenamePrefix.'-'.$record->doc_num)->slug().'.pdf');
     }

@@ -46,6 +46,20 @@ test('hr enterprise schema keeps current screens and removes obsolete organizati
     }
 
     expect(Schema::hasColumn('hr_leave_requests', 'workflow_instance_id'))->toBeTrue()
+        ->and(Schema::hasTable('hr_attendance_sessions'))->toBeTrue()
+        ->and(Schema::hasTable('hr_attendance_events'))->toBeTrue()
+        ->and(Schema::hasTable('hr_attendance_open_sessions'))->toBeTrue()
+        ->and(Schema::hasTable('hr_employee_service_requests'))->toBeTrue()
+        ->and(Schema::hasColumns('hr_attendance_sessions', [
+            'scheduled_start_time',
+            'scheduled_end_time',
+            'scheduled_crosses_midnight',
+            'allowed_late_minutes',
+            'allowed_early_leave_minutes',
+            'overtime_enabled',
+        ]))->toBeTrue()
+        ->and(Schema::hasColumn('hr_employees', 'user_id'))->toBeTrue()
+        ->and(Schema::hasColumn('branches', 'attendance_latitude'))->toBeTrue()
         ->and(Schema::hasColumn('hr_employees', 'work_email'))->toBeTrue()
         ->and(Schema::hasColumn('hr_employees', 'personal_email'))->toBeTrue()
         ->and(Schema::hasColumn('hr_employees', 'primary_assignment_id'))->toBeFalse()

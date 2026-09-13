@@ -30,12 +30,12 @@
                         </div>
                         <div class="col-md-6 col-lg-4">
                             <label class="form-label" for="archive-files-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                            <input class="form-control" id="archive-files-document-prefix" name="archive_files_prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['archive_files']['prefix'] ?? '' }}">
+                            <x-forms.input class="form-control" id="archive-files-document-prefix" name="archive_files_prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['archive_files']['prefix'] ?? '' }}" />
                             <div class="invalid-feedback d-block" data-error-for="archive_files_prefix"></div>
                         </div>
                         <div class="col-md-3 col-lg-2">
                             <label class="form-label" for="archive-files-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                            <input class="form-control" id="archive-files-document-padding" name="archive_files_padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['archive_files']['padding'] ?? 0 }}" required>
+                            <x-forms.input class="form-control" id="archive-files-document-padding" name="archive_files_padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['archive_files']['padding'] ?? 0 }}" required />
                             <div class="invalid-feedback d-block" data-error-for="archive_files_padding"></div>
                         </div>
                         <div class="col-12">
@@ -43,12 +43,12 @@
                         </div>
                         <div class="col-md-6 col-lg-4">
                             <label class="form-label" for="archive-folders-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                            <input class="form-control" id="archive-folders-document-prefix" name="archive_folders_prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['archive_folders']['prefix'] ?? '' }}">
+                            <x-forms.input class="form-control" id="archive-folders-document-prefix" name="archive_folders_prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['archive_folders']['prefix'] ?? '' }}" />
                             <div class="invalid-feedback d-block" data-error-for="archive_folders_prefix"></div>
                         </div>
                         <div class="col-md-3 col-lg-2">
                             <label class="form-label" for="archive-folders-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                            <input class="form-control" id="archive-folders-document-padding" name="archive_folders_padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['archive_folders']['padding'] ?? 0 }}" required>
+                            <x-forms.input class="form-control" id="archive-folders-document-padding" name="archive_folders_padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['archive_folders']['padding'] ?? 0 }}" required />
                             <div class="invalid-feedback d-block" data-error-for="archive_folders_padding"></div>
                         </div>
                         <div class="col-md-auto">

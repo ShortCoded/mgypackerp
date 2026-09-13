@@ -162,8 +162,18 @@ class SalesOrderService
             }
             app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $locked->order_date, (int) $locked->financial_period_id, lockForUpdate: true);
 
+            $data['customer_id'] = $locked->customer_id;
+            $data['currency_id'] = $locked->currency_id;
+            $data['exchange_rate'] = $locked->exchange_rate;
+            if ($locked->quotation_id) {
+                $data['payment_schedules'] = $locked->paymentSchedules()->orderBy('sequence')->get()->map(fn ($schedule): array => [
+                    'title' => $schedule->title,
+                    'due_date' => $schedule->due_date->toDateString(),
+                    'amount' => $schedule->amount,
+                    'notes' => $schedule->notes,
+                ])->all();
+            }
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $locked->company_id);
-            $totals = $this->totals($lines);
             $currentLines = $locked->lines()->get();
             if ($locked->quotation_id || $locked->sales_request_id) {
                 if ($currentLines->count() !== count($lines)) {
@@ -176,9 +186,15 @@ class SalesOrderService
                     }
                     $line['quotation_revision_line_id'] = $source->quotation_revision_line_id;
                     $line['sales_request_line_id'] = $source->sales_request_line_id;
+                    if ($locked->quotation_id) {
+                        foreach (['description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total', 'conversion_factor', 'base_quantity', 'price_list_line_id', 'allowed_discount_type', 'allowed_discount_value', 'requested_date', 'specifications', 'customer_notes', 'warehouse_notes', 'production_notes'] as $field) {
+                            $line[$field] = $source->{$field};
+                        }
+                    }
                 }
                 unset($line);
             }
+            $totals = $this->totals($lines);
             $sameLines = $currentLines->count() === count($lines) && $currentLines->values()->every(fn (SalesOrderLine $line, int $index): bool => ! (clone $line)->fill($lines[$index])->isDirty());
             $currentSchedules = $locked->paymentSchedules()->get();
             $inputSchedules = $data['payment_schedules'] ?? [];
@@ -521,6 +537,9 @@ class SalesOrderService
                 'description' => $line->description ?: $line->product_name_snapshot,
                 'quantity' => $line->quantity,
                 'unit_price' => $line->unit_price,
+                'price_list_line_id' => $line->price_list_line_id,
+                'allowed_discount_type' => $line->allowed_discount_type,
+                'allowed_discount_value' => $line->allowed_discount_value,
                 'discount_amount' => $this->amounts->add($line->discount_amount, $share),
                 'tax_amount' => $line->tax_amount,
                 'requested_date' => $line->requested_date,

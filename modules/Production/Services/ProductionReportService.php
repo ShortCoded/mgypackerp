@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 
 class ProductionReportService
@@ -41,6 +42,7 @@ class ProductionReportService
             'orders' => $this->orders($companyId, $contextFilters),
             'runs' => $runs,
             'materials' => $materials,
+            'qualityInspections' => $this->qualityInspections($companyId, $contextFilters),
             'finishedGoodsReceipts' => $this->finishedGoodsReceipts($companyId, $contextFilters),
             'kpis' => $this->keyPerformanceIndicators($companyId, $contextFilters),
             'runCosts' => $includeFinancial ? $this->runCosts($runs) : collect(),
@@ -57,7 +59,7 @@ class ProductionReportService
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('production_order_date', '>=', $from))
             ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('production_order_date', '<=', $to))
-            ->with(['salesOrder.customer', 'lines.product', 'runs'])
+            ->with(['salesOrder', 'lines.product', 'runs'])
             ->orderByDesc('production_order_date')
             ->get();
     }
@@ -73,7 +75,7 @@ class ProductionReportService
             ->when($filters['production_order_id'] ?? null, fn ($query, $orderId) => $query->where('production_order_id', $orderId))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('planned_start_at', '>=', $from))
             ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('planned_start_at', '<=', $to))
-            ->with(['order.salesOrder.customer', 'orderLine', 'product', 'machine', 'mold', 'shift', 'inspections'])
+            ->with(['order.salesOrder', 'orderLine', 'product', 'fixedAsset', 'stageSnapshot', 'mold', 'shift', 'inspections'])
             ->orderByDesc('planned_start_at')
             ->get();
     }
@@ -129,8 +131,23 @@ class ProductionReportService
             ->when($filters['production_run_id'] ?? null, fn ($query, $runId) => $query->where('production_run_id', $runId))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('document_date', '>=', $from))
             ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('document_date', '<=', $to))
-            ->with(['productionRun.order.salesOrder.customer', 'productionRun.product', 'branchStore', 'lines.product', 'journalEntry'])
+            ->with(['productionRun.order.salesOrder', 'productionRun.product', 'branchStore', 'lines.product', 'journalEntry'])
             ->orderByDesc('document_date')
+            ->get();
+    }
+
+    /** @param array<string, mixed> $filters */
+    public function qualityInspections(int $companyId, array $filters = []): Collection
+    {
+        return ProductionQualityInspection::query()
+            ->where('company_id', $companyId)
+            ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
+            ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
+            ->when($filters['production_run_id'] ?? null, fn ($query, $runId) => $query->where('production_run_id', $runId))
+            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('requested_at', '>=', $from))
+            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('requested_at', '<=', $to))
+            ->with(['run.order.salesOrder', 'run.product', 'product', 'branchStore', 'stageSnapshot', 'qualityType', 'reports'])
+            ->orderByDesc('requested_at')
             ->get();
     }
 

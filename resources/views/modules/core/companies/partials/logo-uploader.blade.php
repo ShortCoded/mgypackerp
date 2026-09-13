@@ -31,13 +31,13 @@
      data-accepted-files="{{ $acceptedFiles }}"
      data-invalid-file-type="{{ $invalidFileType }}"
      data-file-too-large="{{ $fileTooLarge ?? ($inputName === 'favicon' ? __('companies.validation.favicon_too_large', ['size' => $maxFileSize]) : __('archive.logo_file_too_large', ['size' => $maxFileSize])) }}">
-    <input id="{{ $inputId }}"
+    <x-forms.input id="{{ $inputId }}"
            name="{{ $inputName }}"
            type="file"
            accept="{{ $acceptedFiles }}"
            class="visually-hidden js-company-logo-input"
-           @required($required && ! $disabled)
-           @disabled($disabled)>
+           :required='$required && ! $disabled'
+           :disabled='$disabled' />
 
     <div class="d-flex flex-column flex-md-row align-items-start gap-3">
         <div class="d-flex align-items-center justify-content-center bg-white border rounded-2 overflow-hidden flex-shrink-0" style="width: 8rem; height: 8rem;">

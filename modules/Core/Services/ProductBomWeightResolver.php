@@ -162,7 +162,7 @@ final class ProductBomWeightResolver
         $componentProduct = Product::query()
             ->forCompany((int) $product->company_id)
             ->active()
-            ->materialItems()
+            ->componentItems()
             ->with(['unit', 'equivalentUnit'])
             ->find($componentProductId);
 

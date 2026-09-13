@@ -15,10 +15,6 @@ class ErpUiScreenRegistry
         'product_data',
         'sales',
         'purchases',
-        'inventory',
-        'production',
-        'quality',
-        'maintenance',
         'finance',
         'fixed_assets',
         'costing',
@@ -115,6 +111,7 @@ class ErpUiScreenRegistry
                     'target' => $target,
                 ];
             })
+            ->filter(fn (array $alias): bool => $alias['target']->get('shell_enabled', true) !== false)
             ->values()
             ->all();
     }

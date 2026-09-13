@@ -221,15 +221,16 @@ test('procurement navigation follows the operational cycle and removes unused su
     $purchasesMenu = require config_path('menu/purchases.php');
     $purchaseRoutes = collect($purchasesMenu[0]['children'])->pluck('route')->filter()->values();
     expect(collect($inventory[0]['children'])->firstWhere('route', 'admin.purchases.purchase-requisitions.index'))->toBeNull()
-        ->and($purchaseRoutes->take(8)->all())->toBe([
+        ->and($purchaseRoutes->take(9)->all())->toBe([
+            'admin.purchases.suppliers.index',
             'admin.purchases.purchase-requisitions.index',
             'admin.purchases.supplier-quotation-entry.index',
             'admin.purchases.purchase-orders.index',
             'admin.purchases.supply-orders.index',
+            'admin.purchases.goods-receipt-inspection.index',
             'admin.purchases.goods-receipt-notes.index',
             'admin.purchases.purchase-invoices.index',
             'admin.purchases.purchase-returns.index',
-            'admin.purchases.supplier-payments.index',
         ]);
     $purchases = require config_path('erp_ui_screens/purchases.php');
     foreach (['supplier-payments', 'supplier-advances', 'supplier-debit-notes', 'supplier-contracts', 'supplier-contract-milestones', 'supplier-evaluation', 'supplier-price-lists', 'supplier-product-catalog', 'supplier-attachments', 'supplier-complaints'] as $slug) {

@@ -405,6 +405,27 @@ try {
 
   await client.send('Emulation.setEmulatedMedia', { features: [{ name: 'display-mode', value: 'standalone' }] });
   const standalone = await evaluate(`matchMedia('(display-mode: standalone)').matches`);
+  await waitUntil(
+    () => evaluate(`document.querySelector('[data-erp-pwa-navigation]')?.hidden === false`),
+    'Installed PWA navigation controls did not become visible.',
+  );
+  const pwaNavigation = await evaluate(`(() => {
+    const toolbar = document.querySelector('[data-erp-pwa-navigation]');
+    const buttons = toolbar ? [...toolbar.querySelectorAll('button')] : [];
+    const bounds = toolbar?.getBoundingClientRect();
+
+    return {
+      buttonCount: buttons.length,
+      labels: buttons.map((button) => button.getAttribute('aria-label')),
+      insideViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= innerWidth),
+      visible: Boolean(toolbar && !toolbar.hidden),
+    };
+  })()`);
+  assert(
+    pwaNavigation.visible && pwaNavigation.buttonCount === 3 && pwaNavigation.labels.every(Boolean),
+    `Invalid installed PWA navigation controls: ${JSON.stringify(pwaNavigation)}`,
+  );
+  assert(pwaNavigation.insideViewport, `PWA navigation overflowed the mobile viewport: ${JSON.stringify(pwaNavigation)}`);
 
   const staticCache = await evaluate(`(async () => {
     const asset = [...document.scripts].map((script) => script.src).find((src) => src.includes('/assets/js/theme.js'));
@@ -482,6 +503,7 @@ try {
     serviceWorker: { registration: firstRegistration, controlled, staticCache, update: updateState },
     installability: { manifestErrors: appManifest.errors || [], installability },
     standalone,
+    pwaNavigation,
     purchase,
     offline,
     push,

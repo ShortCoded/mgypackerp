@@ -74,6 +74,7 @@ class UpdateHrEmployeeRequest extends StoreHrEmployeeRequest
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
             $this->validateNestedRowOwnership($validator);
+            $this->validateUserLink($validator, $employee instanceof HrEmployee ? $employee : null);
         });
     }
 

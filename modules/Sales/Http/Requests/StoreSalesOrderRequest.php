@@ -59,7 +59,7 @@ class StoreSalesOrderRequest extends FormRequest
             'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['nullable', 'string'],
             'lines.*.source_request_line_public_id' => ['nullable', 'uuid', 'distinct'],
             'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'gt:0'], 'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'gt:0'], 'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
             'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'], 'lines.*.requested_date' => ['nullable', 'date'],
             'lines.*.specifications' => ['nullable', 'array'], 'lines.*.warehouse_notes' => ['nullable', 'string'],
             'lines.*.production_notes' => ['nullable', 'string'],

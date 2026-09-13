@@ -37,6 +37,14 @@ class UserSelect2Service
             $query->whereKeyNot($request->user()->getKey());
         }
 
+        if ($request->boolean('available_for_employee')) {
+            $employeeDocNum = trim((string) $request->input('employee_doc_num'));
+            $query->where(function ($query) use ($employeeDocNum): void {
+                $query->whereDoesntHave('hrEmployee', fn ($query) => $query->withTrashed())
+                    ->when($employeeDocNum !== '', fn ($query) => $query->orWhereHas('hrEmployee', fn ($query) => $query->withTrashed()->where('hr_employees.doc_num', $employeeDocNum)));
+            });
+        }
+
         $excludedDocNums = collect(explode(',', (string) $request->input('exclude_doc_nums')))
             ->map(fn (string $docNum): string => trim($docNum))
             ->filter()

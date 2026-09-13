@@ -33,30 +33,30 @@
             @include('modules.finance.partials.form-actions', ['mode' => 'create', 'record' => null, 'resource' => 'customer_invoices', 'routePrefix' => 'admin.sales.sales-invoices', 'canClone' => false])
         </div>
         <div class="card-body">
-            @if($sourceRequest)<input type="hidden" name="source_request_doc_num" value="{{ $sourceRequest->doc_num }}">@endif
+            @if($sourceRequest)<x-forms.input type="hidden" name="source_request_doc_num" value="{{ $sourceRequest->doc_num }}" />@endif
             <div class="row g-3">
                 <div class="col-md-6">
                     <x-forms.label for="invoice_customer_doc_num" :label="__('Customer')" required />
-                    <select class="form-select js-select2-ajax" id="invoice_customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('Select customer') }}" data-allow-clear="true" required>
+                    <x-forms.select class="form-select js-select2-ajax" id="invoice_customer_doc_num" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('Select customer') }}" data-allow-clear="true" required>
                         @foreach($customers as $customer)<option value="{{ $customer->doc_num }}" selected>{{ $customer->doc_num }} / {{ $customer->name }}</option>@endforeach
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback d-block" data-error-for="customer_doc_num"></div>
                 </div>
                 <div class="col-md-3">
                     <x-forms.label for="invoice_date" :label="__('Invoice date')" required />
-                    <input class="form-control js-date-picker" id="invoice_date" name="invoice_date" value="{{ old('invoice_date', $dates->formatDate(now(), '')) }}" autocomplete="off" required>
+                    <x-forms.date-input class="form-control js-date-picker" id="invoice_date" name="invoice_date" value="{{ old('invoice_date', $dates->formatDate(now(), '')) }}" autocomplete="off" required />
                     <div class="invalid-feedback d-block" data-error-for="invoice_date"></div>
                 </div>
                 <div class="col-md-3">
                     <x-forms.label for="due_date" :label="__('Due date')" />
-                    <input class="form-control js-date-picker" id="due_date" name="due_date" value="{{ old('due_date', $dates->formatDate(now(), '')) }}" autocomplete="off">
+                    <x-forms.date-input class="form-control js-date-picker" id="due_date" name="due_date" value="{{ old('due_date', $dates->formatDate(now(), '')) }}" autocomplete="off" />
                     <div class="invalid-feedback d-block" data-error-for="due_date"></div>
                 </div>
                 <div class="col-md-4">
                     <x-forms.label for="invoice_currency_doc_num" :label="__('Currency')" required />
-                    <select class="form-select js-select2-ajax" id="invoice_currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('Currency') }}" required>
+                    <x-forms.select class="form-select js-select2-ajax" id="invoice_currency_doc_num" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('Currency') }}" required>
                         @foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num', $sourceRequest?->currency?->doc_num ?? $currencies->firstWhere('is_main', true)?->doc_num) === $currency->doc_num)>{{ $currency->code }} — {{ $currency->name }}</option>@endforeach
-                    </select>
+                    </x-forms.select>
                     <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                 </div>
                 <div class="col-md-2">
@@ -65,7 +65,7 @@
                 </div>
                 <div class="col-md-6">
                     <x-forms.label for="invoice_notes" :label="__('Notes')" />
-                    <input class="form-control" id="invoice_notes" name="notes" value="{{ old('notes', $sourceRequest?->notes) }}">
+                    <x-forms.input class="form-control" id="invoice_notes" name="notes" value="{{ old('notes', $sourceRequest?->notes) }}" />
                 </div>
             </div>
         </div>

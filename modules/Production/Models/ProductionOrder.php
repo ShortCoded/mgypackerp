@@ -71,4 +71,9 @@ class ProductionOrder extends Model
     {
         return $this->hasMany(ProductionRun::class)->orderBy('planned_start_at');
     }
+
+    public function stageSnapshots(): HasMany
+    {
+        return $this->hasMany(ProductionOrderStageSnapshot::class)->orderBy('sequence');
+    }
 }

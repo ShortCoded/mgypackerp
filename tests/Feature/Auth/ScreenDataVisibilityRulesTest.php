@@ -90,6 +90,10 @@ function visibilityProduct(Company $company, User $creator, int $number, string 
     return $product;
 }
 
+beforeEach(function (): void {
+    config()->set('erp_features.screen_data_visibility_rules.enabled', true);
+});
+
 test('customer visibility rule restricts totals search select2 and direct routes to the latest authorized set', function () {
     CarbonImmutable::setTestNow('2026-07-19 12:00:00');
     $context = visibilityRuleContext();
@@ -324,6 +328,45 @@ test('product report rows and filter options combine product and material polici
 
     $this->getJson(route('admin.inventory.products.details', $olderProduct->doc_num))
         ->assertNotFound();
+});
+
+test('component selector combines product and material visibility policies', function () {
+    CarbonImmutable::setTestNow('2026-07-19 12:00:00');
+    $context = visibilityRuleContext();
+    $actor = visibilityRuleUser(['products.view']);
+    $other = User::factory()->create();
+
+    $latestProduct = visibilityProduct($context['company'], $actor, 96301, Product::ClassificationFinishedProduct, now()->toImmutable());
+    $olderProduct = visibilityProduct($context['company'], $actor, 96302, Product::ClassificationFinishedProduct, now()->toImmutable()->subDay());
+    visibilityProduct($context['company'], $other, 96303, Product::ClassificationFinishedProduct, now()->toImmutable()->addMinute());
+
+    $latestRawMaterial = visibilityProduct($context['company'], $actor, 96401, Product::ClassificationRawMaterial, now()->toImmutable());
+    $olderRawMaterial = visibilityProduct($context['company'], $actor, 96402, Product::ClassificationRawMaterial, now()->toImmutable()->subDay());
+    visibilityProduct($context['company'], $other, 96403, Product::ClassificationRawMaterial, now()->toImmutable()->addMinute());
+
+    $latestPackagingMaterial = visibilityProduct($context['company'], $actor, 96501, Product::ClassificationPackaging, now()->toImmutable());
+    $olderPackagingMaterial = visibilityProduct($context['company'], $actor, 96502, Product::ClassificationPackaging, now()->toImmutable()->subDay());
+    visibilityProduct($context['company'], $other, 96503, Product::ClassificationPackaging, now()->toImmutable()->addMinute());
+
+    foreach (['products', 'raw_materials', 'packaging_materials'] as $screenKey) {
+        ScreenDataVisibilityRule::factory()->create([
+            'company_id' => $context['company']->getKey(),
+            'user_id' => $actor->getKey(),
+            'screen_key' => $screenKey,
+            'record_scope' => 'own_records',
+            'max_visible_records' => 1,
+        ]);
+    }
+
+    $options = $this->actingAs($actor)
+        ->withSession($context['session'])
+        ->getJson(route('admin.select2.component-products', ['per_page' => 50]))
+        ->assertOk()
+        ->json('results');
+
+    expect(collect($options)->pluck('id')->all())
+        ->toEqualCanonicalizing([$latestProduct->doc_num, $latestRawMaterial->doc_num, $latestPackagingMaterial->doc_num])
+        ->not->toContain($olderProduct->doc_num, $olderRawMaterial->doc_num, $olderPackagingMaterial->doc_num);
 });
 
 test('missing and inactive rules preserve existing authorized access without granting screen permission', function () {

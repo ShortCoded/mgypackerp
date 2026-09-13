@@ -26,6 +26,9 @@ class QuotationRevisionLine extends Model
         'conversion_factor',
         'base_quantity',
         'unit_price',
+        'price_list_line_id',
+        'allowed_discount_type',
+        'allowed_discount_value',
         'discount_type',
         'discount_value',
         'discount_amount',
@@ -59,6 +62,7 @@ class QuotationRevisionLine extends Model
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4',
+            'allowed_discount_value' => 'decimal:4',
             'tax_amount' => 'decimal:4',
             'line_total' => 'decimal:4',
             'requested_date' => 'date',
@@ -76,6 +80,11 @@ class QuotationRevisionLine extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function priceListLine(): BelongsTo
+    {
+        return $this->belongsTo(PriceListLine::class);
     }
 
     public function unit(): BelongsTo

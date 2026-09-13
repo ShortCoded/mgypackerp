@@ -40,19 +40,19 @@
                         <form method="GET" action="{{ route('dashboard') }}" class="gap-2 d-flex flex-column flex-md-row align-items-md-end">
                             <div>
                                 <label class="form-label small mb-1" for="dashboard-range">{{ __('dashboard.expanded.filters.range') }}</label>
-                                <select id="dashboard-range" class="form-select form-select-sm" name="range">
+                                <x-forms.select id="dashboard-range" class="form-select form-select-sm" name="range">
                                     @foreach ($range['options'] as $key => $label)
                                         <option value="{{ $key }}" @selected($range['key'] === $key)>{{ $label }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             </div>
                             <div>
                                 <label class="form-label small mb-1" for="dashboard-date-from">{{ __('dashboard.expanded.filters.date_from') }}</label>
-                                <input id="dashboard-date-from" class="form-control form-control-sm" type="date" name="date_from" value="{{ $range['fromValue'] }}">
+                                <x-forms.date-input id="dashboard-date-from" class="form-control-sm" name="date_from" :value="$range['fromValue']" />
                             </div>
                             <div>
                                 <label class="form-label small mb-1" for="dashboard-date-to">{{ __('dashboard.expanded.filters.date_to') }}</label>
-                                <input id="dashboard-date-to" class="form-control form-control-sm" type="date" name="date_to" value="{{ $range['toValue'] }}">
+                                <x-forms.date-input id="dashboard-date-to" class="form-control-sm" name="date_to" :value="$range['toValue']" />
                             </div>
                             <button class="btn btn-sm btn-falcon-primary" type="submit">
                                 <span class="fas fa-sync-alt me-1"></span>{{ __('dashboard.expanded.actions.refresh') }}

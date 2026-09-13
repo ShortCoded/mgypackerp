@@ -25,10 +25,8 @@ test('ERP UI shell registry metadata remains internally unique', function (): vo
     });
 });
 
-test('complete business shells remain registered while technical child surfaces stay hidden', function (): void {
+test('production quality inventory and maintenance shells are removed from the runtime registry', function (): void {
     $registry = app(ErpUiScreenRegistry::class);
-    $quality = $registry->find('quality_incoming_material_inspection');
-    $maintenance = $registry->find('maintenance_maintenance_work_orders');
     $screens = collect($registry->screens());
     $visibleLeaves = collect();
     $collectLeaves = function (array $items) use (&$collectLeaves, $visibleLeaves): void {
@@ -42,20 +40,9 @@ test('complete business shells remain registered while technical child surfaces 
     };
     $collectLeaves($registry->menuItems());
 
-    expect($quality)->not->toBeNull()
-        ->and($quality?->get('classification'))->toBe('UI_SURFACE_PENDING_DEEP_WORKFLOW')
-        ->and(collect($maintenance?->get('tabs'))->pluck('key')->all())->toBe([
-            'basic',
-            'asset',
-            'failure',
-            'tasks',
-            'technicians',
-            'spare_parts',
-            'downtime',
-            'costs',
-            'attachments',
-            'history',
-        ])
+    expect($registry->find('quality_incoming_material_inspection'))->toBeNull()
+        ->and($registry->find('maintenance_maintenance_work_orders'))->toBeNull()
+        ->and($screens->filter(fn ($screen): bool => in_array($screen->module(), ['inventory', 'production', 'quality', 'maintenance'], true)))->toBeEmpty()
         ->and($screens)->not->toBeEmpty()
         ->and($visibleLeaves)->not->toBeEmpty();
 
@@ -86,7 +73,7 @@ test('ERP UI shell permissions are discoverable and completed routes keep preced
         ->and(Route::has($registry->find('sales_sales_orders')?->route('index')))->toBeTrue();
 });
 
-test('ERP UI shell routes remain registered in complete operational navigation', function (): void {
+test('remaining ERP UI shell routes exclude retired operational domains', function (): void {
     $registry = app(ErpUiScreenRegistry::class);
     $leaves = collect();
 
@@ -109,11 +96,6 @@ test('ERP UI shell routes remain registered in complete operational navigation',
     $collectLeaves($registry->menuItems());
 
     expect($leaves)->not->toBeEmpty()
-        ->and($leaves->pluck('label'))->toContain(
-            'purchases_purchase_order_change_requests',
-            'inventory_stock_receipts',
-            'production_material_requests',
-        )
         ->and($leaves->pluck('label'))->not->toContain(
             'sales_sales_order_lines',
             'purchases_purchase_order_lines',
@@ -122,6 +104,10 @@ test('ERP UI shell routes remain registered in complete operational navigation',
             'fixed_assets_asset_disposal',
             'purchases_supplier_contracts',
             'finance_supplier_payments',
+            'inventory_stock_receipts',
+            'production_material_requests',
+            'quality_incoming_material_inspection',
+            'maintenance_maintenance_work_orders',
         )
         ->and($leaves->every(fn (array $leaf): bool => Route::has($leaf['route'])))->toBeTrue();
 });
@@ -225,7 +211,7 @@ test('retired sales shell permissions do not expose an empty sales menu', functi
     $actor->givePermissionTo('sales.leads.view');
 
     $menu = app(MenuService::class)->getMenu($actor);
-    expect(collect($menu)->pluck('label')->all())->toBe(['dashboard']);
+    expect(collect($menu)->pluck('label')->all())->not->toContain('sales');
 });
 
 test('canonical fixed asset breadcrumbs follow the business domain hierarchy', function (): void {

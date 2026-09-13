@@ -282,10 +282,10 @@ test('product import preserves all bom methods and percentage reference semantic
     ]);
     $directMaterial = Product::query()->create([
         'company_id' => $company->getKey(),
-        'doc_number' => 9824,
-        'doc_num' => 'RawMaterial-09824',
-        'name' => 'Imported Direct Material',
-        'item_classification' => Product::ClassificationRawMaterial,
+        'doc_number' => 9800,
+        'doc_num' => 'Product-09800',
+        'name' => 'Imported Finished Component',
+        'item_classification' => Product::ClassificationFinishedProduct,
         'item_unit_id' => $unit->getKey(),
         'status' => 'active',
     ]);
@@ -309,7 +309,8 @@ test('product import preserves all bom methods and percentage reference semantic
 
     expect($lookupValues)
         ->toContain(ProductComponent::CalculationQuantity)
-        ->toContain(ProductComponent::CalculationCount);
+        ->toContain(ProductComponent::CalculationCount)
+        ->toContain($directMaterial->doc_num);
 
     $productSheet->setCellValue('A3', 'bom-methods-001');
     $productSheet->setCellValue('B3', 'Imported BOM Methods Product');
@@ -374,6 +375,7 @@ test('product import preserves all bom methods and percentage reference semantic
         ->keyBy('calculation_method');
 
     expect($components)->toHaveCount(4)
+        ->and($components[ProductComponent::CalculationDirect]->component_product_id)->toBe($directMaterial->getKey())
         ->and((string) $components[ProductComponent::CalculationDirect]->quantity)->toBe('130.00000000')
         ->and((string) $components[ProductComponent::CalculationPercentage]->percentage)->toBe('2.00000000')
         ->and((string) $components[ProductComponent::CalculationPercentage]->quantity)->toBe('2.60000000')

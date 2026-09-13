@@ -56,18 +56,16 @@
             <div class="col-12">
                 <label class="form-label" for="{{ $field['id'] }}">{{ $field['label'] }}</label>
                 @if ($isOperatingScopeEditable)
-                    <select id="{{ $field['id'] }}"
+                    <x-forms.select id="{{ $field['id'] }}"
                             name="{{ $field['name'] }}[]"
                             class="form-select js-select2-ajax js-role-operating-scope"
                             multiple
                             data-url="{{ $field['url'] }}"
-                            @isset($field['depends'])
-                                data-depends-on="{{ $field['depends'] }}"
-                                data-dependent-param="{{ $field['dependsParam'] }}"
-                                data-dependent-result-field="{{ $field['dependsResultField'] }}"
-                                data-preserve-dependent-values="true"
-                                data-disable-when-dependency-empty="true"
-                            @endisset
+                            :data-depends-on="$field['depends'] ?? null"
+                            :data-dependent-param="$field['dependsParam'] ?? null"
+                            :data-dependent-result-field="$field['dependsResultField'] ?? null"
+                            :data-preserve-dependent-values="isset($field['depends']) ? 'true' : null"
+                            :data-disable-when-dependency-empty="isset($field['depends']) ? 'true' : null"
                             data-placeholder="{{ $field['placeholder'] }}"
                             data-allow-clear="true"
                             data-clear-all="true"
@@ -75,7 +73,7 @@
                         @foreach ($field['options'] as $option)
                             <option value="{{ $option['id'] }}" @if (($option['company_doc_num'] ?? null) !== null) data-dependent-value="{{ $option['company_doc_num'] }}" @endif selected>{{ $option['text'] }}</option>
                         @endforeach
-                    </select>
+                    </x-forms.select>
                 @elseif (! $field['restricted'])
                     <x-forms.view-field :for="$field['id']" :value="$field['all']" />
                 @elseif ($field['options'] !== [])

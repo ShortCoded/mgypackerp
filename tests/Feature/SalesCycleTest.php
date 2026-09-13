@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\DB;
-use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Core\Models\ItemUnit;
@@ -295,7 +294,7 @@ test('fully paid invoice credit remains a customer credit and conserves every re
     ]);
     expect($creditJournal->source_type)->toBe('customer_credit_note')
         ->and($creditLines['sales_returns'])->toBe(['debit' => '1000.0000', 'credit' => '0.0000'])
-        ->and($creditLines['tax_payable'])->toBe(['debit' => '140.0000', 'credit' => '0.0000'])
+        ->and($creditLines['output_vat_payable'])->toBe(['debit' => '140.0000', 'credit' => '0.0000'])
         ->and($creditLines['accounts_receivable'])->toBe(['debit' => '0.0000', 'credit' => '1140.0000'])
         ->and($creditJournal->lines->sum('debit_amount'))->toEqual(1140.0)
         ->and($creditJournal->lines->sum('credit_amount'))->toEqual(1140.0);
@@ -310,8 +309,8 @@ test('fully paid invoice credit remains a customer credit and conserves every re
             'credit' => $line->credit_amount,
         ],
     ]);
-    expect($costLines['inventory'])->toBe(['debit' => '50000.0000', 'credit' => '0.0000'])
-        ->and($costLines[AccountClassification::Expenses])->toBe(['debit' => '0.0000', 'credit' => '50000.0000']);
+    expect($costLines['quarantine_inventory'])->toBe(['debit' => '50000.0000', 'credit' => '0.0000'])
+        ->and($costLines['cost_of_goods_sold'])->toBe(['debit' => '0.0000', 'credit' => '50000.0000']);
 
     $dispositionJournal = JournalEntry::query()
         ->where('source_type', 'sales_return_financial_disposition')
@@ -614,7 +613,7 @@ test('service-only direct sale invoices and collects without inventory reservati
         ->and($invoice->delivery_document_id)->toBeNull()
         ->and($invoiceLines['accounts_receivable'])->toBe(['debit' => '1140.0000', 'credit' => '0.0000'])
         ->and($invoiceLines['service_revenue'])->toBe(['debit' => '0.0000', 'credit' => '1000.0000'])
-        ->and($invoiceLines['tax_payable'])->toBe(['debit' => '0.0000', 'credit' => '140.0000'])
+        ->and($invoiceLines['output_vat_payable'])->toBe(['debit' => '0.0000', 'credit' => '140.0000'])
         ->and($receipt->status)->toBe(CustomerReceipt::StatusApproved)
         ->and($invoice->fresh()->remaining_amount)->toBe('0.0000')
         ->and(InventoryReservation::query()->count())->toBe(0)
@@ -752,7 +751,7 @@ test('physical sales delivery starts only from a posted invoice and preserves in
     ];
 
     expect(fn () => $fulfillment->deliverInvoice($invoice, $deliveryLines, $logistics))
-        ->toThrow(DomainException::class, __('Only a posted sales invoice linked to a sales order can be delivered.'));
+        ->toThrow(DomainException::class, __('Only a posted sales invoice can be delivered.'));
 
     $invoice = $invoices->post($invoice);
     $delivery = $fulfillment->deliverInvoice($invoice, $deliveryLines, $logistics);

@@ -22,6 +22,11 @@ return [
         'type' => 'نوع الفرع',
         'contact' => 'بيانات التواصل',
         'address' => 'العنوان',
+        'attendance_latitude' => 'خط عرض نقطة الحضور',
+        'attendance_longitude' => 'خط طول نقطة الحضور',
+        'attendance_radius_meters' => 'نطاق الحضور بالمتر',
+        'attendance_max_accuracy_meters' => 'أقصى دقة GPS بالمتر',
+        'attendance_location_policy' => 'سياسة موقع الحضور',
         'camera_url' => 'رابط الكاميرا',
         'phone' => 'الهاتف',
         'mobile' => 'الموبايل',
@@ -40,6 +45,15 @@ return [
     ],
     'document_number_control' => [
         'helper' => 'اتركه فارغًا للإنشاء التلقائي. سيتم تطبيق البادئة وعدد الخانات تلقائيًا.',
+    ],
+    'attendance_location' => [
+        'title' => 'موقع الحضور والانصراف',
+        'help' => 'حدد إحداثيات الفرع والنطاق المقبول. وضع التحذير يسجل الحركة مع تنبيه، بينما المنع يرفض الحركة خارج النطاق.',
+        'policies' => [
+            'allow' => 'تسجيل بدون تحقق إلزامي',
+            'warn' => 'تسجيل مع تحذير',
+            'reject' => 'رفض خارج النطاق',
+        ],
     ],
     'document_number_settings' => [
         'description' => 'تحكم في طريقة إنشاء أرقام المستندات الجديدة.',

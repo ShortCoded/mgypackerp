@@ -1,0 +1,8 @@
+<tr data-price-list-line>
+    <td data-line-number>{{ is_numeric($index) ? $index + 1 : '' }}</td>
+    <td><x-forms.select class="form-select js-select2-ajax" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-template="product-image" required><option value=""></option>@if(filled($line['product_doc_num'] ?? null))<option value="{{ $line['product_doc_num'] }}" selected>{{ $line['product_doc_num'] }} / {{ $line['product_name'] ?? '' }}</option>@endif</x-forms.select><div class="text-danger small" data-error-for="lines.{{ $index }}.product_doc_num">@error("lines.$index.product_doc_num"){{ $message }}@enderror</div></td>
+    <td><x-forms.input class="form-control form-control-sm text-end" name="lines[{{ $index }}][unit_price]" value="{{ $line['unit_price'] ?? '' }}" inputmode="decimal" required /></td>
+    <td><x-forms.select class="form-select form-select-sm" name="lines[{{ $index }}][allowed_discount_type]" data-discount-type><option value="">{{ __('price_lists.no_discount') }}</option><option value="percentage" @selected(($line['allowed_discount_type'] ?? null) === 'percentage')>{{ __('price_lists.percentage') }}</option><option value="fixed" @selected(($line['allowed_discount_type'] ?? null) === 'fixed')>{{ __('price_lists.fixed') }}</option></x-forms.select></td>
+    <td><x-forms.input class="form-control form-control-sm text-end" name="lines[{{ $index }}][allowed_discount_value]" value="{{ $line['allowed_discount_value'] ?? 0 }}" inputmode="decimal" data-discount-value /></td>
+    <td>@unless($readOnly)<button class="btn btn-link text-danger p-1" type="button" data-price-list-remove aria-label="{{ __('common.actions.delete') }}">&times;</button>@endunless</td>
+</tr>

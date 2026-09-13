@@ -39,6 +39,7 @@ test('visibility route lookup keeps first-match behavior within each model', fun
 })->with([
     'finished products' => [Product::class, 'admin.products.index', 'products'],
     'raw material select' => [Product::class, 'admin.select2.raw-material-products', 'raw_materials'],
+    'combined component select' => [Product::class, 'admin.select2.component-products', null],
     'packaging material screen' => [Product::class, 'admin.packaging-materials.index', 'packaging_materials'],
     'cash receipt' => [CashVoucher::class, 'admin.finance.cash-receipt-vouchers.index', 'cash_receipt_vouchers'],
     'cash payment' => [CashVoucher::class, 'admin.finance.cash-payment-vouchers.show', 'cash_payment_vouchers'],

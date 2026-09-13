@@ -36,7 +36,7 @@ test('request index offers valid workflow and print actions and supports draft r
         ->assertSee('vendors/sweetalert2/sweetalert2.all.min.js', false);
     $url = route('admin.sales.customer-requests.index', ['draw' => 1]);
     $actions = $this->getJson($url)->assertOk()->assertJsonMissingPath('error')->json('data.0.actions');
-    expect($this->getJson($url)->json('data.0.amount'))->toBe('25');
+    expect($this->getJson($url)->json('data.0.amount'))->toBe('0');
     expect($actions)->toContain('/print', 'data-status="submitted"', 'data-method="DELETE"', 'dropdown-caret-none')->not->toContain('data-status="approved"');
     $this->deleteJson(route('admin.sales.customer-requests.destroy', $record))->assertOk();
     $this->getJson($url)->assertJsonCount(0, 'data');

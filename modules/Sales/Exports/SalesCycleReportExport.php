@@ -41,6 +41,9 @@ class SalesCycleReportExport implements WithMultipleSheets
             'aging' => $this->sheet($this->label('sheets.aging'), $this->headings(['customer', 'current', 'days_1_30', 'days_31_60', 'days_61_90', 'days_over_90']), collect($this->report['aging'] ?? [])->map(fn (array $row): array => [$row['customer'], $row['current'], $row['1_30'], $row['31_60'], $row['61_90'], $row['over_90']])),
             'returns' => $this->sheet($this->label('sheets.returns'), $this->headings(['reason', 'returns', 'returned_quantity', 'saleable_quantity', 'rejected_quantity']), collect($this->report['returns'] ?? [])->map(fn ($row): array => [$this->enumLabel($row->reason_code), $row->return_count, $row->returned_quantity, $row->saleable_quantity, $row->rejected_quantity])),
             'return_quality' => $this->sheet($this->label('sheets.return_quality'), $this->headings(['customer_code', 'customer', 'product_code', 'product', 'reason', 'disposition', 'returned_quantity']), collect($this->report['returnAnalysis'] ?? [])->map(fn ($row): array => [$row->customer_doc_num, $row->customer_name, $row->product_doc_num, $row->product_name, $this->enumLabel($row->reason_code), $this->enumLabel($row->quality_disposition), $row->returned_quantity])),
+            'unpriced_products' => $this->sheet($this->label('sheets.unpriced_products'), $this->headings(['product_code', 'product', 'category']), collect($this->report['unpricedProducts'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->name, $row->category_name])),
+            'customers_without_prices' => $this->sheet($this->label('sheets.customers_without_prices'), $this->headings(['customer_code', 'customer']), collect($this->report['customersWithoutPriceLists'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->name])),
+            'customer_price_gaps' => $this->sheet($this->label('sheets.customer_price_gaps'), $this->headings(['customer_code', 'customer', 'product_code', 'product']), collect($this->report['customerProductPricingGaps'] ?? [])->map(fn ($row): array => [$row->customer_doc_num, $row->customer_name, $row->product_doc_num, $row->product_name])),
         ];
 
         $keys = match ($this->report['reportType'] ?? 'operational') {
@@ -54,6 +57,7 @@ class SalesCycleReportExport implements WithMultipleSheets
             'returns' => ['returns', 'return_quality'],
             'quotations' => ['quotations'],
             'fulfillment' => ['orders'],
+            'pricing' => ['unpriced_products', 'customers_without_prices', 'customer_price_gaps'],
             default => ['summary', 'quotations', 'orders', 'ledger'],
         };
 

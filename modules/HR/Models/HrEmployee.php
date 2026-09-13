@@ -47,6 +47,7 @@ class HrEmployee extends Model
         'contract_start_date',
         'contract_end_date',
         'company_id',
+        'user_id',
         'branch_id',
         'department_id',
         'section_id',
@@ -229,6 +230,14 @@ class HrEmployee extends Model
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class, 'company_id');
+    }
+
+    /**
+     * @return BelongsTo<User, $this>
+     */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     /**

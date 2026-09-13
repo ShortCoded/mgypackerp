@@ -1,7 +1,9 @@
 @php
     $salesCycleMessages = [
         'priceUrl' => route('admin.sales.price-suggestion'),
-        'lastPrice' => __('Suggested price'),
+        'customerPriceList' => __('price_lists.customer_source'),
+        'generalPriceList' => __('price_lists.general_source'),
+        'emptyPrice' => __('price_lists.not_selected'),
         'actionFailed' => __('The action could not be completed.'),
         'saved' => __('Saved successfully.'),
         'unexpectedError' => __('Unexpected browser error.'),

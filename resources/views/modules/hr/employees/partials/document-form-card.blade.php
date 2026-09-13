@@ -27,20 +27,20 @@
 
     <div class="card-body p-3">
         @if ($hasPersistedDocument)
-            <input type="hidden" name="documents[{{ $documentIndex }}][id]" value="{{ $document->getKey() }}">
+            <x-forms.input type="hidden" name="documents[{{ $documentIndex }}][id]" value="{{ $document->getKey() }}" />
         @endif
-        <input type="hidden" name="documents[{{ $documentIndex }}][_delete]" value="0" class="js-hr-document-delete-flag">
-        <input type="hidden" name="documents[{{ $documentIndex }}][sort_order]" value="{{ $document?->sort_order ?? (is_numeric($documentIndex) ? $documentIndex : 0) }}">
+        <x-forms.input type="hidden" name="documents[{{ $documentIndex }}][_delete]" value="0" class="js-hr-document-delete-flag" />
+        <x-forms.input type="hidden" name="documents[{{ $documentIndex }}][sort_order]" value="{{ $document?->sort_order ?? (is_numeric($documentIndex) ? $documentIndex : 0) }}" />
 
         <div class="row g-3 align-items-start">
             <div class="col-12 col-md-6 col-lg-4">
                 <x-forms.label :for="'hr-document-type-'.$documentIndex" :label="__('hr.employees.documents.attributes.document_type_doc_num')" required />
                 <div class="hr-select2-inline-control">
-                    <select id="hr-document-type-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][document_type_doc_num]" class="form-select js-select2-ajax" data-url="{{ $documentTypeSelect['url'] }}" data-placeholder="{{ __('hr.employees.documents.attributes.document_type_doc_num') }}" data-allow-clear="true" required>
+                    <x-forms.select id="hr-document-type-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][document_type_doc_num]" class="form-select js-select2-ajax" data-url="{{ $documentTypeSelect['url'] }}" data-placeholder="{{ __('hr.employees.documents.attributes.document_type_doc_num') }}" data-allow-clear="true" required>
                         @if ($documentType)
                             <option value="{{ $documentType->doc_num }}" selected>{{ $documentTypeText }}</option>
                         @endif
-                    </select>
+                    </x-forms.select>
                     @if (($documentTypeSelect['can_create'] ?? false) && ($documentTypeSelect['create_url'] ?? null))
                         <a class="btn btn-falcon-default btn-sm" href="{{ $documentTypeSelect['create_url'] }}" target="_blank" rel="noopener" title="{{ __('hr.inline_lookup.add_new') }}" data-bs-title="{{ __('hr.inline_lookup.add_new') }}">
                             <span class="fas fa-plus"></span>
@@ -53,25 +53,25 @@
 
             <div class="col-12 col-md-6 col-lg-4">
                 <label class="form-label" for="hr-document-number-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.document_number_text') }}</label>
-                <input id="hr-document-number-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][document_number_text]" type="text" class="form-control" maxlength="120" value="{{ $document?->document_number_text }}">
+                <x-forms.input id="hr-document-number-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][document_number_text]" type="text" class="form-control" maxlength="120" value="{{ $document?->document_number_text }}" />
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.document_number_text"></div>
             </div>
 
             <div class="col-12 col-md-6 col-lg-4">
                 <label class="form-label" for="hr-document-title-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.title') }}</label>
-                <input id="hr-document-title-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][title]" type="text" class="form-control js-hr-document-title" maxlength="255" value="{{ $document?->title }}">
+                <x-forms.input id="hr-document-title-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][title]" type="text" class="form-control js-hr-document-title" maxlength="255" value="{{ $document?->title }}" />
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.title"></div>
             </div>
 
             <div class="col-12 col-md-6 col-lg-4">
                 <label class="form-label" for="hr-document-issue-date-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.issue_date') }}</label>
-                <input id="hr-document-issue-date-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][issue_date]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'issue_date') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                <x-forms.date-input id="hr-document-issue-date-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][issue_date]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'issue_date') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.issue_date"></div>
             </div>
 
             <div class="col-12 col-md-6 col-lg-4">
                 <label class="form-label" for="hr-document-expiry-date-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.expires_at') }}</label>
-                <input id="hr-document-expiry-date-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][expires_at]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'expires_at') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}">
+                <x-forms.date-input id="hr-document-expiry-date-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][expires_at]" type="text" class="form-control js-date-picker" value="{{ $documentDateValue($document, 'expires_at') }}" placeholder="{{ __('common.placeholders.select_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" />
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.expires_at"></div>
             </div>
 
@@ -93,10 +93,10 @@
             <div class="col-12 col-lg-8">
                 <x-forms.label :for="'hr-document-file-display-'.$documentIndex" :label="__('hr.employees.documents.attributes.archive_file_doc_num')" required />
                 <div class="hr-document-attachment-panel">
-                    <input id="hr-document-file-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][archive_file_doc_num]" type="hidden" value="{{ $archiveFile?->doc_num ?? '' }}" class="js-hr-document-file-input">
+                    <x-forms.input id="hr-document-file-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][archive_file_doc_num]" type="hidden" value="{{ $archiveFile?->doc_num ?? '' }}" class="js-hr-document-file-input" />
                     <div class="input-group hr-document-file-control">
                         <span class="input-group-text"><span class="fas fa-paperclip"></span></span>
-                        <input id="hr-document-file-display-{{ $documentIndex }}" type="text" class="form-control js-hr-document-file-display" value="{{ $archiveFileName }}" placeholder="{{ __('hr.employees.documents.no_file_selected') }}" readonly>
+                        <x-forms.input id="hr-document-file-display-{{ $documentIndex }}" type="text" class="form-control js-hr-document-file-display" value="{{ $archiveFileName }}" placeholder="{{ __('hr.employees.documents.no_file_selected') }}" readonly />
                         @can('file_manager.view')
                             <button type="button"
                                 class="btn btn-falcon-default js-hr-document-file-picker"
@@ -133,13 +133,13 @@
 
             <div class="col-12 col-md-6 col-lg-4">
                 <label class="form-label" for="hr-document-file-label-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.file_label') }}</label>
-                <input id="hr-document-file-label-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][file_label]" type="text" class="form-control" maxlength="80" value="{{ $document?->file_label }}">
+                <x-forms.input id="hr-document-file-label-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][file_label]" type="text" class="form-control" maxlength="80" value="{{ $document?->file_label }}" />
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.file_label"></div>
             </div>
 
             <div class="col-12">
                 <label class="form-label" for="hr-document-notes-{{ $documentIndex }}">{{ __('hr.employees.documents.attributes.notes') }}</label>
-                <textarea id="hr-document-notes-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][notes]" class="form-control" rows="2">{{ $document?->notes }}</textarea>
+                <x-forms.textarea id="hr-document-notes-{{ $documentIndex }}" name="documents[{{ $documentIndex }}][notes]" class="form-control" rows="2">{{ $document?->notes }}</x-forms.textarea>
                 <div class="invalid-feedback d-block" data-error-for="documents.{{ $documentIndex }}.notes"></div>
             </div>
         </div>

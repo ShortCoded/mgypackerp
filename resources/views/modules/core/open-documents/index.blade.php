@@ -41,24 +41,24 @@
                 <div class="row g-3">
                     <div class="col-lg-4">
                         <x-forms.label for="open-document-type" :label="__('open_documents.fields.document_type')" required />
-                        <select id="open-document-type" name="document_type" class="form-select js-open-documents-type @error('document_type') is-invalid @enderror" data-placeholder="{{ __('common.placeholders.select') }}" required>
+                        <x-forms.select id="open-document-type" name="document_type" class="form-select js-open-documents-type @error('document_type') is-invalid @enderror" data-placeholder="{{ __('common.placeholders.select') }}" required>
                             <option value=""></option>
                             @foreach ($documentTypes as $key => $label)
                                 <option value="{{ $key }}" @selected(old('document_type') === $key)>{{ $label }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="document_type">@error('document_type'){{ $message }}@enderror</div>
                     </div>
 
                     <div class="col-md-6 col-lg-4">
                         <x-forms.label for="open-document-from-number" :label="__('open_documents.fields.from_number')" required />
-                        <input id="open-document-from-number" name="from_number" class="form-control text-center @error('from_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('from_number') }}" required>
+                        <x-forms.input id="open-document-from-number" name="from_number" class="form-control text-center @error('from_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('from_number') }}" required />
                         <div class="invalid-feedback" data-error-for="from_number">@error('from_number'){{ $message }}@enderror</div>
                     </div>
 
                     <div class="col-md-6 col-lg-4">
                         <x-forms.label for="open-document-to-number" :label="__('open_documents.fields.to_number')" required />
-                        <input id="open-document-to-number" name="to_number" class="form-control text-center @error('to_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('to_number') }}" required>
+                        <x-forms.input id="open-document-to-number" name="to_number" class="form-control text-center @error('to_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('to_number') }}" required />
                         <div class="invalid-feedback" data-error-for="to_number">@error('to_number'){{ $message }}@enderror</div>
                     </div>
                 </div>

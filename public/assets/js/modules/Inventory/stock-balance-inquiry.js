@@ -45,12 +45,8 @@
             return optionMatches($option, 'branch', branch);
         });
 
-        const store = String($store.val() || '');
         filterOptions($hall, function ($option) {
             return optionMatches($option, 'branch', branch);
-        });
-        filterOptions($('#stock-balance-location'), function ($option) {
-            return optionMatches($option, 'branch', branch) && optionMatches($option, 'store', store);
         });
 
         const showHall = branch !== '' && selectedBranchType() === 'factory';

@@ -37,10 +37,18 @@ return [
         'running_debit' => 'الرصيد المدين',
         'running_credit' => 'الرصيد الدائن',
         'balance' => 'الرصيد',
+        'collector' => 'المحصّل المسؤول',
+        'collection_source' => 'مصدر التحصيل',
     ],
     'balance' => [
         'debit' => 'مدين',
         'credit' => 'دائن',
+    ],
+    'collection_methods' => [
+        'cash' => 'نقدي',
+        'bank' => 'بنك',
+        'transfer' => 'تحويل بنكي',
+        'cheque' => 'شيك',
     ],
     'movement_descriptions' => [
         'customer_receivable' => 'مديونية فاتورة مبيعات',

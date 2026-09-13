@@ -46,6 +46,11 @@
             station_halls: stationHallNames($form),
             branch_stores: branchStoreNames($form),
             address: String($form.find('[name="address"]').val() || '').trim(),
+            attendance_latitude: String($form.find('[name="attendance_latitude"]').val() || '').trim(),
+            attendance_longitude: String($form.find('[name="attendance_longitude"]').val() || '').trim(),
+            attendance_radius_meters: String($form.find('[name="attendance_radius_meters"]').val() || '').trim(),
+            attendance_max_accuracy_meters: String($form.find('[name="attendance_max_accuracy_meters"]').val() || '').trim(),
+            attendance_location_policy: String($form.find('[name="attendance_location_policy"]').val() || '').trim(),
             camera_url: String($form.find('[name="camera_url"]').val() || '').trim(),
             phone: String($form.find('[name="phone"]').val() || '').trim(),
             mobile: String($form.find('[name="mobile"]').val() || '').trim(),
@@ -87,6 +92,11 @@
                 };
             }).filter(function (store) { return store.name !== ''; }) : [],
             address: String(original.address || '').trim(),
+            attendance_latitude: String(original.attendance_latitude || '').trim(),
+            attendance_longitude: String(original.attendance_longitude || '').trim(),
+            attendance_radius_meters: String(original.attendance_radius_meters || '200').trim(),
+            attendance_max_accuracy_meters: String(original.attendance_max_accuracy_meters || '100').trim(),
+            attendance_location_policy: String(original.attendance_location_policy || 'warn').trim(),
             camera_url: String(original.camera_url || '').trim(),
             phone: String(original.phone || '').trim(),
             mobile: String(original.mobile || '').trim(),
@@ -458,6 +468,9 @@
         $form.find('[name="company_doc_num"]').val(null).trigger('change');
         $form.find('[name="type"]').val('administrative').trigger('change');
         $form.find('[name="status"]').val('active');
+        $form.find('[name="attendance_radius_meters"]').val('200');
+        $form.find('[name="attendance_max_accuracy_meters"]').val('100');
+        $form.find('[name="attendance_location_policy"]').val('warn');
         $form.find('.js-station-halls-list').empty().append(stationHallRow(0, {}));
         $form.find('.js-branch-stores-list').empty().append(branchStoreRow(0, {}));
         $form.find('[name="submit_action"]').val('save');

@@ -42,6 +42,9 @@ class UserSelect2Controller extends Controller
             || (bool) $user?->can('quotations.edit')
             || (bool) $user?->can('chat.create')
             || (bool) $user?->can('chat.send')
+            || (bool) $user?->can('hr.employees.view')
+            || (bool) $user?->can('hr.employees.create')
+            || (bool) $user?->can('hr.employees.edit')
             || (bool) $user?->can('users.view');
     }
 }

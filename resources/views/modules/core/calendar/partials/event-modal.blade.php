@@ -23,27 +23,27 @@
                                 <label class="form-label" for="calendar-event-title">
                                     {{ __('calendar.fields.title') }} <span class="text-danger" aria-hidden="true">*</span>
                                 </label>
-                                <input class="form-control" id="calendar-event-title" type="text" name="title" maxlength="255" required aria-required="true">
+                                <x-forms.input class="form-control" id="calendar-event-title" type="text" name="title" maxlength="255" required aria-required="true" />
                                 <div class="invalid-feedback" data-error-for="title"></div>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-status">{{ __('calendar.fields.status') }}</label>
-                                <select class="form-select" id="calendar-event-status" name="status">
+                                <x-forms.select class="form-select" id="calendar-event-status" name="status">
                                     @foreach (\Modules\Core\Models\CalendarEvent::Statuses as $status)
                                         <option value="{{ $status }}">{{ __("calendar.statuses.{$status}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="status"></div>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-color">{{ __('calendar.fields.color') }}</label>
-                                <select class="form-select" id="calendar-event-color" name="color">
+                                <x-forms.select class="form-select" id="calendar-event-color" name="color">
                                     @foreach (\Modules\Core\Models\CalendarEvent::Colors as $color)
                                         <option value="{{ $color }}">{{ __("calendar.colors.{$color}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="color"></div>
                             </div>
                         </div>
@@ -56,26 +56,26 @@
                                 <label class="form-label" for="calendar-event-starts-at">
                                     {{ __('calendar.fields.starts_at') }} <span class="text-danger" aria-hidden="true">*</span>
                                 </label>
-                                <input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-starts-at" type="text" name="starts_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" required aria-required="true" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-starts-at" type="text" name="starts_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" required aria-required="true" dir="ltr" />
                                 <div class="invalid-feedback" data-error-for="starts_at"></div>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-ends-at">{{ __('calendar.fields.ends_at') }}</label>
-                                <input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-ends-at" type="text" name="ends_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-ends-at" type="text" name="ends_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" dir="ltr" />
                                 <div class="invalid-feedback" data-error-for="ends_at"></div>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-reminder-at">{{ __('calendar.fields.reminder') }}</label>
-                                <input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-reminder-at" type="text" name="reminder_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker js-calendar-date-time" id="calendar-event-reminder-at" type="text" name="reminder_at" data-enable-time="true" data-date-format="{{ $dateFormatService->jsDateTimeFormat() }}" data-locale="{{ app()->getLocale() }}" data-minute-increment="5" placeholder="{{ $dateFormatService->dateTimeFormat() }}" autocomplete="off" dir="ltr" />
                                 <div class="invalid-feedback" data-error-for="reminder_at"></div>
                             </div>
 
                             <div class="col-md-6 d-flex align-items-end">
                                 <div>
                                     <div class="form-check form-switch mb-1">
-                                        <input class="form-check-input" id="calendar-event-all-day" type="checkbox" name="all_day" value="1">
+                                        <x-forms.input class="form-check-input" id="calendar-event-all-day" type="checkbox" name="all_day" value="1" />
                                         <label class="form-check-label" for="calendar-event-all-day">{{ __('calendar.fields.all_day') }}</label>
                                     </div>
                                     <div class="form-text">{{ __('calendar.help.all_day') }}</div>
@@ -90,19 +90,19 @@
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-location">{{ __('calendar.fields.location') }}</label>
-                                <input class="form-control" id="calendar-event-location" type="text" name="location" maxlength="255">
+                                <x-forms.input class="form-control" id="calendar-event-location" type="text" name="location" maxlength="255" />
                                 <div class="invalid-feedback" data-error-for="location"></div>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label" for="calendar-event-meeting-url">{{ __('calendar.fields.meeting_url') }}</label>
-                                <input class="form-control" id="calendar-event-meeting-url" type="url" name="meeting_url" maxlength="2048" dir="ltr">
+                                <x-forms.input class="form-control" id="calendar-event-meeting-url" type="url" name="meeting_url" maxlength="2048" dir="ltr" />
                                 <div class="invalid-feedback" data-error-for="meeting_url"></div>
                             </div>
 
                             <div class="col-12">
                                 <label class="form-label" for="calendar-event-description">{{ __('calendar.fields.description') }}</label>
-                                <textarea class="form-control" id="calendar-event-description" rows="4" name="description"></textarea>
+                                <x-forms.textarea class="form-control" id="calendar-event-description" rows="4" name="description"></x-forms.textarea>
                                 <div class="invalid-feedback" data-error-for="description"></div>
                             </div>
                         </div>

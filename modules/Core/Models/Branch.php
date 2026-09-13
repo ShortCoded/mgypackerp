@@ -33,6 +33,11 @@ class Branch extends Model
         'name',
         'type',
         'address',
+        'attendance_latitude',
+        'attendance_longitude',
+        'attendance_radius_meters',
+        'attendance_max_accuracy_meters',
+        'attendance_location_policy',
         'camera_url',
         'phone',
         'mobile',
@@ -53,6 +58,9 @@ class Branch extends Model
      */
     protected $attributes = [
         'status' => 'active',
+        'attendance_radius_meters' => 200,
+        'attendance_max_accuracy_meters' => 100,
+        'attendance_location_policy' => 'warn',
     ];
 
     /**
@@ -65,6 +73,10 @@ class Branch extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
+            'attendance_latitude' => 'decimal:7',
+            'attendance_longitude' => 'decimal:7',
+            'attendance_radius_meters' => 'integer',
+            'attendance_max_accuracy_meters' => 'integer',
         ];
     }
 

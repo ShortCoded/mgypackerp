@@ -15,6 +15,16 @@
     @if($from || $to) · {{ $dateValue($from) }} — {{ $dateValue($to) }} @endif
 </div>
 
+@if($reportType === 'pricing')
+<p>{{ __('sales_ui.reports.pricing_as_of', ['date' => $dateValue($pricingDate), 'currency' => $reportCurrency?->code]) }}</p>
+<h3>{{ __('sales_ui.reports.unpriced_products') }}</h3>
+<table class="report-table"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('Category') }}</th></tr></thead><tbody>@forelse($unpricedProducts as $row)<tr><td>{{ $row->doc_num }} / {{ $row->name }}</td><td>{{ $row->category_name ?: '—' }}</td></tr>@empty<tr><td colspan="2">{{ __('sales_ui.reports.no_results') }}</td></tr>@endforelse</tbody></table>
+<h3>{{ __('sales_ui.reports.customers_without_price_lists') }}</h3>
+<table class="report-table"><thead><tr><th>{{ __('Customer') }}</th></tr></thead><tbody>@forelse($customersWithoutPriceLists as $row)<tr><td>{{ $row->doc_num }} / {{ $row->name }}</td></tr>@empty<tr><td>{{ __('sales_ui.reports.no_results') }}</td></tr>@endforelse</tbody></table>
+<h3>{{ __('sales_ui.reports.customer_unpriced_products') }}</h3>
+<table class="report-table"><thead><tr><th>{{ __('Customer') }}</th><th>{{ __('Product') }}</th></tr></thead><tbody>@forelse($customerProductPricingGaps as $row)<tr><td>{{ $row->customer_doc_num }} / {{ $row->customer_name }}</td><td>{{ $row->product_doc_num }} / {{ $row->product_name }}</td></tr>@empty<tr><td colspan="2">{{ __('sales_ui.reports.no_results') }}</td></tr>@endforelse</tbody></table>
+@endif
+
 @if(in_array($reportType, ['financial', 'operational'], true))
 <h3>{{ __('sales_ui.financial_summary') }}</h3>
 <table class="report-table"><thead><tr><th>{{ __('sales_ui.invoice_count') }}</th><th>{{ __('sales_ui.gross_sales') }}</th><th>{{ __('sales_ui.credit_notes_returns') }}</th><th>{{ __('sales_ui.net_sales') }}</th><th>{{ __('sales_ui.collections') }}</th><th>{{ __('sales_ui.outstanding') }}</th><th>{{ __('sales_ui.overdue_outstanding') }}</th><th>{{ __('sales_ui.collection_rate') }}</th></tr></thead><tbody><tr><td>{{ $numbers->format($financialSummary['invoice_count']) }}</td><td>{{ $numbers->format($financialSummary['gross_sales']) }}</td><td>{{ $numbers->format($financialSummary['credit_notes']) }}</td><td>{{ $numbers->format($financialSummary['net_sales']) }}</td><td>{{ $numbers->format($financialSummary['collections']) }}</td><td>{{ $numbers->format($financialSummary['outstanding']) }}</td><td>{{ $numbers->format($financialSummary['overdue_outstanding']) }}</td><td>{{ $numbers->format($financialSummary['collection_rate']) }}%</td></tr></tbody></table>
@@ -82,7 +92,7 @@
 @endif
 
 @if(!in_array($reportType, ['financial', 'operational'], true)
-    && collect([$salesByCustomer, $salesByPeriod, $salesByItem, $salesLedger, $invoiceOutstanding, $customerReceipts, $upcomingCollections, $quotations, $openOrders, $returns])->every(fn ($rows) => collect($rows)->isEmpty()))
+    && collect([$salesByCustomer, $salesByPeriod, $salesByItem, $salesLedger, $invoiceOutstanding, $customerReceipts, $upcomingCollections, $quotations, $openOrders, $returns, $unpricedProducts, $customersWithoutPriceLists, $customerProductPricingGaps])->every(fn ($rows) => collect($rows)->isEmpty()))
 <p class="report-empty-state">{{ __('sales_ui.reports.no_results') }}</p>
 @endif
 

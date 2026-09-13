@@ -7,21 +7,11 @@ use Modules\Inventory\Http\Controllers\OpeningStockController;
 use Modules\Inventory\Http\Controllers\OpeningStockPricingController;
 use Modules\Inventory\Http\Controllers\StockCountController;
 use Modules\Inventory\Http\Controllers\UnpricedInventoryReceiptController;
-use Modules\Inventory\Http\Controllers\WarehouseLocationController;
 
 Route::middleware('auth')
     ->prefix('admin/inventory')
     ->as('admin.inventory.')
     ->group(function (): void {
-        Route::get('/warehouse-locations', [WarehouseLocationController::class, 'index'])
-            ->middleware('can:inventory.locations.view')
-            ->name('warehouse-locations.index');
-        Route::post('/warehouse-locations', [WarehouseLocationController::class, 'store'])
-            ->middleware('can:inventory.locations.manage')
-            ->name('warehouse-locations.store');
-        Route::patch('/warehouse-locations/{warehouseLocation}/status', [WarehouseLocationController::class, 'status'])
-            ->middleware('can:inventory.locations.manage')
-            ->name('warehouse-locations.status');
         Route::prefix('documents')->name('documents.')->controller(InventoryDocumentController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:inventory.documents.view')->name('index');
             Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');

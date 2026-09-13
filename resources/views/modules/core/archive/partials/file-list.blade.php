@@ -135,7 +135,7 @@
                         <tr>
                             @if (! empty($bulkDownloadUrl))
                                 <td>
-                                    <input class="form-check-input js-archive-file-select" type="checkbox" value="{{ $file->doc_num }}" aria-label="{{ __('archive.file_name') }}">
+                                    <x-forms.input class="form-check-input js-archive-file-select" type="checkbox" value="{{ $file->doc_num }}" aria-label="{{ __('archive.file_name') }}" />
                                 </td>
                             @endif
                             <td class="white-space-nowrap">

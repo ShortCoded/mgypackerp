@@ -127,32 +127,72 @@
   async function suggestPrice(row) {
     const form = row?.closest('form');
     const price = row?.querySelector('[name$="[unit_price]"]');
-    if (!price || !messages.priceUrl) return;
+    if (!price || !messages.priceUrl || row.dataset.priceLocked === '1') return;
+    const display = row.querySelector('[data-price-display]');
+    const showPriceHint = (message, isError) => {
+      let hint = row.querySelector('[data-price-source]');
+      if (!message) {
+        hint?.remove();
+        return;
+      }
+      if (!hint) {
+        hint = document.createElement('small');
+        hint.dataset.priceSource = '';
+        price.after(hint);
+      }
+      hint.className = isError ? 'd-block text-danger' : 'd-block text-muted';
+      hint.textContent = message;
+    };
+    const resetPrice = (message, isError) => {
+      price.value = '';
+      delete row.dataset.suggestedPrice;
+      row.dataset.maximumDiscount = '0';
+      if (display) display.textContent = messages.emptyPrice || '—';
+      showPriceHint(message, isError);
+      calculateLineTotal(row);
+    };
     const values = {
       customer_doc_num: form.querySelector('[name="customer_doc_num"]')?.value || '',
       currency_doc_num: form.querySelector('[name="currency_doc_num"]')?.value || '',
       product_doc_num: row.querySelector('[name$="[product_doc_num]"]')?.value || '',
-      unit_doc_num: row.querySelector('[name$="[unit_doc_num]"]')?.value || ''
+      unit_doc_num: row.querySelector('[name$="[unit_doc_num]"]')?.value || '',
+      quantity: row.querySelector('[name$="[quantity]"]')?.value || '1',
+      document_date: form.querySelector('[name="quotation_date"], [name="order_date"], [name="invoice_date"]')?.value || ''
     };
-    if (Object.values(values).some(value => !value)) return;
+    if ([values.customer_doc_num, values.currency_doc_num, values.product_doc_num, values.unit_doc_num].some(value => !value)) {
+      delete row.dataset.priceLookup;
+      resetPrice('', false);
+      return;
+    }
     const key = new URLSearchParams(values).toString();
     if (row.dataset.priceLookup === key) return;
     row.dataset.priceLookup = key;
     try {
       const response = await fetch(messages.priceUrl + '?' + key, { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
-      if (!response.ok) return;
-      const suggestion = (await response.json()).data;
-      if (row.dataset.priceLookup !== key || !suggestion) return;
-      if (!price.value || Number(price.value) === 0 || price.value === row.dataset.suggestedPrice) {
-        price.value = suggestion.unit_price;
-        row.dataset.suggestedPrice = suggestion.unit_price;
-        if (row.matches('.js-quotation-line')) price.dispatchEvent(new Event('input', {bubbles:true}));
-        else calculateLineTotal(row);
+      const payload = await response.json();
+      if (!response.ok) {
+        resetPrice(payload.message || messages.unpriced || 'Unpriced', true);
+        return;
       }
-      let hint = row.querySelector('[data-price-source]');
-      if (!hint) { hint = document.createElement('small'); hint.className = 'd-block text-muted'; hint.dataset.priceSource = ''; price.after(hint); }
-      hint.textContent = (messages.lastPrice || 'Suggested price') + ': ' + suggestion.unit_price + ' · ' + suggestion.source;
-    } catch (_) { /* Manual entry remains available if the lookup is unavailable. */ }
+      const suggestion = payload.data;
+      if (row.dataset.priceLookup !== key) return;
+      if (!suggestion) {
+        resetPrice(payload.message || messages.unpriced || 'Unpriced', true);
+        return;
+      }
+      const sourceLabel = suggestion.scope === 'customer'
+        ? (messages.customerPriceList || 'Customer price list')
+        : (messages.generalPriceList || 'General price list');
+      showPriceHint(sourceLabel + ' · ' + suggestion.source, false);
+      price.value = suggestion.unit_price;
+      row.dataset.suggestedPrice = suggestion.unit_price;
+      row.dataset.maximumDiscount = suggestion.maximum_discount_amount || '0';
+      if (display) display.textContent = window.AppNumbers.format(suggestion.unit_price);
+      if (row.matches('.js-quotation-line')) price.dispatchEvent(new Event('input', {bubbles:true}));
+      else calculateLineTotal(row);
+    } catch (_) {
+      resetPrice(messages.unexpectedError || 'Unexpected browser error.', true);
+    }
   }
 
   window.AppSalesPricing = {suggest: suggestPrice};
@@ -230,7 +270,7 @@
     document.addEventListener('change', (event) => {
       if (event.target.matches('.js-sales-product') && !event.target.matches('.js-select2-ajax')) populateUnits(event.target.closest('tr'));
       if (event.target.matches('.js-sales-unit, .js-sales-product:not(.js-select2-ajax)')) suggestPrice(event.target.closest('tr'));
-      if (event.target.matches('[name="customer_doc_num"], [name="currency_doc_num"]')) {
+      if (event.target.matches('[name="customer_doc_num"], [name="currency_doc_num"], [name="order_date"], [name="invoice_date"]')) {
         lines?.querySelectorAll('[data-sales-line]').forEach(suggestPrice);
         calculateDocumentSummary(event.target.closest('form'));
       }
@@ -247,6 +287,7 @@
     document.addEventListener('input', (event) => {
       if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-tax')) {
         calculateLineTotal(event.target.closest('tr'));
+        if (event.target.matches('.js-sales-quantity')) suggestPrice(event.target.closest('tr'));
       }
     });
     document.addEventListener('click', (event) => {
@@ -267,7 +308,10 @@
       window.AppLineItemCards.remove(row, body === lines ? 'lines' : 'payment_schedules', body === lines ? 1 : 0);
       calculateDocumentSummary(form);
       });
-    lines?.querySelectorAll('[data-sales-line]').forEach(calculateLineTotal);
+    lines?.querySelectorAll('[data-sales-line]').forEach((row) => {
+      calculateLineTotal(row);
+      suggestPrice(row);
+    });
     calculateDocumentSummary(lines?.closest('form'));
   }
 

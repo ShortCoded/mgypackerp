@@ -35,6 +35,7 @@ class SalesOrderLine extends Model
             'delivered_base_quantity' => 'decimal:8', 'invoiced_base_quantity' => 'decimal:8',
             'returned_quantity' => 'decimal:8', 'requested_date' => 'date', 'specifications' => 'array',
             'returned_base_quantity' => 'decimal:8',
+            'allowed_discount_value' => 'decimal:4',
         ];
     }
 
@@ -77,6 +78,11 @@ class SalesOrderLine extends Model
     public function quotationRevisionLine(): BelongsTo
     {
         return $this->belongsTo(QuotationRevisionLine::class);
+    }
+
+    public function priceListLine(): BelongsTo
+    {
+        return $this->belongsTo(PriceListLine::class);
     }
 
     public function product(): BelongsTo

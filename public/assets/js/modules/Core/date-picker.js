@@ -10,10 +10,12 @@
     const direction = defaults.direction || document.documentElement.getAttribute('dir') || 'ltr';
     const enableTime = input.getAttribute('data-enable-time') === 'true' || input.getAttribute('data-enable-time') === '1';
     const minuteIncrement = Number.parseInt(input.getAttribute('data-minute-increment') || '5', 10);
+    const displayFormat = input.getAttribute('data-date-format') || defaults.dateFormat || 'd/m/Y';
+    const storageFormat = input.getAttribute('data-storage-format');
     const options = {
       allowInput: true,
       appendTo: document.body,
-      dateFormat: input.getAttribute('data-date-format') || defaults.dateFormat || 'd/m/Y',
+      dateFormat: storageFormat || displayFormat,
       disableMobile: true,
       enableTime: enableTime,
       locale: locale,
@@ -43,6 +45,23 @@
         }));
       }
     };
+
+    if (storageFormat) {
+      options.altFormat = displayFormat;
+      options.altInput = true;
+      options.altInputClass = input.className + ' erp-date-picker-display';
+    }
+
+    const minDate = input.getAttribute('data-min-date') || input.getAttribute('min');
+    const maxDate = input.getAttribute('data-max-date') || input.getAttribute('max');
+
+    if (minDate) {
+      options.minDate = minDate;
+    }
+
+    if (maxDate) {
+      options.maxDate = maxDate;
+    }
 
     if (window.flatpickr && window.flatpickr.l10ns && !window.flatpickr.l10ns[locale]) {
       delete options.locale;

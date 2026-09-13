@@ -144,9 +144,11 @@ test('inventory and manufacturing navigation exposes canonical workflows without
         'admin.inventory.stock-counts.index',
         'admin.inventory.reports.index',
         'admin.inventory.opening-stocks.index',
-        'admin.production.resources.index',
+        'admin.production.stages.index',
         'admin.production.work-orders.index',
         'admin.production.runs.index',
+        'admin.production.material-requests.index',
+        'admin.production.quality.index',
         'admin.production.reports.index',
     ];
 
@@ -156,16 +158,17 @@ test('inventory and manufacturing navigation exposes canonical workflows without
             'inventory_movements',
             'inventory_stock_counts',
             'inventory_operational_reports',
-            'production_resources',
+            'production_stages',
             'production_work_orders',
             'production_runs',
+            'production_material_requests',
+            'production_quality',
             'production_operational_reports',
         )
         ->and($labels)->not->toContain(
             'inventory_stock_receipts',
             'inventory_finished_goods_receipt',
             'inventory_production_material_issue',
-            'production_material_requests',
             'production_material_issues',
             'production_output_receipts',
         );
@@ -187,7 +190,7 @@ test('menu uses the required business domain order and maps representative scree
         'production',
         'accounting_costing',
         'fixed_assets',
-        ...($phaseMode === 'expanded' ? ['maintenance'] : []),
+        'maintenance',
         'human_resources',
         'reports',
         'tools',
@@ -234,12 +237,16 @@ test('menu uses the required business domain order and maps representative scree
             'item_origin_countries',
         )
         ->and($leavesFor('inventory', 'opening_inventory'))->toContain('opening_stocks', 'unpriced_inventory_receipts', 'opening_stock_pricings')
-        ->and($leavesFor('production', 'production_setup'))->toContain('production_identifier_types', 'production_identifiers')
+        ->and($leavesFor('inventory', 'inventory_inquiries'))->toContain('inventory_stock_balance_inquiry', 'inventory_operational_reports')
+        ->and($leavesFor('production', 'production_operations'))->toContain('production_stages', 'product_production_stages', 'production_work_orders', 'production_runs', 'production_material_requests', 'production_expenses', 'production_operational_reports')
+        ->and($leavesFor('production', 'quality_management'))->toContain('production_quality', 'production_quality_active', 'production_quality_reports')
+        ->and($leavesFor('production', 'production_operations'))->not->toContain('production_identifier_types', 'production_identifiers', 'production_resources')
         ->and($subgroupsFor('accounting_costing'))->toContain('general_accounting', 'treasury_banks', 'cost_accounting')
         ->and($leavesFor('accounting_costing', 'general_accounting'))->toContain('chart_of_accounts', 'opening_balances')
         ->and($leavesFor('accounting_costing', 'treasury_banks'))->toContain('currencies', 'bank_accounts', 'cashboxes')
         ->and($leavesFor('accounting_costing', 'cost_accounting'))->toContain('cost_centers')
-        ->and($leavesFor('fixed_assets', 'asset_data'))->toContain('fixed_assets_register')
+        ->and($subgroupsFor('fixed_assets'))->toContain('fixed_assets_register')
+        ->and($leavesFor('maintenance', 'maintenance_operations'))->toContain('maintenance_requests', 'maintenance_orders', 'maintenance_material_requests', 'maintenance_expenses')
         ->and($leavesFor('human_resources', 'employee_data'))->toContain('hr_employees')
         ->and($subgroupsFor('reports'))->toContain('sales_reports', 'inventory_reports')
         ->and($leavesFor('reports', 'sales_reports'))->toContain('customers_report')
@@ -266,12 +273,20 @@ test('menu uses the required business domain order and maps representative scree
 
         expect($visibleLabels)->toContain('sales_orders', 'sales_invoices', 'sales_returns', 'quotations', 'purchase_orders', 'purchase_invoices')
             ->and($visibleLabels)->toContain(
-                'sales_sales_order_change_requests',
-                'purchases_purchase_order_change_requests',
-                'inventory_stock_receipts',
-                'inventory_finished_goods_receipt',
-                'production_material_requirements_planning',
-                'reports_production_production_plan',
+                'inventory_movements',
+                'inventory_stock_balance_inquiry',
+                'inventory_stock_counts',
+                'inventory_operational_reports',
+                'production_stages',
+                'product_production_stages',
+                'production_work_orders',
+                'production_runs',
+                'production_material_requests',
+                'production_expenses',
+                'production_quality',
+                'production_operational_reports',
+                'maintenance_requests',
+                'maintenance_orders',
             )
             ->and($visibleLabels)->not->toContain(
                 'sales_sales_orders',
@@ -279,6 +294,12 @@ test('menu uses the required business domain order and maps representative scree
                 'purchases_purchase_order_lines',
                 'production_work_order_lines',
                 'quality_incoming_inspection_lines',
+                'sales_sales_order_change_requests',
+                'purchases_purchase_order_change_requests',
+                'inventory_stock_receipts',
+                'inventory_finished_goods_receipt',
+                'production_material_requirements_planning',
+                'reports_production_production_plan',
             );
     }
 })->with(['legacy', 'expanded']);
@@ -380,7 +401,7 @@ test('only the owning business domain and functional subgroup open for child rou
     'sales customer show' => ['admin.sales.customers.show', 'customers.view', 'sales', 'customer_data', 'legacy'],
     'purchases supplier edit' => ['admin.purchases.suppliers.edit', 'suppliers.view', 'purchases', 'supplier_data', 'legacy'],
     'inventory item edit' => ['admin.products.edit', 'products.view', 'inventory', 'item_data', 'legacy'],
-    'production setup show' => ['admin.production.identifiers.show', 'production.identifiers.view', 'production', 'production_setup', 'legacy'],
+    'production stages' => ['admin.production.stages.index', 'production.stages.view', 'production', 'production_operations', 'legacy'],
     'accounting treasury edit' => ['admin.finance.bank-accounts.edit', 'bank_accounts.view', 'accounting_costing', 'treasury_banks', 'legacy'],
     'fixed assets register' => ['admin.fixed-assets.assets.index', 'fixed_assets.view', 'accounting_costing', 'fixed_assets', 'expanded'],
     'maintenance work orders' => ['admin.maintenance.maintenance-work-orders.index', 'maintenance.maintenance_work_orders.view', 'production', 'maintenance', 'expanded'],
@@ -413,7 +434,7 @@ test('permission form uses the same recursive business domain hierarchy', functi
         'reports.customers.view',
         'suppliers.view',
         'products.view',
-        'production.identifiers.view',
+        'production.quality.view',
         'production.orders.view',
         'accounts.view',
         'fixed_assets.view',
@@ -455,7 +476,8 @@ test('permission form uses the same recursive business domain hierarchy', functi
         ->and($permissionsByDomain['sales'])->toContain('customers.view')
         ->and($permissionsByDomain['purchases'])->toContain('suppliers.view')
         ->and($permissionsByDomain['inventory'])->toContain('item_units.view', 'products.view')
-        ->and($permissionsByDomain['production'])->toContain('production.identifiers.view', 'production.orders.view')
+        ->and($permissionsByDomain['production'])->toContain('production.quality.view', 'production.orders.view')
+        ->and($permissionsByDomain['production'])->not->toContain('production.identifiers.view', 'production.resources.view')
         ->and($permissionsByDomain['accounting_costing'])->toContain('accounts.view')
         ->and($permissionsByDomain['fixed_assets'])->toContain('fixed_assets.view')
         ->and($permissionsByDomain['human_resources'])->toContain('hr.employees.view')

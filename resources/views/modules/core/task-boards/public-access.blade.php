@@ -22,10 +22,10 @@
         <form action="{{ route('public.task-boards.display.access', $board->public_token) }}" method="POST" novalidate>
             @csrf
             @if (($intendedDisplay ?? null) === 'user-display')
-                <input type="hidden" name="intended_display" value="user-display">
+                <x-forms.input type="hidden" name="intended_display" value="user-display" />
             @endif
             <label for="access_code">{{ __('task_boards.attributes.access_code') }}</label>
-            <input id="access_code" name="access_code" type="password" value="{{ old('access_code') }}" autocomplete="current-password" autofocus>
+            <x-forms.input id="access_code" name="access_code" type="password" value="{{ old('access_code') }}" autocomplete="current-password" autofocus />
             @error('access_code')
                 <div class="access-error">{{ $message }}</div>
             @enderror

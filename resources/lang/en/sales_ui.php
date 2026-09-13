@@ -93,6 +93,7 @@ return [
             'returns' => 'Sales Returns Analysis',
             'quotations' => 'Quotation Performance',
             'fulfillment' => 'Invoice and Delivery Fulfillment',
+            'pricing' => 'Sales Pricing Coverage',
             'operational' => 'Sales Cycle Operational Report',
         ],
         'descriptions' => [
@@ -106,8 +107,13 @@ return [
             'returns' => 'Return quantities analyzed by reason, customer, product, and quality disposition.',
             'quotations' => 'Quotation status, revision, validity, and value history.',
             'fulfillment' => 'Invoiced, delivered, and remaining delivery quantities through the sales cycle.',
+            'pricing' => 'Unpriced products, customers without dedicated lists, and customer/product pricing gaps.',
             'operational' => 'A concise view of quotations, invoicing, delivery fulfillment, and financial results.',
         ],
+        'pricing_as_of' => 'Pricing coverage as of :date in :currency.',
+        'unpriced_products' => 'Unpriced Products (General List)',
+        'customers_without_price_lists' => 'Customers Without Dedicated Price Lists',
+        'customer_unpriced_products' => 'Unpriced Products by Customer (No Customer or General Price)',
         'export' => [
             'sheets' => [
                 'summary' => 'Financial Summary',
@@ -126,6 +132,9 @@ return [
                 'aging' => 'Customer Aging',
                 'returns' => 'Returns by Reason',
                 'return_quality' => 'Return Quality',
+                'unpriced_products' => 'Unpriced Products',
+                'customers_without_prices' => 'Customers Without Lists',
+                'customer_price_gaps' => 'Customer Pricing Gaps',
             ],
             'metrics' => [
                 'invoice_count' => 'Invoice count',

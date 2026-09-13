@@ -8,6 +8,10 @@ test('the shared mobile stylesheet preserves readable and touch friendly control
         ->toContain('.dashboard-kpi-category')
         ->toContain('.btn-group > .dropdown-toggle-split')
         ->toContain('.navbar-nav-icons .theme-control-dropdown > .nav-link')
+        ->toContain('.erp-pwa-navigation-item[hidden]')
+        ->toContain('.erp-pwa-navigation-button')
+        ->toContain('.erp-pwa-standalone .erp-operating-context-trigger')
+        ->toContain('@media screen and (max-width: 575.98px)')
         ->toContain('.nav-tabs')
         ->toContain('scroll-snap-type: inline proximity')
         ->toContain('.erp-datatable-card th.dt-select')
@@ -33,6 +37,7 @@ test('line item cards keep mobile actions large and inside the card flow', funct
 test('shared tables and topbar expose mobile accessibility hooks', function () {
     $tableCard = file_get_contents(resource_path('views/components/admin/report/table-card.blade.php'));
     $topbar = file_get_contents(resource_path('views/layouts/partials/topbar.blade.php'));
+    $pwaNavigation = file_get_contents(resource_path('views/layouts/partials/pwa-navigation.blade.php'));
     $purchaseRequisition = file_get_contents(resource_path('views/modules/purchases/procurement/requisition-form.blade.php'));
     $userTasks = file_get_contents(resource_path('views/modules/core/user-tasks/index.blade.php'));
     $dataTables = file_get_contents(public_path('assets/js/modules/Core/datatables-defaults.js'));
@@ -43,6 +48,14 @@ test('shared tables and topbar expose mobile accessibility hooks', function () {
         ->toContain('role="region"')
         ->toContain('tabindex="0"')
         ->and(substr_count($topbar, 'erp-theme-switch-item'))->toBe(2)
+        ->and(substr_count($topbar, "@include('layouts.partials.pwa-navigation')"))->toBe(2)
+        ->and($pwaNavigation)
+        ->toContain('data-erp-pwa-navigation hidden')
+        ->toContain('role="group" dir="ltr"')
+        ->toContain('data-erp-pwa-back')
+        ->toContain('data-erp-pwa-forward')
+        ->toContain('data-erp-pwa-page-reload')
+        ->toContain('aria-label="{{ __(\'pwa.navigation.back\') }}"')
         ->and($purchaseRequisition)
         ->toContain('card-body p-0 table-responsive')
         ->toContain('aria-label="{{ __(\'Requirement lines\') }}"')

@@ -96,9 +96,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -117,7 +117,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="company-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-company-doc-number" />
                             @else
-                                <input id="company-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-company-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('companies.document_number_control.placeholder') }}">
+                                <x-forms.input id="company-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-company-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('companies.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('companies.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -139,14 +139,14 @@
                         @if ($isView)
                             <x-forms.view-field for="company-name" :value="old('name', $companyName)" />
                         @else
-                            <input id="company-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $companyName) }}" required>
+                            <x-forms.input id="company-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $companyName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
 
                         @if ($canControlMainCompany && ! $isView)
-                            <input type="hidden" name="is_main" value="0">
+                            <x-forms.input type="hidden" name="is_main" value="0" />
                             <div class="form-check form-switch mt-2">
-                                <input class="form-check-input" id="company-is-main" name="is_main" type="checkbox" value="1" @checked($isMainValue)>
+                                <x-forms.input class="form-check-input" id="company-is-main" name="is_main" type="checkbox" value="1" :checked='$isMainValue' />
                                 <label class="form-check-label" for="company-is-main">{{ __('companies.fields.main_company') }}</label>
                             </div>
                             <div class="invalid-feedback d-block" data-error-for="is_main"></div>
@@ -168,11 +168,11 @@
                             />
                         @else
                             <x-forms.label for="company-status" :label="__('common.fields.status')" required />
-                            <select id="company-status" name="status" class="form-select" required>
+                            <x-forms.select id="company-status" name="status" class="form-select" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected($statusValue === $status)>{{ __("companies.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -182,7 +182,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-legal-name" :value="$fieldValue('legal_name')" />
                         @else
-                            <input id="company-legal-name" name="legal_name" type="text" class="form-control" value="{{ $fieldValue('legal_name') }}">
+                            <x-forms.input id="company-legal-name" name="legal_name" type="text" class="form-control" value="{{ $fieldValue('legal_name') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="legal_name"></div>
                     </div>
@@ -191,7 +191,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-commercial-name" :value="$fieldValue('commercial_name')" />
                         @else
-                            <input id="company-commercial-name" name="commercial_name" type="text" class="form-control" value="{{ $fieldValue('commercial_name') }}">
+                            <x-forms.input id="company-commercial-name" name="commercial_name" type="text" class="form-control" value="{{ $fieldValue('commercial_name') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="commercial_name"></div>
                     </div>
@@ -205,7 +205,7 @@
                         ])
                         @if ($logoPath && ! $isView)
                             <div class="form-check mt-2">
-                                <input class="form-check-input" id="company-remove-logo" name="remove_logo" type="checkbox" value="1">
+                                <x-forms.input class="form-check-input" id="company-remove-logo" name="remove_logo" type="checkbox" value="1" />
                                 <label class="form-check-label" for="company-remove-logo">{{ __('companies.fields.remove_logo') }}</label>
                             </div>
                         @endif
@@ -228,7 +228,7 @@
                         ])
                         @if ($faviconPath && ! $isView)
                             <div class="form-check mt-2">
-                                <input class="form-check-input" id="company-remove-favicon" name="remove_favicon" type="checkbox" value="1">
+                                <x-forms.input class="form-check-input" id="company-remove-favicon" name="remove_favicon" type="checkbox" value="1" />
                                 <label class="form-check-label" for="company-remove-favicon">{{ __('companies.fields.remove_favicon') }}</label>
                             </div>
                         @endif
@@ -246,8 +246,8 @@
                         @if($isView)
                             <span>{{ __('Show company identity on operational prints') }}: {{ $showPrintIdentity ? __('Yes') : __('No') }}</span>
                         @else
-                            <input type="hidden" name="show_company_identity_on_prints" value="0">
-                            <div class="form-check"><input class="form-check-input" type="checkbox" id="show-company-print-identity" name="show_company_identity_on_prints" value="1" @checked($showPrintIdentity)><label class="form-check-label" for="show-company-print-identity">{{ __('Show company identity on operational prints') }}</label></div>
+                            <x-forms.input type="hidden" name="show_company_identity_on_prints" value="0" />
+                            <div class="form-check"><x-forms.input class="form-check-input" type="checkbox" id="show-company-print-identity" name="show_company_identity_on_prints" value="1" :checked='$showPrintIdentity' /><label class="form-check-label" for="show-company-print-identity">{{ __('Show company identity on operational prints') }}</label></div>
                         @endif
                         <div class="form-text">{{ __('Quotations and legal copies always show company identity.') }}</div>
                     </div>
@@ -256,7 +256,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-authorized-signatory-name" :value="$fieldValue('authorized_signatory_name')" />
                         @else
-                            <input id="company-authorized-signatory-name" name="authorized_signatory_name" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_name') }}">
+                            <x-forms.input id="company-authorized-signatory-name" name="authorized_signatory_name" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_name') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="authorized_signatory_name"></div>
                     </div>
@@ -266,7 +266,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-authorized-signatory-title" :value="$fieldValue('authorized_signatory_title')" />
                         @else
-                            <input id="company-authorized-signatory-title" name="authorized_signatory_title" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_title') }}">
+                            <x-forms.input id="company-authorized-signatory-title" name="authorized_signatory_title" type="text" class="form-control" value="{{ $fieldValue('authorized_signatory_title') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="authorized_signatory_title"></div>
                     </div>
@@ -344,18 +344,23 @@
                                 />
                             @else
                                 <label class="form-label" for="company-{{ str_replace('_', '-', $field) }}">{{ __("companies.fields.{$field}") }}</label>
-                                <input id="company-{{ str_replace('_', '-', $field) }}"
-                                       name="{{ $field }}"
-                                       type="{{ $type === 'date' ? 'text' : $type }}"
-                                       class="form-control {{ $type === 'date' ? 'js-date-picker' : '' }}"
-                                       value="{{ $type === 'date' ? $dateValue($field) : $fieldValue($field) }}"
-                                       @if ($type === 'date')
-                                           data-date-format="{{ $dateFormatService->jsDateFormat() }}"
-                                           data-locale="{{ app()->getLocale() }}"
-                                           placeholder="{{ __('common.placeholders.select_date') }}"
-                                           autocomplete="off"
-                                           dir="ltr"
-                                       @endif>
+                                @if ($type === 'date')
+                                    <x-forms.date-input id="company-{{ str_replace('_', '-', $field) }}"
+                                        name="{{ $field }}"
+                                        class="form-control js-date-picker"
+                                        value="{{ $dateValue($field) }}"
+                                        data-date-format="{{ $dateFormatService->jsDateFormat() }}"
+                                        data-locale="{{ app()->getLocale() }}"
+                                        placeholder="{{ __('common.placeholders.select_date') }}"
+                                        autocomplete="off"
+                                        dir="ltr" />
+                                @else
+                                    <x-forms.input id="company-{{ str_replace('_', '-', $field) }}"
+                                        name="{{ $field }}"
+                                        :type="$type"
+                                        class="form-control"
+                                        :value="$fieldValue($field)" />
+                                @endif
                                 <div class="invalid-feedback" data-error-for="{{ $field }}"></div>
                             @endif
                         </div>
@@ -394,7 +399,7 @@
                                 <x-forms.view-field :for="'company-'.$field" :label="$label" :value="$value" :error-for="$field" />
                             @else
                                 <label class="form-label" for="company-{{ $field }}">{{ $label }}</label>
-                                <input id="company-{{ $field }}" name="{{ $field }}" type="{{ $type }}" class="form-control" value="{{ $value }}">
+                                <x-forms.input id="company-{{ $field }}" name="{{ $field }}" type="{{ $type }}" class="form-control" value="{{ $value }}" />
                                 <div class="invalid-feedback" data-error-for="{{ $field }}"></div>
                             @endif
                         </div>
@@ -418,16 +423,14 @@
                             @if ($isView)
                                 <x-forms.view-field :for="'company-'.str_replace('_', '-', $field)" :value="$locationNames[$labelKey]" />
                             @else
-                                <select id="company-{{ str_replace('_', '-', $field) }}"
+                                <x-forms.select id="company-{{ str_replace('_', '-', $field) }}"
                                         name="{{ $field }}"
                                         class="form-select js-select2-ajax js-company-location-select"
-                                        data-url="{{ route("admin.select2.{$routeKey}") }}"
-                                        @if ($locationSelectedUrl)
-                                            data-selected-url="{{ $locationSelectedUrl }}"
-                                            data-selected-key="{{ $selectedKey }}"
-                                        @endif
-                                        data-placeholder="{{ __("companies.placeholders.{$labelKey}") }}"
-                                        data-allow-clear="true"></select>
+                                        :url="route('admin.select2.'.$routeKey)"
+                                        :data-selected-url="$locationSelectedUrl"
+                                        :data-selected-key="$locationSelectedUrl ? $selectedKey : null"
+                                        :placeholder="__('companies.placeholders.'.$labelKey)"
+                                        data-allow-clear="true"></x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="{{ $field }}"></div>
                         </div>
@@ -437,7 +440,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-address" as="textarea" :value="$fieldValue('address')" rows="3" />
                         @else
-                            <textarea id="company-address" name="address" class="form-control" rows="3">{{ $fieldValue('address') }}</textarea>
+                            <x-forms.textarea id="company-address" name="address" class="form-control" rows="3">{{ $fieldValue('address') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="address"></div>
                     </div>
@@ -446,7 +449,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-postal-code" :value="$fieldValue('postal_code')" />
                         @else
-                            <input id="company-postal-code" name="postal_code" type="text" class="form-control" value="{{ $fieldValue('postal_code') }}">
+                            <x-forms.input id="company-postal-code" name="postal_code" type="text" class="form-control" value="{{ $fieldValue('postal_code') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="postal_code"></div>
                     </div>
@@ -455,7 +458,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-map-url" :value="$fieldValue('map_url')" link />
                         @else
-                            <input id="company-map-url" name="map_url" type="url" class="form-control" value="{{ $fieldValue('map_url') }}">
+                            <x-forms.input id="company-map-url" name="map_url" type="url" class="form-control" value="{{ $fieldValue('map_url') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="map_url"></div>
                     </div>
@@ -472,7 +475,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-industry" :value="$fieldValue('industry')" />
                         @else
-                            <input id="company-industry" name="industry" type="text" class="form-control" value="{{ $fieldValue('industry') }}">
+                            <x-forms.input id="company-industry" name="industry" type="text" class="form-control" value="{{ $fieldValue('industry') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="industry"></div>
                     </div>
@@ -481,7 +484,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-activity-type" :value="$fieldValue('activity_type')" />
                         @else
-                            <input id="company-activity-type" name="activity_type" type="text" class="form-control" value="{{ $fieldValue('activity_type') }}">
+                            <x-forms.input id="company-activity-type" name="activity_type" type="text" class="form-control" value="{{ $fieldValue('activity_type') }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="activity_type"></div>
                     </div>
@@ -490,7 +493,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-business-description" as="textarea" :value="$fieldValue('business_description')" rows="4" />
                         @else
-                            <textarea id="company-business-description" name="business_description" class="form-control" rows="4">{{ $fieldValue('business_description') }}</textarea>
+                            <x-forms.textarea id="company-business-description" name="business_description" class="form-control" rows="4">{{ $fieldValue('business_description') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="business_description"></div>
                     </div>
@@ -507,7 +510,7 @@
                         @if ($isView)
                             <x-forms.view-field for="company-notes" as="textarea" :value="$fieldValue('notes')" rows="4" />
                         @else
-                            <textarea id="company-notes" name="notes" class="form-control" rows="4">{{ $fieldValue('notes') }}</textarea>
+                            <x-forms.textarea id="company-notes" name="notes" class="form-control" rows="4">{{ $fieldValue('notes') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

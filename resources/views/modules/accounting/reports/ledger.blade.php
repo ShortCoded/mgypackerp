@@ -15,6 +15,8 @@
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $isPartnerStatement = in_array($type, ['customer_statement', 'supplier_statement'], true);
+    $showCollectionDetails = $type === 'customer_statement';
+    $partnerColumnCount = $showCollectionDetails ? 9 : 7;
     $exportPermission = 'reports.'.$type.'.export';
     $exportRoute = match($type) {
         'customer_statement' => 'admin.accounting.reports.customer-statement.export.',
@@ -49,41 +51,41 @@
             :expanded="$hasFilters"
             :apply-label="__('ledger_reports.actions.run')"
             :reset-url="route(request()->route()->getName())">
-            <input name="run" type="hidden" value="1">
+            <x-forms.input name="run" type="hidden" value="1" />
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="ledger_subject" :label="__('ledger_reports.filters.'.$subjectField)" :required="true" />
-                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="{{ $type === 'customer_statement' ? 0 : 1 }}" data-per-page="20" required>
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="{{ $type === 'customer_statement' ? 0 : 1 }}" data-per-page="20" required>
                     @if($selected)<option value="{{ $selected['doc_num'] }}" selected>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</option>@endif
-                </select>
+                </x-forms.select>
                 @error($subjectField)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-2">
                 <x-forms.label for="from_date" :label="__('ledger_reports.filters.from_date')" :required="true" />
-                <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="from_date" name="from_date" value="{{ $dates->formatDate($fromDate, $fromDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="from_date" name="from_date" value="{{ $dates->formatDate($fromDate, $fromDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                 @error('from_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-2">
                 <x-forms.label for="to_date" :label="__('ledger_reports.filters.to_date')" :required="true" />
-                <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required>
+                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                 @error('to_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             @unless($isPartnerStatement)
                 <div class="col-sm-6 col-xl-2">
                     <x-forms.label for="branch_doc_num" :label="__('ledger_reports.filters.branch')" />
-                    <select class="form-select form-select-sm js-report-filter-control" id="branch_doc_num" name="branch_doc_num">
+                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="branch_doc_num" name="branch_doc_num">
                         <option value="">{{ __('ledger_reports.filters.all') }}</option>
                         @foreach($branches as $branch)
                             <option value="{{ $branch->doc_num }}" @selected(request('branch_doc_num') === $branch->doc_num)>{{ $branch->doc_num }} / {{ $branch->name }}</option>
                         @endforeach
-                    </select>
+                    </x-forms.select>
                     @error('branch_doc_num')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                 </div>
                 <div class="col-sm-6 col-xl-2">
                     <x-forms.label for="cost_center_doc_num" :label="__('ledger_reports.filters.cost_center')" />
-                    <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost_center_doc_num" name="cost_center_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.cost-centers') }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="cost_center_doc_num" name="cost_center_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.cost-centers') }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true">
                         @if(request('cost_center_doc_num'))<option value="{{ request('cost_center_doc_num') }}" selected>{{ request('cost_center_doc_num') }}</option>@endif
-                    </select>
+                    </x-forms.select>
                     @error('cost_center_doc_num')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                 </div>
             @endunless
@@ -113,7 +115,7 @@
                 <div class="table-responsive">
                     <table class="table table-sm table-striped table-hover align-middle mb-0">
                         <thead class="bg-100"><tr>
-                            @foreach(['date', 'document', 'reference', 'description', 'debit', 'credit', 'balance'] as $column)<th class="{{ in_array($column, ['debit', 'credit', 'balance'], true) ? 'text-end' : '' }}">{{ __('ledger_reports.columns.'.$column) }}</th>@endforeach
+                            @foreach($showCollectionDetails ? ['date', 'document', 'reference', 'description', 'collector', 'collection_source', 'debit', 'credit', 'balance'] : ['date', 'document', 'reference', 'description', 'debit', 'credit', 'balance'] as $column)<th class="{{ in_array($column, ['debit', 'credit', 'balance'], true) ? 'text-end' : '' }}">{{ __('ledger_reports.columns.'.$column) }}</th>@endforeach
                         </tr></thead>
                         <tbody>
                             @foreach($result['opening_movements'] as $movement)
@@ -122,6 +124,7 @@
                                     <td dir="ltr">{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
                                     <td dir="ltr">{{ $movement['reference_no'] ?: '—' }}</td>
                                     <td>{{ $movement['description'] }}</td>
+                                    @if($showCollectionDetails)<td>{{ $movement['collector'] ?: '—' }}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
                                     <td class="text-end" dir="ltr">{{ $numbers->format($movement['debit']) }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($movement['credit']) }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
@@ -158,6 +161,7 @@
                                     <th class="dt-code">{{ __('ledger_reports.columns.document') }}</th>
                                     <th class="dt-code">{{ __('ledger_reports.columns.reference') }}</th>
                                     <th class="dt-text">{{ __('ledger_reports.columns.description') }}</th>
+                                    @if($showCollectionDetails)<th class="dt-text">{{ __('ledger_reports.columns.collector') }}</th><th class="dt-text">{{ __('ledger_reports.columns.collection_source') }}</th>@endif
                                     <th class="dt-number text-end">{{ __('ledger_reports.columns.debit') }}</th>
                                     <th class="dt-number text-end">{{ __('ledger_reports.columns.credit') }}</th>
                                     <th class="dt-number text-end">{{ __('ledger_reports.columns.balance') }}</th>
@@ -169,6 +173,7 @@
                                     <td>{{ __('ledger_reports.summary.prior') }}</td>
                                     <td></td>
                                     <td></td>
+                                    @if($showCollectionDetails)<td></td><td></td>@endif
                                     <td class="text-end" dir="ltr">{{ $numbers->format($result['opening']['debit']) }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($result['opening']['credit']) }}</td>
                                     <td class="text-end" dir="ltr">
@@ -182,6 +187,7 @@
                                         <td dir="ltr">{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
                                         <td dir="ltr">{{ $movement['reference_no'] ?: '—' }}</td>
                                         <td>{{ $movement['description'] }}</td>
+                                        @if($showCollectionDetails)<td>{{ $movement['collector'] ?: '—' }}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
                                         <td class="text-end" dir="ltr">{{ $numbers->format($movement['debit']) }}</td>
                                         <td class="text-end" dir="ltr">{{ $numbers->format($movement['credit']) }}</td>
                                         <td class="text-end" dir="ltr">
@@ -190,13 +196,13 @@
                                         </td>
                                     </tr>
                                 @empty
-                                    <tr><td class="text-center text-700 py-4" colspan="7">{{ __('ledger_reports.messages.no_movements') }}</td></tr>
+                                    <tr><td class="text-center text-700 py-4" colspan="{{ $partnerColumnCount }}">{{ __('ledger_reports.messages.no_movements') }}</td></tr>
                                 @endforelse
                             </tbody>
                             <tfoot class="bg-light fw-semibold">
                                 <tr>
                                     <td>{{ $dates->formatDate($toDate, $toDate) }}</td>
-                                    <td colspan="3">{{ __('ledger_reports.summary.period') }}</td>
+                                    <td colspan="{{ $showCollectionDetails ? 5 : 3 }}">{{ __('ledger_reports.summary.period') }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($result['period']['debit']) }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($result['period']['credit']) }}</td>
                                     <td class="text-end" dir="ltr">

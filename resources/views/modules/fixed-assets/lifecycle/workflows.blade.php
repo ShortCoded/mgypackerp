@@ -32,32 +32,32 @@
             <form method="GET" class="row g-3 align-items-end" autocomplete="off">
                 <div class="col-12 col-md-6 col-xl-4">
                     <label class="form-label" for="movement-asset">{{ __('fixed_assets.reports.columns.asset') }}</label>
-                    <select id="movement-asset" class="form-select js-select2-ajax" name="asset_doc_num" data-url="{{ route('admin.fixed-assets.select2.assets') }}" data-placeholder="{{ __('fixed_assets.placeholders.asset') }}" data-allow-clear="true">
+                    <x-forms.select id="movement-asset" class="form-select js-select2-ajax" name="asset_doc_num" data-url="{{ route('admin.fixed-assets.select2.assets') }}" data-placeholder="{{ __('fixed_assets.placeholders.asset') }}" data-allow-clear="true">
                         @if($filters['asset_doc_num'] ?? null)<option selected value="{{ $filters['asset_doc_num'] }}">{{ $filters['asset_doc_num'] }}</option>@endif
-                    </select>
+                    </x-forms.select>
                 </div>
                 <div class="col-12 col-sm-6 col-xl-2">
                     <label class="form-label" for="movement-type">{{ __('fixed_assets.cycle.type') }}</label>
-                    <select id="movement-type" class="form-select" name="movement_type">
+                    <x-forms.select id="movement-type" class="form-select" name="movement_type">
                         <option value="">{{ __('fixed_assets.product.all_movements') }}</option>
                         @foreach($movementTypes as $type)<option value="{{ $type }}" @selected(($filters['movement_type'] ?? '') === $type)>{{ __('fixed_assets.cycle.'.$type) }}</option>@endforeach
-                    </select>
+                    </x-forms.select>
                 </div>
                 @foreach(['from_date', 'to_date'] as $date)
                     <div class="col-12 col-sm-6 col-xl-2">
                         <label class="form-label" for="movement-{{ $date }}">{{ __('fixed_assets.reports.'.$date) }}</label>
-                        <input id="movement-{{ $date }}" class="form-control js-date-picker" name="{{ $date }}" value="{{ isset($filters[$date]) ? $dates->formatDate($filters[$date], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}">
+                        <x-forms.date-input id="movement-{{ $date }}" class="form-control js-date-picker" name="{{ $date }}" value="{{ isset($filters[$date]) ? $dates->formatDate($filters[$date], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" />
                     </div>
                 @endforeach
                 <div class="col-12 col-sm-6 col-xl-2">
                     <label class="form-label" for="movement-branch">{{ __('fixed_assets.attributes.branch') }}</label>
-                    <select id="movement-branch" class="form-select js-select2-ajax" name="branch_doc_num" data-url="{{ route('admin.fixed-assets.select2.branches') }}" data-placeholder="{{ __('fixed_assets.placeholders.branch') }}" data-allow-clear="true">
+                    <x-forms.select id="movement-branch" class="form-select js-select2-ajax" name="branch_doc_num" data-url="{{ route('admin.fixed-assets.select2.branches') }}" data-placeholder="{{ __('fixed_assets.placeholders.branch') }}" data-allow-clear="true">
                         @if($filters['branch_doc_num'] ?? null)<option selected value="{{ $filters['branch_doc_num'] }}">{{ $filters['branch_doc_num'] }}</option>@endif
-                    </select>
+                    </x-forms.select>
                 </div>
                 <div class="col-12 col-sm-6 col-xl-3">
                     <label class="form-label" for="movement-user">{{ __('fixed_assets.cycle.user') }}</label>
-                    <input id="movement-user" class="form-control" name="user" value="{{ $filters['user'] ?? '' }}" placeholder="{{ __('fixed_assets.product.user_filter_help') }}">
+                    <x-forms.input id="movement-user" class="form-control" name="user" value="{{ $filters['user'] ?? '' }}" placeholder="{{ __('fixed_assets.product.user_filter_help') }}" />
                 </div>
                 <div class="col-12 col-sm-auto d-grid d-sm-block">
                     <button class="btn btn-falcon-primary" type="submit"><span class="fas fa-filter me-1" aria-hidden="true"></span>{{ __('common.actions.apply') }}</button>

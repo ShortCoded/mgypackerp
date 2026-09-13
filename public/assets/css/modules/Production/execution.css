@@ -1,0 +1,244 @@
+.production-mobile-workflow .card {
+  border-radius: 0.75rem;
+}
+
+.production-mobile-workflow .erp-datatable-card {
+  position: relative;
+  z-index: 1;
+}
+
+.production-mobile-workflow .erp-datatable-card .dropdown-menu {
+  z-index: 1085;
+}
+
+.production-mobile-workflow .erp-datatable tbody tr:has([data-row-primary-link]) {
+  cursor: pointer;
+}
+
+.production-mobile-workflow .form-control,
+.production-mobile-workflow .form-select,
+.production-mobile-workflow .btn {
+  min-block-size: 2.75rem;
+}
+
+.production-mobile-workflow .quality-evidence-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.5rem;
+  margin-block-start: 0.75rem;
+}
+
+.production-mobile-workflow .quality-evidence-preview-item {
+  display: grid;
+  place-items: center;
+  min-block-size: 5.5rem;
+  padding: 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--falcon-border-color, #d8e2ef);
+  border-radius: 0.5rem;
+  background: var(--falcon-gray-100, #f9fafd);
+  font-size: 0.75rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.production-mobile-workflow .quality-evidence-preview-item img {
+  inline-size: 100%;
+  block-size: 4.5rem;
+  object-fit: cover;
+  border-radius: 0.35rem;
+}
+
+.production-mobile-workflow .quality-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
+.production-mobile-workflow .quality-summary-item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.875rem;
+  border: 1px solid var(--falcon-border-color, #d8e2ef);
+  border-radius: 0.75rem;
+  background: var(--falcon-card-bg, #fff);
+}
+
+.production-mobile-workflow .quality-summary-item > span {
+  color: var(--falcon-gray-600, #748194);
+  font-size: 0.75rem;
+}
+
+.production-mobile-workflow .quality-lifecycle {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(7rem, 1fr));
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-block-end: 0.25rem;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.production-mobile-workflow .quality-lifecycle-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.5rem;
+  min-inline-size: 7rem;
+  padding: 0.75rem;
+  border: 1px solid var(--falcon-border-color, #d8e2ef);
+  border-radius: 0.75rem;
+  background: var(--falcon-card-bg, #fff);
+}
+
+.production-mobile-workflow .quality-lifecycle-step.is-complete {
+  border-color: var(--falcon-success, #00d27a);
+  background: rgb(0 210 122 / 8%);
+}
+
+.production-mobile-workflow .quality-lifecycle-marker {
+  grid-row: 1 / span 2;
+  color: var(--falcon-gray-500, #9da9bb);
+}
+
+.production-mobile-workflow .quality-lifecycle-step.is-complete .quality-lifecycle-marker {
+  color: var(--falcon-success, #00d27a);
+}
+
+.production-mobile-workflow .quality-lifecycle-label {
+  font-weight: 600;
+}
+
+.production-mobile-workflow .quality-lifecycle-step small {
+  color: var(--falcon-gray-600, #748194);
+}
+
+.production-mobile-workflow .quality-evidence-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.75rem;
+}
+
+.production-mobile-workflow .quality-evidence-card {
+  display: grid;
+  grid-template-rows: 8rem auto auto;
+  gap: 0.5rem;
+  min-block-size: 11rem;
+  padding: 0.625rem;
+  border: 1px solid var(--falcon-border-color, #d8e2ef);
+  border-radius: 0.75rem;
+  color: inherit;
+  text-align: center;
+  text-decoration: none;
+}
+
+.production-mobile-workflow .quality-evidence-card:hover,
+.production-mobile-workflow .quality-evidence-card:focus-visible {
+  border-color: var(--falcon-primary, #2c7be5);
+  box-shadow: 0 0 0 0.2rem rgb(44 123 229 / 15%);
+}
+
+.production-mobile-workflow .quality-evidence-card img {
+  inline-size: 100%;
+  block-size: 8rem;
+  object-fit: cover;
+  border-radius: 0.5rem;
+}
+
+.production-mobile-workflow .quality-evidence-card > .fas {
+  align-self: center;
+}
+
+.production-mobile-workflow .quality-detail-list dd {
+  overflow-wrap: anywhere;
+}
+
+.production-mobile-workflow .quality-checkpoint-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.production-mobile-workflow .quality-checkpoint {
+  min-inline-size: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--falcon-border-color, #d8e2ef);
+  border-radius: 0.65rem;
+  background: var(--falcon-gray-100, #f9fafd);
+}
+
+.production-mobile-workflow .quality-checkpoint[hidden] {
+  display: none;
+}
+
+.production-mobile-workflow .quality-checkpoint legend {
+  float: none;
+  inline-size: auto;
+  margin-block-end: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.production-mobile-workflow .quality-capture-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media screen and (max-width: 767.98px) {
+  .production-mobile-workflow .card-header.d-flex,
+  .production-mobile-workflow > .d-flex {
+    align-items: stretch !important;
+    flex-direction: column;
+  }
+
+  .production-mobile-workflow .card-header.d-flex > .btn,
+  .production-mobile-workflow > .d-flex > .btn {
+    inline-size: 100%;
+  }
+
+  .production-mobile-workflow .card-header,
+  .production-mobile-workflow .card-body,
+  .production-mobile-workflow .card-footer {
+    padding-inline: 0.875rem;
+  }
+
+  .production-mobile-workflow .card-footer .btn,
+  .production-mobile-workflow .mobile-action-row > .btn,
+  .production-mobile-workflow .mobile-action-row > form,
+  .production-mobile-workflow .mobile-action-row > form > .btn {
+    inline-size: 100%;
+  }
+
+  .production-mobile-workflow .mobile-action-row {
+    display: grid !important;
+    grid-template-columns: 1fr;
+  }
+
+  .production-mobile-workflow .table-responsive {
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .production-mobile-workflow .quality-review-actions {
+    position: sticky;
+    inset-block-end: 0.75rem;
+    z-index: 5;
+    inline-size: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--falcon-border-color, #d8e2ef);
+    border-radius: 0.75rem;
+    background: var(--falcon-card-bg, #fff);
+    box-shadow: 0 0.25rem 1rem rgb(0 0 0 / 12%);
+  }
+
+  .production-mobile-workflow .quality-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-mobile-workflow .quality-evidence-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-mobile-workflow .quality-capture-actions {
+    grid-template-columns: 1fr;
+  }
+}

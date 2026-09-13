@@ -287,6 +287,7 @@ return [
         'empty_value' => '-',
         'cancel' => 'إلغاء',
         'confirm_yes' => 'تأكيد',
+        'confirm_title' => 'تأكيد الإجراء؟',
         'delete' => 'حذف',
         'restore' => 'استرجاع',
         'approve' => 'اعتماد',

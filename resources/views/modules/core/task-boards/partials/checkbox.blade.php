@@ -13,6 +13,6 @@
 
 @if ($canSelect)
     <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-        <input class="form-check-input js-task-board-row-checkbox js-record-select" type="checkbox" value="{{ $board->doc_num }}" data-doc-num="{{ $board->doc_num }}" aria-label="{{ __('task_boards.select_record', ['record' => $board->doc_num]) }}">
+        <x-forms.input class="form-check-input js-task-board-row-checkbox js-record-select" type="checkbox" value="{{ $board->doc_num }}" data-doc-num="{{ $board->doc_num }}" aria-label="{{ __('task_boards.select_record', ['record' => $board->doc_num]) }}" />
     </div>
 @endif

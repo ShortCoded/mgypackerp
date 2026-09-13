@@ -45,119 +45,119 @@
             @endphp
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-report-type">{{ __('Report') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-report-type" name="report_type">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-report-type" name="report_type">
                     @foreach($reportTypes as $type)
                         <option value="{{ $type }}" @selected($reportType === $type)>{{ __('procurement.reports.types.'.$type) }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-date-from">{{ __('From date') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-date-from" name="date_from" type="date" value="{{ $filters['date_from'] ?? '' }}">
+                <x-forms.date-input class="{{ $fieldClass }}" id="procurement-date-from" name="date_from" :value="$filters['date_from'] ?? ''" />
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-date-to">{{ __('To date') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-date-to" name="date_to" type="date" value="{{ $filters['date_to'] ?? '' }}">
+                <x-forms.date-input class="{{ $fieldClass }}" id="procurement-date-to" name="date_to" :value="$filters['date_to'] ?? ''" />
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-supplier">{{ __('Supplier') }}</label>
-                <select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-supplier" name="supplier_doc_num">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-supplier" name="supplier_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($suppliers as $supplier)
                         <option value="{{ $supplier->doc_num }}" @selected(($filters['supplier_doc_num'] ?? '') === $supplier->doc_num)>{{ $supplier->doc_num }} / {{ $supplier->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-product">{{ __('Item') }}</label>
-                <select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.products') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-product" name="product_doc_num">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.products') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-product" name="product_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($products as $product)
                         <option value="{{ $product->doc_num }}" @selected(($filters['product_doc_num'] ?? '') === $product->doc_num)>{{ $product->doc_num }} / {{ $product->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-pr">{{ __('Purchase requisition') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-pr" name="purchase_requisition_doc_num">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-pr" name="purchase_requisition_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($requisitions as $requisition)
                         <option value="{{ $requisition->doc_num }}" @selected(($filters['purchase_requisition_doc_num'] ?? '') === $requisition->doc_num)>{{ $requisition->doc_num }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-po">{{ __('Purchase order') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-po" name="purchase_order_doc_num">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-po" name="purchase_order_doc_num">
                     <option value="">{{ __('All') }}</option>
                     @foreach($orders as $order)
                         <option value="{{ $order->doc_num }}" @selected(($filters['purchase_order_doc_num'] ?? '') === $order->doc_num)>{{ $order->doc_num }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label" for="procurement-detail">{{ __('Detail level') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-detail" name="detail_level"><option value="summary">{{ __('Summary') }}</option><option value="lines" @selected(($filters['detail_level'] ?? '') === 'lines')>{{ __('Item lines') }}</option></select>
+                <x-forms.select class="{{ $selectClass }}" id="procurement-detail" name="detail_level"><option value="summary">{{ __('Summary') }}</option><option value="lines" @selected(($filters['detail_level'] ?? '') === 'lines')>{{ __('Item lines') }}</option></x-forms.select>
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label" for="procurement-currency">{{ __('Currency') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-currency" name="currency_doc_num"><option value="">{{ __('All') }}</option>@foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? '') === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>@endforeach</select>
+                <x-forms.select class="{{ $selectClass }}" id="procurement-currency" name="currency_doc_num"><option value="">{{ __('All') }}</option>@foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? '') === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>@endforeach</x-forms.select>
             </div>
             @if($reportType === \Modules\Purchases\Services\Reports\ProcurementCycleReport::SupplierStatement)
             <div class="col-12 col-md-4 report-filter-field">
                 <label class="form-label" for="procurement-document-type">{{ __('Document type') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-document-type" name="document_type"><option value="">{{ __('All') }}</option>
+                <x-forms.select class="{{ $selectClass }}" id="procurement-document-type" name="document_type"><option value="">{{ __('All') }}</option>
                     @foreach(['purchase_invoice' => 'Purchase Invoice', 'purchase_return' => 'Purchase Return', 'supplier_payment' => 'Supplier Payment', 'supplier_cheque_issue' => 'Cheque issue', 'supplier_cheque_clearing' => 'Cheque clearing', 'cash_voucher' => 'Cash Payment Voucher', 'cheque' => 'Cheque', 'opening_balance' => 'Opening balance', 'manual' => 'Journal Entry'] as $type => $label)<option value="{{ $type }}" @selected(($filters['document_type'] ?? '') === $type)>{{ __($label) }}</option>@endforeach
-                </select>
+                </x-forms.select>
             </div>
             @endif
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-status">{{ __('Status') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-status" name="status" value="{{ $filters['status'] ?? '' }}">
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-status" name="status" value="{{ $filters['status'] ?? '' }}" />
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-branch">{{ __('Branch') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-branch" name="branch_id">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-branch" name="branch_id">
                     <option value="">{{ __('All') }}</option>
                     @foreach($branches as $branch)
                         <option value="{{ $branch->id }}" @selected((string) ($filters['branch_id'] ?? '') === (string) $branch->id)>{{ $branch->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-warehouse">{{ __('Warehouse') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-warehouse" name="warehouse_uuid">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-warehouse" name="warehouse_uuid">
                     <option value="">{{ __('All') }}</option>
                     @foreach($warehouses as $warehouse)
                         <option value="{{ $warehouse->public_uuid }}" @selected(($filters['warehouse_uuid'] ?? '') === $warehouse->public_uuid)>{{ $warehouse->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-qc">{{ __('QC status') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-qc" name="qc_status" value="{{ $filters['qc_status'] ?? '' }}">
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-qc" name="qc_status" value="{{ $filters['qc_status'] ?? '' }}" />
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-production-order">{{ __('Production order') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-production-order" name="production_order_doc_num" value="{{ $filters['production_order_doc_num'] ?? '' }}" dir="ltr">
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-production-order" name="production_order_doc_num" value="{{ $filters['production_order_doc_num'] ?? '' }}" dir="ltr" />
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-work-order">{{ __('Work order reference') }}</label>
-                <input class="{{ $fieldClass }}" id="procurement-work-order" name="work_order_reference" value="{{ $filters['work_order_reference'] ?? '' }}" dir="ltr">
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-work-order" name="work_order_reference" value="{{ $filters['work_order_reference'] ?? '' }}" dir="ltr" />
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-overdue">{{ __('Overdue only') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-overdue" name="overdue">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-overdue" name="overdue">
                     <option value="">{{ __('No restriction') }}</option>
                     <option value="1" @selected(($filters['overdue'] ?? '') === '1')>{{ __('Yes') }}</option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-outstanding">{{ __('Outstanding only') }}</label>
-                <select class="{{ $selectClass }}" id="procurement-outstanding" name="outstanding">
+                <x-forms.select class="{{ $selectClass }}" id="procurement-outstanding" name="outstanding">
                     <option value="">{{ __('No restriction') }}</option>
                     <option value="1" @selected(($filters['outstanding'] ?? '') === '1')>{{ __('Yes') }}</option>
-                </select>
+                </x-forms.select>
             </div>
         </x-admin.report.filter-panel>
 

@@ -32,12 +32,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6 col-lg-4">
                                 <label class="form-label" for="hr-employees-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="hr-employees-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="hr-employees-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label" for="hr-employees-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="hr-employees-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required>
+                                <x-forms.input class="form-control" id="hr-employees-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -71,72 +71,70 @@
                         @foreach ($filterSelects as $fieldName => $option)
                             <div class="col-md-6 col-xl-4">
                                 <label class="form-label" for="hr-employees-filter-{{ str_replace('_', '-', $fieldName) }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
-                                <select id="hr-employees-filter-{{ str_replace('_', '-', $fieldName) }}"
+                                <x-forms.select id="hr-employees-filter-{{ str_replace('_', '-', $fieldName) }}"
                                     name="{{ $fieldName }}"
                                     class="form-select js-select2-ajax js-hr-employees-filter"
                                     data-url="{{ $option['url'] ?? '' }}"
                                     data-placeholder="{{ __('hr.employees.placeholders.' . $fieldName) }}"
                                     data-allow-clear="true"
-                                    @if ($fieldName === 'section_doc_num')
-                                        data-depends-on="#hr-employees-filter-department-doc-num"
-                                        data-dependent-param="department_doc_num"
-                                        data-dependent-result-field="department_doc_num"
-                                        data-disable-when-dependency-empty="true"
-                                    @endif></select>
+                                    :data-depends-on="$fieldName === 'section_doc_num' ? '#hr-employees-filter-department-doc-num' : null"
+                                    :data-dependent-param="$fieldName === 'section_doc_num' ? 'department_doc_num' : null"
+                                    :data-dependent-result-field="$fieldName === 'section_doc_num' ? 'department_doc_num' : null"
+                                    :data-disable-when-dependency-empty="$fieldName === 'section_doc_num' ? 'true' : null"></x-forms.select>
                             </div>
                         @endforeach
 
                         <div class="col-md-6 col-xl-3">
                             <label class="form-label" for="hr-employees-filter-person-type">{{ __('hr.employees.attributes.person_type') }}</label>
-                            <select id="hr-employees-filter-person-type" name="person_type" class="form-select js-hr-employees-filter">
+                            <x-forms.select id="hr-employees-filter-person-type" name="person_type" class="form-select js-hr-employees-filter">
                                 <option value="">{{ __('hr.employees.filters.all') }}</option>
                                 @foreach (['fixed_employee', 'regular_labor', 'casual_labor'] as $personType)
                                     <option value="{{ $personType }}">{{ __('hr.employees.person_types.' . $personType) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         </div>
 
                         <div class="col-md-6 col-xl-3">
                             <label class="form-label" for="hr-employees-filter-status">{{ __('common.fields.status') }}</label>
-                            <select id="hr-employees-filter-status" name="status" class="form-select js-hr-employees-filter">
+                            <x-forms.select id="hr-employees-filter-status" name="status" class="form-select js-hr-employees-filter">
                                 <option value="">{{ __('hr.employees.filters.all') }}</option>
                                 @foreach (['active', 'inactive', 'suspended', 'stopped', 'left'] as $status)
                                     <option value="{{ $status }}">{{ __('hr.employees.statuses.' . $status) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         </div>
 
                         @foreach (['insurance_status', 'tax_status'] as $statutoryFilter)
                             <div class="col-md-6 col-xl-3">
                                 <label class="form-label" for="hr-employees-filter-{{ str_replace('_', '-', $statutoryFilter) }}">{{ __('hr.employees.attributes.'.$statutoryFilter) }}</label>
-                                <select id="hr-employees-filter-{{ str_replace('_', '-', $statutoryFilter) }}" name="{{ $statutoryFilter }}" class="form-select js-hr-employees-filter">
+                                <x-forms.select id="hr-employees-filter-{{ str_replace('_', '-', $statutoryFilter) }}" name="{{ $statutoryFilter }}" class="form-select js-hr-employees-filter">
                                     <option value="">{{ __('hr.employees.filters.all') }}</option>
                                     @foreach (['subject', 'not_subject', 'suspended', 'ended'] as $statutoryStatus)
                                         <option value="{{ $statutoryStatus }}">{{ __('hr.employees.statutory_statuses.'.$statutoryStatus) }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             </div>
                         @endforeach
 
                         <div class="col-md-6 col-xl-3">
                             <label class="form-label" for="hr-employees-filter-hire-from">{{ __('hr.employees.filters.hire_from') }}</label>
-                            <input id="hr-employees-filter-hire-from" name="hire_from" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}">
+                            <x-forms.date-input id="hr-employees-filter-hire-from" name="hire_from" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}" />
                         </div>
 
                         <div class="col-md-6 col-xl-3">
                             <label class="form-label" for="hr-employees-filter-hire-to">{{ __('hr.employees.filters.hire_to') }}</label>
-                            <input id="hr-employees-filter-hire-to" name="hire_to" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}">
+                            <x-forms.date-input id="hr-employees-filter-hire-to" name="hire_to" type="text" class="form-control js-date-picker js-hr-employees-filter" placeholder="{{ __('common.placeholders.select_date') }}" />
                         </div>
 
                         @can('hr.employees.view_trashed')
                             <div class="col-md-6 col-xl-3">
                                 <label class="form-label" for="hr_employees_trash_filter">{{ __('hr.trash.filter_label') }}</label>
-                                <select class="form-select js-hr-employees-filter" id="hr_employees_trash_filter" name="trash_filter">
+                                <x-forms.select class="form-select js-hr-employees-filter" id="hr_employees_trash_filter" name="trash_filter">
                                     <option value="active">{{ __('hr.trash.active') }}</option>
                                     <option value="inactive">{{ __('hr.trash.inactive') }}</option>
                                     <option value="trashed">{{ __('hr.trash.trashed') }}</option>
                                     <option value="all">{{ __('hr.trash.all') }}</option>
-                                </select>
+                                </x-forms.select>
                             </div>
                         @endcan
 
@@ -164,7 +162,7 @@
                     @if (auth()->user()?->can('hr.employees.delete') || auth()->user()?->can('hr.employees.restore') || auth()->user()?->can('hr.employees.edit'))
                         <div class="d-none align-items-center gap-2 hr-employees-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('hr.bulk_action') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('hr.bulk_action') }}">
                                 @can('hr.employees.delete')
                                     <option value="delete">{{ __('hr.bulk_actions.delete_selected') }}</option>
                                 @endcan
@@ -175,7 +173,7 @@
                                     <option value="activate">{{ __('hr.bulk_actions.activate_selected') }}</option>
                                     <option value="deactivate">{{ __('hr.bulk_actions.deactivate_selected') }}</option>
                                 @endcan
-                            </select>
+                            </x-forms.select>
                             <button type="button" class="btn btn-falcon-danger btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
@@ -198,7 +196,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('hr.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('hr.select_all') }}" />
                                         </div>
                                     </th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('common.fields.document_number') }}</th>

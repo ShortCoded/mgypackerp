@@ -28,7 +28,6 @@
         localStorage.setItem('isRTL', @json($isRtlLocale));
     </script>
     @include('layouts.partials.falcon-defaults')
-    <script src="{{ asset('vendors/simplebar/simplebar.min.js') }}"></script>
     <link href="{{ asset('vendors/simplebar/simplebar.min.css') }}" rel="stylesheet">
     <link href="{{ asset('vendors/select2/select2.min.css') }}" rel="stylesheet">
     <link href="{{ asset('vendors/select2-bootstrap-5-theme/select2-bootstrap-5-theme.min.css') }}" rel="stylesheet">
@@ -67,22 +66,22 @@
             <div class="btn-group d-block w-100 btn-group-navbar-style">
                 <div class="row gx-2">
                     <div class="col-4">
-                        <input class="btn-check" id="themeSwitcherLight" name="theme-color" type="radio"
-                            value="light" data-theme-control="theme">
+                        <x-forms.input class="btn-check" id="themeSwitcherLight" name="theme-color" type="radio"
+                            value="light" data-theme-control="theme" />
                         <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherLight">
                             <span class="label-text">{{ __('auth.customizer.light') }}</span>
                         </label>
                     </div>
                     <div class="col-4">
-                        <input class="btn-check" id="themeSwitcherDark" name="theme-color" type="radio"
-                            value="dark" data-theme-control="theme">
+                        <x-forms.input class="btn-check" id="themeSwitcherDark" name="theme-color" type="radio"
+                            value="dark" data-theme-control="theme" />
                         <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherDark">
                             <span class="label-text">{{ __('auth.customizer.dark') }}</span>
                         </label>
                     </div>
                     <div class="col-4">
-                        <input class="btn-check" id="themeSwitcherAuto" name="theme-color" type="radio"
-                            value="auto" data-theme-control="theme">
+                        <x-forms.input class="btn-check" id="themeSwitcherAuto" name="theme-color" type="radio"
+                            value="auto" data-theme-control="theme" />
                         <label class="btn d-inline-block btn-navbar-style fs-10" for="themeSwitcherAuto">
                             <span class="label-text">{{ __('auth.customizer.auto') }}</span>
                         </label>
@@ -96,7 +95,7 @@
                 <div class="flex-1">
                     <h5 class="fs-9">{{ __('auth.customizer.language') }}</h5>
                     <p class="mb-2 fs-10">{{ __('auth.customizer.language_help') }}</p>
-                    <select class="form-select form-select-sm js-auth-language-select"
+                    <x-forms.select class="form-select form-select-sm js-auth-language-select"
                         aria-label="{{ __('auth.customizer.language') }}"
                         data-language-switch-url="{{ route('lang.switch', ['locale' => '__LOCALE__']) }}">
                         @foreach (config('languages.available', []) as $locale => $language)
@@ -105,7 +104,7 @@
                                 {{ $language['native'] ?? $language['name'] ?? strtoupper($locale) }}
                             </option>
                         @endforeach
-                    </select>
+                    </x-forms.select>
                 </div>
             </div>
             <hr>
@@ -163,6 +162,7 @@
     <script src="{{ asset('vendors/lodash/lodash.min.js') }}"></script>
     <script src="{{ asset('vendors/list.js/list.min.js') }}"></script>
     <script src="{{ asset('vendors/select2/select2.full.min.js') }}"></script>
+    <script src="{{ asset('vendors/simplebar/simplebar.min.js') }}"></script>
     <script src="{{ asset('assets/js/theme.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/client-context.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Auth/helpers.js') }}"></script>

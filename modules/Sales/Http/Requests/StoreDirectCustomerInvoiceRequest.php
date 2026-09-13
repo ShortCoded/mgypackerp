@@ -68,7 +68,7 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
             'lines.*.product_doc_num' => ['required', 'string'],
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'gt:0'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
             'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'],
         ];

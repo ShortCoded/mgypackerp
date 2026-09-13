@@ -287,6 +287,7 @@ return [
         'empty_value' => '-',
         'cancel' => 'Cancel',
         'confirm_yes' => 'Confirm',
+        'confirm_title' => 'Confirm action?',
         'delete' => 'Delete',
         'restore' => 'Restore',
         'approve' => 'Approve',

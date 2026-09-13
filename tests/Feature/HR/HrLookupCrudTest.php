@@ -681,7 +681,7 @@ test('trashed hr lookup restore is blocked when an active record reuses protecte
 
     $response = $this->actingAs($restorer)
         ->patchJson(route('admin.hr.countries.restore', $trashed->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('hr.messages.restore_conflict'))
         ->assertJsonPath('errors.restore.0', __('hr.messages.restore_conflict'))
         ->assertJsonPath('data.conflict_type', $expectedType)

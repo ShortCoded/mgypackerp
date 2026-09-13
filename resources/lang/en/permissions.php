@@ -72,6 +72,15 @@ $hrEmployeePermissionLabels = [
     'hr.employees.documents.delete' => 'Delete Employee Documents',
 ];
 
+$hrAttendanceAndRequestPermissionLabels = [
+    'hr.employee_attendance.view' => 'View Employee Attendance',
+    'hr.employee_attendance.manage' => 'Manage Employee Attendance Events',
+    'hr.employee_attendance.correct' => 'Correct Employee Attendance Events',
+    'hr.employee_attendance.export' => 'Export Employee Attendance Report',
+    'hr.hr_requests.view' => 'View HR Requests',
+    'hr.hr_requests.manage' => 'Review, Approve, or Reject HR Requests',
+];
+
 $costCenterPermissionLabels = [];
 
 foreach (['cost_centers' => ['Cost Centers', 'Cost Center']] as $prefix => [$plural, $singular]) {
@@ -121,26 +130,6 @@ $quotationPermissionLabels = [
     'quotations.print' => 'Print Quotations',
     'quotations.attachments.manage' => 'Manage Quotation Attachments',
 ];
-
-$projectStructurePermissionLabels = [];
-
-foreach ([
-    'project_structures' => ['Project Structures', 'Project Structure'],
-    'project_structure_models' => ['Project Structure Models', 'Project Structure Model'],
-] as $prefix => [$plural, $singular]) {
-    $projectStructurePermissionLabels["{$prefix}.view"] = "View {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.create"] = "Create {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.clone"] = "Clone {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.edit"] = "Edit {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.delete"] = "Delete {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.view_trashed"] = "View Deleted {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.restore"] = "Restore {$plural}";
-    $projectStructurePermissionLabels["{$prefix}.document_number.control"] = "Control {$singular} Document Number";
-    $projectStructurePermissionLabels["{$prefix}.document_number_settings.update"] = "Update {$singular} Document Number Settings";
-}
-
-$projectStructurePermissionLabels['project_structures.tree.view'] = 'View Project Structure Tree';
-$projectStructurePermissionLabels['project_structures.tree.manage'] = 'Manage Project Structure Tree';
 
 $supplierPermissionLabels = [];
 
@@ -383,10 +372,10 @@ return [
     ...$hrFoundationPermissionLabels,
     ...$hrOrgStructurePermissionExtras,
     ...$hrEmployeePermissionLabels,
+    ...$hrAttendanceAndRequestPermissionLabels,
     ...$costCenterPermissionLabels,
     ...$customerPermissionLabels,
     ...$quotationPermissionLabels,
-    ...$projectStructurePermissionLabels,
     ...$supplierPermissionLabels,
     ...$productPermissionLabels,
     ...$reportPermissionLabels,

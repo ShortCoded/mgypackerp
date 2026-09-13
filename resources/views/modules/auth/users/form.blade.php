@@ -36,9 +36,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card">
@@ -57,7 +57,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="user-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-user-doc-number" />
                             @else
-                                <input id="user-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-user-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('users.document_number_control.placeholder') }}">
+                                <x-forms.input id="user-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-user-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('users.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('users.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -79,7 +79,7 @@
                         @if ($isView)
                             <x-forms.view-field for="user-name" :value="old('name', $userName)" />
                         @else
-                            <input id="user-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $userName) }}" required>
+                            <x-forms.input id="user-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $userName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -89,7 +89,7 @@
                         @if ($isView)
                             <x-forms.view-field for="user-username" :value="old('username', $isClone ? '' : $user?->username)" />
                         @else
-                            <input id="user-username" name="username" type="text" class="form-control" value="{{ old('username', $isClone ? '' : $user?->username) }}" autocomplete="username" required>
+                            <x-forms.input id="user-username" name="username" type="text" class="form-control" value="{{ old('username', $isClone ? '' : $user?->username) }}" autocomplete="username" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="username"></div>
                     </div>
@@ -105,7 +105,7 @@
                                 <x-forms.view-field for="user-email" :value="$user?->email" />
                             @endif
                         @else
-                            <input id="user-email" name="email" type="email" class="form-control" value="{{ old('email', $isClone ? '' : $user?->email) }}" autocomplete="email">
+                            <x-forms.input id="user-email" name="email" type="email" class="form-control" value="{{ old('email', $isClone ? '' : $user?->email) }}" autocomplete="email" />
                         @endif
                         <div class="invalid-feedback" data-error-for="email"></div>
                     </div>
@@ -121,7 +121,7 @@
                                 <x-forms.view-field for="user-phone" :value="$phoneValue" />
                             @endif
                         @else
-                            <input id="user-phone" name="phone" type="text" class="form-control" value="{{ old('phone', $phoneValue) }}" autocomplete="tel">
+                            <x-forms.input id="user-phone" name="phone" type="text" class="form-control" value="{{ old('phone', $phoneValue) }}" autocomplete="tel" />
                         @endif
                         <div class="invalid-feedback" data-error-for="phone"></div>
                     </div>
@@ -139,11 +139,11 @@
                             />
                         @else
                             <x-forms.label for="user-status" :label="__('common.fields.status')" required />
-                            <select id="user-status" name="status" class="form-select" required>
+                            <x-forms.select id="user-status" name="status" class="form-select" required>
                                 @foreach (['active', 'inactive', 'blocked'] as $status)
                                     <option value="{{ $status }}" @selected($userStatusValue === $status)>{{ __("users.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -151,13 +151,13 @@
                     @unless ($isView)
                         <div class="col-md-4">
                             <x-forms.label for="user-password" :label="__('users.password')" :required="! $isEdit" />
-                            <input id="user-password" name="password" type="password" class="form-control" autocomplete="new-password" @required(! $isEdit)>
+                            <x-forms.input id="user-password" name="password" type="password" class="form-control" autocomplete="new-password" :required='! $isEdit' />
                             <div class="form-text">{{ $isEdit ? __('users.password_optional_helper') : __('users.password_required_helper') }}</div>
                             <div class="invalid-feedback" data-error-for="password"></div>
                         </div>
                         <div class="col-md-4">
                             <x-forms.label for="user-password-confirmation" :label="__('users.password_confirmation')" :required="! $isEdit" />
-                            <input id="user-password-confirmation" name="password_confirmation" type="password" class="form-control" autocomplete="new-password" @required(! $isEdit)>
+                            <x-forms.input id="user-password-confirmation" name="password_confirmation" type="password" class="form-control" autocomplete="new-password" :required='! $isEdit' />
                             <div class="invalid-feedback" data-error-for="password_confirmation"></div>
                         </div>
                     @endunless
@@ -167,7 +167,7 @@
                         @if ($isView)
                             <x-forms.view-field for="user-notes" as="textarea" :value="old('notes', $user?->notes)" rows="4" />
                         @else
-                            <textarea id="user-notes" name="notes" class="form-control" rows="4">{{ old('notes', $user?->notes) }}</textarea>
+                            <x-forms.textarea id="user-notes" name="notes" class="form-control" rows="4">{{ old('notes', $user?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>
@@ -188,19 +188,17 @@
                                     <x-forms.view-field for="user-roles" />
                                 @endif
                             @else
-                                <input type="hidden" name="_roles_present" value="1">
-                                <select id="user-roles"
+                                <x-forms.input type="hidden" name="_roles_present" value="1" />
+                                <x-forms.select id="user-roles"
                                         name="roles[]"
                                         class="form-select js-select2-ajax"
                                         multiple
                                         data-url="{{ route('admin.select2.roles') }}"
-                                        @if ($isEdit && $user)
-                                            data-selected-url="{{ route('admin.select2.users.roles.selected', $user->doc_num) }}"
-                                        @endif
+                                        :data-selected-url="$isEdit && $user ? route('admin.select2.users.roles.selected', $user->doc_num) : null"
                                         data-placeholder="{{ __('users.placeholders.roles') }}"
                                         data-allow-clear="true"
                                         data-clear-all="true"
-                                        data-clear-all-label="{{ __('common.actions.clear_all') }}"></select>
+                                        data-clear-all-label="{{ __('common.actions.clear_all') }}"></x-forms.select>
                             @endif
                             <div class="form-text">{{ __('users.roles_helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="roles"></div>

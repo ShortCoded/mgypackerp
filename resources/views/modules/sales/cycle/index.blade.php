@@ -16,8 +16,8 @@
 <div class="card mb-3">
     <div class="card-header py-2"><button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center justify-content-between" type="button" data-bs-toggle="collapse" data-bs-target="#sales-index-filters" aria-expanded="false"><span class="fw-semibold">{{ __('Filters') }}</span><span class="fas fa-chevron-down fs-11"></span></button></div>
     <div class="collapse" id="sales-index-filters"><div class="card-body"><form id="sales-index-filter-form" class="row g-3 align-items-end">
-        <div class="col-md-4"><label class="form-label" for="sales-filter-document">{{ __('Document number') }}</label><input class="form-control" id="sales-filter-document" name="document"></div>
-        <div class="col-md-4"><label class="form-label" for="sales-filter-status">{{ __('Status') }}</label><select class="form-select" id="sales-filter-status" name="status"><option value="">{{ __('All statuses') }}</option>@foreach($states as $status)<option value="{{ $status }}">{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</select></div>
+        <div class="col-md-4"><label class="form-label" for="sales-filter-document">{{ __('Document number') }}</label><x-forms.input class="form-control" id="sales-filter-document" name="document" /></div>
+        <div class="col-md-4"><label class="form-label" for="sales-filter-status">{{ __('Status') }}</label><x-forms.select class="form-select" id="sales-filter-status" name="status"><option value="">{{ __('All statuses') }}</option>@foreach($states as $status)<option value="{{ $status }}">{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</x-forms.select></div>
         <div class="col-md-4"><button class="btn btn-falcon-primary" type="submit">{{ __('Apply') }}</button> <button class="btn btn-falcon-default" type="reset">{{ __('Reset') }}</button></div>
     </form></div></div>
 </div>

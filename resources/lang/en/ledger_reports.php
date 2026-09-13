@@ -37,10 +37,18 @@ return [
         'running_debit' => 'Running debit',
         'running_credit' => 'Running credit',
         'balance' => 'Balance',
+        'collector' => 'Responsible collector',
+        'collection_source' => 'Collection source',
     ],
     'balance' => [
         'debit' => 'Debit',
         'credit' => 'Credit',
+    ],
+    'collection_methods' => [
+        'cash' => 'Cash',
+        'bank' => 'Bank',
+        'transfer' => 'Bank transfer',
+        'cheque' => 'Cheque',
     ],
     'movement_descriptions' => [
         'customer_receivable' => 'Sales invoice receivable',

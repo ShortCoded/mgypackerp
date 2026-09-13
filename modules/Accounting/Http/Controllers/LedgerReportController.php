@@ -139,8 +139,8 @@ class LedgerReportController extends Controller
 
         $result = $this->ledger->accountLedger($filters);
         if ($isPartnerStatement) {
-            $result['opening_movements'] = $this->localizePartnerMovements($result['opening_movements']);
-            $result['movements'] = $this->localizePartnerMovements($result['movements']);
+            $result['opening_movements'] = $this->localizePartnerMovements($result['opening_movements'], $type);
+            $result['movements'] = $this->localizePartnerMovements($result['movements'], $type);
         }
 
         return [$result, $selected, $validated];
@@ -150,23 +150,34 @@ class LedgerReportController extends Controller
      * @param  list<array<string, mixed>>  $movements
      * @return list<array<string, mixed>>
      */
-    private function localizePartnerMovements(array $movements): array
+    private function localizePartnerMovements(array $movements, string $type): array
     {
-        return array_map(function (array $movement): array {
+        return array_map(function (array $movement) use ($type): array {
             $translationKey = match (trim((string) $movement['description'])) {
-                'Customer receivable' => 'customer_receivable',
-                'Customer receivable settlement' => 'customer_receivable_settlement',
-                'Customer credit' => 'customer_credit',
-                'Sales return' => 'sales_return',
-                'Supplier payable' => 'supplier_payable',
-                'Supplier payable settlement' => 'supplier_payable_settlement',
-                'Supplier debit' => 'supplier_debit',
-                'Purchase return' => 'purchase_return',
+                'Customer receivable', 'مديونية فاتورة مبيعات' => 'customer_receivable',
+                'Customer receivable settlement', 'تحصيل مديونية العميل' => 'customer_receivable_settlement',
+                'Customer credit', 'إشعار خصم للعميل' => 'customer_credit',
+                'Sales return', 'مرتجع مبيعات' => 'sales_return',
+                'Supplier payable', 'Supplier payable for purchase invoice', 'مستحقات المورد عن فاتورة مشتريات', 'مديونية فاتورة مشتريات' => 'supplier_payable',
+                'Supplier payable settlement', 'تسوية مستحقات المورد', 'سداد مديونية المورد' => 'supplier_payable_settlement',
+                'Supplier debit', 'Supplier debit for purchase return', 'تخفيض رصيد المورد بقيمة مرتجع المشتريات', 'إشعار خصم من المورد' => 'supplier_debit',
+                'Purchase return', 'مرتجع مشتريات' => 'purchase_return',
                 default => null,
             };
 
             if ($translationKey !== null) {
                 $movement['description'] = __('ledger_reports.movement_descriptions.'.$translationKey);
+            }
+
+            $movement['collection_source'] = '';
+            if ($type === 'customer_statement' && filled($movement['collection_method'] ?? null)) {
+                $methodKey = 'ledger_reports.collection_methods.'.$movement['collection_method'];
+                $method = __($methodKey);
+                $movement['collection_source'] = collect([
+                    $method === $methodKey ? $movement['collection_method'] : $method,
+                    $movement['collection_account'] ?? null,
+                    $movement['collection_reference'] ?? null,
+                ])->filter(fn (mixed $value): bool => filled($value))->implode(' / ');
             }
 
             return $movement;

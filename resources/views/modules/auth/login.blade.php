@@ -71,7 +71,7 @@
                                             <span class="text-danger ms-1" aria-hidden="true">*</span>
                                             <span class="visually-hidden">{{ __('common.required') }}</span>
                                         </label>
-                                        <input id="login" name="login" type="text" class="form-control" value="{{ old('login') }}" placeholder="{{ __('auth.login_identifier_placeholder') }}" autocomplete="username" autofocus required aria-required="true">
+                                        <x-forms.input id="login" name="login" type="text" class="form-control" value="{{ old('login') }}" placeholder="{{ __('auth.login_identifier_placeholder') }}" autocomplete="username" autofocus required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="login"></div>
                                     </div>
 
@@ -83,14 +83,14 @@
                                                 <span class="visually-hidden">{{ __('common.required') }}</span>
                                             </label>
                                         </div>
-                                        <input id="password" name="password" type="password" class="form-control" placeholder="{{ __('auth.password_placeholder') }}" autocomplete="current-password" required aria-required="true">
+                                        <x-forms.input id="password" name="password" type="password" class="form-control" placeholder="{{ __('auth.password_placeholder') }}" autocomplete="current-password" required aria-required="true" />
                                         <div class="invalid-feedback" data-error-for="password"></div>
                                     </div>
 
                                     <div class="row flex-between-center">
                                         <div class="col-auto">
                                             <div class="mb-0 form-check">
-                                                <input id="remember" name="remember" value="1" type="checkbox" class="form-check-input">
+                                                <x-forms.input id="remember" name="remember" value="1" type="checkbox" class="form-check-input" />
                                                 <label class="mb-0 form-check-label" for="remember">{{ __('auth.login.remember_me') }}</label>
                                             </div>
                                         </div>

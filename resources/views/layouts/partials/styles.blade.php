@@ -19,7 +19,6 @@
 
 @include('layouts.partials.falcon-defaults')
 <script src="{{ $erpAsset->url('assets/js/modules/Core/navbar-preference.js') }}"></script>
-<script src="{{ $erpAsset->url('vendors/simplebar/simplebar.min.js') }}"></script>
 
 <script>
     localStorage.setItem('isRTL', @json($isRtlLocale));
@@ -29,7 +28,6 @@
 <link href="{{ $erpAsset->url('vendors/datatables.net-bs5/dataTables.bootstrap5.min.css') }}" rel="stylesheet">
 <link href="{{ $erpAsset->url('vendors/datatables.net-responsive-bs5/css/responsive.bootstrap5.min.css') }}" rel="stylesheet">
 <link href="{{ $erpAsset->url('vendors/datatables.net-buttons-bs5/css/buttons.bootstrap5.min.css') }}" rel="stylesheet">
-<link href="{{ $erpAsset->url('vendors/dropzone/dropzone.css') }}" rel="stylesheet">
 <link href="{{ $erpAsset->url('vendors/flatpickr/flatpickr.min.css') }}" rel="stylesheet">
 <link href="{{ $erpAsset->url('vendors/select2/select2.min.css') }}" rel="stylesheet">
 <link href="{{ $erpAsset->url('vendors/select2-bootstrap-5-theme/select2-bootstrap-5-theme.min.css') }}" rel="stylesheet">

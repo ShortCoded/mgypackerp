@@ -141,9 +141,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card">
@@ -162,7 +162,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="hr-foundation-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-hr-foundation-doc-number" />
                             @else
-                                <input id="hr-foundation-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-foundation-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}">
+                                <x-forms.input id="hr-foundation-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-foundation-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('hr.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -184,7 +184,7 @@
                         @if ($isView)
                             <x-forms.view-field for="hr-foundation-name" :value="old('name', $recordName)" />
                         @else
-                            <input id="hr-foundation-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required>
+                            <x-forms.input id="hr-foundation-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -199,11 +199,11 @@
                             />
                         @else
                             <x-forms.label for="hr-foundation-status" :label="__('common.fields.status')" required />
-                            <select id="hr-foundation-status" name="status" class="form-select" required>
+                            <x-forms.select id="hr-foundation-status" name="status" class="form-select" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected(old('status', $record?->status ?? 'active') === $status)>{{ __("hr.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -241,20 +241,20 @@
                                 @endif
                             @elseif ($fieldType === 'checkbox')
                                 <div class="w-100">
-                                    <input type="hidden" name="{{ $fieldName }}" value="0">
+                                    <x-forms.input type="hidden" name="{{ $fieldName }}" value="0" />
                                     <div class="form-check form-switch">
-                                        <input class="form-check-input" id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" type="checkbox" value="1" @checked($value)>
+                                        <x-forms.input class="form-check-input" id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" type="checkbox" value="1" :checked='$value' />
                                         <label class="form-check-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
                                     </div>
                                     <div class="invalid-feedback d-block" data-error-for="{{ $fieldName }}"></div>
                                 </div>
                             @elseif ($fieldType === 'select')
                                 <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
-                                <select id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-select" @required($fieldRequired)>
+                                <x-forms.select id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-select" :required='$fieldRequired'>
                                     @foreach (($field['options'] ?? []) as $option)
                                         <option value="{{ $option }}" @selected((string) $value === (string) $option)>{{ __('hr.foundation.options.'.$fieldName.'.'.$option) }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @elseif ($fieldType === 'weekdays')
                                 <label class="form-label d-block">{{ $fieldLabel }}</label>
@@ -262,7 +262,7 @@
                                     @foreach (($field['options'] ?? []) as $option)
                                         <div class="col-6 col-md-4 col-lg-3">
                                             <div class="form-check">
-                                                <input class="form-check-input" id="hr-foundation-{{ $fieldName }}-{{ $option }}" name="{{ $fieldName }}[]" type="checkbox" value="{{ $option }}" @checked(in_array($option, $value, true))>
+                                                <x-forms.input class="form-check-input" id="hr-foundation-{{ $fieldName }}-{{ $option }}" name="{{ $fieldName }}[]" type="checkbox" value="{{ $option }}" :checked='in_array($option, $value, true)' />
                                                 <label class="form-check-label" for="hr-foundation-{{ $fieldName }}-{{ $option }}">{{ __('hr.foundation.weekdays.' . $option) }}</label>
                                             </div>
                                         </div>
@@ -292,7 +292,7 @@
                                 ])
                             @elseif ($fieldType === 'textarea')
                                 <label class="form-label" for="hr-foundation-{{ $fieldName }}">{{ $fieldLabel }}</label>
-                                <textarea id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-control" rows="4">{{ $value }}</textarea>
+                                <x-forms.textarea id="hr-foundation-{{ $fieldName }}" name="{{ $fieldName }}" class="form-control" rows="4">{{ $value }}</x-forms.textarea>
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @elseif ($isNumericField)
                                 <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
@@ -310,13 +310,19 @@
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @else
                                 <x-forms.label :for="'hr-foundation-'.$fieldName" :label="$fieldLabel" :required="$fieldRequired" />
-                                <input id="hr-foundation-{{ $fieldName }}"
-                                    name="{{ $fieldName }}"
-                                    type="{{ $fieldType === 'time' ? 'time' : 'text' }}"
-                                    class="form-control {{ $fieldType === 'date' ? 'datetimepicker' : '' }}"
-                                    value="{{ $value }}"
-                                    @required($fieldRequired)
-                                    @if ($fieldType === 'date') placeholder="{{ __('common.placeholders.select_date') }}" data-options='{"disableMobile":true,"dateFormat":"Y-m-d"}' @endif>
+                                @if ($fieldType === 'date')
+                                    <x-forms.date-input id="hr-foundation-{{ $fieldName }}"
+                                        name="{{ $fieldName }}"
+                                        :value="$value"
+                                        :required="$fieldRequired"
+                                        placeholder="{{ __('common.placeholders.select_date') }}" />
+                                @else
+                                    <x-forms.input id="hr-foundation-{{ $fieldName }}"
+                                        name="{{ $fieldName }}"
+                                        :type="$fieldType === 'time' ? 'time' : 'text'"
+                                        :value="$value"
+                                        :required="$fieldRequired" />
+                                @endif
                                 <div class="invalid-feedback" data-error-for="{{ $fieldName }}"></div>
                             @endif
                             @if (isset($field['help']))
@@ -347,7 +353,7 @@
                                                 $componentTotal = bcadd((string) ($row['employee_rate'] ?? '0'), (string) ($row['employer_rate'] ?? '0'), 4);
                                             @endphp
                                             <div class="border rounded-3 p-3 js-insurance-component-row" data-insurance-component-index="{{ $index }}">
-                                                <input type="hidden" name="insurance_components[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}">
+                                                <x-forms.input type="hidden" name="insurance_components[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}" />
                                                 <div class="d-flex align-items-center justify-content-between mb-2">
                                                     <span class="badge rounded-pill bg-primary-subtle text-primary js-insurance-component-sequence">{{ $index + 1 }}</span>
                                                     @unless ($isView)
@@ -362,7 +368,7 @@
                                                         @if ($isView)
                                                             <div class="form-control-plaintext" id="insurance-component-{{ $index }}-name">{{ $row['name'] ?? '—' }}</div>
                                                         @else
-                                                            <input class="form-control" id="insurance-component-{{ $index }}-name" name="insurance_components[{{ $index }}][name]" type="text" maxlength="255" value="{{ $row['name'] ?? '' }}" required>
+                                                            <x-forms.input class="form-control" id="insurance-component-{{ $index }}-name" name="insurance_components[{{ $index }}][name]" type="text" maxlength="255" value="{{ $row['name'] ?? '' }}" required />
                                                             <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.name"></div>
                                                         @endif
                                                     </div>
@@ -372,7 +378,7 @@
                                                             @if ($isView)
                                                                 <div class="form-control-plaintext text-center" id="insurance-component-{{ $index }}-{{ $column }}">{{ $row[$column] ?? '0' }}%</div>
                                                             @else
-                                                                <input class="form-control text-center js-insurance-component-rate" id="insurance-component-{{ $index }}-{{ $column }}" name="insurance_components[{{ $index }}][{{ $column }}]" type="number" min="0" max="100" step="0.0001" value="{{ $row[$column] ?? '0' }}" required>
+                                                                <x-forms.input class="form-control text-center js-insurance-component-rate" id="insurance-component-{{ $index }}-{{ $column }}" name="insurance_components[{{ $index }}][{{ $column }}]" type="number" min="0" max="100" step="0.0001" value="{{ $row[$column] ?? '0' }}" required />
                                                                 <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.{{ $column }}"></div>
                                                             @endif
                                                         </div>
@@ -386,9 +392,9 @@
                                                         @if ($isView)
                                                             <div class="form-control-plaintext" id="insurance-component-{{ $index }}-calculation_basis">{{ __('hr.foundation.insurance_components.bases.'.($row['calculation_basis'] ?? 'contribution_wage')) }}</div>
                                                         @else
-                                                            <select class="form-select" id="insurance-component-{{ $index }}-calculation_basis" name="insurance_components[{{ $index }}][calculation_basis]" required>
+                                                            <x-forms.select class="form-select" id="insurance-component-{{ $index }}-calculation_basis" name="insurance_components[{{ $index }}][calculation_basis]" required>
                                                                 <option value="contribution_wage" @selected(($row['calculation_basis'] ?? '') === 'contribution_wage')>{{ __('hr.foundation.insurance_components.bases.contribution_wage') }}</option>
-                                                            </select>
+                                                            </x-forms.select>
                                                             <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.calculation_basis"></div>
                                                         @endif
                                                     </div>
@@ -397,9 +403,9 @@
                                                             <label class="form-label">{{ __('hr.foundation.insurance_components.active') }}</label>
                                                             <div class="form-control-plaintext">{{ $componentActive ? __('common.actions.yes') : __('common.actions.no') }}</div>
                                                         @else
-                                                            <input type="hidden" name="insurance_components[{{ $index }}][is_active]" value="0">
+                                                            <x-forms.input type="hidden" name="insurance_components[{{ $index }}][is_active]" value="0" />
                                                             <div class="form-check form-switch mb-2">
-                                                                <input class="form-check-input js-insurance-component-active" id="insurance-component-{{ $index }}-is_active" name="insurance_components[{{ $index }}][is_active]" type="checkbox" value="1" @checked($componentActive)>
+                                                                <x-forms.input class="form-check-input js-insurance-component-active" id="insurance-component-{{ $index }}-is_active" name="insurance_components[{{ $index }}][is_active]" type="checkbox" value="1" :checked='$componentActive' />
                                                                 <label class="form-check-label" for="insurance-component-{{ $index }}-is_active">{{ __('hr.foundation.insurance_components.active') }}</label>
                                                             </div>
                                                             <div class="invalid-feedback d-block" data-error-for="insurance_components.{{ $index }}.is_active"></div>
@@ -410,7 +416,7 @@
                                                         @if ($isView)
                                                             <div class="form-control-plaintext" id="insurance-component-{{ $index }}-notes">{{ ($row['notes'] ?? '') ?: '—' }}</div>
                                                         @else
-                                                            <input class="form-control" id="insurance-component-{{ $index }}-notes" name="insurance_components[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}">
+                                                            <x-forms.input class="form-control" id="insurance-component-{{ $index }}-notes" name="insurance_components[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}" />
                                                             <div class="invalid-feedback" data-error-for="insurance_components.{{ $index }}.notes"></div>
                                                         @endif
                                                     </div>
@@ -456,7 +462,7 @@
                             <div class="vstack gap-2 js-tax-brackets">
                                 @foreach ($taxBracketRows as $index => $row)
                                     <div class="border rounded-3 p-3 js-tax-bracket-row" data-tax-bracket-index="{{ $index }}">
-                                        <input type="hidden" name="tax_brackets[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}">
+                                        <x-forms.input type="hidden" name="tax_brackets[{{ $index }}][public_uuid]" value="{{ $row['public_uuid'] ?? '' }}" />
                                         <div class="d-flex align-items-center justify-content-between mb-2">
                                             <span class="badge rounded-pill bg-primary-subtle text-primary js-tax-bracket-sequence">{{ __('hr.foundation.tax_brackets.sequence') }} {{ $index + 1 }}</span>
                                             @unless ($isView)
@@ -474,7 +480,7 @@
                                                             {{ ($row[$column] ?? '') !== '' && ($row[$column] ?? null) !== null ? $row[$column].($column === 'rate' ? '%' : '') : __('hr.foundation.tax_brackets.no_upper_limit') }}
                                                         </div>
                                                     @else
-                                                        <input class="form-control text-center" id="tax-bracket-{{ $index }}-{{ $column }}" name="tax_brackets[{{ $index }}][{{ $column }}]" type="number" min="0" step="{{ $column === 'rate' ? '0.0001' : '0.01' }}" value="{{ $row[$column] ?? '' }}" @required($column !== 'to_amount')>
+                                                        <x-forms.input class="form-control text-center" id="tax-bracket-{{ $index }}-{{ $column }}" name="tax_brackets[{{ $index }}][{{ $column }}]" type="number" min="0" step="{{ $column === 'rate' ? '0.0001' : '0.01' }}" value="{{ $row[$column] ?? '' }}" :required="$column !== 'to_amount'" />
                                                         @if ($column === 'to_amount')
                                                             <div class="form-text">{{ __('hr.foundation.tax_brackets.no_upper_limit_help') }}</div>
                                                         @endif
@@ -487,7 +493,7 @@
                                                 @if ($isView)
                                                     <div class="form-control-plaintext" id="tax-bracket-{{ $index }}-notes">{{ ($row['notes'] ?? '') ?: '—' }}</div>
                                                 @else
-                                                    <input class="form-control" id="tax-bracket-{{ $index }}-notes" name="tax_brackets[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}">
+                                                    <x-forms.input class="form-control" id="tax-bracket-{{ $index }}-notes" name="tax_brackets[{{ $index }}][notes]" type="text" value="{{ $row['notes'] ?? '' }}" />
                                                     <div class="invalid-feedback" data-error-for="tax_brackets.{{ $index }}.notes"></div>
                                                 @endif
                                             </div>
@@ -504,7 +510,7 @@
                         @if ($isView)
                             <x-forms.view-field for="hr-foundation-notes" as="textarea" :value="old('notes', $record?->notes)" rows="4" />
                         @else
-                            <textarea id="hr-foundation-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea id="hr-foundation-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>
@@ -534,15 +540,15 @@
                     </div>
                     <div class="modal-body">
                         <div data-form-alert></div>
-                        <input type="hidden" name="target_select" value="">
+                        <x-forms.input type="hidden" name="target_select" value="" />
                         <div class="mb-3">
                             <x-forms.label for="hr-inline-lookup-name" :label="__('hr.inline_lookup.name')" required />
-                            <input class="form-control" id="hr-inline-lookup-name" name="name" type="text" required>
+                            <x-forms.input class="form-control" id="hr-inline-lookup-name" name="name" type="text" required />
                             <div class="invalid-feedback" data-error-for="name"></div>
                         </div>
                         <div>
                             <label class="form-label" for="hr-inline-lookup-notes">{{ __('hr.inline_lookup.notes') }}</label>
-                            <textarea class="form-control" id="hr-inline-lookup-notes" name="notes" rows="3"></textarea>
+                            <x-forms.textarea class="form-control" id="hr-inline-lookup-notes" name="notes" rows="3"></x-forms.textarea>
                             <div class="invalid-feedback" data-error-for="notes"></div>
                         </div>
                     </div>

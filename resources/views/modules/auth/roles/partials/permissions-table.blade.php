@@ -16,7 +16,7 @@
                 <tr>
                     <th class="white-space-nowrap" style="width: 18rem;">
                         <div class="roles-permission-check roles-permission-check-heading">
-                            <input class="form-check-input js-permission-global-check" id="role-permissions-global" type="checkbox" aria-label="{{ __('roles.permissions_ui.select_all_permissions') }}" @disabled($permissionsReadonly)>
+                            <x-forms.input class="form-check-input js-permission-global-check" id="role-permissions-global" type="checkbox" aria-label="{{ __('roles.permissions_ui.select_all_permissions') }}" :disabled='$permissionsReadonly' />
                             <label class="form-check-label fw-semibold" for="role-permissions-global">{{ __('roles.permissions_ui.group') }}</label>
                         </div>
                     </th>

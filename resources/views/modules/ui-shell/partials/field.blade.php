@@ -32,11 +32,17 @@
         'decimal', 'money' => '0.0001',
         default => null,
     };
+    $numericScale = match ($fieldType) {
+        'number' => 0,
+        'percentage' => 2,
+        'decimal', 'money' => 4,
+        default => null,
+    };
 @endphp
 
 @if ($fieldVisible)
     @if ($fieldType === 'hidden')
-        <input id="{{ $fieldId }}" name="{{ $fieldName }}" type="hidden" value="{{ $fieldValue }}">
+        <x-forms.input :id="$fieldId" :name="$fieldName" type="hidden" :value="$fieldValue" />
     @elseif (in_array($fieldType, ['separator', 'title'], true))
         <div class="col-12">
             <div class="border-bottom pb-1 fw-semibold text-700">{{ $definition->localized($field['label']) }}</div>
@@ -67,31 +73,26 @@
                     <x-forms.view-field :for="$fieldId" :value="$fieldValue" :dir="$fieldDirection" />
                 @endif
             @elseif (in_array($fieldType, ['textarea', 'rich_text', 'summernote'], true))
-                <textarea id="{{ $fieldId }}"
-                    name="{{ $fieldName }}"
-                    rows="{{ $fieldType === 'textarea' ? 3 : 6 }}"
-                    class="form-control @if (in_array($fieldType, ['rich_text', 'summernote'], true)) js-erp-ui-summernote @endif"
+                <x-forms.textarea :id="$fieldId"
+                    :name="$fieldName"
+                    :rows="$fieldType === 'textarea' ? 3 : 6"
+                    :class="in_array($fieldType, ['rich_text', 'summernote'], true) ? 'form-control js-erp-ui-summernote' : 'form-control'"
                     placeholder="{{ $definition->localized($field['placeholder'] ?? null) }}"
-                    @if ($fieldDirection) dir="{{ $fieldDirection }}" @endif
-                    @disabled($fieldDisabled)>{{ $fieldValue }}</textarea>
+                    :dir="$fieldDirection"
+                    :disabled="$fieldDisabled">{{ $fieldValue }}</x-forms.textarea>
             @elseif (in_array($fieldType, ['static_select', 'select', 'status', 'multi_select', 'empty_select2', 'ajax_select2'], true))
                 @php
-                    $selectClass = match ($fieldType) {
-                        'empty_select2' => 'js-select2-local',
-                        'ajax_select2' => 'js-select2-ajax',
-                        default => '',
-                    };
                     $endpoint = $field['endpoint'] ?? null;
                     $endpointUrl = is_string($endpoint) && \Illuminate\Support\Facades\Route::has($endpoint) ? route($endpoint) : null;
                 @endphp
-                <select id="{{ $fieldId }}"
-                    name="{{ $fieldName }}@if ($fieldType === 'multi_select')[]@endif"
-                    class="form-select {{ $selectClass }}"
-                    data-placeholder="{{ $definition->localized($field['placeholder'] ?? null) }}"
-                    data-allow-clear="true"
-                    @if ($endpointUrl) data-url="{{ $endpointUrl }}" @endif
-                    @if ($fieldType === 'multi_select') multiple @endif
-                    @disabled($fieldDisabled)>
+                <x-forms.select :id="$fieldId"
+                    :name="$fieldName.($fieldType === 'multi_select' ? '[]' : '')"
+                    :variant="$fieldType === 'ajax_select2' ? 'ajax' : ($fieldType === 'empty_select2' ? 'local' : 'plain')"
+                    :placeholder="$definition->localized($field['placeholder'] ?? null)"
+                    :multiple="$fieldType === 'multi_select'"
+                    :url="$endpointUrl"
+                    :required="(bool) ($field['required'] ?? false)"
+                    :disabled="$fieldDisabled">
                     @unless ($fieldType === 'multi_select')
                         <option value=""></option>
                     @endunless
@@ -100,40 +101,49 @@
                             {{ $definition->localized($option['label'] ?? null) }}
                         </option>
                     @endforeach
-                </select>
+                </x-forms.select>
             @elseif ($fieldType === 'radio')
                 <div id="{{ $fieldId }}" class="d-flex flex-wrap align-items-center gap-3 min-h-control">
                     @foreach ($fieldOptions as $optionIndex => $option)
                         <div class="form-check mb-0">
-                            <input class="form-check-input" id="{{ $fieldId }}-{{ $optionIndex }}" name="{{ $fieldName }}" type="radio" value="{{ $option['value'] ?? '' }}" @checked((string) $fieldValue === (string) ($option['value'] ?? ''))>
+                            <x-forms.input class="form-check-input" id="{{ $fieldId }}-{{ $optionIndex }}" :name="$fieldName" type="radio" :value="$option['value'] ?? ''" :checked="(string) $fieldValue === (string) ($option['value'] ?? '')" />
                             <label class="form-check-label" for="{{ $fieldId }}-{{ $optionIndex }}">{{ $definition->localized($option['label'] ?? null) }}</label>
                         </div>
                     @endforeach
                 </div>
             @elseif (in_array($fieldType, ['switch', 'checkbox'], true))
                 <div class="form-check @if ($fieldType === 'switch') form-switch @endif min-h-control d-flex align-items-center gap-2">
-                    <input class="form-check-input" id="{{ $fieldId }}" name="{{ $fieldName }}" type="checkbox" value="1" @checked((bool) $fieldValue) @disabled($fieldDisabled)>
+                    <x-forms.input class="form-check-input" :id="$fieldId" :name="$fieldName" type="checkbox" value="1" :checked='(bool) $fieldValue' :disabled='$fieldDisabled' />
                     <label class="form-check-label" for="{{ $fieldId }}">{{ __('erp_ui_shell.fields.enabled') }}</label>
                 </div>
             @elseif (in_array($fieldType, ['file_picker', 'file', 'image'], true))
-                <input id="{{ $fieldId }}" name="{{ $fieldName }}" type="file" class="form-control" @if ($fieldType === 'image') accept="image/*" @endif @disabled($fieldDisabled)>
+                <x-forms.input :id="$fieldId" :name="$fieldName" type="file" :accept="$fieldType === 'image' ? 'image/*' : null" :disabled="$fieldDisabled" />
             @else
                 <div class="input-group">
                     @if (! empty($field['prefix']))
                         <span class="input-group-text">{{ $field['prefix'] }}</span>
                     @endif
-                    <input id="{{ $fieldId }}"
-                        name="{{ $fieldName }}"
-                        type="{{ $inputType }}"
-                        class="form-control @if (in_array($fieldType, ['date', 'datetime'], true)) js-date-picker @endif @if (in_array($fieldType, ['number', 'decimal', 'money', 'percentage', 'document_number'], true)) text-center @endif"
-                        value="{{ $fieldValue }}"
-                        placeholder="{{ $definition->localized($field['placeholder'] ?? null) }}"
-                        @if ($step) step="{{ $step }}" @endif
-                        @if ($fieldType === 'datetime') data-enable-time="true" data-time-24hr="true" @endif
-                        @if (in_array($fieldType, ['date', 'datetime'], true)) data-locale="{{ app()->getLocale() }}" @endif
-                        @if ($fieldDirection) dir="{{ $fieldDirection }}" @endif
-                        @if ($fieldType === 'document_number' && $docNum) readonly @endif
-                        @disabled($fieldDisabled)>
+                    @if (in_array($fieldType, ['date', 'datetime'], true))
+                        <x-forms.date-input :id="$fieldId" :name="$fieldName" :value="$fieldValue"
+                            :enable-time="$fieldType === 'datetime'"
+                            :required="(bool) ($field['required'] ?? false)"
+                            :disabled='$fieldDisabled' />
+                    @elseif ($numericScale !== null)
+                        <x-forms.numeric-input :id="$fieldId" :name="$fieldName" :value="$fieldValue"
+                            class="text-center"
+                            :scale="$numericScale"
+                            :step="$step"
+                            :required="(bool) ($field['required'] ?? false)"
+                            :disabled='$fieldDisabled' />
+                    @else
+                        <x-forms.input :id="$fieldId" :name="$fieldName" :type="$inputType" :value="$fieldValue"
+                            :class="$fieldType === 'document_number' ? 'text-center' : null"
+                            placeholder="{{ $definition->localized($field['placeholder'] ?? null) }}"
+                            :dir="$fieldDirection"
+                            :readonly="$fieldType === 'document_number' && filled($docNum)"
+                            :required="(bool) ($field['required'] ?? false)"
+                            :disabled="$fieldDisabled" />
+                    @endif
                     @if (! empty($field['suffix']))
                         <span class="input-group-text">{{ $field['suffix'] }}</span>
                     @endif

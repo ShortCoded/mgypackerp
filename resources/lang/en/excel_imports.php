@@ -30,7 +30,7 @@ return [
     ],
     'instructions' => [
         'products_1' => 'Use the Products sheet for new product master records only. Existing records are never updated.',
-        'products_2' => 'Use Product Components only for components of products in this workbook. Component items must already exist as active material items in the active company.',
+        'products_2' => 'Use Product Components only for components of products in this workbook. Component items must already exist as active raw materials, packaging materials, or finished products in the active company.',
         'assets_1' => 'Use the FixedAssets sheet for new fixed assets only. Existing assets are never updated.',
         'assets_2' => 'Enter dates as ISO YYYY-MM-DD or real Excel date cells. Ambiguous dates are rejected.',
         'common_no_images' => 'Images and attachments are not imported. Use the normal file-picker workflow after import if needed.',

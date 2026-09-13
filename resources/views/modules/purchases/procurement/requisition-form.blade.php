@@ -12,7 +12,7 @@
     @csrf
     <x-forms.line-item-cards />
     @if($record) @method('PUT') @endif
-    <input type="hidden" name="submit_action" value="save_view">
+    <x-forms.input type="hidden" name="submit_action" value="save_view" />
     <div class="card mb-3">
         <div class="card-header py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
             <h5 class="mb-0">{{ $title }}</h5>
@@ -25,11 +25,11 @@
                 <span>{{ __('Branch') }}: <strong>{{ $branch->name }}</strong>@if($store) / {{ $store->name }}@endif</span>
             </div>
             <div class="row g-3">
-                <div class="col-12 col-md-3"><x-forms.label for="request_date" :label="__('Request date')" required /><input id="request_date" class="form-control js-date-picker" type="text" name="request_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('request_date', $dates->formatDate($record?->request_date ?? now())) }}" required></div>
-                <div class="col-12 col-md-3"><x-forms.label for="branch_store_uuid" :label="__('Warehouse')" required /><select id="branch_store_uuid" class="form-select js-select2-ajax" name="branch_store_uuid" data-url="{{ route('admin.purchases.select2.branch-stores') }}" data-placeholder="{{ __('Select') }}" required>@if($store)<option selected value="{{ $store->public_uuid }}">{{ $store->name }}</option>@endif</select></div>
-                <div class="col-12 col-md-3"><x-forms.label for="requester_employee_id" :label="__('procurement.ui.requester_employee')" required /><select id="requester_employee_id" class="form-select js-select2-ajax" name="requester_employee_id" data-url="{{ route('admin.purchases.select2.employees') }}" data-placeholder="{{ __('Select') }}" required>@if($employee)<option selected value="{{ $employee->id }}">{{ $employee->doc_num }} / {{ $employee->full_name ?: $employee->name }}</option>@endif</select></div>
-                <div class="col-12 col-md-3"><label class="form-label" for="required_by_date">{{ __('Required by') }}</label><input id="required_by_date" class="form-control js-date-picker" type="text" name="required_by_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('required_by_date', $dates->formatDate($record?->required_by_date, '')) }}"></div>
-                <div class="col-12"><label class="form-label" for="notes">{{ __('Notes') }}</label><textarea id="notes" class="form-control" rows="2" name="notes">{{ old('notes', $record?->notes) }}</textarea></div>
+                <div class="col-12 col-md-3"><x-forms.label for="request_date" :label="__('Request date')" required /><x-forms.date-input id="request_date" class="form-control js-date-picker" type="text" name="request_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('request_date', $dates->formatDate($record?->request_date ?? now())) }}" required /></div>
+                <div class="col-12 col-md-3"><x-forms.label for="branch_store_uuid" :label="__('Warehouse')" required /><x-forms.select id="branch_store_uuid" class="form-select js-select2-ajax" name="branch_store_uuid" data-url="{{ route('admin.purchases.select2.branch-stores') }}" data-placeholder="{{ __('Select') }}" required>@if($store)<option selected value="{{ $store->public_uuid }}">{{ $store->name }}</option>@endif</x-forms.select></div>
+                <div class="col-12 col-md-3"><x-forms.label for="requester_employee_id" :label="__('procurement.ui.requester_employee')" required /><x-forms.select id="requester_employee_id" class="form-select js-select2-ajax" name="requester_employee_id" data-url="{{ route('admin.purchases.select2.employees') }}" data-placeholder="{{ __('Select') }}" required>@if($employee)<option selected value="{{ $employee->id }}">{{ $employee->doc_num }} / {{ $employee->full_name ?: $employee->name }}</option>@endif</x-forms.select></div>
+                <div class="col-12 col-md-3"><label class="form-label" for="required_by_date">{{ __('Required by') }}</label><x-forms.date-input id="required_by_date" class="form-control js-date-picker" type="text" name="required_by_date" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" value="{{ old('required_by_date', $dates->formatDate($record?->required_by_date, '')) }}" /></div>
+                <div class="col-12"><label class="form-label" for="notes">{{ __('Notes') }}</label><x-forms.textarea id="notes" class="form-control" rows="2" name="notes">{{ old('notes', $record?->notes) }}</x-forms.textarea></div>
             </div>
         </div>
     </div>

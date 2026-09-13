@@ -20,9 +20,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if (! empty($cloneSourceToken))
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         @include('modules.core.user-tasks.partials.form-header')
@@ -40,7 +40,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="! $isCreate ? $record?->doc_number : null" />
                             @else
-                                <input class="form-control" id="doc_number" name="doc_number" inputmode="numeric" value="{{ ! $isCreate ? $record?->doc_number : '' }}">
+                                <x-forms.input class="form-control" id="doc_number" name="doc_number" inputmode="numeric" value="{{ ! $isCreate ? $record?->doc_number : '' }}" />
                             @endif
                             <div class="invalid-feedback" data-error-for="doc_number"></div>
                             <div class="form-text">{{ __('user_tasks.document_number_control.helper') }}</div>
@@ -52,7 +52,7 @@
                         @if ($isView)
                             <x-forms.view-field for="title" :value="old('title', $record?->title)" />
                         @else
-                            <input class="form-control" id="title" name="title" type="text" value="{{ old('title', $record?->title) }}" required>
+                            <x-forms.input class="form-control" id="title" name="title" type="text" value="{{ old('title', $record?->title) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="title"></div>
                     </div>
@@ -62,11 +62,11 @@
                         @if ($isView)
                             <x-forms.view-field for="type" :value="$taskTypeValue ? __('user_tasks.types.'.$taskTypeValue) : null" />
                         @else
-                            <select class="form-select" id="type" name="type" required>
+                            <x-forms.select class="form-select" id="type" name="type" required>
                                 @foreach (\Modules\Core\Models\UserTask::Types as $type)
                                     <option value="{{ $type }}" @selected($taskTypeValue === $type)>{{ __("user_tasks.types.{$type}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="type"></div>
                     </div>
@@ -76,11 +76,11 @@
                         @if ($isView)
                             <x-forms.view-field for="status" :value="$taskStatusValue ? __('user_tasks.statuses.'.$taskStatusValue) : null" />
                         @else
-                            <select class="form-select" id="status" name="status" required>
+                            <x-forms.select class="form-select" id="status" name="status" required>
                                 @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                     <option value="{{ $status }}" @selected($taskStatusValue === $status)>{{ __("user_tasks.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -90,11 +90,11 @@
                         @if ($isView)
                             <x-forms.view-field for="priority" :value="$taskPriorityValue ? __('user_tasks.priorities.'.$taskPriorityValue) : null" />
                         @else
-                            <select class="form-select" id="priority" name="priority" required>
+                            <x-forms.select class="form-select" id="priority" name="priority" required>
                                 @foreach (\Modules\Core\Models\UserTask::Priorities as $priority)
                                     <option value="{{ $priority }}" @selected($taskPriorityValue === $priority)>{{ __("user_tasks.priorities.{$priority}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="priority"></div>
                     </div>
@@ -104,12 +104,12 @@
                         @if ($isView)
                             <x-forms.view-field for="color" :value="$taskColorValue ? __('user_tasks.colors.'.$taskColorValue) : null" />
                         @else
-                            <select class="form-select" id="color" name="color">
+                            <x-forms.select class="form-select" id="color" name="color">
                                 <option value="">{{ __('common.empty_value') }}</option>
                                 @foreach (\Modules\Core\Models\UserTask::Colors as $color)
                                     <option value="{{ $color }}" @selected($taskColorValue === $color)>{{ __("user_tasks.colors.{$color}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="color"></div>
                     </div>
@@ -119,7 +119,7 @@
                         @if ($isView)
                             <x-forms.view-field for="description" as="textarea" :value="old('description', $record?->description)" rows="4" />
                         @else
-                            <textarea class="form-control" id="description" name="description" rows="4" placeholder="{{ __('user_tasks.placeholders.description') }}">{{ old('description', $record?->description) }}</textarea>
+                            <x-forms.textarea class="form-control" id="description" name="description" rows="4" placeholder="{{ __('user_tasks.placeholders.description') }}">{{ old('description', $record?->description) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="description"></div>
                     </div>
@@ -138,11 +138,11 @@
                         @if ($isView)
                             <x-forms.view-field for="assigned_to_doc_num" :value="$assigneeOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="assigned_to_doc_num" name="assigned_to_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assigned_to') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="assigned_to_doc_num" name="assigned_to_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assigned_to') }}" data-allow-clear="true">
                                 @if ($assigneeOption)
                                     <option value="{{ $assigneeOption['id'] }}" selected>{{ $assigneeOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="assigned_to_doc_num"></div>
                     </div>
@@ -166,7 +166,7 @@
                             @if ($isView)
                                 <x-forms.view-field :for="$dateField" :value="$formatDateTime($record?->{$dateField})" dir="ltr" />
                             @else
-                                <input class="form-control js-date-picker" id="{{ $dateField }}" name="{{ $dateField }}" type="text" value="{{ old($dateField, $formatDateTime($record?->{$dateField})) }}" data-enable-time="true" data-date-format="{{ $dateTimeFormat }}" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker" id="{{ $dateField }}" name="{{ $dateField }}" type="text" value="{{ old($dateField, $formatDateTime($record?->{$dateField})) }}" data-enable-time="true" data-date-format="{{ $dateTimeFormat }}" dir="ltr" />
                             @endif
                             <div class="invalid-feedback" data-error-for="{{ $dateField }}"></div>
                         </div>

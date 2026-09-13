@@ -32,12 +32,12 @@
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label" for="document-prefix">{{ __('user_tasks.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="document-prefix" name="prefix" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label" for="document-padding">{{ __('user_tasks.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="document-padding" name="padding" type="number" min="0" max="10" value="{{ $documentNumberSettings['padding'] ?? 5 }}">
+                                <x-forms.input class="form-control" id="document-padding" name="padding" type="number" min="0" max="10" value="{{ $documentNumberSettings['padding'] ?? 5 }}" />
                                 <div class="invalid-feedback" data-error-for="padding"></div>
                             </div>
                         </div>
@@ -58,11 +58,11 @@
                         <label class="form-label mb-0" for="user_tasks_trash_filter">{{ __('common.trash.filter_label') }}</label>
                     </div>
                     <div class="col-auto">
-                        <select class="form-select form-select-sm" id="user_tasks_trash_filter" name="trash_filter">
+                        <x-forms.select class="form-select form-select-sm" id="user_tasks_trash_filter" name="trash_filter">
                             <option value="active">{{ __('companies.trash.active') }}</option>
                             <option value="trashed">{{ __('companies.trash.trashed') }}</option>
                             <option value="all">{{ __('companies.trash.all') }}</option>
-                        </select>
+                        </x-forms.select>
                     </div>
                 </div>
             </div>

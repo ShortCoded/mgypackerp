@@ -10,6 +10,10 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Finance\Models\BankAccount;
+use Modules\Finance\Models\Cashbox;
+use Modules\HR\Models\HrEmployee;
+use Modules\Sales\Models\CustomerReceipt;
 
 class LedgerQueryService
 {
@@ -60,11 +64,23 @@ class LedgerQueryService
      */
     private function baseQuery(array $filters): Builder
     {
+        $customerReceiptsTable = (new CustomerReceipt)->getTable();
+        $employeesTable = (new HrEmployee)->getTable();
+        $cashboxesTable = (new Cashbox)->getTable();
+        $bankAccountsTable = (new BankAccount)->getTable();
+
         return DB::table('journal_entry_lines')
             ->join('journal_entries', 'journal_entries.id', '=', 'journal_entry_lines.journal_entry_id')
             ->join('accounts', 'accounts.id', '=', 'journal_entry_lines.account_id')
             ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
             ->leftJoin('branches', 'branches.id', '=', 'journal_entry_lines.branch_id')
+            ->leftJoin("{$customerReceiptsTable} as ledger_customer_receipts", function ($join): void {
+                $join->on('ledger_customer_receipts.journal_entry_id', '=', 'journal_entries.id')
+                    ->orOn('ledger_customer_receipts.reversal_journal_entry_id', '=', 'journal_entries.id');
+            })
+            ->leftJoin("{$employeesTable} as ledger_collection_employees", 'ledger_collection_employees.id', '=', 'ledger_customer_receipts.received_by_employee_id')
+            ->leftJoin("{$cashboxesTable} as ledger_collection_cashboxes", 'ledger_collection_cashboxes.id', '=', 'ledger_customer_receipts.cashbox_id')
+            ->leftJoin("{$bankAccountsTable} as ledger_collection_bank_accounts", 'ledger_collection_bank_accounts.id', '=', 'ledger_customer_receipts.bank_account_id')
             ->whereNull('journal_entries.deleted_at')
             ->where('journal_entries.company_id', $filters['company_id'])
             ->when(! ($filters['all_periods'] ?? false), fn (Builder $query): Builder => $query->where('journal_entries.financial_period_id', $filters['financial_period_id']))
@@ -101,6 +117,15 @@ class LedgerQueryService
             'cost_centers.name as cost_center_name',
             'branches.doc_num as branch_doc_num',
             'branches.name as branch_name',
+            'ledger_collection_employees.doc_num as collection_employee_doc_num',
+            'ledger_collection_employees.name as collection_employee_name',
+            'ledger_collection_employees.full_name as collection_employee_full_name',
+            'ledger_customer_receipts.payment_method as collection_method',
+            'ledger_customer_receipts.reference_no as collection_reference',
+            'ledger_collection_cashboxes.doc_num as collection_cashbox_doc_num',
+            'ledger_collection_cashboxes.name as collection_cashbox_name',
+            'ledger_collection_bank_accounts.doc_num as collection_bank_doc_num',
+            'ledger_collection_bank_accounts.account_name as collection_bank_name',
         ];
     }
 
@@ -185,6 +210,16 @@ class LedgerQueryService
             'running_credit' => $runningCredit,
             'cost_center' => trim(implode(' / ', array_filter([$row->cost_center_doc_num, $row->cost_center_name]))),
             'branch' => trim(implode(' / ', array_filter([$row->branch_doc_num, $row->branch_name]))),
+            'collector' => trim(implode(' / ', array_filter([
+                $row->collection_employee_doc_num,
+                $row->collection_employee_full_name ?: $row->collection_employee_name,
+            ]))),
+            'collection_method' => $row->collection_method,
+            'collection_reference' => $row->collection_reference,
+            'collection_account' => trim(implode(' / ', array_filter([
+                $row->collection_cashbox_doc_num ?: $row->collection_bank_doc_num,
+                $row->collection_cashbox_name ?: $row->collection_bank_name,
+            ]))),
         ];
     }
 

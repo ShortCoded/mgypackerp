@@ -1,6 +1,7 @@
 @if (isset($topbarClass))
     <ul class="navbar-nav navbar-nav-icons {{ $topbarClass }} flex-row align-items-center">
         @include('layouts.partials.operating-context-indicator')
+        @include('layouts.partials.pwa-navigation')
         <li class="nav-item ps-2 pe-0 erp-theme-switch-item">
             <div class="dropdown theme-control-dropdown">
                 <a class="nav-link d-flex align-items-center dropdown-toggle fa-icon-wait fs-9 pe-1 py-0" href="#" role="button" id="themeSwitchDropdownInline" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -31,6 +32,7 @@
 
         <ul class="navbar-nav navbar-nav-icons ms-auto flex-row align-items-center">
             @include('layouts.partials.operating-context-indicator')
+            @include('layouts.partials.pwa-navigation')
             <li class="nav-item ps-2 pe-0 erp-theme-switch-item">
                 <div class="dropdown theme-control-dropdown">
                     <a class="nav-link d-flex align-items-center dropdown-toggle fa-icon-wait fs-9 pe-1 py-0" href="#" role="button" id="themeSwitchDropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">

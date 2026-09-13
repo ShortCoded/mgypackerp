@@ -80,12 +80,12 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
-        <input type="hidden" name="type" value="{{ $type }}">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
+        <x-forms.input type="hidden" name="type" value="{{ $type }}" />
 
         @unless (($boardConfig['can']['assign'] ?? false) && $isTask && ! $isView)
             @foreach ($selectedAssigneeDocNums as $docNum)
-                <input type="hidden" name="assignee_doc_nums[]" value="{{ $docNum }}">
+                <x-forms.input type="hidden" name="assignee_doc_nums[]" value="{{ $docNum }}" />
             @endforeach
         @endunless
 
@@ -126,7 +126,7 @@
                         @if ($isView)
                             <x-forms.view-field for="my-board-table-title" :value="old('title', $record?->title)" />
                         @else
-                            <input id="my-board-table-title" autofocus name="title" type="text" class="form-control" value="{{ old('title', $record?->title) }}" required>
+                            <x-forms.input id="my-board-table-title" autofocus name="title" type="text" class="form-control" value="{{ old('title', $record?->title) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="title"></div>
                     </div>
@@ -136,11 +136,11 @@
                         @if ($isView)
                             <x-forms.view-field for="my-board-table-status" :value="$statusValue ? __('user_tasks.statuses.'.$statusValue) : null" />
                         @else
-                            <select id="my-board-table-status" name="status" class="form-select" required>
+                            <x-forms.select id="my-board-table-status" name="status" class="form-select" required>
                                 @foreach (\Modules\Core\Models\UserTask::Statuses as $status)
                                     <option value="{{ $status }}" @selected($statusValue === $status)>{{ __("user_tasks.statuses.{$status}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -151,7 +151,7 @@
                             @if ($isView)
                                 <x-forms.view-field :for="'my-board-table-'.$dateField" :value="$formatDateTime($record?->{$dateField})" dir="ltr" />
                             @else
-                                <input class="form-control js-date-picker" id="my-board-table-{{ $dateField }}" name="{{ $dateField }}" type="text" value="{{ old($dateField, $formatDateTime($record?->{$dateField})) }}" data-enable-time="true" data-date-format="{{ $dateTimeFormat }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                                <x-forms.date-input class="form-control js-date-picker" id="my-board-table-{{ $dateField }}" name="{{ $dateField }}" type="text" value="{{ old($dateField, $formatDateTime($record?->{$dateField})) }}" data-enable-time="true" data-date-format="{{ $dateTimeFormat }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                             @endif
                             <div class="invalid-feedback" data-error-for="{{ $dateField }}"></div>
                         </div>
@@ -162,12 +162,12 @@
                         @if ($isView)
                             <x-forms.view-field for="my-board-table-list" :value="$record?->boardList?->name" />
                         @else
-                            <select id="my-board-table-list" name="board_list_doc_num" class="form-select">
+                            <x-forms.select id="my-board-table-list" name="board_list_doc_num" class="form-select">
                                 <option value="">{{ __('user_tasks.placeholders.board') }}</option>
                                 @foreach ($boardLists as $list)
                                     <option value="{{ $list->doc_num }}" @selected($boardListValue === $list->doc_num)>{{ $list->name }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="board_list_doc_num"></div>
                     </div>
@@ -178,11 +178,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="my-board-table-priority" :value="$priorityValue ? __('user_tasks.priorities.'.$priorityValue) : null" />
                             @else
-                                <select id="my-board-table-priority" name="priority" class="form-select" required>
+                                <x-forms.select id="my-board-table-priority" name="priority" class="form-select" required>
                                     @foreach (\Modules\Core\Models\UserTask::Priorities as $priority)
                                         <option value="{{ $priority }}" @selected($priorityValue === $priority)>{{ __("user_tasks.priorities.{$priority}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback" data-error-for="priority"></div>
                         </div>
@@ -193,12 +193,12 @@
                         @if ($isView)
                             <x-forms.view-field for="my-board-table-color" :value="$colorValue ? __('user_tasks.colors.'.$colorValue) : null" />
                         @else
-                            <select id="my-board-table-color" name="color" class="form-select">
+                            <x-forms.select id="my-board-table-color" name="color" class="form-select">
                                 <option value="">{{ __('common.empty_value') }}</option>
                                 @foreach (\Modules\Core\Models\UserTask::Colors as $color)
                                     <option value="{{ $color }}" @selected($colorValue === $color)>{{ __("user_tasks.colors.{$color}") }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="color"></div>
                     </div>
@@ -208,11 +208,11 @@
                         @if ($isView || ! (($boardConfig['can']['assign'] ?? false) && $isTask))
                             <x-forms.view-field for="my-board-table-assignees" :value="$selectedAssigneeLabel" />
                         @else
-                            <select class="form-select js-select2-ajax" id="my-board-table-assignees" name="assignee_doc_nums[]" multiple data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assignees') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="my-board-table-assignees" name="assignee_doc_nums[]" multiple data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('user_tasks.placeholders.assignees') }}" data-allow-clear="true">
                                 @foreach ($selectedAssignees as $assignee)
                                     <option value="{{ $assignee['id'] }}" selected>{{ $assignee['text'] }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="assignee_doc_nums"></div>
                     </div>
@@ -222,7 +222,7 @@
                         @if ($isView)
                             <div id="my-board-table-description" class="form-control-plaintext border rounded-2 px-3 py-2 my-board-rich-content">{!! $descriptionHtml !== '' ? $descriptionHtml : e(__('common.empty_value')) !!}</div>
                         @else
-                            <textarea id="my-board-table-description" name="description" class="form-control js-my-board-rich-editor" rows="8" data-direction="{{ $boardConfig['direction'] ?? 'ltr' }}" placeholder="{{ __('user_tasks.placeholders.description') }}">{{ $descriptionValue }}</textarea>
+                            <x-forms.textarea id="my-board-table-description" name="description" class="form-control js-my-board-rich-editor" rows="8" data-direction="{{ $boardConfig['direction'] ?? 'ltr' }}" placeholder="{{ __('user_tasks.placeholders.description') }}">{{ $descriptionValue }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="description"></div>
                     </div>

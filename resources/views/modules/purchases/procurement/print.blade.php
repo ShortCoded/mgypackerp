@@ -81,8 +81,8 @@
                 @endphp
                 <tr><td><strong>{{ __('Warehouse') }}</strong></td><td>{{ $inspectionStore?->name ?: '—' }}</td></tr>
                 <tr><td><strong>{{ __('Source document') }}</strong></td><td dir="ltr">{{ $record->source_doc_num ?: '—' }}</td></tr>
-                <tr><td><strong>{{ __('Inspection result') }}</strong></td><td>{{ __(str($record->result)->replace('_', ' ')->title()->toString()) }}</td></tr>
-                <tr><td><strong>{{ __('Warehouse receipt') }}</strong></td><td dir="ltr">{{ $record->receipt?->doc_num ?: __('Not created yet') }}</td></tr>
+                <tr><td><strong>{{ __('Inspection result') }}</strong></td><td>{{ __('procurement.statuses.'.$record->result) }}</td></tr>
+                <tr><td><strong>{{ __('Warehouse receipt') }}</strong></td><td dir="ltr">{{ collect([$record->receipt?->doc_num])->merge($record->receipts?->pluck('doc_num') ?? [])->filter()->unique()->join('، ') ?: __('Not created yet') }}</td></tr>
             @endif
             @if($isReturn)
                 <tr><td><strong>{{ __('Source invoice') }}</strong></td><td dir="ltr">{{ $record->purchaseInvoice?->doc_num ?: '—' }}</td></tr>
@@ -117,6 +117,7 @@
                 <th>{{ $isReceipt ? __('Received now') : ($isItemDocument ? __('Quantity') : __('Paid amount')) }}</th>
                 @if($isReceipt || $type === 'goods-receipt-inspection')<th>{{ __('Accepted') }}</th>@endif
                 @if($showRejected || $type === 'goods-receipt-inspection')<th>{{ __('Rejected') }}</th>@endif
+                @if($type === 'goods-receipt-inspection')<th>{{ __('Received') }}</th><th>{{ __('Remaining') }}</th>@endif
                 @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<th>{{ __('Unit price') }}</th><th>{{ __('Total') }}</th>@endif
                 <th>{{ __('Notes') }}</th>
             </tr></thead>
@@ -152,8 +153,9 @@
                         <td dir="ltr">{{ $numbers->format($quantity) }}</td>
                         @if($isReceipt || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->accepted_quantity) }}</td>@endif
                         @if($showRejected || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->rejected_quantity) }}</td>@endif
+                        @if($type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->receivedQuantity()) }}</td><td dir="ltr">{{ $numbers->format($line->remainingReceiptQuantity()) }}</td>@endif
                         @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<td dir="ltr">{{ isset($line->unit_price) ? $numbers->format($line->unit_price) : '—' }}</td><td dir="ltr">{{ $numbers->format($line->line_total ?? $line->amount ?? 0) }}</td>@endif
-                        <td>{{ $line->notes ?? $line->reason ?? $line->result ?? $line->disposition }}</td>
+                        <td>{{ $line->notes ?? $line->reason ?? (filled($line->disposition) ? __('procurement.statuses.'.$line->disposition) : (filled($line->result) ? __('procurement.statuses.'.$line->result) : null)) }}</td>
                     </tr>
                 @endforeach
             </tbody>

@@ -83,12 +83,12 @@
                     @endif
                     <div class="col-md-3">
                         <label class="form-label" for="entry_date">{{ __('journal_entries.attributes.entry_date') }}</label>
-                        <input class="form-control" id="entry_date" name="entry_date" type="date" value="{{ old('entry_date', $record?->entry_date?->format('Y-m-d') ?? now()->format('Y-m-d')) }}" @readonly($isReadonly) required>
+                        <x-forms.date-input id="entry_date" name="entry_date" :value="old('entry_date', $record?->entry_date?->format('Y-m-d') ?? now()->format('Y-m-d'))" :readonly='$isReadonly' required />
                         <div class="invalid-feedback d-block" data-error-for="entry_date"></div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label" for="reference_no">{{ __('journal_entries.attributes.reference_no') }}</label>
-                        <input class="form-control" id="reference_no" name="reference_no" value="{{ old('reference_no', $record?->reference_no) }}" @readonly($isReadonly) dir="ltr">
+                        <x-forms.input class="form-control" id="reference_no" name="reference_no" value="{{ old('reference_no', $record?->reference_no) }}" :readonly='$isReadonly' dir="ltr" />
                         <div class="invalid-feedback d-block" data-error-for="reference_no"></div>
                     </div>
                     <div class="col-md-3">
@@ -101,12 +101,12 @@
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="description">{{ __('journal_entries.attributes.description') }}</label>
-                        <input class="form-control" id="description" name="description" value="{{ old('description', $record?->description) }}" @readonly($isReadonly)>
+                        <x-forms.input class="form-control" id="description" name="description" value="{{ old('description', $record?->description) }}" :readonly='$isReadonly' />
                         <div class="invalid-feedback d-block" data-error-for="description"></div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="notes">{{ __('journal_entries.attributes.notes') }}</label>
-                        <input class="form-control" id="notes" name="notes" value="{{ old('notes', $record?->notes) }}" @readonly($isReadonly)>
+                        <x-forms.input class="form-control" id="notes" name="notes" value="{{ old('notes', $record?->notes) }}" :readonly='$isReadonly' />
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
                 </div>

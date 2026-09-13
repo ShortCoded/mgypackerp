@@ -28,7 +28,7 @@
                                     novalidate>
                                     @csrf
                                     @method('PUT')
-                                    <input type="hidden" name="document_key" value="{{ $documentKey }}">
+                                    <x-forms.input type="hidden" name="document_key" value="{{ $documentKey }}" />
                                     <h6 class="mb-3">{{ __('cheques.document_number_settings.'.$labelKey) }}</h6>
                                     <div class="alert alert-danger alert-dismissible fade show d-none js-finance-alert" role="alert">
                                         <span class="js-finance-alert-message"></span>
@@ -37,12 +37,12 @@
                                     <div class="row g-3 align-items-end">
                                         <div class="col-sm-7">
                                             <label class="form-label" for="{{ $documentKey }}-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                                            <input class="form-control" id="{{ $documentKey }}-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings[$documentKey]['prefix'] ?? '' }}">
+                                            <x-forms.input class="form-control" id="{{ $documentKey }}-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings[$documentKey]['prefix'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                                         </div>
                                         <div class="col-sm-3">
                                             <label class="form-label" for="{{ $documentKey }}-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                                            <input class="form-control" id="{{ $documentKey }}-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings[$documentKey]['padding'] ?? 0 }}" required>
+                                            <x-forms.input class="form-control" id="{{ $documentKey }}-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings[$documentKey]['padding'] ?? 0 }}" required />
                                             <div class="invalid-feedback d-block" data-error-for="padding"></div>
                                         </div>
                                         <div class="col-sm-auto">
@@ -67,28 +67,28 @@
                     <h5 class="fs-9 mb-0 text-nowrap py-2 py-xl-0">{{ $title }}</h5>
                 </div>
                 <div class="col-12 col-xl-auto ms-xl-auto d-flex flex-wrap justify-content-xl-end align-items-center gap-2 finance-toolbar-actions">
-                    <select class="form-select form-select-sm w-auto js-finance-extra-filter js-cheque-type-filter" data-filter-name="cheque_type_filter" aria-label="{{ __('cheques.attributes.cheque_type') }}">
+                    <x-forms.select class="form-select form-select-sm w-auto js-finance-extra-filter js-cheque-type-filter" data-filter-name="cheque_type_filter" aria-label="{{ __('cheques.attributes.cheque_type') }}">
                         <option value="">{{ __('cheques.types.all') }}</option>
                         <option value="received">{{ __('cheques.types.received') }}</option>
                         <option value="issued">{{ __('cheques.types.issued') }}</option>
-                    </select>
+                    </x-forms.select>
                     @can('cheques.view_trashed')
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="cheques_trash_filter">{{ __('finance.trash.filter_label') }}</label>
-                            <select class="form-select form-select-sm w-auto js-finance-trash-filter" id="cheques_trash_filter" aria-label="{{ __('finance.trash.filter_label') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto js-finance-trash-filter" id="cheques_trash_filter" aria-label="{{ __('finance.trash.filter_label') }}">
                                 <option value="active">{{ __('finance.trash.active') }}</option>
                                 <option value="trashed">{{ __('finance.trash.trashed') }}</option>
                                 <option value="all">{{ __('finance.trash.all') }}</option>
-                            </select>
+                            </x-forms.select>
                         </div>
                     @endcan
                     @if(auth()->user()?->can('cheques.delete'))
                         <div class="d-none align-items-center gap-2 finance-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('finance.bulk_action') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('finance.bulk_action') }}">
                                 <option value="">{{ __('finance.bulk_action') }}</option>
                                 <option value="delete">{{ __('common.actions.delete') }}</option>
-                            </select>
+                            </x-forms.select>
                             <button type="button" class="btn btn-falcon-danger btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
@@ -109,7 +109,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('finance.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('finance.select_all') }}" />
                                         </div>
                                     </th>
                                     @foreach($columns as $index => $column)

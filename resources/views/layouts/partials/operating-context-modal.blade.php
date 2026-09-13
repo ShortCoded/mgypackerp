@@ -22,31 +22,31 @@
 
                     <div class="mb-3">
                         <label class="form-label" for="operating-context-company">{{ __('operating_context.select_company') }} <span class="text-danger">*</span></label>
-                        <select class="form-select js-select2-ajax" id="operating-context-company" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_company') }}" data-allow-clear="true" required>
+                        <x-forms.select class="form-select js-select2-ajax" id="operating-context-company" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_company') }}" data-allow-clear="true" required>
                             @if ($currentCompany)
                                 <option value="{{ $currentCompanyDocNum }}" selected>{{ $currentCompany['label'] ?? $currentCompany['name'] ?? $currentCompanyDocNum }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="company_doc_num"></div>
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label" for="operating-context-branch">{{ __('operating_context.select_branch') }} <span class="text-danger">*</span></label>
-                        <select class="form-select js-select2-ajax" id="operating-context-branch" name="branch_doc_num" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_branch') }}" data-allow-clear="true" data-depends-on="#operating-context-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required @disabled(! $currentCompanyDocNum)>
+                        <x-forms.select class="form-select js-select2-ajax" id="operating-context-branch" name="branch_doc_num" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_branch') }}" data-allow-clear="true" data-depends-on="#operating-context-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required :disabled='! $currentCompanyDocNum'>
                             @if ($currentBranch)
                                 <option value="{{ $currentBranch['doc_num'] ?? $currentBranch['id'] }}" data-dependent-value="{{ $currentBranch['company_doc_num'] ?? $currentCompanyDocNum }}" selected>{{ $currentBranch['label'] ?? $currentBranch['name'] ?? $currentBranch['doc_num'] ?? $currentBranch['id'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="branch_doc_num"></div>
                     </div>
 
                     <div class="mb-0">
                         <label class="form-label" for="operating-context-financial-period">{{ __('operating_context.select_financial_period') }} <span class="text-danger">*</span></label>
-                        <select class="form-select js-select2-ajax" id="operating-context-financial-period" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_financial_period') }}" data-allow-clear="true" data-depends-on="#operating-context-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required @disabled(! $currentCompanyDocNum)>
+                        <x-forms.select class="form-select js-select2-ajax" id="operating-context-financial-period" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_financial_period') }}" data-allow-clear="true" data-depends-on="#operating-context-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required :disabled='! $currentCompanyDocNum'>
                             @if ($currentFinancialPeriod)
                                 <option value="{{ $currentFinancialPeriod['doc_num'] ?? $currentFinancialPeriod['id'] }}" data-dependent-value="{{ $currentCompanyDocNum }}" selected>{{ $currentFinancialPeriod['label'] ?? $currentFinancialPeriod['name'] ?? $currentFinancialPeriod['doc_num'] ?? $currentFinancialPeriod['id'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="financial_period_doc_num"></div>
                     </div>
                 </div>

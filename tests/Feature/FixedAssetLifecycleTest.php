@@ -19,7 +19,6 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
-use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -846,7 +845,8 @@ test('asset card reports print and export screens use the canonical lifecycle re
     $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register']))->assertOk()->assertSee($asset->doc_num);
     $this->get(route('admin.fixed-assets.reports.index', ['type' => 'register', 'to_date' => $date]))
         ->assertOk()
-        ->assertSee('value="'.app(DateFormatService::class)->formatDate($date, '').'"', false);
+        ->assertSee('value="'.$date.'"', false)
+        ->assertSee('data-storage-format="Y-m-d"', false);
     assertInlineFixedAssetPdf($this->get(route('admin.fixed-assets.reports.print', ['type' => 'register'])), 'fixed-assets-register.pdf');
 
     foreach (FixedAssetReportService::types() as $reportType) {

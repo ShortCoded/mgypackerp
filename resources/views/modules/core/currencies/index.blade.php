@@ -32,12 +32,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6 col-lg-4">
                                 <label class="form-label" for="currencies-document-prefix">{{ __('common.document_number_settings.prefix') }}</label>
-                                <input class="form-control" id="currencies-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="currencies-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label" for="currencies-document-padding">{{ __('common.document_number_settings.padding') }}</label>
-                                <input class="form-control" id="currencies-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required>
+                                <x-forms.input class="form-control" id="currencies-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -62,19 +62,19 @@
                     @can('currencies.view_trashed')
                         <div class="d-flex align-items-center gap-2">
                             <label class="form-label mb-0 text-700 fs-10" for="currency_trash_filter">{{ __('currencies.trash.filter_label') }}</label>
-                            <select class="form-select form-select-sm w-auto" id="currency_trash_filter" aria-label="{{ __('currencies.trash.filter_label') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="currency_trash_filter" aria-label="{{ __('currencies.trash.filter_label') }}">
                                 <option value="active">{{ __('currencies.trash.active') }}</option>
                                 <option value="trashed">{{ __('currencies.trash.trashed') }}</option>
                                 <option value="all">{{ __('currencies.trash.all') }}</option>
-                            </select>
+                            </x-forms.select>
                         </div>
                     @endcan
                     @can('currencies.delete')
                         <div class="d-none align-items-center gap-2 currency-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('currencies.bulk_action') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('currencies.bulk_action') }}">
                                 <option value="delete">{{ __('common.actions.delete') }}</option>
-                            </select>
+                            </x-forms.select>
                             <button type="button" class="btn btn-falcon-danger btn-sm" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
@@ -96,7 +96,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('currencies.select_all') }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('currencies.select_all') }}" />
                                         </div>
                                     </th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('currencies.attributes.doc_num') }}</th>

@@ -27,14 +27,14 @@
         >
             <div class="col-12 col-lg-8">
                 <label class="form-label" for="source_document">{{ $sourceLabel }}</label>
-                <select
+                <x-forms.select
                     id="source_document"
                     class="form-select js-select2-ajax"
                     data-url="{{ route('admin.purchases.select2.'.$lookup) }}"
                     data-placeholder="{{ __('Select') }}"
                     aria-describedby="source_document_help"
                     required
-                ></select>
+                ></x-forms.select>
                 <div class="form-text" id="source_document_help">{{ $sourceHelp }}</div>
             </div>
             <div class="col-12 col-lg-4 d-grid">

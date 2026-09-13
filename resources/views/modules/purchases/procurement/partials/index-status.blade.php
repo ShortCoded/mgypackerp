@@ -8,4 +8,4 @@
         $status = $record->qc_status;
     }
 @endphp
-<x-status-indicator :status="$status" :label="__('procurement.ui.statuses.'.$status)" />
+<x-status-indicator :status="$status" :label="__('procurement.statuses.'.$status)" />

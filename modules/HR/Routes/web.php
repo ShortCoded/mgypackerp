@@ -1,8 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\HR\Http\Controllers\EmployeeSelfServiceController;
 use Modules\HR\Http\Controllers\HrAllowanceController;
 use Modules\HR\Http\Controllers\HrAreaController;
+use Modules\HR\Http\Controllers\HrAttendanceController;
 use Modules\HR\Http\Controllers\HrBiometricDeviceController;
 use Modules\HR\Http\Controllers\HrCityController;
 use Modules\HR\Http\Controllers\HrCountryController;
@@ -22,6 +24,7 @@ use Modules\HR\Http\Controllers\HrMilitaryServiceController;
 use Modules\HR\Http\Controllers\HrNationalityController;
 use Modules\HR\Http\Controllers\HrQualificationController;
 use Modules\HR\Http\Controllers\HrReligionController;
+use Modules\HR\Http\Controllers\HrRequestController;
 use Modules\HR\Http\Controllers\HrSectionController;
 use Modules\HR\Http\Controllers\HrSelect2InlineController;
 use Modules\HR\Http\Controllers\HrShiftController;
@@ -32,9 +35,32 @@ use Modules\HR\Http\Controllers\PayrollCostPreviewController;
 use Modules\HR\Http\Controllers\Select2\HrSelect2Controller;
 
 Route::middleware('auth')
+    ->prefix('my/hr')
+    ->as('employee.hr.')
+    ->controller(EmployeeSelfServiceController::class)
+    ->group(function (): void {
+        Route::get('/', 'index')->name('self-service.index');
+        Route::get('/attendance/status', 'status')->middleware('throttle:60,1')->name('attendance.status');
+        Route::post('/attendance/punch', 'punch')->middleware('throttle:12,1')->name('attendance.punch');
+        Route::post('/requests', 'storeRequest')->middleware('throttle:10,1')->name('requests.store');
+        Route::patch('/requests/{employeeRequest}/cancel', 'cancelRequest')->name('requests.cancel');
+    });
+
+Route::middleware('auth')
     ->prefix('admin/hr')
     ->as('admin.hr.')
     ->group(function (): void {
+        Route::prefix('employee-attendance')->name('employee-attendance.')->controller(HrAttendanceController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:hr.employee_attendance.view')->name('index');
+            Route::get('/export/csv', 'exportCsv')->middleware('can:hr.employee_attendance.export')->name('export.csv');
+            Route::post('/manual', 'storeManual')->middleware('can:hr.employee_attendance.manage')->name('manual.store');
+        });
+
+        Route::prefix('hr-requests')->name('hr-requests.')->controller(HrRequestController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:hr.hr_requests.view')->name('index');
+            Route::patch('/{employeeRequest}/review', 'review')->middleware('can:hr.hr_requests.manage')->name('review');
+        });
+
         Route::get('/select2/lookups/{resource}', [HrSelect2Controller::class, 'lookup'])
             ->name('select2.lookups');
         Route::get('/select2/foundation/{resource}', [HrSelect2Controller::class, 'foundation'])

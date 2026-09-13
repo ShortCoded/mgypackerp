@@ -48,6 +48,20 @@ class GoodsReceiptInspection extends Model
         return $this->belongsTo(UnpricedInventoryReceipt::class, 'receipt_id');
     }
 
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(UnpricedInventoryReceipt::class, 'goods_receipt_inspection_id');
+    }
+
+    public function hasReceiptableQuantity(): bool
+    {
+        $this->loadMissing('lines.receiptLines.receipt');
+
+        return $this->lines->contains(
+            fn (GoodsReceiptInspectionLine $line): bool => $line->remainingReceiptQuantity() > 0.00000001,
+        );
+    }
+
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);

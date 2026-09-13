@@ -21,7 +21,6 @@ return [
     'supplier_payments' => 'purchases_supplier_payments',
     'supplier_invoice_allocations' => 'purchases_purchase_invoice_allocations',
 
-    'production_identifier_assignments' => 'production_contract_identifier_allocation',
     'production_work_orders' => 'production_work_orders',
     'technical_office_reviews' => 'production_work_order_approval',
     'production_stages' => 'production_production_stages',

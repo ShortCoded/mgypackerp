@@ -31,33 +31,33 @@
                 <div class="row g-3 align-items-end">
                     <div class="col-sm-6 col-lg-3">
                         <label class="form-label" for="quick_tasks_status_filter">{{ __('quick_tasks.attributes.status') }}</label>
-                        <select class="form-select form-select-sm js-quick-task-filter" id="quick_tasks_status_filter" name="status_filter">
+                        <x-forms.select class="form-select form-select-sm js-quick-task-filter" id="quick_tasks_status_filter" name="status_filter">
                             <option value="">{{ __('quick_tasks.filters.all_statuses') }}</option>
                             @foreach (QuickTask::Statuses as $status)
                                 <option value="{{ $status }}">{{ __("quick_tasks.statuses.{$status}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="col-sm-6 col-lg-3">
                         <label class="form-label" for="quick_tasks_priority_filter">{{ __('quick_tasks.attributes.priority') }}</label>
-                        <select class="form-select form-select-sm js-quick-task-filter" id="quick_tasks_priority_filter" name="priority_filter">
+                        <x-forms.select class="form-select form-select-sm js-quick-task-filter" id="quick_tasks_priority_filter" name="priority_filter">
                             <option value="">{{ __('quick_tasks.filters.all_priorities') }}</option>
                             @foreach (QuickTask::Priorities as $priority)
                                 <option value="{{ $priority }}">{{ __("quick_tasks.priorities.{$priority}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="col-sm-6 col-lg-3">
                         <label class="form-label" for="quick_tasks_assigned_filter">{{ __('quick_tasks.filters.assigned_to') }}</label>
-                        <select class="form-select form-select-sm js-select2-ajax js-quick-task-filter" id="quick_tasks_assigned_filter" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('quick_tasks.placeholders.assigned_to') }}" data-allow-clear="true"></select>
+                        <x-forms.select class="form-select form-select-sm js-select2-ajax js-quick-task-filter" id="quick_tasks_assigned_filter" name="assigned_user_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('quick_tasks.placeholders.assigned_to') }}" data-allow-clear="true"></x-forms.select>
                     </div>
                     <div class="col-sm-6 col-lg-3">
                         <label class="form-label" for="quick_tasks_created_from">{{ __('quick_tasks.filters.created_from') }}</label>
-                        <input class="form-control form-control-sm js-date-picker js-quick-task-filter" id="quick_tasks_created_from" name="created_from" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr">
+                        <x-forms.date-input class="form-control form-control-sm js-date-picker js-quick-task-filter" id="quick_tasks_created_from" name="created_from" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr" />
                     </div>
                     <div class="col-sm-6 col-lg-3">
                         <label class="form-label" for="quick_tasks_created_to">{{ __('quick_tasks.filters.created_to') }}</label>
-                        <input class="form-control form-control-sm js-date-picker js-quick-task-filter" id="quick_tasks_created_to" name="created_to" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr">
+                        <x-forms.date-input class="form-control form-control-sm js-date-picker js-quick-task-filter" id="quick_tasks_created_to" name="created_to" type="text" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ $dateFormatService->dateFormat() }}" autocomplete="off" dir="ltr" />
                     </div>
                     <div class="col-auto">
                         <button class="btn btn-falcon-default btn-sm js-quick-task-reset-filters" type="button">
@@ -78,25 +78,25 @@
                 <div class="col-12 col-lg-auto ms-lg-auto d-flex flex-wrap justify-content-lg-end align-items-center gap-2 quick-tasks-toolbar-actions">
                     <div class="d-flex align-items-center gap-2">
                         <label class="form-label mb-0 text-700 fs-10" for="quick_tasks_record_filter">{{ __('quick_tasks.filters.records') }}</label>
-                        <select class="form-select form-select-sm w-auto js-quick-task-filter" id="quick_tasks_record_filter" name="trash_filter" aria-label="{{ __('quick_tasks.filters.records') }}">
+                        <x-forms.select class="form-select form-select-sm w-auto js-quick-task-filter" id="quick_tasks_record_filter" name="trash_filter" aria-label="{{ __('quick_tasks.filters.records') }}">
                             <option value="active">{{ __('quick_tasks.filters.active') }}</option>
                             @can('quick_tasks.restore')
                                 <option value="trashed">{{ __('quick_tasks.filters.trashed') }}</option>
                                 <option value="all">{{ __('quick_tasks.filters.all') }}</option>
                             @endcan
-                        </select>
+                        </x-forms.select>
                     </div>
                     @if ($hasBulkActions)
                         <div class="d-none align-items-center gap-2 quick-tasks-bulk-actions-bar" id="bulk_actions_bar">
                             <span class="badge rounded-pill badge-subtle-primary" id="bulk_selected_count">0</span>
-                            <select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('quick_tasks.bulk_action') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" id="bulk_action_select" aria-label="{{ __('quick_tasks.bulk_action') }}">
                                 @if ($canBulkDelete)
                                     <option value="delete" data-visible-filters="active all">{{ __('quick_tasks.actions.delete_selected') }}</option>
                                 @endif
                                 @if ($canBulkRestore)
                                     <option value="restore" data-visible-filters="trashed all">{{ __('quick_tasks.actions.restore_selected') }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                             <button class="btn btn-falcon-default btn-sm" type="button" id="bulk_action_apply" data-label="{{ __('common.actions.apply') }}" title="{{ __('common.shortcuts.bulk_apply') }}" data-bs-title="{{ __('common.shortcuts.bulk_apply') }}" disabled>
                                 <span class="fas fa-check" data-fa-transform="shrink-3 down-2"></span><span class="d-none d-sm-inline-block ms-1">{{ __('common.actions.apply') }}</span>
                             </button>
@@ -124,7 +124,7 @@
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" data-searchable="false" style="width: 2.25rem;">
                                         @if ($hasBulkActions)
                                             <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                                <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('quick_tasks.select_all') }}">
+                                                <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('quick_tasks.select_all') }}" />
                                             </div>
                                         @endif
                                     </th>

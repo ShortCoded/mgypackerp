@@ -2,6 +2,7 @@
 
 namespace Modules\HR\Services;
 
+use App\Models\User;
 use DateTimeInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -20,6 +21,7 @@ use Modules\Core\Services\FilePickerService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\HR\Events\HrEmployeeCreated;
+use Modules\HR\Exceptions\HrEmployeeRestoreBlockedException;
 use Modules\HR\Models\HrAllowance;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrDepartment;
@@ -97,6 +99,7 @@ class HrEmployeeService
      * @var array<string, array{column: string, model: class-string}>
      */
     private array $relationFields = [
+        'user_doc_num' => ['column' => 'user_id', 'model' => User::class],
         'branch_doc_num' => ['column' => 'branch_id', 'model' => Branch::class],
         'department_doc_num' => ['column' => 'department_id', 'model' => HrDepartment::class],
         'section_doc_num' => ['column' => 'section_id', 'model' => HrSection::class],
@@ -844,11 +847,20 @@ class HrEmployeeService
     private function ensureEmployeeCanBeRestored(HrEmployee $employee): void
     {
         if (! $employee->trashed()) {
-            throw new DomainException(__('hr.messages.restore_not_allowed'));
+            throw new HrEmployeeRestoreBlockedException(
+                __('hr.messages.restore_not_allowed'),
+                'already_active',
+            );
         }
 
-        if ($this->restoreConflictFields($employee) !== []) {
-            throw new DomainException(__('hr.employees.messages.restore_conflict'));
+        $conflictFields = $this->restoreConflictFields($employee);
+
+        if ($conflictFields !== []) {
+            throw new HrEmployeeRestoreBlockedException(
+                __('hr.employees.messages.restore_conflict'),
+                'employee_identity_conflict',
+                $conflictFields,
+            );
         }
     }
 

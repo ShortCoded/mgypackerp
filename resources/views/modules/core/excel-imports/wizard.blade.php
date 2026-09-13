@@ -67,7 +67,7 @@
                             @csrf
                             <label class="form-label" for="workbook">{{ __('excel_imports.actions.upload_validate') }}</label>
                             <div class="input-group">
-                                <input class="form-control @error('workbook') is-invalid @enderror" id="workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                                <x-forms.input class="form-control @error('workbook') is-invalid @enderror" id="workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
                                 <button class="btn btn-falcon-primary" type="submit"><span class="fas fa-shield-alt me-1" aria-hidden="true"></span>{{ __('excel_imports.actions.upload_validate') }}</button>
                             </div>
                             @error('workbook')
@@ -122,12 +122,12 @@
                 <div class="card-body">
                     <div class="d-flex flex-wrap gap-2 justify-content-between align-items-end">
                         <form class="d-flex flex-wrap gap-2" method="GET" action="{{ route($routePrefix.'.show', $batch->public_uuid) }}">
-                            <select class="form-select form-select-sm w-auto" name="filter" aria-label="{{ __('excel_imports.review.status') }}">
+                            <x-forms.select class="form-select form-select-sm w-auto" name="filter" aria-label="{{ __('excel_imports.review.status') }}">
                                 @foreach(['' => 'all', 'valid' => 'valid', 'errors' => 'errors', 'warnings' => 'warnings_filter'] as $value => $label)
                                     <option value="{{ $value }}" @selected((string) request('filter', '') === $value)>{{ __('excel_imports.review.'.$label) }}</option>
                                 @endforeach
-                            </select>
-                            <input class="form-control form-control-sm" name="q" value="{{ request('q') }}" placeholder="{{ __('excel_imports.review.search') }}">
+                            </x-forms.select>
+                            <x-forms.input class="form-control form-control-sm" name="q" value="{{ request('q') }}" placeholder="{{ __('excel_imports.review.search') }}" />
                             <button class="btn btn-falcon-default btn-sm" type="submit">{{ __('common.search') }}</button>
                         </form>
                         <div class="d-flex flex-wrap gap-2">
@@ -145,7 +145,7 @@
                         <form action="{{ route($routePrefix.'.replace', $batch->public_uuid) }}" method="POST" enctype="multipart/form-data" data-excel-import-form>
                             @csrf
                             <div class="input-group">
-                                <input class="form-control" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                                <x-forms.input class="form-control" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
                                 <button class="btn btn-falcon-primary" type="submit">{{ __('excel_imports.actions.upload_validate') }}</button>
                             </div>
                         </form>
@@ -211,7 +211,7 @@
                     <form action="{{ route($routePrefix.'.confirm', $batch->public_uuid) }}" method="POST" data-excel-import-form>
                         @csrf
                         <div class="form-check mb-2">
-                            <input class="form-check-input" id="confirm-import" name="confirmed" type="checkbox" value="1" @disabled(! $batch->isReady()) required>
+                            <x-forms.input class="form-check-input" id="confirm-import" name="confirmed" type="checkbox" value="1" :disabled='! $batch->isReady()' required />
                             <label class="form-check-label" for="confirm-import">{{ __('excel_imports.actions.confirm') }}</label>
                         </div>
                         <button class="btn btn-primary" type="submit" @disabled(! $batch->isReady())>{{ __('excel_imports.actions.confirm') }}</button>

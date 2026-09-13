@@ -35,12 +35,12 @@
     @if($method !== 'POST')
         @method($method)
     @endif
-    <input type="hidden" name="submit_action" value="save">
+    <x-forms.input type="hidden" name="submit_action" value="save" />
     @if($cloneSourceToken)
-        <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+        <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
     @endif
-    <input type="hidden" id="source_holder_doc_num" value="{{ $sourceOption['id'] ?? '' }}">
-    <input type="hidden" id="target_holder_doc_num" value="{{ $targetOption['id'] ?? '' }}">
+    <x-forms.input type="hidden" id="source_holder_doc_num" value="{{ $sourceOption['id'] ?? '' }}" />
+    <x-forms.input type="hidden" id="target_holder_doc_num" value="{{ $targetOption['id'] ?? '' }}" />
 
     <div class="card mb-3">
         <div class="card-header">
@@ -75,7 +75,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                         @else
-                            <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                            <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -91,7 +91,7 @@
                     @if($isReadonly)
                         <x-forms.view-field for="transfer_date" :value="$dateValue" dir="ltr" input-class="date-value" />
                     @else
-                        <input class="form-control text-center js-date-picker" id="transfer_date" name="transfer_date" type="text" value="{{ $dateValue }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                        <x-forms.date-input class="form-control text-center js-date-picker" id="transfer_date" name="transfer_date" type="text" value="{{ $dateValue }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="transfer_date"></div>
                 </div>
@@ -103,11 +103,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="source_type" :value="__('fund_transfers.holder_types.'.$sourceType)" />
                     @else
-                        <select class="form-select js-fund-transfer-holder-type" id="source_type" name="source_type" data-side="source" required>
+                        <x-forms.select class="form-select js-fund-transfer-holder-type" id="source_type" name="source_type" data-side="source" required>
                             @foreach(\Modules\Finance\Models\FundTransfer::holderTypes() as $type)
                                 <option value="{{ $type }}" @selected($sourceType === $type)>{{ __('fund_transfers.holder_types.'.$type) }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="source_type"></div>
                 </div>
@@ -117,11 +117,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="source_cashbox_doc_num" :value="$sourceType === 'cashbox' ? ($sourceOption['text'] ?? null) : null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-holder-select js-source-cashbox" id="source_cashbox_doc_num" name="source_cashbox_doc_num" data-url="{{ route('admin.finance.select2.cashboxes') }}" data-side="source" data-holder-type="cashbox" data-placeholder="{{ __('fund_transfers.js.select_cashbox') }}" data-allow-clear="true" @disabled($sourceType !== 'cashbox')>
+                        <x-forms.select class="form-select js-select2-ajax js-fund-transfer-holder-select js-source-cashbox" id="source_cashbox_doc_num" name="source_cashbox_doc_num" data-url="{{ route('admin.finance.select2.cashboxes') }}" data-side="source" data-holder-type="cashbox" data-placeholder="{{ __('fund_transfers.js.select_cashbox') }}" data-allow-clear="true" :disabled="$sourceType !== 'cashbox'">
                             @if($sourceType === 'cashbox' && $sourceOption)
                                 <option value="{{ $sourceOption['id'] }}" selected>{{ $sourceOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="source_cashbox_doc_num"></div>
                 </div>
@@ -131,11 +131,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="source_bank_account_doc_num" :value="$sourceType === 'bank_account' ? ($sourceOption['text'] ?? null) : null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-holder-select js-source-bank-account" id="source_bank_account_doc_num" name="source_bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-side="source" data-holder-type="bank_account" data-placeholder="{{ __('fund_transfers.js.select_bank_account') }}" data-allow-clear="true" @disabled($sourceType !== 'bank_account')>
+                        <x-forms.select class="form-select js-select2-ajax js-fund-transfer-holder-select js-source-bank-account" id="source_bank_account_doc_num" name="source_bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-side="source" data-holder-type="bank_account" data-placeholder="{{ __('fund_transfers.js.select_bank_account') }}" data-allow-clear="true" :disabled="$sourceType !== 'bank_account'">
                             @if($sourceType === 'bank_account' && $sourceOption)
                                 <option value="{{ $sourceOption['id'] }}" selected>{{ $sourceOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="source_bank_account_doc_num"></div>
                 </div>
@@ -145,11 +145,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="source_currency_doc_num" :value="$sourceCurrencyOption['text'] ?? null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-currency js-source-currency" id="source_currency_doc_num" name="source_currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" data-extra-params='@json(['holder_type' => '#source_type', 'holder' => '#source_holder_doc_num'])' data-side="source" data-placeholder="{{ __('fund_transfers.js.select_currency') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax js-fund-transfer-currency js-source-currency" id="source_currency_doc_num" name="source_currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" :data-extra-params="json_encode(['holder_type' => '#source_type', 'holder' => '#source_holder_doc_num'])" data-side="source" data-placeholder="{{ __('fund_transfers.js.select_currency') }}" data-allow-clear="true" required>
                             @if($sourceCurrencyOption)
                                 <option value="{{ $sourceCurrencyOption['id'] }}" data-is-main="{{ $sourceCurrencyOption['is_main'] ? '1' : '0' }}" selected>{{ $sourceCurrencyOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="source_currency_doc_num"></div>
                 </div>
@@ -171,11 +171,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="target_type" :value="__('fund_transfers.holder_types.'.$targetType)" />
                     @else
-                        <select class="form-select js-fund-transfer-holder-type" id="target_type" name="target_type" data-side="target" required>
+                        <x-forms.select class="form-select js-fund-transfer-holder-type" id="target_type" name="target_type" data-side="target" required>
                             @foreach(\Modules\Finance\Models\FundTransfer::holderTypes() as $type)
                                 <option value="{{ $type }}" @selected($targetType === $type)>{{ __('fund_transfers.holder_types.'.$type) }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="target_type"></div>
                 </div>
@@ -185,11 +185,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="target_cashbox_doc_num" :value="$targetType === 'cashbox' ? ($targetOption['text'] ?? null) : null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-holder-select js-target-cashbox" id="target_cashbox_doc_num" name="target_cashbox_doc_num" data-url="{{ route('admin.finance.select2.cashboxes') }}" data-side="target" data-holder-type="cashbox" data-placeholder="{{ __('fund_transfers.js.select_cashbox') }}" data-allow-clear="true" @disabled($targetType !== 'cashbox')>
+                        <x-forms.select class="form-select js-select2-ajax js-fund-transfer-holder-select js-target-cashbox" id="target_cashbox_doc_num" name="target_cashbox_doc_num" data-url="{{ route('admin.finance.select2.cashboxes') }}" data-side="target" data-holder-type="cashbox" data-placeholder="{{ __('fund_transfers.js.select_cashbox') }}" data-allow-clear="true" :disabled="$targetType !== 'cashbox'">
                             @if($targetType === 'cashbox' && $targetOption)
                                 <option value="{{ $targetOption['id'] }}" selected>{{ $targetOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="target_cashbox_doc_num"></div>
                 </div>
@@ -199,11 +199,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="target_bank_account_doc_num" :value="$targetType === 'bank_account' ? ($targetOption['text'] ?? null) : null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-holder-select js-target-bank-account" id="target_bank_account_doc_num" name="target_bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-side="target" data-holder-type="bank_account" data-placeholder="{{ __('fund_transfers.js.select_bank_account') }}" data-allow-clear="true" @disabled($targetType !== 'bank_account')>
+                        <x-forms.select class="form-select js-select2-ajax js-fund-transfer-holder-select js-target-bank-account" id="target_bank_account_doc_num" name="target_bank_account_doc_num" data-url="{{ route('admin.finance.select2.bank-accounts') }}" data-side="target" data-holder-type="bank_account" data-placeholder="{{ __('fund_transfers.js.select_bank_account') }}" data-allow-clear="true" :disabled="$targetType !== 'bank_account'">
                             @if($targetType === 'bank_account' && $targetOption)
                                 <option value="{{ $targetOption['id'] }}" selected>{{ $targetOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="target_bank_account_doc_num"></div>
                 </div>
@@ -213,11 +213,11 @@
                     @if($isReadonly)
                         <x-forms.view-field for="target_currency_doc_num" :value="$targetCurrencyOption['text'] ?? null" />
                     @else
-                        <select class="form-select js-select2-ajax js-fund-transfer-currency js-target-currency" id="target_currency_doc_num" name="target_currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" data-extra-params='@json(['holder_type' => '#target_type', 'holder' => '#target_holder_doc_num'])' data-side="target" data-placeholder="{{ __('fund_transfers.js.select_currency') }}" data-allow-clear="true" required>
+                                <x-forms.select class="form-select js-select2-ajax js-fund-transfer-currency js-target-currency" id="target_currency_doc_num" name="target_currency_doc_num" data-url="{{ route('admin.finance.select2.holder-currencies') }}" :data-extra-params="json_encode(['holder_type' => '#target_type', 'holder' => '#target_holder_doc_num'])" data-side="target" data-placeholder="{{ __('fund_transfers.js.select_currency') }}" data-allow-clear="true" required>
                             @if($targetCurrencyOption)
                                 <option value="{{ $targetCurrencyOption['id'] }}" data-is-main="{{ $targetCurrencyOption['is_main'] ? '1' : '0' }}" selected>{{ $targetCurrencyOption['text'] }}</option>
                             @endif
-                        </select>
+                        </x-forms.select>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="target_currency_doc_num"></div>
                 </div>
@@ -249,7 +249,7 @@
                     @if($isReadonly)
                         <x-forms.view-field for="reason" :value="$value('reason')" />
                     @else
-                        <input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required>
+                        <x-forms.input class="form-control" id="reason" name="reason" value="{{ $value('reason') }}" required />
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="reason"></div>
                 </div>
@@ -259,7 +259,7 @@
                     @if($isReadonly)
                         <div class="form-control-plaintext">{{ $value('description') }}</div>
                     @else
-                        <textarea class="form-control" id="description" name="description" rows="2">{{ $value('description') }}</textarea>
+                        <x-forms.textarea class="form-control" id="description" name="description" rows="2">{{ $value('description') }}</x-forms.textarea>
                     @endif
                     <div class="invalid-feedback d-block" data-error-for="description"></div>
                     <div class="invalid-feedback d-block" data-error-for="document"></div>

@@ -31,9 +31,9 @@
     @if($screen === 'purchase_requisitions')
     @can('purchase_orders.create') @can('purchases.prices.view')
     <form class="card mb-3" method="GET" action="{{ route('admin.purchases.purchase-orders.create') }}"><div class="card-body row g-3 align-items-end">
-        <div class="col-md-9"><label class="form-label">{{ __('Combine approved purchase requests') }}</label><select class="form-select" name="purchase_requisition_doc_nums[]" multiple required>
+        <div class="col-md-9"><label class="form-label">{{ __('Combine approved purchase requests') }}</label><x-forms.select class="form-select" name="purchase_requisition_doc_nums[]" multiple required>
             @foreach($records as $requestRecord) @if(in_array($requestRecord->status, ['approved', 'partially_converted']))<option value="{{ $requestRecord->doc_num }}">{{ $requestRecord->doc_num }} / {{ $requestRecord->branchStore?->name }}</option>@endif @endforeach
-        </select><div class="form-text">{{ __('Select purchase requests for the same receiving warehouse.') }}</div></div>
+        </x-forms.select><div class="form-text">{{ __('Select purchase requests for the same receiving warehouse.') }}</div></div>
         <div class="col-md-3"><button class="btn btn-primary">{{ __('Create Purchase Order') }}</button></div>
     </div></form>
     @endcan @endcan

@@ -3,7 +3,7 @@
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $reportTypes = ['financial', 'period', 'customers', 'products', 'invoices', 'receivables', 'collections', 'returns', 'quotations', 'fulfillment', 'operational'];
+    $reportTypes = ['financial', 'period', 'customers', 'products', 'invoices', 'receivables', 'collections', 'returns', 'quotations', 'fulfillment', 'pricing', 'operational'];
     $reportTitle = __('sales_ui.reports.types.'.$reportType);
     $reportDescription = __('sales_ui.reports.descriptions.'.$reportType);
     $hasFilters = collect(request()->except(['report', 'ledger_page', 'backorders_page']))->filter(fn ($value) => filled($value))->isNotEmpty();
@@ -53,79 +53,88 @@
             :action="route('admin.reports.sales.sales-orders.index')"
             :expanded="$hasFilters"
             :reset-url="route('admin.reports.sales.sales-orders.index', ['report' => $reportType])">
-            <input type="hidden" name="report" value="{{ $reportType }}">
+            <x-forms.input type="hidden" name="report" value="{{ $reportType }}" />
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_currency" :label="__('Currency')" />
-                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_currency" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('Currency') }}" required>
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_currency" name="currency_doc_num" data-url="{{ route('admin.select2.currencies') }}" data-placeholder="{{ __('Currency') }}" required>
                     @foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" selected>{{ $currency->code }} — {{ $currency->name }}</option>@endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_from" :label="__('From')" />
-                <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_from" name="from" value="{{ $dateValue($from) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_from" name="from" value="{{ $dateValue($from) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_to" :label="__('To')" />
-                <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_to" name="to" value="{{ $dateValue($to) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr">
+                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_to" name="to" value="{{ $dateValue($to) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_customer" :label="__('Customer')" />
-                <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_customer" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_customer" name="customer_doc_num" data-url="{{ route('admin.sales.select2.customers') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
                     @if($filterOptions['customer'])<option value="{{ $filterOptions['customer']->doc_num }}" selected>{{ $filterOptions['customer']->doc_num }} / {{ $filterOptions['customer']->name }}</option>@endif
-                </select>
+                </x-forms.select>
             </div>
 
-            @if(in_array($reportType, ['products', 'returns', 'fulfillment', 'operational'], true))
+            @if(in_array($reportType, ['products', 'returns', 'fulfillment', 'pricing', 'operational'], true))
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_product" :label="__('Product')" />
-                    <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_product" name="product_doc_num" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_product" name="product_doc_num" data-url="{{ route('admin.sales.select2.quotation-products') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
                         @if($filterOptions['product'])<option value="{{ $filterOptions['product']->doc_num }}" selected>{{ $filterOptions['product']->doc_num }} / {{ $filterOptions['product']->name }}</option>@endif
-                    </select>
+                    </x-forms.select>
                 </div>
             @endif
             @if(in_array($reportType, ['quotations', 'fulfillment', 'operational'], true))
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_employee" :label="__('Sales Representative')" />
-                    <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_employee" name="sales_person_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_employee" name="sales_person_doc_num" data-url="{{ route('admin.sales.select2.employees') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
                         @if($filterOptions['employee'])<option value="{{ $filterOptions['employee']->doc_num }}" selected>{{ $filterOptions['employee']->doc_num }} / {{ $filterOptions['employee']->full_name ?: $filterOptions['employee']->name }}</option>@endif
-                    </select>
+                    </x-forms.select>
                 </div>
             @endif
             @if(in_array($reportType, ['fulfillment', 'operational'], true))
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_warehouse" :label="__('Delivery warehouse')" />
-                    <select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_warehouse" name="warehouse_uuid" data-url="{{ route('admin.sales.select2.stores') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_warehouse" name="warehouse_uuid" data-url="{{ route('admin.sales.select2.stores') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
                         @if($filterOptions['warehouse'])<option value="{{ $filterOptions['warehouse']->public_uuid }}" selected>{{ $filterOptions['warehouse']->name }}</option>@endif
-                    </select>
+                    </x-forms.select>
                 </div>
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_order_status" :label="__('Order Status')" />
-                    <select class="form-select form-select-sm js-report-filter-control" id="report_order_status" name="order_status">
+                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="report_order_status" name="order_status">
                         <option value="">{{ __('All') }}</option>
                         @foreach($orderStatuses as $status)<option value="{{ $status }}" @selected($filters['order_status'] === $status)>{{ __(str($status)->replace('_', ' ')->title()->toString()) }}</option>@endforeach
-                    </select>
+                    </x-forms.select>
                 </div>
             @endif
             @if($reportType === 'quotations')
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_quotation_status" :label="__('Quotation Status')" />
-                    <select class="form-select form-select-sm js-report-filter-control" id="report_quotation_status" name="quotation_status"><option value="">{{ __('All') }}</option>@foreach(\Modules\Sales\Models\Quotation::Statuses as $status)<option value="{{ $status }}" @selected($filters['quotation_status'] === $status)>{{ __('quotations.statuses.'.$status) }}</option>@endforeach</select>
+                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="report_quotation_status" name="quotation_status"><option value="">{{ __('All') }}</option>@foreach(\Modules\Sales\Models\Quotation::Statuses as $status)<option value="{{ $status }}" @selected($filters['quotation_status'] === $status)>{{ __('quotations.statuses.'.$status) }}</option>@endforeach</x-forms.select>
                 </div>
             @endif
             @if(in_array($reportType, ['receivables', 'collections', 'financial'], true))
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_payment_state" :label="__('Payment State')" />
-                    <select class="form-select form-select-sm js-report-filter-control" id="report_payment_state" name="payment_state"><option value="">{{ __('All') }}</option><option value="outstanding" @selected($filters['payment_state'] === 'outstanding')>{{ __('Outstanding') }}</option><option value="settled" @selected($filters['payment_state'] === 'settled')>{{ __('Settled') }}</option></select>
+                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="report_payment_state" name="payment_state"><option value="">{{ __('All') }}</option><option value="outstanding" @selected($filters['payment_state'] === 'outstanding')>{{ __('Outstanding') }}</option><option value="settled" @selected($filters['payment_state'] === 'settled')>{{ __('Settled') }}</option></x-forms.select>
                 </div>
             @endif
             @if($reportType === 'returns')
                 <div class="col-sm-6 col-xl-3">
                     <x-forms.label for="report_return_reason" :label="__('Return Reason')" />
-                    <select class="form-select form-select-sm js-report-filter-control" id="report_return_reason" name="return_reason"><option value="">{{ __('All') }}</option>@foreach($returnReasons as $reason)<option value="{{ $reason }}" @selected($filters['return_reason'] === $reason)>{{ __(str($reason)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</select>
+                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="report_return_reason" name="return_reason"><option value="">{{ __('All') }}</option>@foreach($returnReasons as $reason)<option value="{{ $reason }}" @selected($filters['return_reason'] === $reason)>{{ __(str($reason)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</x-forms.select>
                 </div>
             @endif
         </x-admin.report.filter-panel>
+
+        @if($reportType === 'pricing')
+            <div class="alert alert-info">{{ __('sales_ui.reports.pricing_as_of', ['date' => $dateValue($pricingDate), 'currency' => $reportCurrency?->code]) }}</div>
+            <div class="row g-3 mb-3">
+                <div class="col-xl-6"><x-admin.report.table-card :title="__('sales_ui.reports.unpriced_products')" table-id="unpriced-products" class="h-100"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('Category') }}</th></tr></thead><tbody>@forelse($unpricedProducts as $row)<tr><td>{{ $row->doc_num }} / {{ $row->name }}</td><td>{{ $row->category_name ?: '—' }}</td></tr>@empty{!! $emptyRow(2) !!}@endforelse</tbody></x-admin.report.table-card></div>
+                <div class="col-xl-6"><x-admin.report.table-card :title="__('sales_ui.reports.customers_without_price_lists')" table-id="customers-without-price-lists" class="h-100"><thead><tr><th>{{ __('Customer') }}</th></tr></thead><tbody>@forelse($customersWithoutPriceLists as $row)<tr><td>{{ $row->doc_num }} / {{ $row->name }}</td></tr>@empty{!! $emptyRow(1) !!}@endforelse</tbody></x-admin.report.table-card></div>
+            </div>
+            <x-admin.report.table-card :title="__('sales_ui.reports.customer_unpriced_products')" table-id="customer-unpriced-products" class="mb-3"><thead><tr><th>{{ __('Customer') }}</th><th>{{ __('Product') }}</th></tr></thead><tbody>@forelse($customerProductPricingGaps as $row)<tr><td>{{ $row->customer_doc_num }} / {{ $row->customer_name }}</td><td>{{ $row->product_doc_num }} / {{ $row->product_name }}</td></tr>@empty{!! $emptyRow(2) !!}@endforelse</tbody></x-admin.report.table-card>
+        @endif
 
         @if(in_array($reportType, ['financial', 'operational'], true))
             <div class="card mb-3" data-sales-financial-summary>

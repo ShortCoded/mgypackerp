@@ -109,9 +109,9 @@
                         <div class="text-600 fs-10">{{ __('pwa.help.availability') }}</div>
                     </div>
                     <div class="col-md-auto">
-                        <input type="hidden" name="enabled" value="0">
+                        <x-forms.input type="hidden" name="enabled" value="0" />
                         <div class="mb-0 form-check form-switch">
-                            <input class="form-check-input" id="pwa-enabled" name="enabled" type="checkbox" value="1" @checked($checked('enabled'))>
+                            <x-forms.input class="form-check-input" id="pwa-enabled" name="enabled" type="checkbox" value="1" :checked="$checked('enabled')" />
                             <label class="form-check-label fw-semibold" for="pwa-enabled">{{ __('pwa.fields.enabled') }}</label>
                         </div>
                     </div>
@@ -127,17 +127,17 @@
                 <div class="row g-3">
                     <div class="col-md-6">
                         <x-forms.label for="pwa-app-name" :label="__('pwa.fields.app_name')" required />
-                        <input id="pwa-app-name" name="app_name" class="form-control @error('app_name') is-invalid @enderror" type="text" value="{{ $value('app_name') }}" required>
+                        <x-forms.input id="pwa-app-name" name="app_name" class="form-control @error('app_name') is-invalid @enderror" type="text" value="{{ $value('app_name') }}" required />
                         <div class="invalid-feedback" data-error-for="app_name">@error('app_name'){{ $message }}@enderror</div>
                     </div>
                     <div class="col-md-6">
                         <x-forms.label for="pwa-short-name" :label="__('pwa.fields.short_name')" required />
-                        <input id="pwa-short-name" name="short_name" class="form-control @error('short_name') is-invalid @enderror" type="text" value="{{ $value('short_name') }}" required>
+                        <x-forms.input id="pwa-short-name" name="short_name" class="form-control @error('short_name') is-invalid @enderror" type="text" value="{{ $value('short_name') }}" required />
                         <div class="invalid-feedback" data-error-for="short_name">@error('short_name'){{ $message }}@enderror</div>
                     </div>
                     <div class="col-12">
                         <label class="form-label" for="pwa-description">{{ __('pwa.fields.description') }}</label>
-                        <textarea id="pwa-description" name="description" class="form-control @error('description') is-invalid @enderror" rows="3">{{ $value('description') }}</textarea>
+                        <x-forms.textarea id="pwa-description" name="description" class="form-control @error('description') is-invalid @enderror" rows="3">{{ $value('description') }}</x-forms.textarea>
                         <div class="invalid-feedback" data-error-for="description">@error('description'){{ $message }}@enderror</div>
                     </div>
                 </div>
@@ -152,29 +152,29 @@
                 <div class="row g-3">
                     <div class="col-md-6 col-xl-4">
                         <x-forms.label for="pwa-display" :label="__('pwa.fields.display')" required />
-                        <select id="pwa-display" name="display" class="form-select @error('display') is-invalid @enderror" required>
+                        <x-forms.select id="pwa-display" name="display" class="form-select @error('display') is-invalid @enderror" required>
                             @foreach ($displayModes as $mode)
                                 <option value="{{ $mode }}" @selected($value('display') === $mode)>{{ __("pwa.display_modes.{$mode}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="display">@error('display'){{ $message }}@enderror</div>
                     </div>
                     <div class="col-md-6 col-xl-4">
                         <x-forms.label for="pwa-orientation" :label="__('pwa.fields.orientation')" required />
-                        <select id="pwa-orientation" name="orientation" class="form-select @error('orientation') is-invalid @enderror">
+                        <x-forms.select id="pwa-orientation" name="orientation" class="form-select @error('orientation') is-invalid @enderror">
                             @foreach ($orientations as $orientation)
                                 <option value="{{ $orientation }}" @selected($value('orientation') === $orientation)>{{ __("pwa.orientations.{$orientation}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="orientation">@error('orientation'){{ $message }}@enderror</div>
                     </div>
                     <div class="col-md-6 col-xl-4">
                         <x-forms.label for="pwa-direction" :label="__('pwa.fields.direction')" required />
-                        <select id="pwa-direction" name="direction" class="form-select @error('direction') is-invalid @enderror">
+                        <x-forms.select id="pwa-direction" name="direction" class="form-select @error('direction') is-invalid @enderror">
                             @foreach ($directions as $direction)
                                 <option value="{{ $direction }}" @selected($value('direction') === $direction)>{{ __("pwa.directions.{$direction}") }}</option>
                             @endforeach
-                        </select>
+                        </x-forms.select>
                         <div class="invalid-feedback" data-error-for="direction">@error('direction'){{ $message }}@enderror</div>
                     </div>
                 </div>
@@ -189,12 +189,12 @@
                 <div class="row g-3">
                     <div class="col-md-6">
                         <x-forms.label for="pwa-offline-title" :label="__('pwa.fields.offline_title')" />
-                        <input id="pwa-offline-title" name="offline_title" class="form-control @error('offline_title') is-invalid @enderror" type="text" value="{{ $value('offline_title') }}">
+                        <x-forms.input id="pwa-offline-title" name="offline_title" class="form-control @error('offline_title') is-invalid @enderror" type="text" value="{{ $value('offline_title') }}" />
                         <div class="invalid-feedback" data-error-for="offline_title">@error('offline_title'){{ $message }}@enderror</div>
                     </div>
                     <div class="col-md-6">
                         <x-forms.label for="pwa-offline-message" :label="__('pwa.fields.offline_message')" />
-                        <textarea id="pwa-offline-message" name="offline_message" class="form-control @error('offline_message') is-invalid @enderror" rows="3">{{ $value('offline_message') }}</textarea>
+                        <x-forms.textarea id="pwa-offline-message" name="offline_message" class="form-control @error('offline_message') is-invalid @enderror" rows="3">{{ $value('offline_message') }}</x-forms.textarea>
                         <div class="invalid-feedback" data-error-for="offline_message">@error('offline_message'){{ $message }}@enderror</div>
                     </div>
                 </div>
@@ -217,7 +217,7 @@
                                 data-selected-label="{{ __('pwa.icons.selected_icon') }}"
                                 data-replace-label="{{ __('pwa.actions.replace_icon') }}">
                                 <label class="form-label fw-semibold" for="pwa-{{ str_replace('_', '-', $input) }}-picker-button">{{ $icon['label'] }}</label>
-                                <input type="hidden" id="pwa-{{ str_replace('_', '-', $input) }}-archive-file" name="{{ $icon['field'] }}" value="{{ $icon['selected_public_id'] }}">
+                                <x-forms.input type="hidden" id="pwa-{{ str_replace('_', '-', $input) }}-archive-file" name="{{ $icon['field'] }}" value="{{ $icon['selected_public_id'] }}" />
                                 <div class="gap-3 d-flex flex-column align-items-start">
                                     <div class="overflow-hidden bg-white border d-flex align-items-center justify-content-center rounded-2 pwa-icon-preview-frame">
                                         <img class="js-pwa-icon-preview @if (! $icon['current_url']) d-none @endif"

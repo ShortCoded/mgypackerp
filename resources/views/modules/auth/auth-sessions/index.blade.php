@@ -45,54 +45,54 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-date-from">{{ __('reports.from_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="session-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="session-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-date-to">{{ __('reports.to_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="session-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="session-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-status">{{ __('auth_sessions.filters.status') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-status" name="status" data-filter-label="{{ __('auth_sessions.filters.status') }}" data-url="{{ route('admin.auth-sessions.filter-options.presence-statuses') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_presence') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-status" name="status" data-filter-label="{{ __('auth_sessions.filters.status') }}" data-url="{{ route('admin.auth-sessions.filter-options.presence-statuses') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_presence') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-account-status">{{ __('auth_sessions.filters.account_status') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-account-status" name="account_status" data-filter-label="{{ __('auth_sessions.filters.account_status') }}" data-url="{{ route('admin.auth-sessions.filter-options.account-statuses') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_account_status') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-account-status" name="account_status" data-filter-label="{{ __('auth_sessions.filters.account_status') }}" data-url="{{ route('admin.auth-sessions.filter-options.account-statuses') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_account_status') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-user">{{ __('auth_sessions.filters.user') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-user" name="user" data-filter-label="{{ __('auth_sessions.filters.user') }}" data-url="{{ route('admin.auth-sessions.filter-options.users') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_user') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-user" name="user" data-filter-label="{{ __('auth_sessions.filters.user') }}" data-url="{{ route('admin.auth-sessions.filter-options.users') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_user') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-device-type">{{ __('auth_sessions.filters.device_type') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-device-type" name="device_type" data-filter-label="{{ __('auth_sessions.filters.device_type') }}" data-url="{{ route('admin.auth-sessions.filter-options.devices') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_device') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-device-type" name="device_type" data-filter-label="{{ __('auth_sessions.filters.device_type') }}" data-url="{{ route('admin.auth-sessions.filter-options.devices') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_device') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-browser-name">{{ __('auth_sessions.filters.browser_name') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-browser-name" name="browser_name" data-filter-label="{{ __('auth_sessions.filters.browser_name') }}" data-url="{{ route('admin.auth-sessions.filter-options.browsers') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_browser') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-browser-name" name="browser_name" data-filter-label="{{ __('auth_sessions.filters.browser_name') }}" data-url="{{ route('admin.auth-sessions.filter-options.browsers') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_browser') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-os-name">{{ __('auth_sessions.filters.os_name') }}</label>
-                <select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-os-name" name="os_name" data-filter-label="{{ __('auth_sessions.filters.os_name') }}" data-url="{{ route('admin.auth-sessions.filter-options.operating-systems') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_os') }}" data-allow-clear="true">
+                <x-forms.select class="form-select form-select-sm w-100 js-select2-ajax js-report-filter-control" id="session-os-name" name="os_name" data-filter-label="{{ __('auth_sessions.filters.os_name') }}" data-url="{{ route('admin.auth-sessions.filter-options.operating-systems') }}" data-placeholder="{{ __('auth_sessions.placeholders.select_os') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="session-ip">{{ __('auth_sessions.filters.ip') }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="session-ip" name="ip" type="text" data-filter-label="{{ __('auth_sessions.filters.ip') }}" placeholder="{{ __('auth_sessions.placeholders.ip_address') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="session-ip" name="ip" type="text" data-filter-label="{{ __('auth_sessions.filters.ip') }}" placeholder="{{ __('auth_sessions.placeholders.ip_address') }}" />
             </div>
         </x-admin.report.filter-panel>
 

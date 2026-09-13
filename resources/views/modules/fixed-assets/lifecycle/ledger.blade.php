@@ -1,7 +1,7 @@
 <div class="card mb-3" id="ledger">
     <div class="card-header py-2 d-flex flex-wrap gap-2 align-items-center justify-content-between">
         <h6 class="mb-0">{{ __('fixed_assets.cycle.ledger') }}</h6>
-        <select class="form-select w-auto js-asset-ledger-type" aria-label="{{ __('fixed_assets.cycle.type') }}"><option value="">{{ __('fixed_assets.product.all_movements') }}</option>@foreach(\Modules\FixedAssets\Services\FixedAssetLedgerService::types() as $type)<option value="{{ $type }}">{{ __('fixed_assets.cycle.'.$type) }}</option>@endforeach</select>
+        <x-forms.select class="form-select w-auto js-asset-ledger-type" aria-label="{{ __('fixed_assets.cycle.type') }}"><option value="">{{ __('fixed_assets.product.all_movements') }}</option>@foreach(\Modules\FixedAssets\Services\FixedAssetLedgerService::types() as $type)<option value="{{ $type }}">{{ __('fixed_assets.cycle.'.$type) }}</option>@endforeach</x-forms.select>
     </div>
     <div class="d-md-none alert alert-info rounded-0 border-0 mb-0 py-2 small"><span class="fas fa-arrows-alt-h me-1"></span>{{ __('fixed_assets.product.scroll_table_hint') }}</div>
     <div class="card-body p-0 table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr>
@@ -32,7 +32,7 @@
             <td>@if($movement && !str_ends_with($row['type'], '_reversal'))
                 @can('fixed_assets.print')<a target="_blank" href="{{ route('admin.fixed-assets.prints.movement', $movement) }}">{{ __('common.actions.print') }}</a>@endcan
                 @can($movement->movement_type === 'addition' ? 'fixed_assets.improvement.reverse' : 'fixed_assets.recognition.reverse')
-                @if(app(\Modules\FixedAssets\Services\FixedAssetCostMovementService::class)->canReverse($movement))<details class="mt-2"><summary class="text-danger">{{ __('fixed_assets.lifecycle.reverse') }}</summary><form method="POST" action="{{ route('admin.fixed-assets.movements.reverse', $movement) }}">@csrf<input class="form-control form-control-sm" name="reason" required aria-label="{{ __('fixed_assets.lifecycle.reversal_reason') }}" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}"><button class="btn btn-sm btn-falcon-danger mt-1">{{ __('fixed_assets.lifecycle.reverse') }}</button></form></details>@endif
+                @if(app(\Modules\FixedAssets\Services\FixedAssetCostMovementService::class)->canReverse($movement))<details class="mt-2"><summary class="text-danger">{{ __('fixed_assets.lifecycle.reverse') }}</summary><form method="POST" action="{{ route('admin.fixed-assets.movements.reverse', $movement) }}">@csrf<x-forms.input class="form-control form-control-sm" name="reason" required aria-label="{{ __('fixed_assets.lifecycle.reversal_reason') }}" placeholder="{{ __('fixed_assets.lifecycle.reversal_reason') }}" /><button class="btn btn-sm btn-falcon-danger mt-1">{{ __('fixed_assets.lifecycle.reverse') }}</button></form></details>@endif
                 @endcan
             @endif</td>
         </tr>

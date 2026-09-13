@@ -27,7 +27,7 @@
                     <form data-procurement-source-picker data-destination="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseRequisition, '__DOCUMENT__']) }}" class="row g-3 align-items-end">
                         <div class="col-12 col-md-8">
                             <label class="form-label" for="quotation_purchase_request">{{ __('Purchase Request') }}</label>
-                            <select id="quotation_purchase_request" class="form-select js-select2-ajax" data-url="{{ route('admin.purchases.select2.requisitions', ['purpose' => 'supplier_quotation']) }}" data-placeholder="{{ __('Select') }}" required></select>
+                            <x-forms.select id="quotation_purchase_request" class="form-select js-select2-ajax" data-url="{{ route('admin.purchases.select2.requisitions', ['purpose' => 'supplier_quotation']) }}" data-placeholder="{{ __('Select') }}" required></x-forms.select>
                         </div>
                         <div class="col-12 col-md-4 d-grid">
                             <button class="btn btn-primary">{{ __('procurement.ui.load_lines') }}</button>
@@ -50,7 +50,7 @@
                     <form data-procurement-source-picker data-destination="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseOrder, '__DOCUMENT__']) }}" class="row g-3 align-items-end">
                         <div class="col-12 col-md-8">
                             <label class="form-label" for="quotation_purchase_order">{{ __('Purchase Order') }}</label>
-                            <select id="quotation_purchase_order" class="form-select js-select2-ajax" data-url="{{ route('admin.purchases.select2.purchase-orders', ['purpose' => 'supplier_quotation']) }}" data-placeholder="{{ __('Select') }}" required></select>
+                            <x-forms.select id="quotation_purchase_order" class="form-select js-select2-ajax" data-url="{{ route('admin.purchases.select2.purchase-orders', ['purpose' => 'supplier_quotation']) }}" data-placeholder="{{ __('Select') }}" required></x-forms.select>
                         </div>
                         <div class="col-12 col-md-4 d-grid">
                             <button class="btn btn-primary">{{ __('procurement.ui.load_lines') }}</button>

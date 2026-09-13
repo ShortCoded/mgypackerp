@@ -9,13 +9,13 @@
     <div class="card-header"><h5 class="mb-0">{{ __('New Inventory Movement') }}</h5></div>
     <div class="card-body">
         <div class="row g-3">
-            <div class="col-md-3"><label class="form-label">{{ __('Type') }}</label><select class="form-select" name="document_type" required>@foreach($allowedDocumentTypes as $type)<option value="{{ $type }}">{{ __(str($type)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</select></div>
-            <div class="col-md-3"><label class="form-label">{{ __('Source store') }}</label><select class="form-select" name="branch_store_id" required>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</select></div>
-            <div class="col-md-3"><label class="form-label">{{ __('Destination store') }}</label><select class="form-select" name="destination_branch_store_id"><option value="">—</option>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</select></div>
-            <div class="col-md-3"><label class="form-label">{{ __('Date') }}</label><input class="form-control" type="date" name="document_date" value="{{ now()->toDateString() }}" required></div>
-            <div class="col-md-6"><label class="form-label">{{ __('Reason') }}</label><input class="form-control" name="movement_reason" required></div>
-            <div class="col-md-3"><label class="form-label">{{ __('Source status') }}</label><input class="form-control" name="source_stock_status" value="available"></div>
-            <div class="col-md-3"><label class="form-label">{{ __('Destination status') }}</label><input class="form-control" name="destination_stock_status" value="available"></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Type') }}</label><x-forms.select class="form-select" name="document_type" required>@foreach($allowedDocumentTypes as $type)<option value="{{ $type }}">{{ __(str($type)->replace('_', ' ')->title()->toString()) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Source store') }}</label><x-forms.select class="form-select" name="branch_store_id" required>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Destination store') }}</label><x-forms.select class="form-select" name="destination_branch_store_id"><option value="">—</option>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Date') }}</label><x-forms.date-input name="document_date" :value="now()->toDateString()" required /></div>
+            <div class="col-md-6"><label class="form-label">{{ __('Reason') }}</label><x-forms.input class="form-control" name="movement_reason" required /></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Source status') }}</label><x-forms.input class="form-control" name="source_stock_status" value="available" /></div>
+            <div class="col-md-3"><label class="form-label">{{ __('Destination status') }}</label><x-forms.input class="form-control" name="destination_stock_status" value="available" /></div>
         </div>
         <hr>
         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -34,11 +34,11 @@
 
 <template id="inventory-line-template">
     <tr data-inventory-line>
-        <td><select class="form-select form-select-sm" name="lines[__INDEX__][product_id]" required><option value="">{{ __('Select product') }}</option>@foreach($products as $product)<option value="{{ $product->id }}">{{ $product->doc_num }} — {{ $product->name }}</option>@endforeach</select></td>
-        <td><input class="form-control form-control-sm" type="number" step="0.00000001" min="0.00000001" name="lines[__INDEX__][quantity]" required></td>
-        <td><input class="form-control form-control-sm" name="lines[__INDEX__][batch_lot]" maxlength="100"></td>
-        <td><input class="form-control form-control-sm" type="number" step="0.00000001" min="0.00000001" name="lines[__INDEX__][unit_cost]"></td>
-        <td><input class="form-control form-control-sm" name="lines[__INDEX__][notes]"></td>
+        <td><x-forms.select class="form-select form-select-sm" name="lines[__INDEX__][product_id]" required><option value="">{{ __('Select product') }}</option>@foreach($products as $product)<option value="{{ $product->id }}">{{ $product->doc_num }} — {{ $product->name }}</option>@endforeach</x-forms.select></td>
+        <td><x-forms.input class="form-control form-control-sm" type="number" step="0.00000001" min="0.00000001" name="lines[__INDEX__][quantity]" required /></td>
+        <td><x-forms.input class="form-control form-control-sm" name="lines[__INDEX__][batch_lot]" maxlength="100" /></td>
+        <td><x-forms.input class="form-control form-control-sm" type="number" step="0.00000001" min="0.00000001" name="lines[__INDEX__][unit_cost]" /></td>
+        <td><x-forms.input class="form-control form-control-sm" name="lines[__INDEX__][notes]" /></td>
         <td class="text-center"><button class="btn btn-link text-danger p-0" type="button" data-remove-inventory-line title="{{ __('Remove line') }}"><span class="fas fa-trash-alt"></span></button></td>
     </tr>
 </template>

@@ -53,7 +53,7 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
 
         <div class="card">
             @include('modules.core.quick-tasks.partials.form-header')
@@ -95,7 +95,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="title" :value="old('title', $record?->title)" />
                             @else
-                                <input class="form-control" id="title" name="title" type="text" value="{{ old('title', $record?->title) }}" maxlength="255" placeholder="{{ __('quick_tasks.placeholders.title') }}" required @disabled($isTrashed)>
+                                <x-forms.input class="form-control" id="title" name="title" type="text" value="{{ old('title', $record?->title) }}" maxlength="255" placeholder="{{ __('quick_tasks.placeholders.title') }}" required :disabled='$isTrashed' />
                             @endif
                             <div class="invalid-feedback" data-error-for="title"></div>
                         </div>
@@ -105,11 +105,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="status" :value="$statusValue ? __('quick_tasks.statuses.'.$statusValue) : null" />
                             @else
-                                <select class="form-select" id="status" name="status" required @disabled($isTrashed)>
+                                <x-forms.select class="form-select" id="status" name="status" required :disabled='$isTrashed'>
                                     @foreach (QuickTask::Statuses as $status)
                                         <option value="{{ $status }}" @selected($statusValue === $status)>{{ __("quick_tasks.statuses.{$status}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback" data-error-for="status"></div>
                         </div>
@@ -119,11 +119,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="task_board_doc_num" :value="$selectedBoardLabel" />
                             @else
-                                <select class="form-select js-select2-ajax" id="task_board_doc_num" name="task_board_doc_num" data-url="{{ route('admin.select2.task-boards') }}" data-placeholder="{{ __('quick_tasks.placeholders.task_board') }}" data-allow-clear="true" @disabled($isTrashed)>
+                                <x-forms.select class="form-select js-select2-ajax" id="task_board_doc_num" name="task_board_doc_num" data-url="{{ route('admin.select2.task-boards') }}" data-placeholder="{{ __('quick_tasks.placeholders.task_board') }}" data-allow-clear="true" :disabled='$isTrashed'>
                                     @if ($selectedBoardDocNum && $selectedBoardLabel)
                                         <option value="{{ $selectedBoardDocNum }}" selected>{{ $selectedBoardLabel }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="task_board_doc_num"></div>
                         </div>
@@ -133,11 +133,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="assigned_to_doc_num" :value="$assigneeOption['text'] ?? null" />
                             @else
-                                <select class="form-select js-select2-ajax" id="assigned_to_doc_num" name="assigned_to_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('quick_tasks.placeholders.assigned_to') }}" data-allow-clear="true" @disabled($isTrashed)>
+                                <x-forms.select class="form-select js-select2-ajax" id="assigned_to_doc_num" name="assigned_to_doc_num" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('quick_tasks.placeholders.assigned_to') }}" data-allow-clear="true" :disabled='$isTrashed'>
                                     @if ($assigneeOption)
                                         <option value="{{ $assigneeOption['id'] }}" selected>{{ $assigneeOption['text'] }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="assigned_to_doc_num"></div>
                         </div>
@@ -147,11 +147,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="priority" :value="$priorityValue ? __('quick_tasks.priorities.'.$priorityValue) : null" />
                             @else
-                                <select class="form-select" id="priority" name="priority" @disabled($isTrashed)>
+                                <x-forms.select class="form-select" id="priority" name="priority" :disabled='$isTrashed'>
                                     @foreach (QuickTask::Priorities as $priority)
                                         <option value="{{ $priority }}" @selected($priorityValue === $priority)>{{ __("quick_tasks.priorities.{$priority}") }}</option>
                                     @endforeach
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback" data-error-for="priority"></div>
                         </div>
@@ -161,7 +161,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="summary" :value="old('summary', $record?->summary)" />
                             @else
-                                <input class="form-control" id="summary" name="summary" type="text" value="{{ old('summary', $record?->summary) }}" maxlength="500" placeholder="{{ __('quick_tasks.placeholders.summary') }}" @disabled($isTrashed)>
+                                <x-forms.input class="form-control" id="summary" name="summary" type="text" value="{{ old('summary', $record?->summary) }}" maxlength="500" placeholder="{{ __('quick_tasks.placeholders.summary') }}" :disabled='$isTrashed' />
                             @endif
                             <div class="invalid-feedback" data-error-for="summary"></div>
                         </div>
@@ -171,7 +171,7 @@
                             @if ($isView)
                                 <div id="details" class="px-3 py-2 border form-control-plaintext rounded-2 quick-task-rich-content">{!! $detailsHtml !== '' ? $detailsHtml : e(__('common.empty_value')) !!}</div>
                             @else
-                                <textarea class="form-control js-quick-task-rich-editor" id="details" name="details" rows="8" data-direction="{{ $editorDirection }}" placeholder="{{ __('quick_tasks.placeholders.details') }}" @disabled($isTrashed)>{{ $detailsValue }}</textarea>
+                                <x-forms.textarea class="form-control js-quick-task-rich-editor" id="details" name="details" rows="8" data-direction="{{ $editorDirection }}" placeholder="{{ __('quick_tasks.placeholders.details') }}" :disabled='$isTrashed'>{{ $detailsValue }}</x-forms.textarea>
                             @endif
                             <div class="invalid-feedback" data-error-for="details"></div>
                         </div>

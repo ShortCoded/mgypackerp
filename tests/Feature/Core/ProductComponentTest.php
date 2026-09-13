@@ -136,6 +136,11 @@ test('product components schema and routes use public identifiers', function () 
             ProductComponent::CalculationPercentage,
             ProductComponent::CalculationQuantity,
             ProductComponent::CalculationCount,
+        ])
+        ->and(Product::componentItemClassifications())->toBe([
+            Product::ClassificationRawMaterial,
+            Product::ClassificationPackaging,
+            Product::ClassificationFinishedProduct,
         ]);
 
     foreach (['index', 'store', 'update', 'destroy'] as $action) {
@@ -190,6 +195,45 @@ test('can add raw material component and unit is derived from raw material produ
         ->toHaveKey('raw_material')
         ->not->toHaveKey('id')
         ->and($list['data'][0]['public_id'] ?? null)->toBe($component->public_id);
+});
+
+test('product form can save a finished product as a component', function () {
+    config()->set('products.image_required', false);
+
+    $actor = productComponentActor(['products.create']);
+    $unit = productComponentUnit($this->componentCompany, 111, 'Assembly Piece');
+    $finishedComponent = productComponentProduct($this->componentCompany, [
+        'doc_number' => 111,
+        'doc_num' => 'Product-00111',
+        'name' => 'Finished Assembly',
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    $clientKey = (string) Str::uuid();
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.products.store'), [
+            'name' => 'Finished Product With Assembly',
+            'item_classification' => Product::ClassificationFinishedProduct,
+            'status' => 'active',
+            'components' => [[
+                'client_key' => $clientKey,
+                'component_product_doc_num' => $finishedComponent->doc_num,
+                'unit_doc_num' => $unit->doc_num,
+                'calculation_method' => ProductComponent::CalculationDirect,
+                'quantity' => '2',
+                'input_source' => ProductComponent::InputWeight,
+            ]],
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonPath('data.components.0.component_product_doc_num', $finishedComponent->doc_num);
+
+    $product = Product::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+    $component = ProductComponent::query()->where('product_id', $product->getKey())->firstOrFail();
+
+    expect($component->component_product_id)->toBe($finishedComponent->getKey())
+        ->and($component->unit_id)->toBe($unit->getKey())
+        ->and((string) $component->quantity)->toBe('2.00000000');
 });
 
 test('component quantities preserve eight-place precision and strictly normalize grouped input', function () {
@@ -625,7 +669,7 @@ test('product component grid renders one main row and one percentage details row
         ->assertDontSee('js-product-component-remove-row', false);
 });
 
-test('component validation allows distinct duplicate lines and blocks cross-company deleted non-raw self and non-positive quantity', function () {
+test('component validation allows duplicate and finished-product lines while blocking unavailable items', function () {
     $actor = productComponentActor(['products.edit']);
     $companyA = $this->componentCompany;
     $unit = productComponentUnit($companyA, 12, 'Meter');
@@ -638,7 +682,12 @@ test('component validation allows distinct duplicate lines and blocks cross-comp
         'item_classification' => Product::ClassificationRawMaterial,
         'item_unit_id' => $unit->getKey(),
     ]);
-    $nonRaw = productComponentProduct($companyA, ['doc_number' => 6, 'doc_num' => 'Product-00006', 'name' => 'Finished Child']);
+    $finishedProduct = productComponentProduct($companyA, [
+        'doc_number' => 6,
+        'doc_num' => 'Product-00006',
+        'name' => 'Finished Child',
+        'item_unit_id' => $unit->getKey(),
+    ]);
     $deletedRaw = productComponentProduct($companyA, [
         'doc_number' => 7,
         'doc_num' => 'Product-00007',
@@ -646,6 +695,13 @@ test('component validation allows distinct duplicate lines and blocks cross-comp
         'item_classification' => Product::ClassificationRawMaterial,
     ]);
     $deletedRaw->delete();
+    $serviceProduct = productComponentProduct($companyA, [
+        'doc_number' => 8,
+        'doc_num' => 'Product-00008',
+        'name' => 'Unsupported Service',
+        'item_classification' => Product::ClassificationService,
+        'item_unit_id' => $unit->getKey(),
+    ]);
 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
@@ -687,7 +743,20 @@ test('component validation allows distinct duplicate lines and blocks cross-comp
 
     $this->actingAs($actor)
         ->postJson(route('admin.products.components.store', $product->doc_num), [
-            'component_product_doc_num' => $nonRaw->doc_num,
+            'component_product_doc_num' => $finishedProduct->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '1',
+        ])
+        ->assertOk();
+
+    expect(ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->where('component_product_id', $finishedProduct->getKey())
+        ->exists())->toBeTrue();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.products.components.store', $product->doc_num), [
+            'component_product_doc_num' => $serviceProduct->doc_num,
             'unit_doc_num' => $unit->doc_num,
             'quantity' => '1',
         ])
@@ -781,10 +850,10 @@ test('can update and delete product component by public id only', function () {
     expect(ProductComponent::withTrashed()->where('public_id', $component->public_id)->first()?->trashed())->toBeTrue();
 });
 
-test('material select2 returns active raw and packaging materials for the current company', function () {
+test('component select2 returns active materials and finished products for the current company', function () {
     $actor = productComponentActor(['products.view']);
     $unit = productComponentUnit($this->componentCompany, 15, 'Linear Meter');
-    $master = productComponentProduct($this->componentCompany, ['doc_number' => 12, 'doc_num' => 'Product-00012', 'name' => 'Master Product']);
+    $master = productComponentProduct($this->componentCompany, ['doc_number' => 12, 'doc_num' => 'Product-00012', 'name' => 'Master Fabric Product']);
     Storage::disk('public')->put('products/images/raw-visible-fabric.webp', 'raw material image');
 
     $rawMaterial = productComponentProduct($this->componentCompany, [
@@ -809,10 +878,25 @@ test('material select2 returns active raw and packaging materials for the curren
         'item_classification' => Product::ClassificationPackaging,
         'item_unit_id' => $unit->getKey(),
     ]);
-    productComponentProduct($this->componentCompany, [
+    $finishedProduct = productComponentProduct($this->componentCompany, [
         'doc_number' => 14,
         'doc_num' => 'Product-00014',
-        'name' => 'Finished Hidden Product',
+        'name' => 'Finished Visible Fabric Product',
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    productComponentProduct($this->componentCompany, [
+        'doc_number' => 19,
+        'doc_num' => 'Product-00019',
+        'name' => 'Semi Finished Hidden Fabric Product',
+        'item_classification' => Product::ClassificationSemiFinished,
+        'item_unit_id' => $unit->getKey(),
+    ]);
+    productComponentProduct($this->componentCompany, [
+        'doc_number' => 20,
+        'doc_num' => 'Product-00020',
+        'name' => 'Service Hidden Fabric Item',
+        'item_classification' => Product::ClassificationService,
+        'item_unit_id' => $unit->getKey(),
     ]);
     $deletedRaw = productComponentProduct($this->componentCompany, [
         'doc_number' => 15,
@@ -848,7 +932,7 @@ test('material select2 returns active raw and packaging materials for the curren
     ]);
 
     $payload = $this->actingAs($actor)
-        ->getJson(route('admin.select2.raw-material-products', [
+        ->getJson(route('admin.select2.component-products', [
             'q' => 'Fabric',
             'current_product_doc_num' => $master->doc_num,
         ]))
@@ -859,6 +943,7 @@ test('material select2 returns active raw and packaging materials for the curren
     $imageResult = $results->firstWhere('id', $rawMaterial->doc_num);
     $plainResult = $results->firstWhere('id', $plainRawMaterial->doc_num);
     $packagingResult = $results->firstWhere('id', $packagingMaterial->doc_num);
+    $finishedResult = $results->firstWhere('id', $finishedProduct->doc_num);
     $expectedImageUrl = Storage::disk('public')->url('products/images/raw-visible-fabric.webp');
     $json = json_encode($payload, JSON_THROW_ON_ERROR);
 
@@ -888,13 +973,21 @@ test('material select2 returns active raw and packaging materials for the curren
         ->and($packagingResult['text'])->toContain('Packaging Visible Fabric Film')
         ->and($packagingResult['unit_text'])->toContain('Linear Meter');
 
+    expect($finishedResult)
+        ->toBeArray()
+        ->and($finishedResult['text'])->toContain('Finished Visible Fabric Product')
+        ->and($finishedResult['unit_text'])->toContain('Linear Meter');
+
     expect($json)
         ->toContain($rawMaterial->doc_num)
         ->toContain('Raw Visible Fabric')
         ->toContain('Linear Meter')
         ->toContain($plainRawMaterial->doc_num)
         ->toContain($packagingMaterial->doc_num)
-        ->not->toContain('Finished Hidden Product')
+        ->toContain($finishedProduct->doc_num)
+        ->toContain('Finished Visible Fabric Product')
+        ->not->toContain('Semi Finished Hidden Fabric Product')
+        ->not->toContain('Service Hidden Fabric Item')
         ->not->toContain('Deleted Raw Fabric')
         ->not->toContain('Other Company Raw Fabric')
         ->not->toContain('Foreign Equivalent Unit')
@@ -907,35 +1000,46 @@ test('material select2 returns active raw and packaging materials for the curren
         ->and(app(ProductComponentUnitOptionsService::class)->options($plainRawMaterial->fresh()))
         ->toHaveCount(1)
         ->and(app(ProductComponentUnitOptionsService::class)->options($packagingMaterial->fresh()))
+        ->toHaveCount(1)
+        ->and(app(ProductComponentUnitOptionsService::class)->options($finishedProduct->fresh()))
         ->toHaveCount(1);
 
     $selectedPayload = $this->actingAs($actor)
-        ->getJson(route('admin.select2.raw-material-products', [
-            'selected_doc_num' => $rawMaterial->doc_num,
+        ->getJson(route('admin.select2.component-products', [
+            'selected_doc_num' => $finishedProduct->doc_num,
             'current_product_doc_num' => $master->doc_num,
         ]))
         ->assertOk()
         ->json();
 
-    expect($selectedPayload['results'][0]['id'] ?? null)->toBe($rawMaterial->doc_num)
+    expect($selectedPayload['results'][0]['id'] ?? null)->toBe($finishedProduct->doc_num)
         ->and($selectedPayload['results'][0]['unit_text'] ?? null)->toContain('Linear Meter')
-        ->and($selectedPayload['results'][0]['imageUrl'] ?? null)->toBe($expectedImageUrl);
+        ->and($selectedPayload['results'][0]['imageUrl'] ?? null)->toBeNull();
 });
 
 test('product component selector and validation do not use legacy product type', function () {
     $selector = file_get_contents(base_path('modules/Core/Http/Controllers/Select2/ProductRawMaterialSelect2Controller.php'));
     $validation = file_get_contents(base_path('modules/Core/Http/Requests/Concerns/ValidatesProductPayload.php'));
+    $componentValidation = file_get_contents(base_path('modules/Core/Http/Requests/Concerns/ValidatesProductComponentPayload.php'));
+    $bomResolver = file_get_contents(base_path('modules/Core/Services/ProductBomWeightResolver.php'));
+    $importDefinition = file_get_contents(base_path('modules/Core/Imports/ProductExcelImportDefinition.php'));
     $javascript = file_get_contents(base_path('public/assets/js/modules/Core/products.js'));
     $select2Ajax = file_get_contents(base_path('public/assets/js/modules/Core/select2-ajax.js'));
     $form = file_get_contents(base_path('resources/views/modules/core/products/form.blade.php'));
 
     expect($selector)
-        ->toContain('->materialItems()')
+        ->toContain('->componentItems()')
         ->toContain('imageUrl')
         ->not->toContain('product_type')
         ->and($validation)
-        ->toContain('Product::ClassificationRawMaterial')
+        ->toContain('->componentItems()')
         ->not->toContain('product_type')
+        ->and($componentValidation)
+        ->toContain('->componentItems()')
+        ->and($bomResolver)
+        ->toContain('->componentItems()')
+        ->and($importDefinition)
+        ->toContain('->componentItems()')
         ->and($javascript)
         ->toContain('duplicateComponentRow')
         ->toContain("$(option).attr('data-image-url'")

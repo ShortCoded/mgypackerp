@@ -36,7 +36,7 @@ class SalesCycleReportController extends Controller
 {
     private const REPORT_TYPES = [
         'financial', 'period', 'customers', 'products', 'invoices', 'receivables',
-        'collections', 'returns', 'quotations', 'fulfillment', 'operational',
+        'collections', 'returns', 'quotations', 'fulfillment', 'pricing', 'operational',
     ];
 
     public function __construct(private readonly OperatingContextService $context) {}
@@ -290,6 +290,51 @@ class SalesCycleReportController extends Controller
         $ledgerQuery = $readService->ledger($companyId, $branchId, $readFilters)->withSum(['creditNotes as returns_amount' => fn ($query) => $query->where('posting_status', 'posted')], 'total_amount');
         $salesLedger = $fullReport ? $ledgerQuery->get() : $ledgerQuery->paginate(25, ['*'], 'ledger_page')->withQueryString();
 
+        $pricingDate = ($to ?? today())->toDateString();
+        $unpricedProducts = collect();
+        $customersWithoutPriceLists = collect();
+        $customerProductPricingGaps = collect();
+        if ($reportType === 'pricing') {
+            $unpricedProducts = DB::table('products as pricing_products')
+                ->leftJoin('item_categories', 'item_categories.id', '=', 'pricing_products.item_category_id')
+                ->where('pricing_products.company_id', $companyId)->where('pricing_products.status', 'active')->whereNull('pricing_products.deleted_at')
+                ->whereIn('pricing_products.item_classification', Product::salesItemClassifications())
+                ->when($productId, fn ($query) => $query->where('pricing_products.id', $productId))
+                ->when($categoryId, fn ($query) => $query->where('pricing_products.item_category_id', $categoryId))
+                ->whereNotExists(fn ($query) => $this->effectivePriceExists($query, 'pricing_products.id', $companyId, $currencyId, $pricingDate, null))
+                ->select('pricing_products.doc_num', 'pricing_products.name', 'item_categories.name as category_name')
+                ->orderBy('pricing_products.name')->when(! $fullReport, fn ($query) => $query->limit(200))->get();
+
+            $customersWithoutPriceLists = DB::table('customers as pricing_customers')
+                ->where('pricing_customers.company_id', $companyId)->where('pricing_customers.status', 'active')->whereNull('pricing_customers.deleted_at')
+                ->when($customerId, fn ($query) => $query->where('pricing_customers.id', $customerId))
+                ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('price_lists as customer_price_lists')
+                    ->whereColumn('customer_price_lists.customer_id', 'pricing_customers.id')
+                    ->where('customer_price_lists.company_id', $companyId)->where('customer_price_lists.currency_id', $currencyId)
+                    ->whereNull('customer_price_lists.deleted_at')->whereDate('customer_price_lists.valid_from', '<=', $pricingDate)
+                    ->where(fn ($dates) => $dates->whereNull('customer_price_lists.valid_until')->orWhereDate('customer_price_lists.valid_until', '>=', $pricingDate)))
+                ->select('pricing_customers.doc_num', 'pricing_customers.name')->orderBy('pricing_customers.name')
+                ->when(! $fullReport, fn ($query) => $query->limit(200))->get();
+
+            $customerProductPricingGaps = DB::table('customers as coverage_customers')->crossJoin('products as coverage_products')
+                ->where('coverage_customers.company_id', $companyId)->where('coverage_customers.status', 'active')->whereNull('coverage_customers.deleted_at')
+                ->whereColumn('coverage_products.company_id', 'coverage_customers.company_id')->where('coverage_products.status', 'active')->whereNull('coverage_products.deleted_at')
+                ->whereIn('coverage_products.item_classification', Product::salesItemClassifications())
+                ->when($customerId, fn ($query) => $query->where('coverage_customers.id', $customerId))
+                ->when($productId, fn ($query) => $query->where('coverage_products.id', $productId))
+                ->when($categoryId, fn ($query) => $query->where('coverage_products.item_category_id', $categoryId))
+                ->whereNotExists(function ($query) use ($companyId, $currencyId, $pricingDate): void {
+                    $query->selectRaw('1')->from('price_list_lines as coverage_lines')->join('price_lists as coverage_lists', 'coverage_lists.id', '=', 'coverage_lines.price_list_id')
+                        ->whereColumn('coverage_lines.product_id', 'coverage_products.id')->where('coverage_lists.company_id', $companyId)
+                        ->where('coverage_lists.currency_id', $currencyId)->whereNull('coverage_lists.deleted_at')
+                        ->where(fn ($scope) => $scope->whereColumn('coverage_lists.customer_id', 'coverage_customers.id')->orWhereNull('coverage_lists.customer_id'))
+                        ->whereDate('coverage_lists.valid_from', '<=', $pricingDate)
+                        ->where(fn ($dates) => $dates->whereNull('coverage_lists.valid_until')->orWhereDate('coverage_lists.valid_until', '>=', $pricingDate));
+                })
+                ->select('coverage_customers.doc_num as customer_doc_num', 'coverage_customers.name as customer_name', 'coverage_products.doc_num as product_doc_num', 'coverage_products.name as product_name')
+                ->orderBy('coverage_customers.name')->orderBy('coverage_products.name')->when(! $fullReport, fn ($query) => $query->limit(500))->get();
+        }
+
         $filterOptions = [
             'customer' => $customerId && $customerId > 0 ? Customer::withTrashed()->where('company_id', $companyId)->find($customerId) : null,
             'product' => $productId && $productId > 0 ? Product::withTrashed()->where('company_id', $companyId)->find($productId) : null,
@@ -300,7 +345,7 @@ class SalesCycleReportController extends Controller
             'invoice' => $invoiceId && $invoiceId > 0 ? CustomerInvoice::query()->where('company_id', $companyId)->find($invoiceId) : null,
         ];
 
-        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response
@@ -341,5 +386,14 @@ class SalesCycleReportController extends Controller
         $id = $query->where('doc_num', $docNum)->value('id');
 
         return $id === null ? -1 : (int) $id;
+    }
+
+    private function effectivePriceExists(mixed $query, string $productColumn, int $companyId, int $currencyId, string $date, ?int $customerId): void
+    {
+        $query->selectRaw('1')->from('price_list_lines as effective_lines')->join('price_lists as effective_lists', 'effective_lists.id', '=', 'effective_lines.price_list_id')
+            ->whereColumn('effective_lines.product_id', $productColumn)->where('effective_lists.company_id', $companyId)
+            ->where('effective_lists.currency_id', $currencyId)->where('effective_lists.customer_id', $customerId)
+            ->whereNull('effective_lists.deleted_at')->whereDate('effective_lists.valid_from', '<=', $date)
+            ->where(fn ($dates) => $dates->whereNull('effective_lists.valid_until')->orWhereDate('effective_lists.valid_until', '>=', $date));
     }
 }

@@ -39,7 +39,7 @@
                                 <tr>
                                     <th class="align-middle text-900 no-sort white-space-nowrap all no-colvis dt-select" data-orderable="false" style="width: 2.25rem;">
                                         <div class="mb-0 form-check d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input company-select-all js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('companies.select_all') }}">
+                                            <x-forms.input class="form-check-input company-select-all js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ __('companies.select_all') }}" />
                                         </div>
                                     </th>
                                     <th class="align-middle text-900 sort pe-1 white-space-nowrap all no-colvis dt-code">{{ __('common.fields.document_number') }}</th>

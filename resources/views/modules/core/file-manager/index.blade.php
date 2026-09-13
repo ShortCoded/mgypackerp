@@ -2,6 +2,12 @@
 
 @section('title', __('archive.file_manager'))
 
+@push('styles')
+    @can('file_manager.upload')
+        <link href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/dropzone/dropzone.css') }}" rel="stylesheet">
+    @endcan
+@endpush
+
 @section('content')
     @include('modules.core.archive.partials.document-number-settings')
 
@@ -15,10 +21,10 @@
                     <div class="card-body">
                         <form class="js-archive-folder-form" action="{{ $folderStoreUrl }}" method="POST" novalidate>
                             @csrf
-                            <input type="hidden" name="parent_folder" value="{{ $currentFolder?->doc_num }}">
+                            <x-forms.input type="hidden" name="parent_folder" value="{{ $currentFolder?->doc_num }}" />
                             <label class="form-label" for="archive-folder-name">{{ __('archive.folder_name') }}</label>
                             <div class="input-group">
-                                <input id="archive-folder-name" class="form-control" type="text" name="name" maxlength="255" required data-shortcut-action="file-manager.create-folder" title="{{ __('common.shortcuts.file_manager_create_folder') }}" data-bs-title="{{ __('common.shortcuts.file_manager_create_folder') }}">
+                                <x-forms.input id="archive-folder-name" class="form-control" type="text" name="name" maxlength="255" required data-shortcut-action="file-manager.create-folder" title="{{ __('common.shortcuts.file_manager_create_folder') }}" data-bs-title="{{ __('common.shortcuts.file_manager_create_folder') }}" />
                                 <button class="btn btn-falcon-primary" type="submit" title="{{ __('common.shortcuts.file_manager_create_folder') }}" data-bs-title="{{ __('common.shortcuts.file_manager_create_folder') }}">
                                     <span class="fas fa-folder-plus me-1"></span>{{ __('archive.create_folder') }}
                                 </button>
@@ -98,6 +104,10 @@
         window.archiveMessages = @json($archiveMessages);
         window.dataTableTranslations = @json(__('datatables'));
     </script>
+    @can('file_manager.upload')
+        <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/dropzone/dropzone-min.js') }}"></script>
+    @endcan
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/archive-uploader.js') }}"></script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/file-manager.js') }}"></script>
 @endpush

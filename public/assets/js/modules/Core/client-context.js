@@ -206,7 +206,8 @@
 
   function collectLiveLocation(settings, permissionState, cache) {
     const timeout = Number.parseInt(settings.timeout, 10) || defaultTimeout;
-    const maximumAge = Number.parseInt(settings.maximumAge, 10) || defaultMaximumAge;
+    const configuredMaximumAge = Number.parseInt(settings.maximumAge, 10);
+    const maximumAge = Number.isFinite(configuredMaximumAge) && configuredMaximumAge >= 0 ? configuredMaximumAge : defaultMaximumAge;
 
     if (!window.navigator || !window.navigator.geolocation) {
       const unavailable = {
@@ -290,7 +291,7 @@
         rememberLocationAttempt(cache, errorLocation);
         resolve(errorLocation);
       }, {
-        enableHighAccuracy: false,
+        enableHighAccuracy: settings.enableHighAccuracy === true,
         timeout: timeout,
         maximumAge: maximumAge
       });
@@ -323,7 +324,7 @@
           attempted_at: isoNow()
         });
 
-        if (hasCoordinates(cache)) {
+        if (hasCoordinates(cache) && settings.forceLocationRefresh !== true) {
           return cachedLocation(cache, {
             expired: !isFreshCachedLocation(cache, settings),
             permission_state: permissionState,

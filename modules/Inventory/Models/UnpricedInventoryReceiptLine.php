@@ -12,6 +12,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Purchases\Models\GoodsReceiptInspectionLine;
 use Modules\Purchases\Models\PurchaseOrderDeliverySchedule;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\SupplyOrderLine;
@@ -34,6 +35,7 @@ class UnpricedInventoryReceiptLine extends Model
         'purchase_order_line_id',
         'supply_order_line_id',
         'delivery_schedule_id',
+        'goods_receipt_inspection_line_id',
         'product_snapshot',
         'quantity',
         'delivered_quantity',
@@ -116,6 +118,11 @@ class UnpricedInventoryReceiptLine extends Model
     public function deliverySchedule(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrderDeliverySchedule::class, 'delivery_schedule_id');
+    }
+
+    public function sourceInspectionLine(): BelongsTo
+    {
+        return $this->belongsTo(GoodsReceiptInspectionLine::class, 'goods_receipt_inspection_line_id');
     }
 
     public function company(): BelongsTo

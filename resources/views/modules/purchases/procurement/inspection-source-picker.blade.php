@@ -41,13 +41,13 @@
                             </div>
                             <div>
                                 <label class="form-label" for="{{ $option['id'] }}">{{ __('Source document') }}</label>
-                                <select
+                                <x-forms.select
                                     id="{{ $option['id'] }}"
                                     class="form-select js-select2-ajax"
                                     data-url="{{ route('admin.purchases.select2.'.$option['lookup'], ['purpose' => 'inspection']) }}"
                                     data-placeholder="{{ __('Select') }}"
                                     required
-                                ></select>
+                                ></x-forms.select>
                             </div>
                             <button class="btn btn-primary mt-auto" type="submit">
                                 <span class="fas fa-list-check me-1"></span>{{ __('procurement.ui.load_lines') }}

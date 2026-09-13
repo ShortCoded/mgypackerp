@@ -13,17 +13,6 @@ return [
         ],
         'children' => [
             [
-                'label' => 'warehouse_locations',
-                'title' => 'Warehouse Locations',
-                'icon' => 'map-marker-alt',
-                'route' => 'admin.inventory.warehouse-locations.index',
-                'permission' => 'inventory.locations.view',
-                'keywords' => ['warehouse locations', 'zones', 'bins'],
-                'actions' => ['view' => 'inventory.locations.view', 'manage' => 'inventory.locations.manage'],
-                'active' => ['admin.inventory.warehouse-locations.*'],
-                'children' => [],
-            ],
-            [
                 'label' => 'inventory_stock_balance_inquiry',
                 'title' => 'Stock Balance Inquiry',
                 'icon' => 'search',

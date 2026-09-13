@@ -210,10 +210,6 @@ return [
                 'title' => 'Raw Materials Missing Units',
                 'meta' => ':count missing category or origin',
             ],
-            'production_identifiers' => [
-                'title' => 'Active Identifiers',
-                'meta' => 'Production identifier tree',
-            ],
             'customers' => [
                 'title' => 'Active Customers',
                 'meta' => 'Company customer records',
@@ -322,7 +318,6 @@ return [
             'branch_storage' => 'Branch Stores and Halls',
             'product_components' => 'Products and Components',
             'raw_materials' => 'Raw Materials',
-            'production_identifiers' => 'Production Identifiers',
             'factory_branches' => 'Factory Branches',
             'customers' => 'Customers',
             'quotations' => 'Quotations',

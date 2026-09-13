@@ -18,7 +18,7 @@
             <div class="roles-permission-node roles-permission-node-depth-{{ $depthClass }}">
                 <span class="roles-permission-branch" aria-hidden="true"></span>
                 <span class="roles-permission-check">
-                    <input class="form-check-input js-permission-group-check" id="{{ $nodeId }}" type="checkbox" data-permission-node="{{ $nodeKey }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-depth="{{ $depth }}" data-permission-scope="group" aria-label="{{ __('roles.permissions_ui.select_group_permissions', ['group' => $nodeLabel]) }}" @disabled($permissionsReadonly)>
+                    <x-forms.input class="form-check-input js-permission-group-check" id="{{ $nodeId }}" type="checkbox" data-permission-node="{{ $nodeKey }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-depth="{{ $depth }}" data-permission-scope="group" aria-label="{{ __('roles.permissions_ui.select_group_permissions', ['group' => $nodeLabel]) }}" :disabled='$permissionsReadonly' />
                     <label class="form-check-label" for="{{ $nodeId }}">{{ $nodeLabel }}</label>
                 </span>
             </div>
@@ -35,7 +35,7 @@
             <div class="roles-permission-node roles-permission-node-depth-{{ $depthClass }}">
                 <span class="roles-permission-branch" aria-hidden="true"></span>
                 <span class="roles-permission-check">
-                    <input class="form-check-input js-permission-resource-check" id="{{ $resourceId }}" type="checkbox" data-permission-node="{{ $nodeKey }}" data-permission-nodes="{{ $nodeTokens }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-resource="{{ $nodeKey }}" data-permission-scope="resource" aria-label="{{ __('roles.permissions_ui.select_screen_permissions', ['screen' => $nodeLabel]) }}" @disabled($permissionsReadonly)>
+                    <x-forms.input class="form-check-input js-permission-resource-check" id="{{ $resourceId }}" type="checkbox" data-permission-node="{{ $nodeKey }}" data-permission-nodes="{{ $nodeTokens }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-resource="{{ $nodeKey }}" data-permission-scope="resource" aria-label="{{ __('roles.permissions_ui.select_screen_permissions', ['screen' => $nodeLabel]) }}" :disabled='$permissionsReadonly' />
                     <label class="form-check-label" for="{{ $resourceId }}">{{ $nodeLabel }}</label>
                 </span>
             </div>
@@ -47,7 +47,7 @@
                         $permissionId = 'permission-'.md5($permission['name']);
                     @endphp
                     <div class="roles-permission-action">
-                        <input class="form-check-input js-permission-checkbox" id="{{ $permissionId }}" name="permissions[]" type="checkbox" value="{{ $permission['name'] }}" data-permission-node="{{ $nodeKey }}" data-permission-nodes="{{ $nodeTokens }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-resource="{{ $nodeKey }}" data-permission-scope="permission" @checked(in_array($permission['name'], $assignedPermissions, true)) @disabled($permissionsReadonly)>
+                        <x-forms.input class="form-check-input js-permission-checkbox" id="{{ $permissionId }}" name="permissions[]" type="checkbox" value="{{ $permission['name'] }}" data-permission-node="{{ $nodeKey }}" data-permission-nodes="{{ $nodeTokens }}" data-permission-group="{{ $groupKey }}" data-permission-parent="{{ $parentKey }}" data-permission-resource="{{ $nodeKey }}" data-permission-scope="permission" :checked="in_array($permission['name'], $assignedPermissions, true)" :disabled='$permissionsReadonly' />
                         <label class="form-check-label" for="{{ $permissionId }}">
                             {{ $permission['label'] }}
                             {{-- <span class="roles-permission-code text-500 fs-11" dir="ltr">{{ $permission['name'] }}</span> --}}

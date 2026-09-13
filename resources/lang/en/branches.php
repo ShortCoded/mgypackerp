@@ -22,6 +22,11 @@ return [
         'type' => 'Branch Type',
         'contact' => 'Contact',
         'address' => 'Address',
+        'attendance_latitude' => 'Attendance Latitude',
+        'attendance_longitude' => 'Attendance Longitude',
+        'attendance_radius_meters' => 'Attendance Radius (meters)',
+        'attendance_max_accuracy_meters' => 'Maximum GPS Accuracy (meters)',
+        'attendance_location_policy' => 'Attendance Location Policy',
         'camera_url' => 'Camera Url',
         'phone' => 'Phone',
         'mobile' => 'Mobile',
@@ -40,6 +45,15 @@ return [
     ],
     'document_number_control' => [
         'helper' => 'Leave empty for automatic generation. Prefix and padding are applied automatically.',
+    ],
+    'attendance_location' => [
+        'title' => 'Attendance Location',
+        'help' => 'Set the branch coordinates and accepted radius. Warn records outside punches with a warning; reject blocks them.',
+        'policies' => [
+            'allow' => 'Record without enforcement',
+            'warn' => 'Record with warning',
+            'reject' => 'Reject outside radius',
+        ],
     ],
     'document_number_settings' => [
         'description' => 'Control how new document numbers are generated.',

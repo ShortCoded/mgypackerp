@@ -81,12 +81,12 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6 col-lg-4">
                                 <label class="form-label" for="products-document-prefix">{{ __($documentNumberSettingsRoot.'.prefix') }}</label>
-                                <input class="form-control" id="products-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                                <x-forms.input class="form-control" id="products-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                                 <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                             </div>
                             <div class="col-md-3 col-lg-2">
                                 <label class="form-label" for="products-document-padding">{{ __($documentNumberSettingsRoot.'.padding') }}</label>
-                                <input class="form-control" id="products-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}">
+                                <x-forms.input class="form-control" id="products-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 5 }}" />
                                 <div class="invalid-feedback d-block" data-error-for="padding"></div>
                             </div>
                             <div class="col-md-auto">
@@ -135,7 +135,7 @@
                                 <tr>
                                     <th class="text-900 no-sort white-space-nowrap align-middle all no-colvis dt-select" data-orderable="false" data-searchable="false" style="width: 2.25rem;">
                                         <div class="form-check mb-0 d-flex align-items-center justify-content-center">
-                                            <input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ $resourceSelectAllLabel }}">
+                                            <x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="select_all_records" aria-label="{{ $resourceSelectAllLabel }}" />
                                         </div>
                                     </th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('common.fields.document_number') }}</th>

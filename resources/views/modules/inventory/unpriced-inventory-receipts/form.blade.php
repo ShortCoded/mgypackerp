@@ -70,7 +70,7 @@
         @if($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
 
         <div class="card mb-3">
             <div class="card-header">
@@ -118,7 +118,7 @@
                             @if($isReadonly)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" type="number" min="1" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                                 <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -134,7 +134,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="document_date" :value="$dateValue" dir="ltr" input-class="date-value text-center" />
                         @else
-                            <input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ old('document_date', $dateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required>
+                            <x-forms.date-input class="form-control text-center js-date-picker" id="document_date" name="document_date" type="text" value="{{ old('document_date', $dateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="document_date"></div>
                     </div>
@@ -151,11 +151,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="branch_doc_num" as="display" :value="$branchOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax js-unpriced-inventory-receipt-branch" id="branch_doc_num" name="branch_doc_num" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branches') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_branch') }}" data-allow-clear="true" required>
+                            <x-forms.select class="form-select js-select2-ajax js-unpriced-inventory-receipt-branch" id="branch_doc_num" name="branch_doc_num" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branches') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_branch') }}" data-allow-clear="true" required>
                                 @if($selectedBranchDocNum && $branchOption)
                                     <option value="{{ $branchOption['id'] }}" selected>{{ $branchOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_doc_num"></div>
                     </div>
@@ -165,11 +165,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="branch_hall_uuid" as="display" :value="$hallOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="branch_hall_uuid" name="branch_hall_uuid" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branch-halls') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_hall') }}" data-allow-clear="true" data-extra-params='{"branch_doc_num":"#branch_doc_num"}' data-depends-on="#branch_doc_num" data-disable-when-dependency-empty="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="branch_hall_uuid" name="branch_hall_uuid" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branch-halls') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_hall') }}" data-allow-clear="true" data-extra-params='{"branch_doc_num":"#branch_doc_num"}' data-depends-on="#branch_doc_num" data-disable-when-dependency-empty="true">
                                 @if($selectedHallUuid && $hallOption)
                                     <option value="{{ $hallOption['id'] }}" selected>{{ $hallOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_hall_uuid"></div>
                     </div>
@@ -179,11 +179,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="branch_store_uuid" as="display" :value="$storeOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branch-stores') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_store') }}" data-allow-clear="true" data-extra-params='{"branch_doc_num":"#branch_doc_num"}' data-depends-on="#branch_doc_num" data-disable-when-dependency-empty="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="branch_store_uuid" name="branch_store_uuid" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-branch-stores') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_store') }}" data-allow-clear="true" data-extra-params='{"branch_doc_num":"#branch_doc_num"}' data-depends-on="#branch_doc_num" data-disable-when-dependency-empty="true">
                                 @if($selectedStoreUuid && $storeOption)
                                     <option value="{{ $storeOption['id'] }}" selected>{{ $storeOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_store_uuid"></div>
                     </div>
@@ -193,11 +193,11 @@
                         @if($isReadonly)
                             <x-forms.view-field for="supplier_doc_num" as="display" :value="$supplierOption['text'] ?? __('common.empty_value')" />
                         @else
-                            <select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-suppliers') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_supplier') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-suppliers') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_supplier') }}" data-allow-clear="true">
                                 @if($selectedSupplierDocNum && $supplierOption)
                                     <option value="{{ $supplierOption['id'] }}" selected>{{ $supplierOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="form-text">{{ __('inventory.unpriced_inventory_receipts.helpers.supplier_optional') }}</div>
                         <div class="invalid-feedback d-block" data-error-for="supplier_doc_num"></div>
@@ -208,7 +208,7 @@
                         @if($isReadonly)
                             <x-forms.view-field for="reference_number" as="display" :value="$record?->reference_number ?: __('common.empty_value')" />
                         @else
-                            <input class="form-control" id="reference_number" name="reference_number" type="text" value="{{ old('reference_number', $value('reference_number')) }}">
+                            <x-forms.input class="form-control" id="reference_number" name="reference_number" type="text" value="{{ old('reference_number', $value('reference_number')) }}" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="reference_number"></div>
                     </div>
@@ -218,14 +218,14 @@
                         @if($isReadonly)
                             <x-forms.view-field for="reference_date" :value="$referenceDateValue ?: __('common.empty_value')" dir="ltr" input-class="date-value text-center" />
                         @else
-                            <input class="form-control text-center js-date-picker" id="reference_date" name="reference_date" type="text" value="{{ old('reference_date', $referenceDateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                            <x-forms.date-input class="form-control text-center js-date-picker" id="reference_date" name="reference_date" type="text" value="{{ old('reference_date', $referenceDateValue) }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="reference_date"></div>
                     </div>
 
                     <div class="col-12">
                         <label class="form-label" for="notes">{{ __('inventory.unpriced_inventory_receipts.attributes.notes') }}</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="2" @readonly($isReadonly)>{{ old('notes', $value('notes')) }}</textarea>
+                        <x-forms.textarea class="form-control" id="notes" name="notes" rows="2" :readonly='$isReadonly'>{{ old('notes', $value('notes')) }}</x-forms.textarea>
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>
                 </div>
@@ -272,8 +272,8 @@
                                 @endphp
                                 <tr class="js-unpriced-inventory-receipt-line" data-index="{{ $index }}">
                                     <td>
-                                        <input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}">
-                                        <input type="hidden" name="lines[{{ $index }}][_delete]" value="0">
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][public_id]" value="{{ $line['public_id'] ?? '' }}" />
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][_delete]" value="0" />
                                         @if($isReadonly)
                                             <div class="d-flex align-items-center gap-1 unpriced-receipt-product-picker">
                                                 <div class="form-control-plaintext flex-grow-1 min-w-0 text-truncate" title="{{ $productLabel }}">{{ $productLabel }}</div>
@@ -281,16 +281,16 @@
                                                     <span class="fas fa-info-circle"></span>
                                                     <span class="visually-hidden">{{ __('inventory.unpriced_inventory_receipts.actions.view_product') }}</span>
                                                 </button>
-                                                <input type="hidden" class="js-unpriced-inventory-receipt-product-value" value="{{ $productDocNum }}">
+                                                <x-forms.input type="hidden" class="js-unpriced-inventory-receipt-product-value" value="{{ $productDocNum }}" />
                                             </div>
                                         @else
                                             <div class="d-flex align-items-start gap-1 unpriced-receipt-product-picker">
                                                 <div class="flex-grow-1 min-w-0">
-                                                    <select class="form-select js-select2-ajax js-unpriced-inventory-receipt-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-products') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image">
+                                                    <x-forms.select class="form-select js-select2-ajax js-unpriced-inventory-receipt-product" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-products') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image">
                                                         @if($productDocNum)
                                                             <option value="{{ $productDocNum }}" data-unit-options="{{ e(json_encode($unitOptions, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT)) }}" @if($imageUrl) data-image-url="{{ $imageUrl }}" @endif selected>{{ $productLabel }}</option>
                                                         @endif
-                                                    </select>
+                                                    </x-forms.select>
                                                     <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
                                                 </div>
                                                 <button class="btn btn-falcon-default btn-sm unpriced-receipt-product-action js-unpriced-inventory-receipt-product-info" type="button" title="{{ __('inventory.unpriced_inventory_receipts.js.product_info_title') }}" data-bs-title="{{ __('inventory.unpriced_inventory_receipts.js.product_info_title') }}" @disabled(! $productDocNum)>
@@ -311,12 +311,12 @@
                                             <div class="form-control-plaintext">{{ $line['unit'] ?? null }}</div>
                                         @else
                                             <div class="unpriced-receipt-unit-picker">
-                                                <select class="form-select js-unpriced-inventory-receipt-unit" name="lines[{{ $index }}][unit_doc_num]" @disabled(! $productDocNum)>
+                                                <x-forms.select class="form-select js-unpriced-inventory-receipt-unit" name="lines[{{ $index }}][unit_doc_num]" :disabled='! $productDocNum'>
                                                     <option value="">{{ __('inventory.unpriced_inventory_receipts.placeholders.select_unit') }}</option>
                                                     @foreach($unitOptions as $option)
                                                         <option value="{{ $option['id'] ?? '' }}" @selected(($option['id'] ?? null) === $unitDocNum)>{{ $option['text'] ?? $option['id'] ?? '' }}</option>
                                                     @endforeach
-                                                </select>
+                                                </x-forms.select>
                                             </div>
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_doc_num"></div>
                                         @endif
@@ -333,7 +333,7 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['notes'] ?? null }}</div>
                                         @else
-                                            <input class="form-control js-unpriced-inventory-receipt-line-notes" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}">
+                                            <x-forms.input class="form-control js-unpriced-inventory-receipt-line-notes" name="lines[{{ $index }}][notes]" type="text" value="{{ $line['notes'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.notes"></div>
                                         @endif
                                     </td>
@@ -433,11 +433,11 @@
         <template id="unpriced-inventory-receipt-line-template">
             <tr class="js-unpriced-inventory-receipt-line" data-index="__INDEX__">
                 <td>
-                    <input type="hidden" name="lines[__INDEX__][public_id]" value="">
-                    <input type="hidden" name="lines[__INDEX__][_delete]" value="0">
+                    <x-forms.input type="hidden" name="lines[__INDEX__][public_id]" value="" />
+                    <x-forms.input type="hidden" name="lines[__INDEX__][_delete]" value="0" />
                     <div class="d-flex align-items-start gap-1 unpriced-receipt-product-picker">
                         <div class="flex-grow-1 min-w-0">
-                            <select class="form-select js-select2-ajax js-unpriced-inventory-receipt-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-products') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image"></select>
+                            <x-forms.select class="form-select js-select2-ajax js-unpriced-inventory-receipt-product" name="lines[__INDEX__][product_doc_num]" data-url="{{ route('admin.inventory.select2.unpriced-inventory-receipt-products') }}" data-placeholder="{{ __('inventory.unpriced_inventory_receipts.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image"></x-forms.select>
                             <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.product_doc_num"></div>
                         </div>
                         <button class="btn btn-falcon-default btn-sm unpriced-receipt-product-action js-unpriced-inventory-receipt-product-info" type="button" title="{{ __('inventory.unpriced_inventory_receipts.js.product_info_title') }}" data-bs-title="{{ __('inventory.unpriced_inventory_receipts.js.product_info_title') }}" disabled>
@@ -454,9 +454,9 @@
                 </td>
                 <td>
                     <div class="unpriced-receipt-unit-picker">
-                        <select class="form-select js-unpriced-inventory-receipt-unit" name="lines[__INDEX__][unit_doc_num]" disabled>
+                        <x-forms.select class="form-select js-unpriced-inventory-receipt-unit" name="lines[__INDEX__][unit_doc_num]" disabled>
                             <option value="">{{ __('inventory.unpriced_inventory_receipts.placeholders.select_unit') }}</option>
-                        </select>
+                        </x-forms.select>
                     </div>
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_doc_num"></div>
                 </td>
@@ -465,7 +465,7 @@
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
                 </td>
                 <td>
-                    <input class="form-control js-unpriced-inventory-receipt-line-notes" name="lines[__INDEX__][notes]" type="text" value="">
+                    <x-forms.input class="form-control js-unpriced-inventory-receipt-line-notes" name="lines[__INDEX__][notes]" type="text" value="" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
                 </td>
                 <td class="text-center">

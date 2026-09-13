@@ -397,7 +397,7 @@ test('statutory policies are company scoped effective dated and tax brackets are
         ->assertOk();
     $this->withSession($session)
         ->patchJson(route('admin.hr.social-insurance-policies.restore', $insurancePolicy->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('data.conflict_type', 'effective_period_conflict')
         ->assertJsonPath('data.conflict_fields.0', 'effective_period');
 });

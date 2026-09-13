@@ -162,7 +162,7 @@ function salesPurchasesLocationSet(int $number): array
     return compact('country', 'governorate', 'city', 'area');
 }
 
-test('Menu shows sales and purchases while HR stays hidden without HR permission', function (): void {
+test('Menu shows sales and purchases while HR exposes only employee self service without HR permission', function (): void {
     $this->seed(PermissionSeeder::class);
 
     $actor = salesPurchasesActor(['customers.view', 'suppliers.view', 'file_manager.view']);
@@ -175,15 +175,20 @@ test('Menu shows sales and purchases while HR stays hidden without HR permission
         ->toContain('sales')
         ->toContain('purchases')
         ->toContain('tools')
-        ->not->toContain('human_resources')
+        ->toContain('human_resources')
         ->and(array_search('sales', $labels, true))->toBeLessThan(array_search('purchases', $labels, true))
         ->and(array_search('purchases', $labels, true))->toBeLessThan(array_search('tools', $labels, true));
 
     $sales = collect($menu)->firstWhere('label', 'sales');
     $purchases = collect($menu)->firstWhere('label', 'purchases');
+    $humanResources = collect($menu)->firstWhere('label', 'human_resources');
 
     expect(collect($sales['children'])->flatMap(fn ($item) => [$item['label'], ...collect($item['children'] ?? [])->pluck('label')->all()])->all())->toContain('customers')
         ->and(collect($purchases['children'])->flatMap(fn ($item) => [$item['label'], ...collect($item['children'] ?? [])->pluck('label')->all()])->all())->toContain('suppliers')
+        ->and(collect($humanResources['children'])->flatMap(fn (array $item): array => [
+            $item['label'],
+            ...collect($item['children'] ?? [])->pluck('label')->all(),
+        ])->all())->toBe(['attendance_leave', 'employee_self_service'])
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.employees.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.departments.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.countries.view');

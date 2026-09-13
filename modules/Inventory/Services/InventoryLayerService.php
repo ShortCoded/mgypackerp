@@ -158,7 +158,7 @@ class InventoryLayerService
 
             if (bccomp((string) $transaction->quantity_out, '0', 8) > 0
                 && ! InventoryLayerAllocation::query()->where('issue_transaction_id', $transaction->getKey())->exists()) {
-                $this->allocateIssueFromLayers($transaction, $receiptTransactionId);
+                $this->allocateIssueFromLayers($transaction);
             }
         }
     }

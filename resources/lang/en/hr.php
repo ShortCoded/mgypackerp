@@ -367,6 +367,7 @@ return [
             'termination_date' => 'Termination Date',
             'company_doc_num' => 'Company',
             'branch_doc_num' => 'Branch',
+            'user_doc_num' => 'Linked User Account',
             'department_doc_num' => 'Department',
             'section_doc_num' => 'Job Section',
             'job_doc_num' => 'Job',
@@ -439,6 +440,7 @@ return [
         'placeholders' => [
             'company_doc_num' => 'Select company',
             'branch_doc_num' => 'Select branch',
+            'user_doc_num' => 'Select user account',
             'department_doc_num' => 'Select department',
             'section_doc_num' => 'Select job section',
             'job_doc_num' => 'Select job',
@@ -487,6 +489,7 @@ return [
             'national_id_unique' => 'National ID already exists.',
             'work_email_unique' => 'Work email already exists.',
             'email_unique' => 'Email already exists.',
+            'user_already_linked' => 'This user account is already linked to another employee.',
             'manager_self' => 'The employee cannot be their own manager.',
             'selected_photo_unavailable' => 'The selected photo is not available.',
             'selected_signature_unavailable' => 'The selected signature is not available.',

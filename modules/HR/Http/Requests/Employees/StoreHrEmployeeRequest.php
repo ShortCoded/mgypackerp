@@ -2,6 +2,7 @@
 
 namespace Modules\HR\Http\Requests\Employees;
 
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -72,6 +73,7 @@ class StoreHrEmployeeRequest extends FormRequest
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
             'branch_doc_num' => ['nullable', 'string', Rule::exists('branches', 'doc_num')->where(fn ($query) => $query->where('company_id', $this->companyId())->where('status', 'active')->whereNull('deleted_at'))],
+            'user_doc_num' => ['nullable', 'string', Rule::exists('users', 'doc_num')->where(fn ($query) => $query->where('status', 'active')->whereNull('deleted_at'))],
             'email' => ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'email')->withoutTrashed()],
             'work_email' => ['nullable', 'email:rfc', 'max:255', Rule::unique('hr_employees', 'work_email')->withoutTrashed()],
             'personal_email' => ['nullable', 'email:rfc', 'max:255'],
@@ -232,7 +234,26 @@ class StoreHrEmployeeRequest extends FormRequest
             $this->validateBiometricMappings($validator);
             $this->validateDocuments($validator);
             $this->validateNestedRowOwnership($validator);
+            $this->validateUserLink($validator);
         });
+    }
+
+    protected function validateUserLink(Validator $validator, ?HrEmployee $employee = null): void
+    {
+        $docNum = trim((string) $this->input('user_doc_num'));
+
+        if ($docNum === '' || $validator->errors()->has('user_doc_num')) {
+            return;
+        }
+
+        $userId = User::query()->where('doc_num', $docNum)->value('id');
+
+        if ($userId !== null && HrEmployee::withTrashed()
+            ->where('user_id', $userId)
+            ->when($employee instanceof HrEmployee, fn ($query) => $query->whereKeyNot($employee->getKey()))
+            ->exists()) {
+            $validator->errors()->add('user_doc_num', __('hr.employees.validation.user_already_linked'));
+        }
     }
 
     /**

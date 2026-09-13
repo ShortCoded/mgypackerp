@@ -27,12 +27,12 @@
                     <div class="row g-3 align-items-end">
                         <div class="col-md-6 col-lg-4">
                             <label class="form-label" for="companies-document-prefix">{{ __('companies.document_number_settings.prefix') }}</label>
-                            <input class="form-control" id="companies-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}">
+                            <x-forms.input class="form-control" id="companies-document-prefix" name="prefix" type="text" maxlength="20" value="{{ $documentNumberSettings['prefix'] ?? '' }}" />
                             <div class="invalid-feedback d-block" data-error-for="prefix"></div>
                         </div>
                         <div class="col-md-3 col-lg-2">
                             <label class="form-label" for="companies-document-padding">{{ __('companies.document_number_settings.padding') }}</label>
-                            <input class="form-control" id="companies-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required>
+                            <x-forms.input class="form-control" id="companies-document-padding" name="padding" type="number" min="0" max="10" step="1" value="{{ $documentNumberSettings['padding'] ?? 0 }}" required />
                             <div class="invalid-feedback d-block" data-error-for="padding"></div>
                         </div>
                         <div class="col-md-auto">

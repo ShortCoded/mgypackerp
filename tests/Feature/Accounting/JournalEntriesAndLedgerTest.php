@@ -592,7 +592,7 @@ test('customer statement uses the shared report controls and exports pdf excel a
         ->assertSee('admin-report-page', false)
         ->assertSee('js-date-picker js-report-filter-control', false)
         ->assertSee('js-select2-ajax js-report-filter-control', false)
-        ->assertSee('data-minimum-input-length="1"', false)
+        ->assertSee('data-minimum-input-length="0"', false)
         ->assertSee(__('reports.export_pdf'))
         ->assertSee(__('reports.export_excel'))
         ->assertSee(__('reports.export_csv'))
@@ -685,7 +685,10 @@ test('supplier statement uses the shared party layout and includes the prior bal
         'status' => 'active',
     ]);
     journalPostedMovement($context, $supplierAccountA, $counterpart, 99310, '2026-02-10', '0.0000', '80.0000');
-    journalPostedMovement($context, $supplierAccountA, $counterpart, 99311, '2026-03-10', '0.0000', '250.0000');
+    $localizedSupplierMovement = journalPostedMovement($context, $supplierAccountA, $counterpart, 99311, '2026-03-10', '0.0000', '250.0000');
+    $localizedSupplierMovement->lines()
+        ->where('account_id', $supplierAccountA->getKey())
+        ->update(['description' => 'مستحقات المورد عن فاتورة مشتريات']);
     journalPostedMovement($context, $supplierAccountB, $counterpart, 99312, '2026-03-11', '0.0000', '910.0000');
 
     $filters = [
@@ -704,6 +707,8 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->assertSee(__('ledger_reports.summary.prior_details'))
         ->assertSee('JE-99310')
         ->assertSee('JE-99311')
+        ->assertSee(__('ledger_reports.movement_descriptions.supplier_payable'))
+        ->assertDontSee('مستحقات المورد عن فاتورة مشتريات')
         ->assertDontSee('JE-99312')
         ->assertDontSee('910')
         ->assertDontSee('id="branch_doc_num"', false)
@@ -726,5 +731,24 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->toContain('Supplier Statement')
         ->toContain('Balance before period')
         ->toContain('JE-99310')
+        ->toContain('Purchase invoice payable')
+        ->not->toContain('مستحقات المورد عن فاتورة مشتريات')
         ->not->toContain('Supplier A Account');
+
+    $actor->forceFill(['locale' => 'ar'])->save();
+    app()->setLocale('ar');
+    $arabicPdf = $this->get(route('admin.accounting.reports.supplier-statement.export.pdf', $filters))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+    $arabicPdfText = accountingPdfText($arabicPdf->getContent());
+
+    if ($directory = getenv('LEDGER_PRINT_SAMPLES')) {
+        file_put_contents($directory.'/supplier-statement-en.pdf', $pdf->getContent());
+        file_put_contents($directory.'/supplier-statement-ar.pdf', $arabicPdf->getContent());
+    }
+
+    expect($arabicPdfText)
+        ->toContain('SUP-99301')
+        ->not->toContain('AM')
+        ->not->toContain('PM');
 });

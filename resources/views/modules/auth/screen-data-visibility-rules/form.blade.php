@@ -32,8 +32,8 @@
     <form class="js-screen-visibility-rule-form" action="{{ $action }}" method="{{ $method }}" data-mode="{{ $mode }}" data-original='@json($original)' novalidate>
         @csrf
         @if ($method !== 'POST') @method($method) @endif
-        @unless($isView)<input type="hidden" name="submit_action" value="save">@endunless
-        @if ($cloneSourceToken)<input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">@endif
+        @unless($isView)<x-forms.input type="hidden" name="submit_action" value="save" />@endunless
+        @if ($cloneSourceToken)<x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />@endif
 
         <div class="card">
             <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -52,9 +52,9 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-user" :value="$selectedUser ? trim($selectedUser->name.' / '.$selectedUser->doc_num) : null" />
                         @else
-                            <select id="visibility-rule-user" name="user_doc_num" class="form-select js-screen-visibility-user" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('screen_data_visibility_rules.placeholders.user') }}" required>
+                            <x-forms.select id="visibility-rule-user" name="user_doc_num" class="form-select js-screen-visibility-user" data-url="{{ route('admin.select2.users') }}" data-placeholder="{{ __('screen_data_visibility_rules.placeholders.user') }}" required>
                                 @if ($selectedUser)<option value="{{ $selectedUser->doc_num }}" selected>{{ trim($selectedUser->name.' / '.$selectedUser->doc_num) }}</option>@endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="user_doc_num"></div>
                     </div>
@@ -67,7 +67,7 @@
                             @endphp
                             <x-forms.view-field for="visibility-rule-screen" :value="$selectedScreen['text'] ?? $record?->screen_key" />
                         @else
-                            <select id="visibility-rule-screen" name="screen_key" class="form-select js-screen-visibility-screen" data-placeholder="{{ __('screen_data_visibility_rules.placeholders.screen') }}" required>
+                            <x-forms.select id="visibility-rule-screen" name="screen_key" class="form-select js-screen-visibility-screen" data-placeholder="{{ __('screen_data_visibility_rules.placeholders.screen') }}" required>
                                 <option value=""></option>
                                 @foreach (collect($screenOptions)->groupBy('module') as $module => $options)
                                     <optgroup label="{{ $module }}">
@@ -78,7 +78,7 @@
                                         @endforeach
                                     </optgroup>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="screen_key"></div>
                     </div>
@@ -88,9 +88,9 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-scope" :value="__('screen_data_visibility_rules.scopes.'.$recordScope)" />
                         @else
-                            <select id="visibility-rule-scope" name="record_scope" class="form-select" required>
+                            <x-forms.select id="visibility-rule-scope" name="record_scope" class="form-select" required>
                                 @foreach (['own_records', 'authorized_scope'] as $scope)<option value="{{ $scope }}" @selected($recordScope === $scope)>{{ __('screen_data_visibility_rules.scopes.'.$scope) }}</option>@endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="record_scope"></div>
                     </div>
@@ -100,7 +100,7 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-maximum" :value="$record?->max_visible_records ?? __('screen_data_visibility_rules.unlimited')" />
                         @else
-                            <input id="visibility-rule-maximum" name="max_visible_records" type="number" min="1" step="1" class="form-control" value="{{ old('max_visible_records', $record?->max_visible_records) }}" placeholder="{{ __('screen_data_visibility_rules.placeholders.maximum') }}">
+                            <x-forms.input id="visibility-rule-maximum" name="max_visible_records" type="number" min="1" step="1" class="form-control" value="{{ old('max_visible_records', $record?->max_visible_records) }}" placeholder="{{ __('screen_data_visibility_rules.placeholders.maximum') }}" />
                             <div class="form-text">{{ __('screen_data_visibility_rules.help.maximum') }}</div>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="max_visible_records"></div>
@@ -111,7 +111,7 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-duration-value" :value="$record?->duration_value ?? __('screen_data_visibility_rules.unlimited')" />
                         @else
-                            <input id="visibility-rule-duration-value" name="duration_value" type="number" min="1" step="1" class="form-control" value="{{ old('duration_value', $record?->duration_value) }}" placeholder="{{ __('screen_data_visibility_rules.placeholders.duration') }}">
+                            <x-forms.input id="visibility-rule-duration-value" name="duration_value" type="number" min="1" step="1" class="form-control" value="{{ old('duration_value', $record?->duration_value) }}" placeholder="{{ __('screen_data_visibility_rules.placeholders.duration') }}" />
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="duration_value"></div>
                     </div>
@@ -121,10 +121,10 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-duration-unit" :value="$durationUnit ? __('screen_data_visibility_rules.duration_units.'.$durationUnit) : __('screen_data_visibility_rules.unlimited')" />
                         @else
-                            <select id="visibility-rule-duration-unit" name="duration_unit" class="form-select">
+                            <x-forms.select id="visibility-rule-duration-unit" name="duration_unit" class="form-select">
                                 <option value=""></option>
                                 @foreach (['days', 'weeks', 'months', 'years'] as $unit)<option value="{{ $unit }}" @selected($durationUnit === $unit)>{{ __('screen_data_visibility_rules.duration_units.'.$unit) }}</option>@endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="duration_unit"></div>
                     </div>
@@ -134,9 +134,9 @@
                         @if ($isView)
                             <span class="badge rounded-pill badge-subtle-{{ $isActive ? 'success' : 'secondary' }}">{{ __('screen_data_visibility_rules.statuses.'.($isActive ? 'active' : 'inactive')) }}</span>
                         @else
-                            <input type="hidden" name="is_active" value="0">
+                            <x-forms.input type="hidden" name="is_active" value="0" />
                             <div class="form-check form-switch mt-2">
-                                <input id="visibility-rule-active" name="is_active" type="checkbox" class="form-check-input" value="1" @checked($isActive)>
+                                <x-forms.input id="visibility-rule-active" name="is_active" type="checkbox" class="form-check-input" value="1" :checked='$isActive' />
                                 <label class="form-check-label" for="visibility-rule-active">{{ __('screen_data_visibility_rules.statuses.active') }}</label>
                             </div>
                         @endif
@@ -148,7 +148,7 @@
                         @if ($isView)
                             <x-forms.view-field for="visibility-rule-notes" as="textarea" :value="$record?->notes" rows="4" />
                         @else
-                            <textarea id="visibility-rule-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea id="visibility-rule-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
                     </div>

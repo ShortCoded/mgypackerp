@@ -63,26 +63,26 @@
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-doc-num">{{ $report['filter_labels']['doc_num'] }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-doc-num" name="doc_num" type="text" data-filter-label="{{ $report['filter_labels']['doc_num'] }}" placeholder="{{ __('business_partner_reports.'.$report['key'].'.placeholders.doc_num') }}" dir="ltr">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-doc-num" name="doc_num" type="text" data-filter-label="{{ $report['filter_labels']['doc_num'] }}" placeholder="{{ __('business_partner_reports.'.$report['key'].'.placeholders.doc_num') }}" dir="ltr" />
             </div>
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-name">{{ $report['filter_labels']['name'] }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-name" name="name" type="text" data-filter-label="{{ $report['filter_labels']['name'] }}" placeholder="{{ __('business_partner_reports.'.$report['key'].'.placeholders.name') }}">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-name" name="name" type="text" data-filter-label="{{ $report['filter_labels']['name'] }}" placeholder="{{ __('business_partner_reports.'.$report['key'].'.placeholders.name') }}" />
             </div>
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-phone">{{ $report['filter_labels']['phone'] }}</label>
-                <input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-phone" name="phone" type="text" data-filter-label="{{ $report['filter_labels']['phone'] }}" placeholder="{{ __('business_partner_reports.placeholders.phone') }}" dir="ltr">
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="{{ $reportId }}-phone" name="phone" type="text" data-filter-label="{{ $report['filter_labels']['phone'] }}" placeholder="{{ __('business_partner_reports.placeholders.phone') }}" dir="ltr" />
             </div>
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-status">{{ $report['filter_labels']['status'] }}</label>
-                <select class="{{ $staticSelectClass }}" id="{{ $reportId }}-status" name="status" data-filter-label="{{ $report['filter_labels']['status'] }}" data-placeholder="{{ __('reports.all_records') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $staticSelectClass }}" id="{{ $reportId }}-status" name="status" data-filter-label="{{ $report['filter_labels']['status'] }}" data-placeholder="{{ __('reports.all_records') }}" data-allow-clear="true">
                     <option value=""></option>
                     <option value="active">{{ __('business_partners.statuses.active') }}</option>
                     <option value="inactive">{{ __('business_partners.statuses.inactive') }}</option>
-                </select>
+                </x-forms.select>
             </div>
 
             <div class="col-12">
@@ -94,16 +94,16 @@
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-account-group">{{ $report['filter_labels']['account_group_doc_num'] }}</label>
-                <select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-account-group" name="account_group_doc_num" data-filter-label="{{ $report['filter_labels']['account_group_doc_num'] }}" data-url="{{ route($report['route_prefix'].'.filter-options.account-groups') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_group') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-account-group" name="account_group_doc_num" data-filter-label="{{ $report['filter_labels']['account_group_doc_num'] }}" data-url="{{ route($report['route_prefix'].'.filter-options.account-groups') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_group') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-account">{{ $report['filter_labels']['account_doc_num'] }}</label>
-                <select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-account" name="account_doc_num" data-filter-label="{{ $report['filter_labels']['account_doc_num'] }}" data-url="{{ route($report['route_prefix'].'.filter-options.accounts') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_account') }}" data-allow-clear="true">
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-account" name="account_doc_num" data-filter-label="{{ $report['filter_labels']['account_doc_num'] }}" data-url="{{ route($report['route_prefix'].'.filter-options.accounts') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_account') }}" data-allow-clear="true">
                     <option value=""></option>
-                </select>
+                </x-forms.select>
             </div>
 
             <div class="col-12">
@@ -116,14 +116,14 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-created-from">{{ $report['filter_labels']['created_from'] }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="{{ $reportId }}-created-from" name="created_from" type="text" data-filter-label="{{ $report['filter_labels']['created_from'] }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="{{ $reportId }}-created-from" name="created_from" type="text" data-filter-label="{{ $report['filter_labels']['created_from'] }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
 
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="{{ $reportId }}-created-to">{{ $report['filter_labels']['created_to'] }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <input class="form-control form-control-sm js-date-picker js-report-filter-control" id="{{ $reportId }}-created-to" name="created_to" type="text" data-filter-label="{{ $report['filter_labels']['created_to'] }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr">
+                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="{{ $reportId }}-created-to" name="created_to" type="text" data-filter-label="{{ $report['filter_labels']['created_to'] }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
         </x-admin.report.filter-panel>

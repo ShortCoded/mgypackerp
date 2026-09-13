@@ -134,7 +134,7 @@
                     <form class="js-profile-form" action="{{ route('profile.update') }}" method="POST" data-original='@json($profileFields)' novalidate>
                         @csrf
                         @method('PUT')
-                        <input type="hidden" name="submit_action" value="save">
+                        <x-forms.input type="hidden" name="submit_action" value="save" />
 
                         <div class="card-body bg-body-tertiary p-3 js-profile-form-body">
                             <div class="alert alert-danger alert-dismissible fade show d-none js-profile-alert" role="alert">
@@ -145,27 +145,27 @@
                             <div class="row gx-2 gy-3">
                                 <div class="col-md-6">
                                     <x-forms.label for="profile-name" :label="__('common.fields.name')" required />
-                                    <input id="profile-name" name="name" type="text" class="form-control" value="{{ old('name', $user->name) }}" required>
+                                    <x-forms.input id="profile-name" name="name" type="text" class="form-control" value="{{ old('name', $user->name) }}" required />
                                     <div class="invalid-feedback" data-error-for="name"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <x-forms.label for="profile-username" :label="__('common.fields.username')" required />
-                                    <input id="profile-username" name="username" type="text" class="form-control" value="{{ old('username', $user->username) }}" autocomplete="username" required>
+                                    <x-forms.input id="profile-username" name="username" type="text" class="form-control" value="{{ old('username', $user->username) }}" autocomplete="username" required />
                                     <div class="invalid-feedback" data-error-for="username"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label" for="profile-email">{{ __('common.fields.email') }}</label>
-                                    <input id="profile-email" name="email" type="email" class="form-control" value="{{ old('email', $user->email) }}" autocomplete="email">
+                                    <x-forms.input id="profile-email" name="email" type="email" class="form-control" value="{{ old('email', $user->email) }}" autocomplete="email" />
                                     <div class="invalid-feedback" data-error-for="email"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label" for="profile-phone">{{ __('common.fields.phone') }}</label>
-                                    <input id="profile-phone" name="phone" type="text" class="form-control" value="{{ old('phone', $user->phone) }}" autocomplete="tel">
+                                    <x-forms.input id="profile-phone" name="phone" type="text" class="form-control" value="{{ old('phone', $user->phone) }}" autocomplete="tel" />
                                     <div class="invalid-feedback" data-error-for="phone"></div>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label" for="profile-notes">{{ __('common.fields.notes') }}</label>
-                                    <textarea id="profile-notes" name="notes" class="form-control" rows="2">{{ old('notes', $user->notes) }}</textarea>
+                                    <x-forms.textarea id="profile-notes" name="notes" class="form-control" rows="2">{{ old('notes', $user->notes) }}</x-forms.textarea>
                                     <div class="invalid-feedback" data-error-for="notes"></div>
                                 </div>
                             </div>
@@ -254,29 +254,29 @@
                             <div class="row gx-2 gy-3">
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-default-company" :label="__('profile.fields.default_company')" required />
-                                    <select class="form-select js-select2-ajax" id="profile-default-company" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_company') }}" data-allow-clear="true" required>
+                                    <x-forms.select class="form-select js-select2-ajax" id="profile-default-company" name="company_doc_num" data-url="{{ route('admin.select2.companies', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_company') }}" data-allow-clear="true" required>
                                         @if ($defaultCompany)
                                             <option value="{{ $defaultCompany['id'] }}" selected>{{ $defaultCompany['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <div class="invalid-feedback d-block" data-error-for="company_doc_num"></div>
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-default-branch" :label="__('profile.fields.default_branch')" required />
-                                    <select class="form-select js-select2-ajax" id="profile-default-branch" name="branch_doc_num" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_branch') }}" data-allow-clear="true" data-depends-on="#profile-default-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required @disabled(! $defaultCompanyDocNum)>
+                                    <x-forms.select class="form-select js-select2-ajax" id="profile-default-branch" name="branch_doc_num" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_branch') }}" data-allow-clear="true" data-depends-on="#profile-default-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required :disabled='! $defaultCompanyDocNum'>
                                         @if ($defaultBranch)
                                             <option value="{{ $defaultBranch['id'] }}" data-dependent-value="{{ $defaultBranch['company_doc_num'] ?? $defaultCompanyDocNum }}" selected>{{ $defaultBranch['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <div class="invalid-feedback d-block" data-error-for="branch_doc_num"></div>
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-default-financial-period" :label="__('profile.fields.default_financial_period')" required />
-                                    <select class="form-select js-select2-ajax" id="profile-default-financial-period" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_financial_period') }}" data-allow-clear="true" data-depends-on="#profile-default-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required @disabled(! $defaultCompanyDocNum)>
+                                    <x-forms.select class="form-select js-select2-ajax" id="profile-default-financial-period" name="financial_period_doc_num" data-url="{{ route('admin.select2.financial-periods', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('operating_context.select_financial_period') }}" data-allow-clear="true" data-depends-on="#profile-default-company" data-dependent-param="company_doc_num" data-dependent-result-field="company_doc_num" data-disable-when-dependency-empty="true" required :disabled='! $defaultCompanyDocNum'>
                                         @if ($defaultFinancialPeriod)
                                             <option value="{{ $defaultFinancialPeriod['id'] }}" data-dependent-value="{{ $defaultFinancialPeriod['company_doc_num'] ?? $defaultCompanyDocNum }}" selected>{{ $defaultFinancialPeriod['text'] }}</option>
                                         @endif
-                                    </select>
+                                    </x-forms.select>
                                     <div class="invalid-feedback d-block" data-error-for="financial_period_doc_num"></div>
                                 </div>
                             </div>
@@ -309,21 +309,21 @@
                             <div class="row gx-2 gy-3 align-items-end">
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-current-password" :label="__('profile.fields.current_password')" required />
-                                    <input id="profile-current-password" name="current_password" type="password" class="form-control @error('current_password', 'updatePassword') is-invalid @enderror" autocomplete="current-password" required>
+                                    <x-forms.input id="profile-current-password" name="current_password" type="password" class="form-control @error('current_password', 'updatePassword') is-invalid @enderror" autocomplete="current-password" required />
                                     @error('current_password', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-new-password" :label="__('profile.fields.new_password')" required />
-                                    <input id="profile-new-password" name="password" type="password" class="form-control @error('password', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required>
+                                    <x-forms.input id="profile-new-password" name="password" type="password" class="form-control @error('password', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required />
                                     @error('password', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-password-confirmation" :label="__('profile.fields.password_confirmation')" required />
-                                    <input id="profile-password-confirmation" name="password_confirmation" type="password" class="form-control @error('password_confirmation', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required>
+                                    <x-forms.input id="profile-password-confirmation" name="password_confirmation" type="password" class="form-control @error('password_confirmation', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required />
                                     @error('password_confirmation', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror

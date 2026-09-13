@@ -13,7 +13,7 @@
                 <div class="mb-3 js-archive-public-link-url-wrap d-none">
                     <label class="form-label" for="archive-public-link-url">{{ __('archive.public_links.public_url') }}</label>
                     <div class="input-group">
-                        <input id="archive-public-link-url" class="form-control js-archive-public-link-url" type="text" readonly>
+                        <x-forms.input id="archive-public-link-url" class="form-control js-archive-public-link-url" type="text" readonly />
                         <button class="btn btn-falcon-default js-archive-public-link-copy" type="button">
                             <span class="far fa-copy me-1"></span>{{ __('archive.public_links.copy') }}
                         </button>
@@ -28,7 +28,7 @@
                     <span class="badge rounded-pill badge-subtle-info js-archive-public-link-download-enabled-badge d-none">{{ __('archive.public_links.download_allowed') }}</span>
                 </div>
                 <div class="form-check form-switch mt-3 js-archive-public-link-download-setting">
-                    <input class="form-check-input js-archive-public-link-allow-download" id="archive-public-link-allow-download" type="checkbox">
+                    <x-forms.input class="form-check-input js-archive-public-link-allow-download" id="archive-public-link-allow-download" type="checkbox" />
                     <label class="form-check-label" for="archive-public-link-allow-download">{{ __('archive.public_links.allow_download_label') }}</label>
                 </div>
             </div>

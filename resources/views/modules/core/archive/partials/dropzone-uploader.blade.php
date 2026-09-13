@@ -30,7 +30,7 @@
       method="POST"
       enctype="multipart/form-data">
     @csrf
-    <div class="fallback"><input name="files[]" type="file" multiple></div>
+    <div class="fallback"><x-forms.input name="files[]" type="file" multiple /></div>
     <div class="dz-message" data-dz-message="data-dz-message">
         <img class="me-2" src="{{ asset('assets/img/icons/cloud-upload.svg') }}" width="25" alt="">
         {{ __('archive.drop_files_here') }}

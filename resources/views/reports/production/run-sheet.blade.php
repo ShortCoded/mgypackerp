@@ -6,12 +6,18 @@
     <h2>{{ $reportTitle }}</h2>
     <table class="report-table" style="margin-bottom:9px;"><tbody>
         <tr><th>{{ __('Production Order') }}</th><td dir="ltr">{{ $record->order?->doc_num }}</td><th>{{ __('Sales Order') }}</th><td dir="ltr">{{ $record->order?->salesOrder?->doc_num ?: '—' }}</td></tr>
-        <tr><th>{{ __('Customer') }}</th><td>{{ $record->order?->salesOrder?->customer?->name ?: '—' }}</td><th>{{ __('Product') }}</th><td>{{ $record->product?->doc_num }} / {{ $record->product?->name }}</td></tr>
-        <tr><th>{{ __('Machine') }}</th><td>{{ $record->machine?->code }} / {{ $record->machine?->name }}</td><th>{{ __('Mold') }}</th><td>{{ $record->mold?->code }} / {{ $record->mold?->name }}</td></tr>
-        <tr><th>{{ __('Shift') }}</th><td>{{ $record->shift?->name ?: '—' }}</td><th>{{ __('Batch / lot') }}</th><td dir="ltr">{{ $record->batch_lot ?: '—' }}</td></tr>
+        <tr><th>{{ __('production_execution.fields.stage') }}</th><td>{{ $record->stageSnapshot?->stage_name ?: '—' }}</td><th>{{ __('Product') }}</th><td>{{ $record->product?->doc_num }} / {{ $record->product?->name }}</td></tr>
+        <tr><th>{{ __('production_execution.fields.fixed_asset') }}</th><td>{{ $record->fixedAsset?->doc_num }} / {{ $record->fixedAsset?->asset_name }}</td><th>{{ __('production_execution.fields.planned_labor_count') }}</th><td>{{ $record->planned_labor_count ?? '—' }}</td></tr>
+        <tr><th>{{ __('Batch / lot') }}</th><td dir="ltr">{{ $record->batch_lot ?: '—' }}</td><th>{{ __('production_execution.fields.work_description') }}</th><td>{{ $record->work_description ?: '—' }}</td></tr>
         <tr><th>{{ __('Planned start') }}</th><td>{{ $dates->formatDateTime($record->planned_start_at, '') }}</td><th>{{ __('Planned end') }}</th><td>{{ $dates->formatDateTime($record->planned_end_at, '') }}</td></tr>
         <tr><th>{{ __('Actual start') }}</th><td>{{ $dates->formatDateTime($record->actual_start_at, '—') }}</td><th>{{ __('Actual end') }}</th><td>{{ $dates->formatDateTime($record->actual_end_at, '—') }}</td></tr>
+        <tr><th>{{ __('production_execution.fields.actual_duration') }}</th><td>{{ $record->actualDurationHours() !== null ? __('production_execution.labor.hours_value', ['hours' => $record->actualDurationHours()]) : '—' }}</td><th>{{ __('production_execution.fields.total_labor_hours') }}</th><td>{{ $record->totalLaborHours() }}</td></tr>
         <tr><th>{{ __('Target') }}</th><td dir="ltr">{{ $numbers->format($record->planned_base_quantity) }}</td><th>{{ __('Status') }}</th><td>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td></tr>
+    </tbody></table>
+
+    <h3>{{ __('production_execution.labor.actual_details') }}</h3>
+    <table class="report-table"><thead><tr><th>#</th><th>{{ __('production_execution.fields.worker_name') }}</th><th>{{ __('production_execution.fields.worker_role') }}</th><th>{{ __('production_execution.fields.planned_hours') }}</th><th>{{ __('production_execution.fields.actual_hours') }}</th><th>{{ __('production_execution.fields.notes') }}</th></tr></thead><tbody>
+        @forelse(collect($record->labor_details ?? []) as $index => $labor)<tr><td>{{ $index + 1 }}</td><td>{{ $labor['name'] ?? '—' }}</td><td>{{ $labor['role'] ?? '—' }}</td><td>{{ $labor['planned_hours'] ?? '—' }}</td><td>{{ $labor['actual_hours'] ?? '—' }}</td><td>{{ $labor['notes'] ?? '—' }}</td></tr>@empty<tr><td colspan="6">{{ __('production_execution.labor.no_details') }}</td></tr>@endforelse
     </tbody></table>
 
     <h3>{{ __('Material Requirement and Accountability') }}</h3>

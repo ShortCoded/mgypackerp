@@ -73,9 +73,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card mb-3">
@@ -92,7 +92,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="doc_number" as="display" :value="old('doc_number', ! $isCreateLike ? $record?->doc_number : '')" input-class="text-center" />
                             @else
-                                <input class="form-control text-center" id="doc_number" name="doc_number" value="{{ old('doc_number', ! $isCreateLike ? $record?->doc_number : '') }}">
+                                <x-forms.input class="form-control text-center" id="doc_number" name="doc_number" value="{{ old('doc_number', ! $isCreateLike ? $record?->doc_number : '') }}" />
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
@@ -107,7 +107,7 @@
                         @if ($isView)
                             <x-forms.view-field for="name" :value="$value('name')" />
                         @else
-                            <input class="form-control" id="name" name="name" value="{{ $value('name') }}" required autofocus>
+                            <x-forms.input class="form-control" id="name" name="name" value="{{ $value('name') }}" required autofocus />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -117,7 +117,7 @@
                         @if ($isView)
                             <x-forms.view-field for="account_code" :value="$isCreateLike && $mode === 'clone' ? '' : $value('account_code')" />
                         @else
-                            <input class="form-control" id="account_code" name="account_code" value="{{ $isCreateLike && $mode === 'clone' ? '' : $value('account_code') }}" @readonly(! $canControlAccountCode && ! $isCreateLike)>
+                            <x-forms.input class="form-control" id="account_code" name="account_code" value="{{ $isCreateLike && $mode === 'clone' ? '' : $value('account_code') }}" :readonly='! $canControlAccountCode && ! $isCreateLike' />
                         @endif
                         <div class="invalid-feedback" data-error-for="account_code"></div>
                     </div>
@@ -127,28 +127,28 @@
                         @if ($isView)
                             <x-forms.view-field for="parent_doc_num" :value="$parentOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="parent_doc_num" name="parent_doc_num" data-url="{{ route('admin.accounting.select2.accounts') }}?exclude={{ $record?->doc_num }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="parent_doc_num" name="parent_doc_num" data-url="{{ route('admin.accounting.select2.accounts') }}?exclude={{ $record?->doc_num }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                 @if ($parentOption)
                                     <option value="{{ $parentOption['id'] }}" selected>{{ $parentOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="parent_doc_num"></div>
                     </div>
 
-                    <input type="hidden" id="account_type" name="account_type" value="{{ $accountTypeValue }}">
-                    <input type="hidden" id="statement_type" name="statement_type" value="{{ $statementTypeValue }}">
+                    <x-forms.input type="hidden" id="account_type" name="account_type" value="{{ $accountTypeValue }}" />
+                    <x-forms.input type="hidden" id="statement_type" name="statement_type" value="{{ $statementTypeValue }}" />
 
                     <div class="col-md-6 col-lg-3">
                         <label class="form-label" for="classification_code">{{ __('accounts.attributes.classification') }}</label>
                         @if ($isView)
                             <x-forms.view-field for="classification_code" :value="$classificationOption['text'] ?? null" />
                         @else
-                            <select class="form-select js-select2-ajax" id="classification_code" name="classification_code" data-url="{{ route('admin.accounting.select2.account-classifications') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                            <x-forms.select class="form-select js-select2-ajax" id="classification_code" name="classification_code" data-url="{{ route('admin.accounting.select2.account-classifications') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                 @if ($classificationOption)
                                     <option value="{{ $classificationOption['id'] }}" selected>{{ $classificationOption['text'] }}</option>
                                 @endif
-                            </select>
+                            </x-forms.select>
                             {{-- <div class="form-text">{{ __('accounts.messages.expense_classification_fallback') }}</div> --}}
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="classification_code"></div>
@@ -159,11 +159,11 @@
                         @if ($isView)
                             <x-forms.view-field for="statement_type_display" :value="__('accounts.statement_types.' . ($record?->statement_type ?? $statementTypeValue))" />
                         @else
-                            <select class="form-select bg-100" id="statement_type_display" disabled required>
+                            <x-forms.select class="form-select bg-100" id="statement_type_display" disabled required>
                                 @foreach (\Modules\Accounting\Models\Account::statementTypes() as $type)
                                     <option value="{{ $type }}" @selected($statementTypeValue === $type)>{{ __('accounts.statement_types.' . $type) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                             <div class="form-text">{{ __('accounts.messages.statement_type_auto') }}</div>
                         @endif
                         <div class="invalid-feedback" data-error-for="account_type"></div>
@@ -175,11 +175,11 @@
                         @if ($isView)
                             <x-forms.view-field for="normal_balance" :value="__('accounts.normal_balances.' . ($record?->normal_balance ?? $value('normal_balance', 'debit')))" />
                         @else
-                            <select class="form-select" id="normal_balance" name="normal_balance" required>
+                            <x-forms.select class="form-select" id="normal_balance" name="normal_balance" required>
                                 @foreach (\Modules\Accounting\Models\Account::normalBalances() as $balance)
                                     <option value="{{ $balance }}" @selected($value('normal_balance') === $balance)>{{ __('accounts.normal_balances.' . $balance) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                             <div class="form-text">{{ __('accounts.messages.normal_balance_editable') }}</div>
                         @endif
                         <div class="invalid-feedback" data-error-for="normal_balance"></div>
@@ -190,11 +190,11 @@
                         @if ($isView)
                             <x-forms.view-field for="status" :value="__('accounts.statuses.' . ($record?->status ?? 'active'))" />
                         @else
-                            <select class="form-select" id="status" name="status" required>
+                            <x-forms.select class="form-select" id="status" name="status" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected($value('status', 'active') === $status)>{{ __('accounts.statuses.' . $status) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -210,9 +210,9 @@
                                         </span>
                                     </div>
                                 @else
-                                    <input type="hidden" name="{{ $boolean }}" value="0">
+                                    <x-forms.input type="hidden" name="{{ $boolean }}" value="0" />
                                     <div class="mb-0 form-check form-switch">
-                                        <input class="form-check-input" id="{{ $boolean }}" name="{{ $boolean }}" type="checkbox" value="1" @checked(old($boolean, $record?->{$boolean} ?? ($boolean === 'is_postable')))>
+                                        <x-forms.input class="form-check-input" id="{{ $boolean }}" name="{{ $boolean }}" type="checkbox" value="1" :checked="old($boolean, $record?->{$boolean} ?? ($boolean === 'is_postable'))" />
                                         <label class="form-check-label text-700 fs-10" for="{{ $boolean }}">{{ __('accounts.attributes.' . $boolean) }}</label>
                                     </div>
                                 @endif
@@ -228,7 +228,7 @@
                         @if ($isView)
                             <x-forms.view-field for="notes" as="textarea" :value="$value('notes')" rows="4" />
                         @else
-                            <textarea class="form-control" id="notes" name="notes" rows="4">{{ $value('notes') }}</textarea>
+                            <x-forms.textarea class="form-control" id="notes" name="notes" rows="4">{{ $value('notes') }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

@@ -212,6 +212,15 @@ function hrAllReviewHrIndexRoutes(): array
     return hrSimplifiedHrIndexRoutes();
 }
 
+function hrAllReviewHrMenuRoutes(): array
+{
+    $routes = hrAllReviewHrIndexRoutes();
+    $attendanceIndex = array_search('admin.hr.biometric-devices.index', $routes, true);
+    array_splice($routes, $attendanceIndex === false ? count($routes) : $attendanceIndex, 0, ['employee.hr.self-service.index']);
+
+    return $routes;
+}
+
 function hrSimplifiedHrMenuLabels(): array
 {
     return [
@@ -494,7 +503,7 @@ test('Human Resources menu exposes current screens and retained lookup screens',
         ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_types')['text'])->toBe('Job Types')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_social_insurance_policies')['text'])->toBe('Social Insurance Policies')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_tax_policies')['text'])->toBe('Employment Tax Policies')
-        ->and($routes)->toBe(hrAllReviewHrIndexRoutes())
+        ->and($routes)->toBe(hrAllReviewHrMenuRoutes())
         ->and($routes)->not->toContain('admin.hr.select2.lookups')
         ->and($routes)->not->toContain('admin.hr.select2.foundation');
 
@@ -522,7 +531,7 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
     expect($lookupOnlyHr)->not->toBeNull();
-    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_setup'])
+    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_setup', 'attendance_leave'])
         ->and(hrMenuItemByLabel([$lookupOnlyHr], 'hr_countries'))->not->toBeNull();
 });
 
@@ -1560,8 +1569,8 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->assertSee('value="'.$fixtures['hiringStatus']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['allowance']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['shift']->doc_num.'" selected', false)
-        ->assertSee('name="attendance_tracking_enabled" type="checkbox"', false)
-        ->assertSee('name="overtime_enabled" type="checkbox"', false)
+        ->assertSee('type="checkbox" id="hr-employee-attendance-tracking-enabled" name="attendance_tracking_enabled"', false)
+        ->assertSee('type="checkbox" id="hr-employee-overtime-enabled" name="overtime_enabled"', false)
         ->assertSee('nadia.personal@example.test');
 
     $this->withSession($session)
@@ -1727,10 +1736,43 @@ test('HrEmployee routes prefer the active company record and restore collisions 
         ->assertDontSee('Active Employee');
     $this->withSession($session)
         ->patchJson(route('admin.hr.employees.restore', $historical->public_uuid))
-        ->assertUnprocessable()
-        ->assertJsonPath('message', __('hr.employees.messages.restore_conflict'));
+        ->assertStatus(409)
+        ->assertJsonPath('message', __('hr.employees.messages.restore_conflict'))
+        ->assertJsonPath('data.conflict_type', 'employee_identity_conflict')
+        ->assertJsonPath('data.conflict_fields.0', 'doc_number');
 
     expect($historical->refresh()->trashed())->toBeTrue();
+});
+
+test('employee record can link one active user account only once', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $linkedUser = User::factory()->create();
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'user_doc_num' => $linkedUser->doc_num,
+            'biometric_mappings' => [],
+        ]))
+        ->assertOk();
+
+    $employee = HrEmployee::query()->where('user_id', $linkedUser->getKey())->sole();
+    expect($employee->user?->is($linkedUser))->toBeTrue();
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Second Employee',
+            'national_id' => '29104159999999',
+            'email' => 'second.employee@example.test',
+            'work_email' => 'second.employee@company.example.test',
+            'user_doc_num' => $linkedUser->doc_num,
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('user_doc_num');
+
 });
 
 test('HrEmployee list and branch validation are restricted to the operating company', function (): void {

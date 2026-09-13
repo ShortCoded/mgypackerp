@@ -46,12 +46,12 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
         @if ($isEdit && $record)
-            <input type="hidden" id="item-lookup-current-doc-num" value="{{ $record->doc_num }}">
+            <x-forms.input type="hidden" id="item-lookup-current-doc-num" value="{{ $record->doc_num }}" />
         @endif
 
         <div class="card">
@@ -70,7 +70,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="item-lookup-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-item-lookup-doc-number" />
                             @else
-                                <input id="item-lookup-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-item-lookup-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input id="item-lookup-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-item-lookup-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -92,7 +92,7 @@
                         @if ($isView)
                             <x-forms.view-field for="item-lookup-name" :value="old('name', $recordName)" />
                         @else
-                            <input id="item-lookup-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required>
+                            <x-forms.input id="item-lookup-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -102,11 +102,11 @@
                         @if ($isView)
                             <x-forms.view-field for="item-lookup-status" :value="__('item_lookups.statuses.' . ($record?->status ?? 'active'))" />
                         @else
-                            <select id="item-lookup-status" name="status" class="form-select" required>
+                            <x-forms.select id="item-lookup-status" name="status" class="form-select" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected(old('status', $record?->status ?? 'active') === $status)>{{ __('item_lookups.statuses.' . $status) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -136,11 +136,11 @@
                             @if ($isView)
                                 <x-forms.view-field for="equivalent_unit_doc_num" :value="$equivalentUnitLabel" />
                             @else
-                                <select class="form-select js-select2-ajax js-item-unit-equivalent-unit" id="equivalent_unit_doc_num" name="equivalent_unit_doc_num" data-url="{{ route('admin.select2.item-units') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" @if ($equivalentUnitExtraParams !== []) data-extra-params='@json($equivalentUnitExtraParams)' @endif>
+                                <x-forms.select class="form-select js-select2-ajax js-item-unit-equivalent-unit" id="equivalent_unit_doc_num" name="equivalent_unit_doc_num" data-url="{{ route('admin.select2.item-units') }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" :data-extra-params="$equivalentUnitExtraParams !== [] ? json_encode($equivalentUnitExtraParams) : null">
                                     @if ($equivalentUnitDocNum !== '' && $equivalentUnitLabel !== '')
                                         <option value="{{ $equivalentUnitDocNum }}" selected>{{ $equivalentUnitLabel }}</option>
                                     @endif
-                                </select>
+                                </x-forms.select>
                             @endif
                             <div class="invalid-feedback d-block" data-error-for="equivalent_unit_doc_num"></div>
                         </div>
@@ -151,7 +151,7 @@
                         @if ($isView)
                             <x-forms.view-field for="item-lookup-notes" as="textarea" :value="old('notes', $record?->notes)" rows="4" />
                         @else
-                            <textarea id="item-lookup-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea id="item-lookup-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

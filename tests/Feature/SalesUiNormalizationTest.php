@@ -3,7 +3,6 @@
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\ArchiveFile;
-use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\MenuService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Exports\SalesCycleReportExport;
@@ -226,14 +225,14 @@ test('sales request customer type requires customer and internal type uses separ
         ->assertDontSee('[specifications][packaging]', false)
         ->assertDontSee('[specifications][units_per_package]', false)
         ->assertSee('data-document-summary', false)
-        ->assertSee('data-sales-summary-subtotal', false)
-        ->assertSee('data-sales-summary-total', false)
+        ->assertDontSee('data-sales-summary-subtotal', false)
+        ->assertDontSee('data-sales-summary-total', false)
         ->assertSee('data-sales-summary-quantity', false)
         ->assertDontSee('data-sales-summary-discount', false)
         ->assertDontSee('data-sales-summary-tax', false)
-        ->assertSee(__('sales_ui.optional_unit_price'))
+        ->assertDontSee(__('sales_ui.optional_unit_price'))
+        ->assertDontSee('[unit_price]', false)
         ->assertSee('data-shortcut-action="line.add"', false);
-    expect($requestForm->getContent())->not->toMatch('/name="lines\[[^]]+\]\[unit_price\]"[^>]*required/');
     expect(substr_count($requestForm->getContent(), 'data-sales-add-line'))->toBe(2);
 
     $printText = salesPdfText($this->get(route('admin.sales.customer-requests.print', $request))->assertOk()->getContent());
@@ -244,13 +243,13 @@ test('sales request customer type requires customer and internal type uses separ
 
 test('sales navigation is one ordered journey with canonical statement and collection links', function () {
     $f = salesUiFixture();
-    foreach (['customers.view', 'sales_deliveries.view', 'customer_invoices.view', 'sales_returns.view', 'customer_receipts.view', 'reports.customer_statement.view', 'reports.sales.sales_orders.view'] as $permission) {
+    foreach (['customers.view', 'price_lists.view', 'sales_deliveries.view', 'customer_invoices.view', 'sales_returns.view', 'customer_receipts.view', 'reports.customer_statement.view', 'reports.sales.sales_orders.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $f['user']->givePermissionTo($permission);
     }
     $menu = app(MenuService::class)->getMenu($f['user']);
     $sales = collect($menu)->firstWhere('label', 'sales');
-    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'customer_terms', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports']);
+    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'customer_terms', 'price_lists', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports']);
     $reportLabels = collect($sales['children'])->firstWhere('label', 'sales_cycle_reports')['children'] ?? [];
     expect(collect($reportLabels)->pluck('label')->all())->toBe([
         'customer_statement',
@@ -264,6 +263,7 @@ test('sales navigation is one ordered journey with canonical statement and colle
         'sales_report_returns',
         'sales_report_quotations',
         'sales_report_fulfillment',
+        'sales_report_pricing',
         'sales_report_operational',
     ]);
 });
@@ -366,6 +366,7 @@ test('approved sales request can prefill quotation order and invoice forms', fun
 
 test('direct sales invoice can be posted delivered and returned without a sales order', function () {
     $f = salesUiFixture();
+    createSalesPriceList($f, null, [['product' => $f['finished'], 'price' => '50']]);
     foreach (['customer_invoices.view', 'customer_invoices.post', 'sales_deliveries.create', 'sales_deliveries.view', 'sales_returns.create'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $f['user']->givePermissionTo($permission);
@@ -607,8 +608,10 @@ test('customer collection records the receiving employee and prints conditional 
 
     $this->get(route('admin.sales.customer-receipts.create'))->assertOk()
         ->assertSee('id="received_by_employee_doc_num"', false)
-        ->assertSee('value="'.app(DateFormatService::class)->formatDate(now()).'"', false)
-        ->assertDontSee('value="'.now()->toDateString().'"', false)
+        ->assertSee('id="receipt_date"', false)
+        ->assertSee('value="'.now()->toDateString().'"', false)
+        ->assertSee('data-storage-format="Y-m-d"', false)
+        ->assertSee('js-date-picker', false)
         ->assertSee(route('admin.sales.select2.employees'), false)
         ->assertSee(route('admin.select2.currencies'), false)
         ->assertSee('data-shortcut-action="form.save"', false)

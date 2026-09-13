@@ -4,6 +4,7 @@ namespace Modules\Purchases\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -43,6 +44,31 @@ class GoodsReceiptInspectionLine extends Model
     public function receiptLine(): BelongsTo
     {
         return $this->belongsTo(UnpricedInventoryReceiptLine::class, 'receipt_line_id');
+    }
+
+    public function receiptLines(): HasMany
+    {
+        return $this->hasMany(UnpricedInventoryReceiptLine::class, 'goods_receipt_inspection_line_id');
+    }
+
+    public function receivedQuantity(?int $exceptReceiptId = null): float
+    {
+        if ($exceptReceiptId === null && $this->relationLoaded('receiptLines')) {
+            return (float) $this->receiptLines
+                ->filter(fn (UnpricedInventoryReceiptLine $line): bool => $line->receipt !== null
+                    && ! in_array($line->receipt->status, ['cancelled', 'reversed'], true))
+                ->sum('delivered_quantity');
+        }
+
+        return (float) $this->receiptLines()
+            ->when($exceptReceiptId !== null, fn ($query) => $query->where('receipt_id', '<>', $exceptReceiptId))
+            ->whereHas('receipt', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('delivered_quantity');
+    }
+
+    public function remainingReceiptQuantity(?int $exceptReceiptId = null): float
+    {
+        return max(0, (float) $this->accepted_quantity - $this->receivedQuantity($exceptReceiptId));
     }
 
     public function product(): BelongsTo

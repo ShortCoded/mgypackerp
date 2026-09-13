@@ -2,7 +2,7 @@
     <li class="nav-item">
         <div class="search-box" data-navigation-search>
             <form class="position-relative" data-bs-toggle="search" data-bs-display="static">
-                <input class="form-control search-input" id="navbar_search_input" type="search" placeholder="{{ __('navigation_search.search_pages') }}" aria-label="{{ __('navigation_search.search_pages') }}" title="{{ __('common.shortcuts.global_search') }}" data-bs-title="{{ __('common.shortcuts.global_search') }}" autocomplete="off" aria-expanded="false" aria-controls="navbar_navigation_search_results">
+                <x-forms.input class="form-control search-input" id="navbar_search_input" type="search" placeholder="{{ __('navigation_search.search_pages') }}" aria-label="{{ __('navigation_search.search_pages') }}" title="{{ __('common.shortcuts.global_search') }}" data-bs-title="{{ __('common.shortcuts.global_search') }}" autocomplete="off" aria-expanded="false" aria-controls="navbar_navigation_search_results" />
                 <span class="fas fa-search search-box-icon"></span>
             </form>
             <div class="btn-close-falcon-container position-absolute end-0 top-50 translate-middle shadow-none" data-bs-dismiss="search">

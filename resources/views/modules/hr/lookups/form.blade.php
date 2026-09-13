@@ -28,9 +28,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card">
@@ -49,7 +49,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="hr-lookup-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-hr-doc-number" />
                             @else
-                                <input id="hr-lookup-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}">
+                                <x-forms.input id="hr-lookup-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-hr-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('hr.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('hr.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -71,7 +71,7 @@
                         @if ($isView)
                             <x-forms.view-field for="hr-lookup-name" :value="old('name', $recordName)" />
                         @else
-                            <input id="hr-lookup-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required>
+                            <x-forms.input id="hr-lookup-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -81,7 +81,7 @@
                         @if ($isView)
                             <x-forms.view-field for="hr-lookup-notes" as="textarea" :value="old('notes', $record?->notes)" rows="4" />
                         @else
-                            <textarea id="hr-lookup-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea id="hr-lookup-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

@@ -7,6 +7,8 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\MenuService;
+use Modules\Finance\Models\Cashbox;
+use Modules\Finance\Models\CashboxCurrency;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -314,6 +316,83 @@ test('purchase invoices allow an optional order and preserve deliberately unlink
         ->assertSee(__('purchase_invoices.actions.delete_line'));
 });
 
+test('supplier invoice schedule uses one date and an explicit cashbox or bank source', function (): void {
+    $fixture = procurementUiFixture();
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+
+    expect(PurchaseInvoice::scheduleSourceTypes())->toBe([
+        PurchaseInvoice::SourceCashbox,
+        PurchaseInvoice::SourceBank,
+    ]);
+
+    $html = $this->get(route('admin.purchases.purchase-invoices.create'))->assertOk()->getContent();
+    $dom = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $scheduleTable = $dom->querySelector('.js-purchase-invoice-schedules');
+    $sourceOptions = collect($scheduleTable->querySelectorAll('.js-purchase-invoice-schedule-source option'))
+        ->map(fn ($option): string => $option->getAttribute('value'))
+        ->all();
+
+    expect($sourceOptions)->toBe([PurchaseInvoice::SourceCashbox, PurchaseInvoice::SourceBank])
+        ->and($scheduleTable->querySelector('.js-purchase-invoice-payment-date'))->toBeNull()
+        ->and($scheduleTable->querySelector('.js-purchase-invoice-linked-voucher-cell'))->toBeNull()
+        ->and($scheduleTable->textContent)->not->toContain(__('purchase_invoices.attributes.status'));
+
+    $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111098', 'Schedule supplier payable');
+    $cashAccount = procurementPostingAccount($fixture['company'], '1111', '1111098', 'Schedule cash');
+    $fixture['firstSupplier']->forceFill(['account_id' => $supplierAccount->getKey()])->save();
+    $cashbox = Cashbox::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $administrativeBranch->getKey(),
+        'account_id' => $cashAccount->getKey(),
+        'name' => 'Schedule cashbox',
+        'status' => 'active',
+    ]);
+    CashboxCurrency::query()->create([
+        'cashbox_id' => $cashbox->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'is_default' => true,
+        'status' => 'active',
+    ]);
+    $dueDate = now()->addWeek()->toDateString();
+    $payload = [
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypePartial,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 2,
+            'unit_price' => 10,
+        ]],
+        'payment_schedules' => [[
+            'due_date' => $dueDate,
+            'amount' => 20,
+            'payment_source_type' => PurchaseInvoice::SourceCashbox,
+            'cashbox_doc_num' => $cashbox->doc_num,
+        ]],
+    ];
+
+    $invalidPayload = $payload;
+    $invalidPayload['payment_schedules'][0]['payment_source_type'] = PurchaseInvoice::SourceScheduled;
+    $this->postJson(route('admin.purchases.purchase-invoices.store'), $invalidPayload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('payment_schedules.0.payment_source_type');
+
+    $response = $this->postJson(route('admin.purchases.purchase-invoices.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $invoice = PurchaseInvoice::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
+    $schedule = $invoice->paymentSchedules()->sole();
+    expect($schedule->due_date->toDateString())->toBe($dueDate)
+        ->and($schedule->payment_date?->toDateString())->toBe($dueDate)
+        ->and($schedule->payment_source_type)->toBe(PurchaseInvoice::SourceCashbox);
+});
+
 test('request datatable exposes state actions and draft restore without resurrecting removed lines', function (): void {
     $fixture = procurementUiFixture();
     $request = procurementManualRequisition($fixture);
@@ -526,21 +605,74 @@ test('purchase inspection precedes receipt and accepted quantities feed the ware
     expect($rejectionRows->firstWhere('document', $inspection->doc_num))
         ->toMatchArray(['rejected' => '10.00000000', 'document_permission' => 'purchases.goods_receipt_inspection.view']);
     $this->get(route('admin.purchases.goods-receipt-notes.create', $inspection))->assertOk()
-        ->assertSee($inspection->doc_num)->assertSee(__('Accepted for receipt'))->assertDontSee(__('Rejected for receipt'));
+        ->assertSee($inspection->doc_num)
+        ->assertSee(__('Accepted'))
+        ->assertSee(__('Previously received'))
+        ->assertSee(__('Remaining'))
+        ->assertSee(__('Received now'))
+        ->assertDontSee(__('Rejected for receipt'));
     $receipt = $receiving->createReceiptFromInspection($inspection, [
         'document_date' => now()->toDateString(),
-        'lines' => [['inspection_line_public_id' => $inspection->lines->sole()->public_id]],
+        'lines' => [[
+            'inspection_line_public_id' => $inspection->lines->sole()->public_id,
+            'delivered_quantity' => 15,
+        ]],
     ]);
     expect(InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->count())->toBe(0);
-    expect((float) $receipt->lines->sole()->accepted_quantity)->toBe(40.0)
-        ->and($inspection->fresh()->receipt_id)->toBe($receipt->id)
+    expect((float) $receipt->lines->sole()->accepted_quantity)->toBe(15.0)
+        ->and($receipt->goods_receipt_inspection_id)->toBe($inspection->id)
+        ->and($receipt->lines->sole()->goods_receipt_inspection_line_id)->toBe($inspection->lines->sole()->id)
+        ->and($inspection->fresh()->receipt_id)->toBeNull();
+    $this->get(route('admin.purchases.goods-receipt-notes.edit', $receipt->doc_num))
+        ->assertOk()
+        ->assertSee($inspection->doc_num)
+        ->assertSee('name="lines[0][delivered_quantity]"', false);
+    $inspection->forceFill(['receipt_id' => $receipt->id])->save();
+    $this->get(route('admin.purchases.goods-receipt-notes.edit', $receipt->doc_num))
+        ->assertOk()
+        ->assertSee('name="lines[0][delivered_quantity]"', false);
+    $inspection->forceFill(['receipt_id' => null])->save();
+    $receipt = $receiving->updateReceipt($receipt, [
+        'document_date' => now()->toDateString(),
+        'lines' => [[
+            'inspection_line_public_id' => $inspection->lines->sole()->public_id,
+            'delivered_quantity' => 18,
+        ]],
+    ]);
+    expect((float) $receipt->lines->sole()->accepted_quantity)->toBe(18.0)
+        ->and($receipt->lines->sole()->goods_receipt_inspection_line_id)->toBe($inspection->lines->sole()->id);
+    $receipt = $receiving->postReceipt($receipt->fresh());
+    expect(app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::IncomingQcPending,
+        ['branch_id' => $fixture['branch']->id],
+        $fixture['company']->id,
+        $fixture['period']->id,
+    )->pluck('document')->all())->toContain($inspection->doc_num);
+    $partialInspectionOptions = $this->getJson(route('admin.purchases.select2.inspections'))->assertOk();
+    expect(collect($partialInspectionOptions->json('results'))->pluck('id')->all())->toContain($inspection->doc_num);
+    $splitReceipt = $receiving->postReceipt($receiving->createReceiptFromInspection($inspection->fresh(), [
+        'document_date' => now()->toDateString(),
+        'lines' => [[
+            'inspection_line_public_id' => $inspection->lines->sole()->public_id,
+            'delivered_quantity' => 22,
+        ]],
+    ]));
+    expect((float) $splitReceipt->lines->sole()->accepted_quantity)->toBe(22.0)
+        ->and($inspection->fresh()->hasReceiptableQuantity())->toBeFalse()
         ->and(fn () => $receiving->createReceiptFromInspection($inspection->fresh(), [
             'document_date' => now()->toDateString(),
             'lines' => [['inspection_line_public_id' => $inspection->lines->sole()->public_id]],
-        ]))->toThrow(DomainException::class, __('Only an accepted unused purchase inspection can create a goods receipt.'));
+        ]))->toThrow(DomainException::class, __('procurement.messages.receipt_quantity_exceeds_inspection_remaining'));
+    expect(app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::IncomingQcPending,
+        ['branch_id' => $fixture['branch']->id],
+        $fixture['company']->id,
+        $fixture['period']->id,
+    )->pluck('document')->all())->not->toContain($inspection->doc_num);
+    $completedInspectionOptions = $this->getJson(route('admin.purchases.select2.inspections'))->assertOk();
+    expect(collect($completedInspectionOptions->json('results'))->pluck('id')->all())->not->toContain($inspection->doc_num);
     expect(app(ProcurementCycleReport::class)->documentChain($receipt)->pluck('doc_num')->all())
-        ->toContain($order->doc_num, $inspection->doc_num, $receipt->doc_num);
-    $receipt = $receiving->postReceipt($receipt->fresh());
+        ->toContain($order->doc_num, $inspection->doc_num, $receipt->doc_num, $splitReceipt->doc_num);
     $secondInspection = $receiving->inspectPurchaseSource($order->fresh(), [
         'inspection_at' => now()->toDateString(),
         'lines' => [[
@@ -558,13 +690,13 @@ test('purchase inspection precedes receipt and accepted quantities feed the ware
         ->assertOk()->assertSee($receipt->doc_num)->assertSee($fixture['raw']->name);
     procurementUseBranch($fixture, $administrativeBranch);
     $receiptOptions = $this->getJson(route('admin.purchases.select2.receipts', ['purpose' => 'invoice', 'purchase_order' => $order->doc_num]))->assertOk();
-    expect(collect($receiptOptions->json('results'))->pluck('id')->all())->toContain($receipt->doc_num, $secondReceipt->doc_num);
+    expect(collect($receiptOptions->json('results'))->pluck('id')->all())->toContain($receipt->doc_num, $splitReceipt->doc_num, $secondReceipt->doc_num);
     $invoiceHtml = $this->get(route('admin.purchases.purchase-invoices.create', ['receipts' => [$receipt->doc_num]]))->assertOk()->assertSee('value="'.$receipt->doc_num.'" selected', false)->getContent();
     $invoiceDom = HTMLDocument::createFromString($invoiceHtml, LIBXML_NOERROR);
     $source = $invoiceDom->querySelector('input[name="lines[0][receipt_line_public_id]"]');
     expect($source->getAttribute('value'))->toBe($receipt->lines->sole()->public_id)
         ->and($invoiceDom->querySelector('.js-purchase-invoice-duplicate-line')->hasAttribute('hidden'))->toBeTrue();
-    $this->getJson(route('admin.purchases.procurement.data', 'goods_receipts').'?search[value]='.$order->doc_num)->assertOk()->assertJsonPath('recordsFiltered', 2);
+    $this->getJson(route('admin.purchases.procurement.data', 'goods_receipts').'?search[value]='.$order->doc_num)->assertOk()->assertJsonPath('recordsFiltered', 3);
 });
 
 test('editing the simplified request preserves legacy hidden metadata and timestamps on a no-op', function (): void {
@@ -634,6 +766,7 @@ test('purchase request visibility and downstream actions follow operating branch
 test('purchase navigation follows the operational document sequence', function (): void {
     config()->set('erp.phase_mode', 'expanded');
     $expectedOrder = [
+        'suppliers',
         'purchase_requisitions',
         'purchase_orders',
         'supplier_quotations',
@@ -643,7 +776,6 @@ test('purchase navigation follows the operational document sequence', function (
         'purchase_invoices',
         'supplier_payments',
         'purchase_returns',
-        'suppliers',
         'purchase_reports',
     ];
     $purchases = collect(app(MenuService::class)->structure())->firstWhere('label', 'purchases');
@@ -653,6 +785,22 @@ test('purchase navigation follows the operational document sequence', function (
 
     app()->setLocale('ar');
     expect(__('menu.purchase_inspections'))->toBe('فحوص المشتريات');
+});
+
+test('purchase reports menu exposes every implemented procurement report', function (): void {
+    $purchasesMenu = require config_path('menu/purchases.php');
+    $reportItems = collect($purchasesMenu[0]['children'])->firstWhere('label', 'purchase_reports')['children'];
+    $exposedTypes = collect($reportItems)->pluck('route_params.report_type')->filter()->values()->all();
+    $dedicatedTypes = [ProcurementCycleReport::SupplierStatement];
+
+    expect(array_values(array_diff(ProcurementCycleReport::types(), [...$exposedTypes, ...$dedicatedTypes])))->toBe([])
+        ->and($exposedTypes)->toContain(
+            ProcurementCycleReport::PurchaseLedger,
+            ProcurementCycleReport::ReceiptQualityStatus,
+            ProcurementCycleReport::QcRejection,
+            ProcurementCycleReport::DueSupplierInstallments,
+            ProcurementCycleReport::ProductionAnalysis,
+        );
 });
 
 test('supplier payment form compiles all fields and Arabic labels', function (): void {
@@ -685,4 +833,12 @@ test('purchase cycle tables consistently support permission aware double click e
         ->and($procurementScript)
         ->toContain('dblclick.procurementEditRow')
         ->toContain('row?.can_edit ? row.edit_url : row?.view_url');
+});
+
+test('purchase invoice generic confirmations are translated without an English fallback', function (): void {
+    app()->setLocale('ar');
+    expect(__('purchase_invoices.js.confirm_title'))->toBe('تأكيد الإجراء؟');
+
+    app()->setLocale('en');
+    expect(__('purchase_invoices.js.confirm_title'))->toBe('Confirm action?');
 });

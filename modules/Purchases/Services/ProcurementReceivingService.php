@@ -211,10 +211,7 @@ class ProcurementReceivingService
                         ->where('delivery_schedule_id', $schedule->getKey())
                         ->whereHas('receipt', fn ($query) => $query->where('posting_status', 'unposted')->where('status', UnpricedInventoryReceipt::StatusDraft))
                         ->sum('delivered_quantity');
-                    $pendingScheduledInspections = (float) GoodsReceiptInspectionLine::query()
-                        ->where('delivery_schedule_id', $schedule->getKey())
-                        ->whereHas('inspection', fn ($query) => $query->whereNull('receipt_id')->where('status', 'finalized'))
-                        ->sum('accepted_quantity');
+                    $pendingScheduledInspections = $this->pendingScheduledInspectionAcceptedQuantity($schedule);
                     $scheduleRemaining = max(0, (float) $schedule->scheduled_quantity - (float) $schedule->received_quantity - $pendingScheduledReceipts - $pendingScheduledInspections);
                     if ($delivered > $scheduleRemaining + 0.00000001) {
                         throw new DomainException(__('Inspected quantity exceeds the remaining scheduled quantity.'));
@@ -276,45 +273,71 @@ class ProcurementReceivingService
 
     public function createReceiptFromInspection(GoodsReceiptInspection $inspection, array $data): UnpricedInventoryReceipt
     {
-        return DB::transaction(function () use ($inspection, $data): UnpricedInventoryReceipt {
+        return $this->saveReceiptFromInspection($inspection, $data);
+    }
+
+    private function saveReceiptFromInspection(
+        GoodsReceiptInspection $inspection,
+        array $data,
+        ?UnpricedInventoryReceipt $draft = null,
+    ): UnpricedInventoryReceipt {
+        return DB::transaction(function () use ($inspection, $data, $draft): UnpricedInventoryReceipt {
             $context = $this->context();
             $locked = GoodsReceiptInspection::query()->with([
                 'purchaseOrder', 'supplyOrder.purchaseOrder',
-                'lines.purchaseOrderLine', 'lines.supplyOrderLine', 'lines.deliverySchedule',
             ])->lockForUpdate()->findOrFail($inspection->getKey());
+            $inspectionLines = GoodsReceiptInspectionLine::query()
+                ->with([
+                    'purchaseOrderLine', 'supplyOrderLine', 'deliverySchedule',
+                    'receiptLines.receipt',
+                ])
+                ->where('goods_receipt_inspection_id', $locked->getKey())
+                ->lockForUpdate()
+                ->get();
+            $locked->setRelation('lines', $inspectionLines);
             if ((int) $locked->company_id !== $context['company_id']
                 || (int) $locked->financial_period_id !== $context['financial_period_id']
                 || (int) $locked->branch_id !== $context['branch_id']) {
                 throw new DomainException(__('The purchase inspection is outside the active operating context.'));
             }
-            if ($locked->receipt_id !== null
-                || $locked->status !== 'finalized'
+            if ($locked->status !== 'finalized'
                 || ! in_array($locked->result, ['accepted', 'partially_accepted'], true)) {
-                throw new DomainException(__('Only an accepted unused purchase inspection can create a goods receipt.'));
+                throw new DomainException(__('procurement.messages.inspection_status_not_receiptable'));
             }
             if (! $locked->purchaseOrder instanceof PurchaseOrder) {
                 throw new DomainException(__('The purchase inspection has no valid purchase order.'));
             }
 
-            $inputLines = collect($data['lines'] ?? [])->keyBy('inspection_line_public_id');
-            $acceptedLines = $locked->lines->filter(
-                fn (GoodsReceiptInspectionLine $line): bool => (float) $line->accepted_quantity > 0,
-            );
-            if ($acceptedLines->isEmpty()) {
-                throw new DomainException(__('The purchase inspection has no accepted quantity to receive.'));
+            $inputLines = collect($data['lines'] ?? [])->values();
+            $inputLineIds = $inputLines->pluck('inspection_line_public_id');
+            if ($inputLines->isEmpty()
+                || $inputLineIds->contains(fn (mixed $id): bool => blank($id))
+                || $inputLineIds->unique()->count() !== $inputLines->count()) {
+                throw new DomainException(__('procurement.messages.receipt_requires_distinct_inspection_lines'));
             }
 
-            $receiptLines = $acceptedLines->map(function (GoodsReceiptInspectionLine $line) use ($inputLines, $locked): array {
-                $input = $inputLines->get($line->public_id, []);
+            $receiptLines = $inputLines->map(function (array $input) use ($locked, $draft): array {
+                $line = $locked->lines->firstWhere('public_id', $input['inspection_line_public_id']);
+                if (! $line instanceof GoodsReceiptInspectionLine || (float) $line->accepted_quantity <= 0) {
+                    throw new DomainException(__('procurement.messages.inspection_line_unavailable'));
+                }
+
+                $remaining = $line->remainingReceiptQuantity($draft?->getKey());
+                $quantity = (float) ($input['delivered_quantity'] ?? $remaining);
+                if ($quantity <= 0 || $quantity > $remaining + 0.00000001) {
+                    throw new DomainException(__('procurement.messages.receipt_quantity_exceeds_inspection_remaining'));
+                }
+
                 $sourceLine = $locked->supply_order_id === null ? $line->purchaseOrderLine : $line->supplyOrderLine;
                 if ($sourceLine === null) {
                     throw new DomainException(__('The purchase inspection line has no valid source line.'));
                 }
 
                 return [
+                    'inspection_line_public_id' => $line->public_id,
                     $locked->supply_order_id === null ? 'purchase_order_line_public_id' : 'supply_order_line_public_id' => $sourceLine->public_id,
                     'delivery_schedule_public_id' => $line->deliverySchedule?->public_id,
-                    'delivered_quantity' => $line->accepted_quantity,
+                    'delivered_quantity' => $this->quantity($quantity),
                     'supplier_lot_number' => $line->supplier_lot_number,
                     'manufacture_date' => $line->manufacture_date?->toDateString(),
                     'expiry_date' => $line->expiry_date?->toDateString(),
@@ -323,10 +346,14 @@ class ProcurementReceivingService
                 ];
             })->values()->all();
 
+            if ($receiptLines === []) {
+                throw new DomainException(__('The purchase inspection has no accepted quantity to receive.'));
+            }
+
             return $this->receiveDocument(
                 $locked->purchaseOrder,
                 [...$data, 'lines' => $receiptLines],
-                null,
+                $draft,
                 $locked->supplyOrder,
                 $locked,
             );
@@ -336,10 +363,14 @@ class ProcurementReceivingService
     public function updateReceipt(UnpricedInventoryReceipt $receipt, array $data): UnpricedInventoryReceipt
     {
         return DB::transaction(function () use ($receipt, $data): UnpricedInventoryReceipt {
-            $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($receipt->getKey());
+            $locked = UnpricedInventoryReceipt::query()->with('sourceInspection')->lockForUpdate()->findOrFail($receipt->getKey());
             $this->assertReceiptContext($locked, $this->context());
-            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->inspection()->exists()) {
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->hasBlockingInspection()) {
                 throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
+            }
+
+            if ($locked->sourceInspection instanceof GoodsReceiptInspection) {
+                return $this->saveReceiptFromInspection($locked->sourceInspection, $data, $locked);
             }
 
             return $this->receiveDocument($locked->purchaseOrder, $data, $locked, $locked->supplyOrder);
@@ -351,7 +382,7 @@ class ProcurementReceivingService
         return DB::transaction(function () use ($receipt): UnpricedInventoryReceipt {
             $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($receipt->getKey());
             $this->assertReceiptContext($locked, $this->context());
-            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->inspection()->exists()) {
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->hasBlockingInspection()) {
                 throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
             }
             $locked->forceFill(['deleted_by' => auth()->id()])->save();
@@ -375,7 +406,7 @@ class ProcurementReceivingService
     {
         return DB::transaction(function () use ($receipt): UnpricedInventoryReceipt {
             $locked = UnpricedInventoryReceipt::query()->with([
-                'inspection', 'purchaseOrder', 'supplyOrder', 'lines.product', 'lines.purchaseOrderLine',
+                'inspection', 'sourceInspection', 'purchaseOrder', 'supplyOrder', 'lines.product', 'lines.purchaseOrderLine',
                 'lines.supplyOrderLine', 'lines.deliverySchedule',
             ])
                 ->lockForUpdate()->findOrFail($receipt->getKey());
@@ -394,8 +425,9 @@ class ProcurementReceivingService
             $requiresInspection = $locked->lines->contains(
                 fn (UnpricedInventoryReceiptLine $line): bool => $line->product?->requiresIncomingInspection() === true,
             );
-            if ($requiresInspection && (! $locked->inspection instanceof GoodsReceiptInspection
-                || $locked->inspection->status !== 'finalized'
+            $qualityInspection = $locked->sourceInspection ?? $locked->inspection;
+            if ($requiresInspection && (! $qualityInspection instanceof GoodsReceiptInspection
+                || $qualityInspection->status !== 'finalized'
                 || $locked->qc_status === 'pending_inspection')) {
                 throw new DomainException(__('procurement.messages.quality_before_receipt_posting'));
             }
@@ -484,6 +516,7 @@ class ProcurementReceivingService
             if (empty($data['lines']) || count(array_unique(array_column($data['lines'], $sourceLineKey))) !== count($data['lines'])) {
                 throw new DomainException(__('A goods receipt requires distinct purchase order lines.'));
             }
+            $sourceInspectionLines = $sourceInspection?->lines?->keyBy('public_id') ?? collect();
             $receipt = $draft ?? new UnpricedInventoryReceipt;
             $receipt->fill([
                 ...($draft ? [] : $this->number('unpriced_inventory_receipts', UnpricedInventoryReceipt::class, $context)),
@@ -494,6 +527,7 @@ class ProcurementReceivingService
                 'supplier_id' => $order->supplier_id,
                 'purchase_order_id' => $order->getKey(),
                 'supply_order_id' => $lockedSupplyOrder?->getKey(),
+                'goods_receipt_inspection_id' => $sourceInspection?->getKey(),
                 'reference_number' => $data['supplier_delivery_note'] ?? null,
                 'reference_date' => $data['supplier_delivery_date'] ?? null,
                 'supplier_delivery_note' => $data['supplier_delivery_note'] ?? null,
@@ -522,6 +556,13 @@ class ProcurementReceivingService
             $keptLineIds = [];
             $requiresInspection = false;
             foreach (array_values($data['lines']) as $index => $input) {
+                $sourceInspectionLine = null;
+                if ($sourceInspection instanceof GoodsReceiptInspection) {
+                    $sourceInspectionLine = $sourceInspectionLines->get($input['inspection_line_public_id'] ?? null);
+                    if (! $sourceInspectionLine instanceof GoodsReceiptInspectionLine) {
+                        throw new DomainException(__('procurement.messages.inspection_line_unavailable'));
+                    }
+                }
                 $supplyLine = null;
                 if ($lockedSupplyOrder) {
                     $supplyLine = SupplyOrderLine::query()->with('purchaseOrderLine.product')->lockForUpdate()
@@ -541,8 +582,17 @@ class ProcurementReceivingService
                 if ($line->product->isService()) {
                     throw new DomainException(__('Service lines do not create warehouse receipts.'));
                 }
+                if ($sourceInspectionLine instanceof GoodsReceiptInspectionLine
+                    && ((int) $sourceInspectionLine->purchase_order_line_id !== (int) $line->getKey()
+                        || (int) ($sourceInspectionLine->supply_order_line_id ?? 0) !== (int) ($supplyLine?->getKey() ?? 0))) {
+                    throw new DomainException(__('procurement.messages.inspection_line_source_mismatch'));
+                }
 
                 $quantity = (float) $input['delivered_quantity'];
+                if ($sourceInspectionLine instanceof GoodsReceiptInspectionLine
+                    && $quantity > $sourceInspectionLine->remainingReceiptQuantity($draft?->getKey()) + 0.00000001) {
+                    throw new DomainException(__('procurement.messages.receipt_quantity_exceeds_inspection_remaining'));
+                }
                 $receivedBefore = $line->netReceivedQuantity($draft?->getKey());
                 $pendingArrivalQuantity = (float) UnpricedInventoryReceiptLine::query()
                     ->where('purchase_order_line_id', $line->getKey())
@@ -569,11 +619,7 @@ class ProcurementReceivingService
                             ->where('posting_status', 'unposted')
                             ->where('status', UnpricedInventoryReceipt::StatusDraft))
                         ->sum('delivered_quantity');
-                    $pendingScheduledInspections = (float) GoodsReceiptInspectionLine::query()
-                        ->where('delivery_schedule_id', $schedule->getKey())
-                        ->when($sourceInspection?->getKey() !== null, fn ($query) => $query->where('goods_receipt_inspection_id', '<>', $sourceInspection->getKey()))
-                        ->whereHas('inspection', fn ($query) => $query->whereNull('receipt_id')->where('status', 'finalized'))
-                        ->sum('accepted_quantity');
+                    $pendingScheduledInspections = $this->pendingScheduledInspectionAcceptedQuantity($schedule, $sourceInspection?->getKey());
                     $scheduleRemaining = (float) $schedule->scheduled_quantity - (float) $schedule->received_quantity - $pendingScheduledQuantity - $pendingScheduledInspections;
                     if ($quantity > $scheduleRemaining + 0.00000001) {
                         throw new DomainException(__('Delivered quantity exceeds the remaining scheduled quantity.'));
@@ -583,7 +629,12 @@ class ProcurementReceivingService
                 $lineNeedsInspection = $sourceInspection === null && $line->product->requiresIncomingInspection();
                 $requiresInspection = $requiresInspection || $lineNeedsInspection;
                 $receiptLine = $draft
-                    ? ($receipt->lines()->where($supplyLine ? 'supply_order_line_id' : 'purchase_order_line_id', $supplyLine?->getKey() ?? $line->getKey())->first() ?? new UnpricedInventoryReceiptLine)
+                    ? ($receipt->lines()
+                        ->where(
+                            $sourceInspectionLine ? 'goods_receipt_inspection_line_id' : ($supplyLine ? 'supply_order_line_id' : 'purchase_order_line_id'),
+                            $sourceInspectionLine?->getKey() ?? $supplyLine?->getKey() ?? $line->getKey(),
+                        )
+                        ->first() ?? new UnpricedInventoryReceiptLine)
                     : new UnpricedInventoryReceiptLine;
                 $receiptLine->fill([
                     ...$context,
@@ -594,6 +645,7 @@ class ProcurementReceivingService
                     'purchase_order_line_id' => $line->getKey(),
                     'supply_order_line_id' => $supplyLine?->getKey(),
                     'delivery_schedule_id' => $schedule?->getKey(),
+                    'goods_receipt_inspection_line_id' => $sourceInspectionLine?->getKey(),
                     'product_snapshot' => $line->product_snapshot,
                     'quantity' => $this->quantity($quantity),
                     'delivered_quantity' => $this->quantity($quantity),
@@ -636,13 +688,7 @@ class ProcurementReceivingService
                 }
                 $receipt->save();
             }
-            if ($sourceInspection instanceof GoodsReceiptInspection) {
-                $sourceInspection->forceFill([
-                    'receipt_id' => $receipt->getKey(),
-                    'updated_by' => auth()->id(),
-                ])->save();
-            }
-            $receipt = $receipt->refresh()->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.supplyOrderLine']);
+            $receipt = $receipt->refresh()->load(['sourceInspection', 'purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.supplyOrderLine']);
             if ($changed) {
                 $this->audit->record($receipt, $draft ? 'goods_receipt.updated' : 'goods_receipt.created', ['qc_status' => $receipt->qc_status]);
             }
@@ -992,20 +1038,73 @@ class ProcurementReceivingService
 
     private function pendingInspectionAcceptedQuantity(PurchaseOrderLine $line, ?int $exceptInspectionId = null): float
     {
-        return (float) GoodsReceiptInspectionLine::query()
+        $accepted = (float) GoodsReceiptInspectionLine::query()
             ->where('purchase_order_line_id', $line->getKey())
             ->when($exceptInspectionId !== null, fn ($query) => $query->where('goods_receipt_inspection_id', '<>', $exceptInspectionId))
-            ->whereHas('inspection', fn ($query) => $query->whereNull('receipt_id')->where('status', 'finalized'))
+            ->whereHas('inspection', fn ($query) => $query
+                ->whereIn('source_type', ['purchase_order', 'supply_order'])
+                ->where('status', 'finalized'))
             ->sum('accepted_quantity');
+
+        $received = (float) UnpricedInventoryReceiptLine::query()
+            ->where('purchase_order_line_id', $line->getKey())
+            ->whereNotNull('goods_receipt_inspection_line_id')
+            ->when($exceptInspectionId !== null, fn ($query) => $query->whereHas(
+                'sourceInspectionLine',
+                fn ($inspectionLines) => $inspectionLines->where('goods_receipt_inspection_id', '<>', $exceptInspectionId),
+            ))
+            ->whereHas('receipt', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('delivered_quantity');
+
+        return max(0, $accepted - $received);
     }
 
     private function pendingSupplyInspectionAcceptedQuantity(SupplyOrderLine $line, ?int $exceptInspectionId = null): float
     {
-        return (float) GoodsReceiptInspectionLine::query()
+        $accepted = (float) GoodsReceiptInspectionLine::query()
             ->where('supply_order_line_id', $line->getKey())
             ->when($exceptInspectionId !== null, fn ($query) => $query->where('goods_receipt_inspection_id', '<>', $exceptInspectionId))
-            ->whereHas('inspection', fn ($query) => $query->whereNull('receipt_id')->where('status', 'finalized'))
+            ->whereHas('inspection', fn ($query) => $query
+                ->whereIn('source_type', ['purchase_order', 'supply_order'])
+                ->where('status', 'finalized'))
             ->sum('accepted_quantity');
+
+        $received = (float) UnpricedInventoryReceiptLine::query()
+            ->where('supply_order_line_id', $line->getKey())
+            ->whereNotNull('goods_receipt_inspection_line_id')
+            ->when($exceptInspectionId !== null, fn ($query) => $query->whereHas(
+                'sourceInspectionLine',
+                fn ($inspectionLines) => $inspectionLines->where('goods_receipt_inspection_id', '<>', $exceptInspectionId),
+            ))
+            ->whereHas('receipt', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('delivered_quantity');
+
+        return max(0, $accepted - $received);
+    }
+
+    private function pendingScheduledInspectionAcceptedQuantity(
+        PurchaseOrderDeliverySchedule $schedule,
+        ?int $exceptInspectionId = null,
+    ): float {
+        $accepted = (float) GoodsReceiptInspectionLine::query()
+            ->where('delivery_schedule_id', $schedule->getKey())
+            ->when($exceptInspectionId !== null, fn ($query) => $query->where('goods_receipt_inspection_id', '<>', $exceptInspectionId))
+            ->whereHas('inspection', fn ($query) => $query
+                ->whereIn('source_type', ['purchase_order', 'supply_order'])
+                ->where('status', 'finalized'))
+            ->sum('accepted_quantity');
+
+        $received = (float) UnpricedInventoryReceiptLine::query()
+            ->where('delivery_schedule_id', $schedule->getKey())
+            ->whereNotNull('goods_receipt_inspection_line_id')
+            ->when($exceptInspectionId !== null, fn ($query) => $query->whereHas(
+                'sourceInspectionLine',
+                fn ($inspectionLines) => $inspectionLines->where('goods_receipt_inspection_id', '<>', $exceptInspectionId),
+            ))
+            ->whereHas('receipt', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('delivered_quantity');
+
+        return max(0, $accepted - $received);
     }
 
     private function schedule(PurchaseOrderLine $line, ?string $publicId): ?PurchaseOrderDeliverySchedule

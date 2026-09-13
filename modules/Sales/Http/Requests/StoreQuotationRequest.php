@@ -125,7 +125,7 @@ class StoreQuotationRequest extends FormRequest
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
@@ -368,7 +368,6 @@ class StoreQuotationRequest extends FormRequest
             $productDocNum = trim((string) ($line['product_doc_num'] ?? ''));
             $unitDocNum = trim((string) ($line['unit_doc_num'] ?? ''));
             $quantity = $line['quantity'] ?? null;
-            $unitPrice = $line['unit_price'] ?? null;
 
             if ($productDocNum === '') {
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('validation.required', ['attribute' => __('quotations.attributes.product')]));
@@ -396,10 +395,6 @@ class StoreQuotationRequest extends FormRequest
 
             if ($quantity === null || $quantity === '' || ! is_numeric($quantity) || bccomp((string) $quantity, '0', 4) <= 0) {
                 $validator->errors()->add("lines.{$index}.quantity", __('quotations.messages.quantity_gt_zero'));
-            }
-
-            if ($unitPrice === null || $unitPrice === '' || ! is_numeric($unitPrice) || bccomp((string) $unitPrice, '0', 4) <= 0) {
-                $validator->errors()->add("lines.{$index}.unit_price", __('quotations.messages.unit_price_required'));
             }
 
             if ($product instanceof Product && $quantity !== null && $quantity !== '' && is_numeric($quantity)) {

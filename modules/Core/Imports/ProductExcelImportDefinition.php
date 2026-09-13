@@ -157,7 +157,7 @@ class ProductExcelImportDefinition implements ExcelImportDefinition
                 'rows' => Product::query()
                     ->forCompany($companyId)
                     ->active()
-                    ->materialItems()
+                    ->componentItems()
                     ->orderBy('doc_number')
                     ->get(['doc_num', 'name'])
                     ->map(fn (Product $product): array => [

@@ -37,10 +37,10 @@
             @method($method)
         @endif
         @unless ($isProtectedReadonly)
-            <input type="hidden" name="submit_action" value="save">
+            <x-forms.input type="hidden" name="submit_action" value="save" />
         @endunless
         @if (($isClone || $isCloneSource) && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card">
@@ -66,7 +66,7 @@
                             @if ($isReadonly)
                                 <x-forms.view-field for="role-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-role-doc-number" />
                             @else
-                                <input id="role-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-role-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('roles.document_number_control.placeholder') }}">
+                                <x-forms.input id="role-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-role-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('roles.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('roles.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -88,7 +88,7 @@
                         @if ($isReadonly)
                             <x-forms.view-field for="role-name" :value="old('name', $roleName)" />
                         @else
-                            <input id="role-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $roleName) }}" required>
+                            <x-forms.input id="role-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $roleName) }}" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="name"></div>
                     </div>
@@ -98,7 +98,7 @@
                         @if ($isReadonly)
                             <x-forms.view-field for="role-notes" as="textarea" :value="old('notes', $role?->notes)" rows="4" />
                         @else
-                            <textarea id="role-notes" name="notes" class="form-control" rows="4">{{ old('notes', $role?->notes) }}</textarea>
+                            <x-forms.textarea id="role-notes" name="notes" class="form-control" rows="4">{{ old('notes', $role?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

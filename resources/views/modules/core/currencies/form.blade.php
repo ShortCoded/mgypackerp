@@ -35,9 +35,9 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($isClone && $cloneSourceToken)
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
 
         <div class="card">
@@ -56,7 +56,7 @@
                             @if ($isView)
                                 <x-forms.view-field for="currency-doc-number" as="display" :value="$documentNumberValue" input-class="text-center js-currency-doc-number" />
                             @else
-                                <input id="currency-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-currency-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}">
+                                <x-forms.input id="currency-doc-number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" class="text-center form-control js-currency-doc-number" value="{{ $documentNumberValue }}" placeholder="{{ __('item_lookups.document_number_control.placeholder') }}" />
                             @endif
                             <div class="form-text">{{ __('item_lookups.document_number_control.helper') }}</div>
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -78,7 +78,7 @@
                         @if ($isView)
                             <x-forms.view-field for="currency-name" :value="old('name', $recordName)" />
                         @else
-                            <input id="currency-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required>
+                            <x-forms.input id="currency-name" autofocus name="name" type="text" class="form-control" value="{{ old('name', $recordName) }}" required />
                         @endif
                         @if ($isView)
                             <div class="mt-2 currency-main-option">
@@ -88,9 +88,9 @@
                                 </span>
                             </div>
                         @else
-                            <input type="hidden" name="is_main" value="0">
+                            <x-forms.input type="hidden" name="is_main" value="0" />
                             <div class="mt-2 mr-2 mb-0 form-check form-switch currency-main-option">
-                                <input class="form-check-input" id="currency-is-main" name="is_main" type="checkbox" value="1" @checked(old('is_main', $isClone ? false : ($record?->is_main ?? false)))>
+                                <x-forms.input class="form-check-input" id="currency-is-main" name="is_main" type="checkbox" value="1" :checked="old('is_main', $isClone ? false : ($record?->is_main ?? false))" />
                                 <label class="form-check-label text-700 fs-10" for="currency-is-main">{{ __('currencies.attributes.is_main') }}</label>
                             </div>
                         @endif
@@ -103,7 +103,7 @@
                         @if ($isView)
                             <x-forms.view-field for="currency-code" :value="$codeValue" input-class="text-uppercase" />
                         @else
-                            <input id="currency-code" name="code" type="text" class="form-control text-uppercase" value="{{ $codeValue }}" maxlength="10" dir="ltr" required>
+                            <x-forms.input id="currency-code" name="code" type="text" class="form-control text-uppercase" value="{{ $codeValue }}" maxlength="10" dir="ltr" required />
                         @endif
                         <div class="invalid-feedback" data-error-for="code"></div>
                     </div>
@@ -113,7 +113,7 @@
                         @if ($isView)
                             <x-forms.view-field for="currency-minor-unit-name" :value="old('minor_unit_name', $record?->minor_unit_name)" />
                         @else
-                            <input id="currency-minor-unit-name" name="minor_unit_name" type="text" class="form-control" value="{{ old('minor_unit_name', $record?->minor_unit_name) }}">
+                            <x-forms.input id="currency-minor-unit-name" name="minor_unit_name" type="text" class="form-control" value="{{ old('minor_unit_name', $record?->minor_unit_name) }}" />
                         @endif
                         <div class="invalid-feedback" data-error-for="minor_unit_name"></div>
                     </div>
@@ -133,11 +133,11 @@
                         @if ($isView)
                             <x-forms.view-field for="currency-status" :value="__('currencies.statuses.' . ($record?->status ?? 'active'))" />
                         @else
-                            <select id="currency-status" name="status" class="form-select" required>
+                            <x-forms.select id="currency-status" name="status" class="form-select" required>
                                 @foreach (['active', 'inactive'] as $status)
                                     <option value="{{ $status }}" @selected(old('status', $record?->status ?? 'active') === $status)>{{ __('currencies.statuses.' . $status) }}</option>
                                 @endforeach
-                            </select>
+                            </x-forms.select>
                         @endif
                         <div class="invalid-feedback" data-error-for="status"></div>
                     </div>
@@ -147,7 +147,7 @@
                         @if ($isView)
                             <x-forms.view-field for="currency-notes" as="textarea" :value="old('notes', $record?->notes)" rows="4" />
                         @else
-                            <textarea id="currency-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</textarea>
+                            <x-forms.textarea id="currency-notes" name="notes" class="form-control" rows="4">{{ old('notes', $record?->notes) }}</x-forms.textarea>
                         @endif
                         <div class="invalid-feedback" data-error-for="notes"></div>
                     </div>

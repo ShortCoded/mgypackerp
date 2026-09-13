@@ -181,12 +181,12 @@
         @if ($method !== 'POST')
             @method($method)
         @endif
-        <input type="hidden" name="submit_action" value="save">
+        <x-forms.input type="hidden" name="submit_action" value="save" />
         @if (! empty($cloneSourceToken))
-            <input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}">
+            <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
         @endif
         @if ($isMaterialContext && ! $isView)
-            <input type="hidden" name="item_classification" value="{{ $contextClassification }}">
+            <x-forms.input type="hidden" name="item_classification" value="{{ $contextClassification }}" />
         @endif
 
         <div class="mb-3 card product-form-card">
@@ -219,7 +219,7 @@
                                     @if ($isView)
                                         <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
                                     @else
-                                        <input class="text-center form-control" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('products.document_number_control.placeholder') }}">
+                                        <x-forms.input class="text-center form-control" id="doc_number" name="doc_number" type="number" min="0" step="1" inputmode="numeric" value="{{ $documentNumberValue }}" placeholder="{{ __('products.document_number_control.placeholder') }}" />
                                     @endif
                                     <div class="form-text">{{ __('products.document_number_control.helper') }}</div>
                                     <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
@@ -241,7 +241,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="name" :value="$fieldValue('name')" />
                                 @else
-                                    <input class="form-control" id="name" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus>
+                                    <x-forms.input class="form-control" id="name" name="name" type="text" value="{{ $fieldValue('name') }}" required autofocus />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="name"></div>
                             </div>
@@ -252,11 +252,11 @@
                                     @if ($isView)
                                     <x-forms.view-field for="item_classification" :value="__('products.classifications.' . $classificationValue)" />
                                     @else
-                                    <select class="form-select" id="item_classification" name="item_classification" required>
+                                    <x-forms.select class="form-select" id="item_classification" name="item_classification" required>
                                         @foreach ($classificationOptions as $classification)
                                             <option value="{{ $classification }}" @selected($classificationValue === $classification)>{{ __('products.classifications.' . $classification) }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                     @endif
                                     <div class="invalid-feedback" data-error-for="item_classification"></div>
                                 </div>
@@ -279,8 +279,8 @@
                                             @endforelse
                                         </div>
                                     @else
-                                        <input type="hidden" name="related_finished_product_doc_nums[]" value="">
-                                        <select class="form-select js-select2-ajax"
+                                        <x-forms.input type="hidden" name="related_finished_product_doc_nums[]" value="" />
+                                        <x-forms.select class="form-select js-select2-ajax"
                                             id="packaging-related-finished-products"
                                             name="related_finished_product_doc_nums[]"
                                             multiple
@@ -294,7 +294,7 @@
                                                     {{ $option['text'] }}@if ($option['is_stale']) — {{ __('products.packaging_materials.related_finished_products.unavailable') }}@endif
                                                 </option>
                                             @endforeach
-                                        </select>
+                                        </x-forms.select>
                                     @endif
                                     <div class="form-text">{{ __('products.packaging_materials.related_finished_products.help') }}</div>
                                     <div class="invalid-feedback d-block" data-error-for="related_finished_product_doc_nums"></div>
@@ -306,7 +306,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="barcode" :value="$barcodeValue" dir="ltr" />
                                 @else
-                                    <input class="form-control" id="barcode" name="barcode" type="text" maxlength="100" value="{{ $barcodeValue }}" dir="ltr">
+                                    <x-forms.input class="form-control" id="barcode" name="barcode" type="text" maxlength="100" value="{{ $barcodeValue }}" dir="ltr" />
                                 @endif
                                 <div class="invalid-feedback" data-error-for="barcode"></div>
                             </div>
@@ -335,11 +335,11 @@
                                 @if ($isView)
                                     <x-forms.view-field for="status" :value="__('products.statuses.' . $statusValue)" />
                                 @else
-                                    <select class="form-select" id="status" name="status" required>
+                                    <x-forms.select class="form-select" id="status" name="status" required>
                                         @foreach (['active', 'inactive'] as $status)
                                             <option value="{{ $status }}" @selected($statusValue === $status)>{{ __('products.statuses.' . $status) }}</option>
                                         @endforeach
-                                    </select>
+                                    </x-forms.select>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="status"></div>
                             </div>
@@ -358,11 +358,11 @@
                                                     <x-forms.view-field :for="$lookup['name']" :value="$lookup['option']['text'] ?? null" />
                                                 @else
                                                     <div class="product-lookup-control">
-                                                        <select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $lookup['name'] }}" name="{{ $lookup['name'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                                                        <x-forms.select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $lookup['name'] }}" name="{{ $lookup['name'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                                             @if ($lookup['option'])
                                                                 <option value="{{ $lookup['option']['id'] }}" selected>{{ $lookup['option']['text'] }}</option>
                                                             @endif
-                                                        </select>
+                                                        </x-forms.select>
                                                         @if ($lookup['can_create'])
                                                             <button class="btn btn-falcon-default btn-sm js-inline-lookup-create" type="button" data-target-select="#{{ $lookup['name'] }}" data-url="{{ $lookup['inline_url'] }}" data-label="{{ $lookup['label'] }}">
                                                                 <span class="fas fa-plus"></span>
@@ -398,11 +398,11 @@
                                                 @if ($isView)
                                                     <x-forms.view-field :for="$equivalentUnitField['name']" :value="$equivalentUnitField['option']['text'] ?? null" />
                                                 @else
-                                                    <select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $equivalentUnitField['name'] }}" name="{{ $equivalentUnitField['name'] }}" data-url="{{ $equivalentUnitField['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                                                    <x-forms.select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $equivalentUnitField['name'] }}" name="{{ $equivalentUnitField['name'] }}" data-url="{{ $equivalentUnitField['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                                         @if ($equivalentUnitField['option'])
                                                             <option value="{{ $equivalentUnitField['option']['id'] }}" selected>{{ $equivalentUnitField['option']['text'] }}</option>
                                                         @endif
-                                                    </select>
+                                                    </x-forms.select>
                                                 @endif
                                                 <div class="invalid-feedback d-block" data-error-for="{{ $equivalentUnitField['name'] }}"></div>
                                             </div>
@@ -416,11 +416,11 @@
                                         <x-forms.view-field :for="$lookup['name']" :value="$lookup['option']['text'] ?? null" />
                                     @else
                                         <div class="product-lookup-control">
-                                            <select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $lookup['name'] }}" name="{{ $lookup['name'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
+                                            <x-forms.select class="form-select js-select2-ajax js-product-lookup-select" id="{{ $lookup['name'] }}" name="{{ $lookup['name'] }}" data-url="{{ $lookup['url'] }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true">
                                                 @if ($lookup['option'])
                                                     <option value="{{ $lookup['option']['id'] }}" selected>{{ $lookup['option']['text'] }}</option>
                                                 @endif
-                                            </select>
+                                            </x-forms.select>
                                             @if ($lookup['can_create'])
                                                 <button class="btn btn-falcon-default btn-sm js-inline-lookup-create" type="button" data-target-select="#{{ $lookup['name'] }}" data-url="{{ $lookup['inline_url'] }}" data-label="{{ $lookup['label'] }}">
                                                     <span class="fas fa-plus"></span>
@@ -436,8 +436,8 @@
                             <div class="col-lg-4 product-image-field">
                                 <x-forms.label :for="$isView ? 'product-image-preview' : 'product-image-picker-button'" :label="__('products.attributes.image')" :required="$productImageRequired" />
                                 @unless ($isView)
-                                    <input type="hidden" id="product-image-archive-file" name="image_archive_file_doc_num" value="{{ $selectedImagePublicId }}">
-                                    <input type="hidden" id="product-remove-image" name="remove_image" value="{{ $removeImageRequested && ! $selectedImageFile ? '1' : '0' }}">
+                                    <x-forms.input type="hidden" id="product-image-archive-file" name="image_archive_file_doc_num" value="{{ $selectedImagePublicId }}" />
+                                    <x-forms.input type="hidden" id="product-remove-image" name="remove_image" value="{{ $removeImageRequested && ! $selectedImageFile ? '1' : '0' }}" />
                                 @endunless
                                 <div id="product-image-picker-field"
                                     class="border rounded-2 bg-body-tertiary p-3 product-image-picker-panel js-product-image-picker-field @if ($isView) opacity-75 @endif"
@@ -516,9 +516,9 @@
                                                             {{ $record?->{$booleanField} ? __('common.actions.yes') : __('common.actions.no') }}
                                                         </span>
                                                     @else
-                                                        <input type="hidden" name="{{ $booleanField }}" value="0">
+                                                        <x-forms.input type="hidden" name="{{ $booleanField }}" value="0" />
                                                         <div class="form-check form-switch mb-0">
-                                                            <input class="form-check-input" id="{{ $booleanField }}" name="{{ $booleanField }}" type="checkbox" value="1" aria-label="{{ __('products.attributes.' . $booleanField) }}" @checked($booleanChecked)>
+                                                            <x-forms.input class="form-check-input" id="{{ $booleanField }}" name="{{ $booleanField }}" type="checkbox" value="1" aria-label="{{ __('products.attributes.' . $booleanField) }}" :checked='$booleanChecked' />
                                                         </div>
                                                     @endif
                                                 </div>
@@ -530,7 +530,7 @@
                                             @if ($isView)
                                                 <x-forms.view-field for="default_shelf_life_days" :value="$record?->default_shelf_life_days" />
                                             @else
-                                                <input class="form-control" id="default_shelf_life_days" name="default_shelf_life_days" type="number" min="1" max="36500" value="{{ old('default_shelf_life_days', $record?->default_shelf_life_days) }}">
+                                                <x-forms.input class="form-control" id="default_shelf_life_days" name="default_shelf_life_days" type="number" min="1" max="36500" value="{{ old('default_shelf_life_days', $record?->default_shelf_life_days) }}" />
                                             @endif
                                         </div>
                                     </div>
@@ -542,7 +542,7 @@
                                 @if ($isView)
                                     <x-forms.view-field for="notes" as="textarea" :value="$fieldValue('notes')" rows="4" />
                                 @else
-                                    <textarea class="form-control" id="notes" name="notes" rows="4">{{ $fieldValue('notes') }}</textarea>
+                                    <x-forms.textarea class="form-control" id="notes" name="notes" rows="4">{{ $fieldValue('notes') }}</x-forms.textarea>
                                 @endif
                                 <div class="invalid-feedback" data-error-for="notes"></div>
                             </div>
@@ -601,29 +601,29 @@
                                     <template id="product-component-row-template">
                                         <tr class="js-product-component-row product-component-main-row" data-component-index="__INDEX__">
                                             <td class="product-component-item-column">
-                                                <input type="hidden" data-component-field="client_key" name="components[__INDEX__][client_key]" value="">
-                                                <input type="hidden" data-component-field="public_id" name="components[__INDEX__][public_id]" value="">
-                                                <input type="hidden" data-component-field="_delete" name="components[__INDEX__][_delete]" value="0">
-                                                <input type="hidden" data-component-field="input_source" name="components[__INDEX__][input_source]" value="weight">
-                                                <select class="form-select js-select2-ajax js-product-component-raw-material" name="components[__INDEX__][component_product_doc_num]" data-component-field="component_product_doc_num" data-url="{{ $rawMaterialSelectUrl }}" data-placeholder="{{ __('products.components.select_component_item') }}" data-allow-clear="true" data-template="product-image"></select>
+                                                <x-forms.input type="hidden" data-component-field="client_key" name="components[__INDEX__][client_key]" value="" />
+                                                <x-forms.input type="hidden" data-component-field="public_id" name="components[__INDEX__][public_id]" value="" />
+                                                <x-forms.input type="hidden" data-component-field="_delete" name="components[__INDEX__][_delete]" value="0" />
+                                                <x-forms.input type="hidden" data-component-field="input_source" name="components[__INDEX__][input_source]" value="weight" />
+                                                <x-forms.select class="form-select js-select2-ajax js-product-component-raw-material" name="components[__INDEX__][component_product_doc_num]" data-component-field="component_product_doc_num" data-url="{{ $rawMaterialSelectUrl }}" data-placeholder="{{ __('products.components.select_component_item') }}" data-allow-clear="true" data-template="product-image"></x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.component_product_doc_num"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.client_key"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.public_id"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__._delete"></div>
                                             </td>
                                             <td class="product-component-unit-column">
-                                                <select class="form-select js-product-component-unit" name="components[__INDEX__][unit_doc_num]" data-component-field="unit_doc_num" data-placeholder="{{ __('common.placeholders.select') }}" disabled>
+                                                <x-forms.select class="form-select js-product-component-unit" name="components[__INDEX__][unit_doc_num]" data-component-field="unit_doc_num" data-placeholder="{{ __('common.placeholders.select') }}" disabled>
                                                     <option value="">{{ __('common.placeholders.select') }}</option>
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.unit_doc_num"></div>
                                             </td>
                                             <td class="product-component-method-column">
-                                                <select class="form-select js-product-component-calculation-method" name="components[__INDEX__][calculation_method]" data-component-field="calculation_method">
+                                                <x-forms.select class="form-select js-product-component-calculation-method" name="components[__INDEX__][calculation_method]" data-component-field="calculation_method">
                                                     <option value="{{ ProductComponent::CalculationDirect }}">{{ __('products.components.direct') }}</option>
                                                     <option value="{{ ProductComponent::CalculationPercentage }}">{{ __('products.components.percentage') }}</option>
                                                     <option value="{{ ProductComponent::CalculationQuantity }}">{{ __('products.components.quantity') }}</option>
                                                     <option value="{{ ProductComponent::CalculationCount }}">{{ __('products.components.count') }}</option>
-                                                </select>
+                                                </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.calculation_method"></div>
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.input_source"></div>
                                             </td>
@@ -648,7 +648,7 @@
                                                 <div class="product-component-calculation-state js-product-component-calculation-state text-600 fw-semi-bold" aria-live="polite"></div>
                                             </td>
                                             <td class="product-component-notes-column">
-                                                <input class="form-control js-product-component-notes" name="components[__INDEX__][notes]" data-component-field="notes" type="text" value="">
+                                                <x-forms.input class="form-control js-product-component-notes" name="components[__INDEX__][notes]" data-component-field="notes" type="text" value="" />
                                                 <div class="invalid-feedback d-block" data-error-for="components.__INDEX__.notes"></div>
                                             </td>
                                             <td class="text-center product-component-actions-column">
@@ -669,9 +669,9 @@
                                                 <div class="product-component-details-layout">
                                                     <div class="product-component-reference-control">
                                                         <label class="form-label small fw-semi-bold mb-1" for="product-component-reference-__INDEX__">{{ __('products.components.reference_component') }}</label>
-                                                        <select id="product-component-reference-__INDEX__" class="form-select js-select2-local js-product-component-reference" name="components[__INDEX__][reference_component_key]" data-component-field="reference_component_key" data-placeholder="{{ __('products.components.select_reference_component') }}" data-allow-clear="true" aria-describedby="product-component-reference-error-__INDEX__">
+                                                        <x-forms.select id="product-component-reference-__INDEX__" class="form-select js-select2-local js-product-component-reference" name="components[__INDEX__][reference_component_key]" data-component-field="reference_component_key" data-placeholder="{{ __('products.components.select_reference_component') }}" data-allow-clear="true" aria-describedby="product-component-reference-error-__INDEX__">
                                                             <option value="">{{ __('products.components.select_reference_component') }}</option>
-                                                        </select>
+                                                        </x-forms.select>
                                                         <div id="product-component-reference-error-__INDEX__" class="invalid-feedback d-block" data-error-for="components.__INDEX__.reference_component_key"></div>
                                                     </div>
                                                     <div class="product-component-explanation-control">
@@ -708,15 +708,15 @@
                     </div>
                     <div class="modal-body">
                         <div data-form-alert></div>
-                        <input type="hidden" name="target_select" value="">
+                        <x-forms.input type="hidden" name="target_select" value="" />
                         <div class="mb-3">
                             <x-forms.label for="inline_lookup_name" :label="__('products.inline_lookup.name')" required />
-                            <input class="form-control" id="inline_lookup_name" name="name" type="text" required>
+                            <x-forms.input class="form-control" id="inline_lookup_name" name="name" type="text" required />
                             <div class="invalid-feedback" data-error-for="name"></div>
                         </div>
                         <div>
                             <label class="form-label" for="inline_lookup_notes">{{ __('products.inline_lookup.notes') }}</label>
-                            <textarea class="form-control" id="inline_lookup_notes" name="notes" rows="3"></textarea>
+                            <x-forms.textarea class="form-control" id="inline_lookup_notes" name="notes" rows="3"></x-forms.textarea>
                             <div class="invalid-feedback" data-error-for="notes"></div>
                         </div>
                     </div>

@@ -158,7 +158,7 @@ class ErpUiShellOverviewService
             'production', 'quality' => $this->workflows([
                 ['production_orders', 'admin.production.work-orders.index', 'production.orders.view'],
                 ['production_runs', 'admin.production.runs.index', 'production.runs.view'],
-                ['production_resources', 'admin.production.resources.index', 'production.resources.view'],
+                ['production_quality', 'admin.production.quality.index', 'production.quality.view'],
                 ['production_reports', 'admin.production.reports.index', 'production.reports.operational'],
             ]),
             'fixed_assets', 'maintenance' => $this->workflows([

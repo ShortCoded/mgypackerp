@@ -33,7 +33,9 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(RequestMemo::class);
         $this->app->singleton('datatables.request', BoundedDataTableRequest::class);
 
-        if ($this->app->environment('local') && class_exists(\Laravel\Telescope\TelescopeServiceProvider::class)) {
+        if ($this->app->environment('local')
+            && (bool) config('telescope.enabled', false)
+            && class_exists(\Laravel\Telescope\TelescopeServiceProvider::class)) {
             $this->app->register(\Laravel\Telescope\TelescopeServiceProvider::class);
             $this->app->register(TelescopeServiceProvider::class);
         }

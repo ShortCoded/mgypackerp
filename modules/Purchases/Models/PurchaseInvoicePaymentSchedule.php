@@ -54,7 +54,7 @@ class PurchaseInvoicePaymentSchedule extends Model
     ];
 
     protected $attributes = [
-        'payment_source_type' => PurchaseInvoice::SourceScheduled,
+        'payment_source_type' => PurchaseInvoice::SourceCashbox,
         'status' => self::StatusScheduled,
     ];
 

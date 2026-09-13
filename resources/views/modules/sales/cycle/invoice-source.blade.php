@@ -16,7 +16,7 @@
                             <h6><span class="fas fa-file-contract text-primary me-2"></span>{{ __('sales_ui.invoice_from_order') }}</h6>
                             <p class="small text-600">{{ __('sales_ui.invoice_from_order_help') }}</p>
                             <x-forms.label for="sales_order_doc_num" :label="__('Sales Order')" required />
-                            <select class="form-select js-select2-ajax" id="sales_order_doc_num" name="sales_order_doc_num" data-url="{{ route('admin.sales.select2.invoiceable-orders') }}" data-placeholder="{{ __('Sales Order') }}" required></select>
+                            <x-forms.select class="form-select js-select2-ajax" id="sales_order_doc_num" name="sales_order_doc_num" data-url="{{ route('admin.sales.select2.invoiceable-orders') }}" data-placeholder="{{ __('Sales Order') }}" required></x-forms.select>
                             <button class="btn btn-primary btn-sm mt-3" type="submit">{{ __('sales_ui.continue_invoice') }}</button>
                         </form>
                     </div>
@@ -28,7 +28,7 @@
                         <h6><span class="fas fa-clipboard-list text-info me-2"></span>{{ __('sales_ui.invoice_from_request') }}</h6>
                         <p class="small text-600">{{ __('sales_ui.invoice_from_request_help') }}</p>
                         <x-forms.label for="source_request_doc_num" :label="__('sales_ui.source_sales_request')" required />
-                        <select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.source_sales_request') }}" required></select>
+                        <x-forms.select class="form-select js-select2-ajax" id="source_request_doc_num" name="source_request_doc_num" data-url="{{ route('admin.sales.select2.convertible-requests') }}" data-placeholder="{{ __('sales_ui.source_sales_request') }}" required></x-forms.select>
                         <button class="btn btn-primary btn-sm mt-3" type="submit">{{ __('sales_ui.continue_invoice') }}</button>
                     </form>
                 </div>
