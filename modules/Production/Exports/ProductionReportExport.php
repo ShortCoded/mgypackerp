@@ -21,18 +21,18 @@ class ProductionReportExport implements WithMultipleSheets
     /** @return list<ProductionReportSheet> */
     public function sheets(): array
     {
-        $runRows = collect($this->report['runs'])->map(fn ($run): array => [$run->run_number, $run->order?->doc_num, $run->order?->salesOrder?->doc_num, $run->stageSnapshot?->stage_name, $run->fixedAsset?->asset_name, $run->product?->doc_num, $run->product?->name, $run->actual_start_at?->format('Y-m-d H:i:s'), $run->actual_end_at?->format('Y-m-d H:i:s'), $run->actualDurationHours(), $run->planned_labor_count, $run->actual_labor_count, $run->totalLaborHours(), $run->planned_base_quantity, $run->good_base_quantity, $run->rejected_base_quantity, $run->rework_base_quantity, $run->scrap_base_quantity, $run->received_base_quantity, $run->yield_percent, $run->status]);
-        $runRows->push(['TOTAL', null, null, null, null, null, null, null, null, null, null, null, null, $this->report['kpis']['planned_base_quantity'], $this->report['kpis']['good_base_quantity'], null, null, $this->report['kpis']['loss_base_quantity'], null, null, null]);
+        $runRows = collect($this->report['runs'])->map(fn ($run): array => [$run->run_number, $run->order?->doc_num, $run->order?->salesOrder?->doc_num, $run->stageSnapshot?->stage_name, $run->fixedAsset?->asset_name, $run->product?->doc_num, $run->product?->name, $run->actual_start_at?->format('Y-m-d H:i:s'), $run->actual_end_at?->format('Y-m-d H:i:s'), $run->actualDurationHours(), $run->planned_labor_count, $run->actual_labor_count, $run->totalLaborHours(), $run->planned_base_quantity, $run->good_base_quantity, $run->rejected_base_quantity, $run->rework_base_quantity, $run->scrap_base_quantity, $run->received_base_quantity, $run->yield_percent, __('production_execution.statuses.'.$run->status)]);
+        $runRows->push([__('Total'), null, null, null, null, null, null, null, null, null, null, null, null, $this->report['kpis']['planned_base_quantity'], $this->report['kpis']['good_base_quantity'], null, null, $this->report['kpis']['loss_base_quantity'], null, null, null]);
         $sheets = [
-            $this->sheet('Production Orders', ['Order', 'Date', 'Source', 'Sales Order', 'Status', 'Planned Quantity', 'Received Quantity'], collect($this->report['orders'])->map(fn ($order): array => [$order->doc_num, $order->production_order_date?->toDateString(), $order->source_type, $order->salesOrder?->doc_num, $order->status, $order->lines->sum('base_quantity'), $order->lines->sum('received_base_quantity')])),
-            $this->sheet('Runs Plan vs Actual', ['Run', 'Order', 'Sales Order', 'Stage', 'Fixed Asset', 'Product Code', 'Product', 'Actual Start', 'Actual End', 'Duration Hours', 'Planned Labor', 'Actual Labor', 'Total Labor Hours', 'Planned', 'Good', 'Rejected', 'Rework', 'Scrap', 'Received', 'Yield %', 'Status'], $runRows),
-            $this->sheet('Production Quality', ['Inspection', 'Sampled At', 'Run', 'Order', 'Sales Order', 'Stage', 'Inspection Type', 'Result', 'Disposition', 'Affected Quantity', 'Status', 'Defect Code', 'Notes', 'Corrective Action', 'Attachments'], collect($this->report['qualityInspections'])->map(fn ($inspection): array => [$inspection->doc_num, $inspection->sampled_at?->format('Y-m-d H:i'), $inspection->run?->run_number, $inspection->run?->order?->doc_num, $inspection->run?->order?->salesOrder?->doc_num, $inspection->stageSnapshot?->stage_name, $inspection->qualityType?->name, $inspection->result, $inspection->disposition, $inspection->affected_base_quantity, $inspection->status, $inspection->defect_code, $inspection->notes, $inspection->corrective_action, count($inspection->evidence ?? [])])),
-            $this->sheet('Material Requirements', $this->materialHeadings(), collect($this->report['materials'])->map(fn ($line): array => $this->materialRow($line))),
-            $this->sheet('Finished Goods Receipts', ['Receipt', 'Date', 'Run', 'Order', 'Sales Order', 'Store', 'Product Code', 'Product', 'Quantity', 'Value', 'Journal'], collect($this->report['finishedGoodsReceipts'])->flatMap(fn ($document): Collection => $document->lines->map(fn ($line): array => [$document->doc_num, $document->document_date?->toDateString(), $document->productionRun?->run_number, $document->productionRun?->order?->doc_num, $document->productionRun?->order?->salesOrder?->doc_num, $document->branchStore?->name, $line->product?->doc_num, $line->product?->name, $line->base_quantity, $this->includeFinancial ? $line->total_cost : null, $this->includeFinancial ? $document->journalEntry?->doc_num : null]))),
+            $this->sheet(__('Production Orders'), $this->headings(['Order', 'Date', 'Source', 'Sales Order', 'Status', 'Planned Quantity', 'Received Quantity']), collect($this->report['orders'])->map(fn ($order): array => [$order->doc_num, $order->production_order_date?->toDateString(), __('production_execution.source_types.'.$order->source_type), $order->salesOrder?->doc_num, __('production_execution.statuses.'.$order->status), $order->lines->sum('base_quantity'), $order->lines->sum('received_base_quantity')])),
+            $this->sheet(__('Runs Plan vs Actual'), $this->headings(['Run', 'Order', 'Sales Order', 'Stage', 'Fixed Asset', 'Product Code', 'Product', 'Actual Start', 'Actual End', 'Duration Hours', 'Planned Labor', 'Actual Labor', 'Total Labor Hours', 'Planned', 'Good', 'Rejected', 'Rework', 'Scrap', 'Received', 'Yield %', 'Status']), $runRows),
+            $this->sheet(__('Production Quality'), $this->headings(['Inspection', 'Sampled At', 'Run', 'Order', 'Sales Order', 'Stage', 'Inspection Type', 'Result', 'Disposition', 'Affected Quantity', 'Status', 'Defect Code', 'Notes', 'Corrective Action', 'Attachments']), collect($this->report['qualityInspections'])->map(fn ($inspection): array => [$inspection->doc_num, $inspection->sampled_at?->format('Y-m-d H:i'), $inspection->run?->run_number, $inspection->run?->order?->doc_num, $inspection->run?->order?->salesOrder?->doc_num, $inspection->stageSnapshot?->stage_name, $inspection->qualityType?->name, __('production_execution.quality_results.'.$inspection->result), $inspection->disposition ? __('production_execution.quality_dispositions.'.$inspection->disposition) : null, $inspection->affected_base_quantity, __('production_execution.statuses.'.$inspection->status), $inspection->defect_code, $inspection->notes, $inspection->corrective_action, count($inspection->evidence ?? [])])),
+            $this->sheet(__('Material Requirements'), $this->materialHeadings(), collect($this->report['materials'])->map(fn ($line): array => $this->materialRow($line))),
+            $this->sheet(__('Finished Goods Receipts'), $this->finishedGoodsHeadings(), collect($this->report['finishedGoodsReceipts'])->flatMap(fn ($document): Collection => $document->lines->map(fn ($line): array => $this->finishedGoodsRow($document, $line)))),
         ];
 
         if ($this->includeFinancial) {
-            $sheets[] = $this->sheet('Production Cost and WIP', ['Run', 'Order', 'Issued', 'Returned', 'Waste', 'Capitalizable', 'Finished Goods', 'WIP'], collect($this->report['runCosts'])->map(fn ($row): array => [$row->run?->run_number, $row->run?->order?->doc_num, $row->issued, $row->returned, $row->waste, $row->capitalizable, $row->finished_goods, $row->wip]));
+            $sheets[] = $this->sheet(__('Production Cost and WIP'), $this->headings(['Run', 'Order', 'Issued', 'Returned', 'Waste', 'Capitalizable', 'Finished Goods', 'WIP']), collect($this->report['runCosts'])->map(fn ($row): array => [$row->run?->run_number, $row->run?->order?->doc_num, $row->issued, $row->returned, $row->waste, $row->capitalizable, $row->finished_goods, $row->wip]));
         }
 
         return $sheets;
@@ -41,7 +41,7 @@ class ProductionReportExport implements WithMultipleSheets
     /** @param list<string> $headings */
     private function sheet(string $title, array $headings, Collection $rows): ProductionReportSheet
     {
-        return new ProductionReportSheet($title, $headings, $rows->values()->all());
+        return new ProductionReportSheet(mb_substr($title, 0, 31), $headings, $rows->values()->all());
     }
 
     /** @return list<string> */
@@ -53,7 +53,7 @@ class ProductionReportExport implements WithMultipleSheets
             array_push($headings, 'Planned Cost', 'Actual Cost', 'Waste Cost', 'Cost Variance');
         }
 
-        return $headings;
+        return $this->headings($headings);
     }
 
     /** @return list<mixed> */
@@ -66,6 +66,38 @@ class ProductionReportExport implements WithMultipleSheets
         }
 
         return $row;
+    }
+
+    /** @return list<string> */
+    private function finishedGoodsHeadings(): array
+    {
+        $headings = ['Receipt', 'Date', 'Run', 'Order', 'Sales Order', 'Store', 'Product Code', 'Product', 'Quantity'];
+
+        if ($this->includeFinancial) {
+            array_push($headings, 'Value', 'Journal');
+        }
+
+        return $this->headings($headings);
+    }
+
+    /** @return list<mixed> */
+    private function finishedGoodsRow($document, $line): array
+    {
+        $row = [$document->doc_num, $document->document_date?->toDateString(), $document->productionRun?->run_number, $document->productionRun?->order?->doc_num, $document->productionRun?->order?->salesOrder?->doc_num, $document->branchStore?->name, $line->product?->doc_num, $line->product?->name, $line->base_quantity];
+
+        if ($this->includeFinancial) {
+            array_push($row, $line->total_cost, $document->journalEntry?->doc_num);
+        }
+
+        return $row;
+    }
+
+    /** @param list<string> $headings
+     * @return list<string>
+     */
+    private function headings(array $headings): array
+    {
+        return array_map(static fn (string $heading): string => __($heading), $headings);
     }
 }
 

@@ -19,8 +19,10 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Exports\ProductionQualityReportExport;
 use Modules\Production\Http\Requests\CloseProductionQualityInspectionRequest;
@@ -75,32 +77,94 @@ class ProductionQualityController extends Controller
     public function create(Request $request): View
     {
         $context = $this->requiredContext($request);
+        $selectedRunId = $request->integer('run') ?: (int) $request->session()->getOldInput('production_run_id');
+        $selectedProductId = (int) $request->session()->getOldInput('product_id');
+        $selectedStoreId = (int) $request->session()->getOldInput('branch_store_id');
+        $selectedInspectionTypeId = (int) $request->session()->getOldInput('quality_inspection_type_id');
         $runs = ProductionRun::query()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
             ->where('branch_id', $context['branch_id'])
             ->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])
+            ->whereKey($selectedRunId ?: -1)
             ->with(['product', 'stageSnapshot'])
-            ->latest('id')
             ->get();
         $inspectionTypes = QualityInspectionType::query()
             ->where('company_id', $context['company_id'])
             ->where('is_active', true)
-            ->orderBy('name')
+            ->whereKey($selectedInspectionTypeId ?: -1)
             ->get();
 
         $products = Product::query()
             ->where('company_id', $context['company_id'])
             ->where('status', 'active')
             ->where('item_classification', '!=', Product::ClassificationService)
-            ->orderBy('name')
+            ->whereKey($selectedProductId ?: -1)
             ->get();
         $stores = BranchStore::query()
             ->where('branch_id', $context['branch_id'])
-            ->orderBy('position')
+            ->whereKey($selectedStoreId ?: -1)
             ->get();
 
         return view('modules.production.quality.form', compact('runs', 'inspectionTypes', 'products', 'stores'));
+    }
+
+    public function select2(
+        Request $request,
+        string $lookup,
+        DataTableSearchService $search,
+        Select2ResponseService $select2,
+    ): JsonResponse {
+        $context = $this->requiredContext($request);
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        return match ($lookup) {
+            'runs' => response()->json($select2->paginated(
+                tap(ProductionRun::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('financial_period_id', $context['financial_period_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])
+                    ->with(['product', 'stageSnapshot'])
+                    ->latest('id'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['run_number']])),
+                $request,
+                fn (ProductionRun $run): array => [
+                    'id' => (string) $run->getKey(),
+                    'text' => collect([
+                        $run->run_number,
+                        $run->product?->name,
+                        $run->stageSnapshot?->stage_name,
+                        __('production_execution.statuses.'.$run->status),
+                    ])->filter()->implode(' — '),
+                ],
+            )),
+            'products' => response()->json($select2->paginated(
+                tap(Product::query()
+                    ->forCompany($context['company_id'])
+                    ->active()
+                    ->nonService()
+                    ->orderBy('name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name', 'barcode']])),
+                $request,
+                fn (Product $product): array => ['id' => (string) $product->getKey(), 'text' => trim($product->doc_num.' — '.$product->name)],
+            )),
+            'stores' => response()->json($select2->paginated(
+                tap(BranchStore::query()
+                    ->where('branch_id', $context['branch_id'])
+                    ->orderBy('position')
+                    ->orderBy('name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['name']])),
+                $request,
+                fn (BranchStore $store): array => ['id' => (string) $store->getKey(), 'text' => (string) $store->name],
+            )),
+            'inspection-types' => response()->json($select2->paginated(
+                tap(QualityInspectionType::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('is_active', true)
+                    ->orderBy('name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['code', 'name']])),
+                $request,
+                fn (QualityInspectionType $type): array => ['id' => (string) $type->getKey(), 'text' => trim($type->code.' — '.$type->name)],
+            )),
+            default => abort(404),
+        };
     }
 
     public function store(StoreProductionQualityInspectionRequest $request): RedirectResponse

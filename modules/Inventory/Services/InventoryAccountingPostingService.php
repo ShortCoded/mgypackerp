@@ -76,6 +76,9 @@ class InventoryAccountingPostingService
         }
 
         return in_array($document->document_type, [
+            InventoryDocument::TypeReceipt,
+            InventoryDocument::TypeIssue,
+            InventoryDocument::TypeReturn,
             InventoryDocument::TypeMaterialIssue,
             InventoryDocument::TypeAdditionalMaterialIssue,
             InventoryDocument::TypeMaterialReturn,
@@ -114,6 +117,17 @@ class InventoryAccountingPostingService
                 $event,
             );
             [$debitAccountId, $creditAccountId] = match ($document->document_type) {
+                InventoryDocument::TypeReceipt,
+                InventoryDocument::TypeReturn,
+                InventoryDocument::TypeAdjustmentIn => [
+                    $inventoryAccount->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentGain, $event)->getKey(),
+                ],
+                InventoryDocument::TypeIssue,
+                InventoryDocument::TypeAdjustmentOut => [
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentLoss, $event)->getKey(),
+                    $inventoryAccount->getKey(),
+                ],
                 InventoryDocument::TypeMaterialIssue,
                 InventoryDocument::TypeAdditionalMaterialIssue => [
                     $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
@@ -130,14 +144,6 @@ class InventoryAccountingPostingService
                 InventoryDocument::TypeProductionReceipt => [
                     $inventoryAccount->getKey(),
                     $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
-                ],
-                InventoryDocument::TypeAdjustmentIn => [
-                    $inventoryAccount->getKey(),
-                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentGain, $event)->getKey(),
-                ],
-                InventoryDocument::TypeAdjustmentOut => [
-                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentLoss, $event)->getKey(),
-                    $inventoryAccount->getKey(),
                 ],
                 InventoryDocument::TypeScrap => [
                     $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WarehouseDamageLoss, $event)->getKey(),
@@ -206,6 +212,9 @@ class InventoryAccountingPostingService
     private function eventLabel(InventoryDocument $document): string
     {
         return match ($document->document_type) {
+            InventoryDocument::TypeReceipt => __('inventory.movements.accounting.receipt', ['document' => $document->doc_num]),
+            InventoryDocument::TypeIssue => __('inventory.movements.accounting.issue', ['document' => $document->doc_num]),
+            InventoryDocument::TypeReturn => __('inventory.movements.accounting.return', ['document' => $document->doc_num]),
             InventoryDocument::TypeMaterialIssue => __('Production material issue :document', ['document' => $document->doc_num]),
             InventoryDocument::TypeAdditionalMaterialIssue => __('Additional production material issue :document', ['document' => $document->doc_num]),
             InventoryDocument::TypeMaterialReturn => __('Production material return :document', ['document' => $document->doc_num]),

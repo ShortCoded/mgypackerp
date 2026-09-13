@@ -9,7 +9,7 @@
         $relatedDocuments = collect([
             ['label' => __('Production Order'), 'number' => $record->order?->doc_num, 'url' => $record->order ? route('admin.production.work-orders.show', $record->order) : null, 'permission' => 'production.orders.view'],
             ['label' => __('Sales Requirement / Order'), 'number' => $record->order?->salesOrder?->doc_num, 'url' => $record->order?->salesOrder ? route('admin.sales.sales-orders.show', $record->order->salesOrder) : null, 'permission' => 'sales_orders.view'],
-            ...$record->inventoryDocuments->map(fn ($document) => ['label' => __(str($document->document_type)->replace('_', ' ')->title()->toString()), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => __(str($document->status)->replace('_', ' ')->title()->toString())])->all(),
+            ...$record->inventoryDocuments->map(fn ($document) => ['label' => __('inventory.movements.types.'.$document->document_type), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => __('inventory.movements.statuses.'.$document->status)])->all(),
             ...$record->inspections->map(fn ($inspection) => ['label' => __('QC Sample'), 'number' => $inspection->doc_num, 'url' => route('admin.production.quality.show', $inspection->getKey()), 'permission' => 'production.quality.view', 'meta' => __('production_execution.quality_results.'.$inspection->result)])->all(),
             ...$record->materialRequests->map(fn ($materialRequest) => ['label' => __('production_execution.material_requests.title'), 'number' => $materialRequest->doc_num, 'url' => route('admin.production.material-requests.index'), 'permission' => 'production.material_requests.view', 'meta' => __('production_execution.statuses.'.$materialRequest->status)])->all(),
             ...$record->expenseRequests->map(fn ($expenseRequest) => ['label' => __('production_execution.expenses.title'), 'number' => $expenseRequest->doc_num, 'url' => route('admin.production.expenses.index'), 'permission' => 'production.expenses.view', 'meta' => __('production_execution.statuses.'.$expenseRequest->status)])->all(),
@@ -21,7 +21,7 @@
 
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between">
-            <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</span></div>
+            <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ __('production_execution.statuses.'.$record->status) }}</span></div>
             @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
         </div>
         <div class="card-body"><div class="row g-2">

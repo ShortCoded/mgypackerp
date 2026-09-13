@@ -14,8 +14,14 @@ Route::middleware('auth')
     ->group(function (): void {
         Route::prefix('documents')->name('documents.')->controller(InventoryDocumentController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:inventory.documents.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:inventory.documents.view')->name('data');
+            Route::get('/select2/stores', 'stores')->middleware('can:inventory.documents.view')->name('select2.stores');
+            Route::get('/select2/products', 'products')->middleware('can:inventory.documents.view')->name('select2.products');
             Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');
             Route::post('/', 'store')->middleware('can:inventory.documents.create')->name('store');
+            Route::get('/{inventoryDocument}/edit', 'edit')->middleware('can:inventory.documents.edit')->name('edit');
+            Route::put('/{inventoryDocument}', 'update')->middleware('can:inventory.documents.edit')->name('update');
+            Route::post('/{inventoryDocument}/post', 'post')->middleware('can:inventory.documents.post')->name('post');
             Route::get('/{inventoryDocument}/print', 'print')->middleware('can:inventory.documents.print')->name('print');
             Route::post('/{inventoryDocument}/reverse', 'reverse')->middleware('can:inventory.documents.reverse')->name('reverse');
             Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.documents.view')->name('show');

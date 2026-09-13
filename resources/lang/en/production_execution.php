@@ -113,6 +113,7 @@ return [
         'shortage' => 'Shortage', 'rejected' => 'Rejected', 'paid' => 'Paid', 'reversed' => 'Reversed', 'pending' => 'Pending',
         'received' => 'Received', 'closed' => 'Closed',
     ],
+    'source_types' => ['sales_order' => 'Sales Order', 'make_to_stock' => 'Make to Stock'],
     'duration_units' => ['hours' => 'Hours', 'days' => 'Days'],
     'quality_results' => ['passed' => 'Passed', 'failed' => 'Failed', 'conditional' => 'Conditional', 'pending' => 'Pending'],
     'quality_dispositions' => ['release' => 'Release', 'hold' => 'Hold', 'rework' => 'Rework', 'scrap' => 'Scrap', 'return' => 'Return'],

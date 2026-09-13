@@ -40,6 +40,12 @@ class InventoryDocument extends Model
 
     public const TypeTransfer = 'inventory_transfer';
 
+    public const TypeReceipt = 'inventory_receipt';
+
+    public const TypeIssue = 'inventory_issue';
+
+    public const TypeReturn = 'inventory_return';
+
     public const TypeAdjustmentIn = 'inventory_adjustment_in';
 
     public const TypeAdjustmentOut = 'inventory_adjustment_out';
@@ -47,6 +53,21 @@ class InventoryDocument extends Model
     public const TypeDamage = 'inventory_damage';
 
     public const TypeScrap = 'inventory_scrap';
+
+    /** @return list<string> */
+    public static function manualMovementTypes(): array
+    {
+        return [
+            self::TypeReceipt,
+            self::TypeIssue,
+            self::TypeReturn,
+            self::TypeTransfer,
+            self::TypeAdjustmentIn,
+            self::TypeAdjustmentOut,
+            self::TypeDamage,
+            self::TypeScrap,
+        ];
+    }
 
     public const StatusDraft = 'draft';
 

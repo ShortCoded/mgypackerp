@@ -19,6 +19,13 @@ Route::middleware('auth')->prefix('admin/maintenance')->as('admin.maintenance.')
     Route::post('/expenses/{productionExpenseRequest}/approve', [MaintenanceController::class, 'approveExpense'])->middleware('can:maintenance.expenses.approve')->name('expenses.approve');
     Route::post('/expenses/{productionExpenseRequest}/pay', [MaintenanceController::class, 'payExpense'])->middleware('can:maintenance.expenses.pay')->name('expenses.pay');
     Route::post('/expenses/{productionExpenseRequest}/reverse', [MaintenanceController::class, 'reverseExpense'])->middleware('can:maintenance.expenses.reverse')->name('expenses.reverse');
+    Route::get('/reports', [MaintenanceController::class, 'reports'])->middleware('can:maintenance.reports.view')->name('reports.index');
+    Route::get('/reports/export.xlsx', [MaintenanceController::class, 'exportReport'])->middleware('can:maintenance.reports.export')->name('reports.export');
+    Route::get('/reports/print', [MaintenanceController::class, 'printReport'])->middleware('can:maintenance.reports.export')->name('reports.print');
+    Route::get('/select2/{lookup}', [MaintenanceController::class, 'select2'])
+        ->middleware('can:maintenance.orders.view')
+        ->whereIn('lookup', ['assets', 'molds', 'suppliers'])
+        ->name('select2');
     Route::get('/orders/export.xlsx', [MaintenanceController::class, 'exportOrders'])->middleware('can:maintenance.orders.export')->name('orders.export');
     Route::get('/orders/create', [MaintenanceController::class, 'createOrder'])->middleware('can:maintenance.orders.create')->name('orders.create');
     Route::post('/orders', [MaintenanceController::class, 'storeOrder'])->name('orders.store');

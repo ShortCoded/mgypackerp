@@ -82,6 +82,7 @@ return [
         'save_and_new' => 'حفظ وجديد',
         'save_and_view' => 'حفظ وعرض',
         'save_data' => 'حفظ البيانات',
+        'select' => 'اختر...',
         'restore' => 'استعادة',
         'reset' => 'إعادة ضبط',
         'update' => 'تحديث',

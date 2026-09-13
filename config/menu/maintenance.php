@@ -81,6 +81,21 @@ return [
                 'active' => ['admin.maintenance.expenses.*'],
                 'children' => [],
             ],
+            [
+                'label' => 'maintenance_reports',
+                'title' => 'Maintenance Reports',
+                'icon' => 'chart-line',
+                'route' => 'admin.maintenance.reports.index',
+                'permission' => 'maintenance.reports.view',
+                'keywords' => ['maintenance reports', 'downtime', 'material usage', 'تقارير الصيانة', 'وقت التوقف'],
+                'actions' => [
+                    'view' => 'maintenance.reports.view',
+                    'export' => 'maintenance.reports.export',
+                    'financial' => 'maintenance.reports.financial',
+                ],
+                'active' => ['admin.maintenance.reports.*'],
+                'children' => [],
+            ],
         ],
     ],
 ];

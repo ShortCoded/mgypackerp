@@ -37,6 +37,11 @@ return [
                 'actions' => [
                     'view' => 'inventory.documents.view',
                     'create' => 'inventory.documents.create',
+                    'edit' => 'inventory.documents.edit',
+                    'post' => 'inventory.documents.post',
+                    'receive' => 'inventory.documents.receive',
+                    'issue' => 'inventory.documents.issue',
+                    'return' => 'inventory.documents.return',
                     'transfer' => 'inventory.documents.transfer',
                     'adjust' => 'inventory.documents.adjust',
                     'damage_scrap' => 'inventory.documents.damage_scrap',

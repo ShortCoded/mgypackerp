@@ -12,7 +12,7 @@
         <tr><th>{{ __('Planned start') }}</th><td>{{ $dates->formatDateTime($record->planned_start_at, '') }}</td><th>{{ __('Planned end') }}</th><td>{{ $dates->formatDateTime($record->planned_end_at, '') }}</td></tr>
         <tr><th>{{ __('Actual start') }}</th><td>{{ $dates->formatDateTime($record->actual_start_at, '—') }}</td><th>{{ __('Actual end') }}</th><td>{{ $dates->formatDateTime($record->actual_end_at, '—') }}</td></tr>
         <tr><th>{{ __('production_execution.fields.actual_duration') }}</th><td>{{ $record->actualDurationHours() !== null ? __('production_execution.labor.hours_value', ['hours' => $record->actualDurationHours()]) : '—' }}</td><th>{{ __('production_execution.fields.total_labor_hours') }}</th><td>{{ $record->totalLaborHours() }}</td></tr>
-        <tr><th>{{ __('Target') }}</th><td dir="ltr">{{ $numbers->format($record->planned_base_quantity) }}</td><th>{{ __('Status') }}</th><td>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td></tr>
+        <tr><th>{{ __('Target') }}</th><td dir="ltr">{{ $numbers->format($record->planned_base_quantity) }}</td><th>{{ __('Status') }}</th><td>{{ __('production_execution.statuses.'.$record->status) }}</td></tr>
     </tbody></table>
 
     <h3>{{ __('production_execution.labor.actual_details') }}</h3>
@@ -32,7 +32,7 @@
 
     <h3>{{ __('In-Process Quality') }}</h3>
     <table class="report-table"><thead><tr><th>{{ __('Inspection') }}</th><th>{{ __('Sampled at') }}</th><th>{{ __('Result') }}</th><th>{{ __('Defect') }}</th><th>{{ __('Affected quantity') }}</th><th>{{ __('Corrective action / notes') }}</th></tr></thead><tbody>
-        @forelse($record->inspections as $inspection)<tr><td dir="ltr">{{ $inspection->doc_num }}</td><td>{{ $dates->formatDateTime($inspection->sampled_at, '') }}</td><td>{{ __(str($inspection->result)->replace('_', ' ')->title()->toString()) }}</td><td dir="ltr">{{ $inspection->defect_code }}</td><td>{{ $numbers->format($inspection->affected_base_quantity) }}</td><td>{{ $inspection->corrective_action }} {{ $inspection->notes }}</td></tr>@empty<tr><td colspan="6">{{ __('No quality inspections.') }}</td></tr>@endforelse
+        @forelse($record->inspections as $inspection)<tr><td dir="ltr">{{ $inspection->doc_num }}</td><td>{{ $dates->formatDateTime($inspection->sampled_at, '') }}</td><td>{{ __('production_execution.quality_results.'.$inspection->result) }}</td><td dir="ltr">{{ $inspection->defect_code }}</td><td>{{ $numbers->format($inspection->affected_base_quantity) }}</td><td>{{ $inspection->corrective_action }} {{ $inspection->notes }}</td></tr>@empty<tr><td colspan="6">{{ __('No quality inspections.') }}</td></tr>@endforelse
     </tbody></table>
 
     <h3>{{ __('Output Accountability') }}</h3>

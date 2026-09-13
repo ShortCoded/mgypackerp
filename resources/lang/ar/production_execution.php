@@ -97,6 +97,7 @@ return [
         'shortage' => 'يوجد عجز', 'rejected' => 'مرفوض', 'paid' => 'تم الصرف', 'reversed' => 'معكوس', 'pending' => 'منتظر',
         'received' => 'مستلم', 'closed' => 'مغلق',
     ],
+    'source_types' => ['sales_order' => 'أمر بيع', 'make_to_stock' => 'إنتاج للمخزون'],
     'duration_units' => ['hours' => 'ساعات', 'days' => 'أيام'],
     'quality_results' => ['passed' => 'مقبول', 'failed' => 'مرفوض', 'conditional' => 'قبول مشروط', 'pending' => 'منتظر'],
     'quality_dispositions' => ['release' => 'إفراج', 'hold' => 'حجز', 'rework' => 'إعادة تشغيل', 'scrap' => 'هالك', 'return' => 'مرتجع'],

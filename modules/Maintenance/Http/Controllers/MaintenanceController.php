@@ -17,8 +17,10 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -198,9 +200,39 @@ class MaintenanceController extends Controller
     public function exportOrders(Request $request): BinaryFileResponse
     {
         return Excel::download(
-            new MaintenanceWorkOrderExport($this->ordersForContext($request)),
+            new MaintenanceWorkOrderExport(
+                $this->ordersForContext($request),
+                (bool) $request->user()?->can('maintenance.reports.financial'),
+            ),
             'maintenance-work-orders-'.now()->format('Ymd-His').'.xlsx',
         );
+    }
+
+    public function reports(Request $request): View
+    {
+        return view('modules.maintenance.reports.index', $this->maintenanceReport($request));
+    }
+
+    public function exportReport(Request $request): BinaryFileResponse
+    {
+        $report = $this->maintenanceReport($request);
+
+        return Excel::download(
+            new MaintenanceWorkOrderExport($report['orders'], $report['canViewFinancial']),
+            'maintenance-operations-'.now()->format('Ymd-His').'.xlsx',
+        );
+    }
+
+    public function printReport(Request $request): Response
+    {
+        $report = $this->maintenanceReport($request);
+        $company = Company::query()->findOrFail($report['context']['company_id']);
+
+        return $this->pdf->stream('reports.maintenance.operations', [
+            ...$report,
+            'title' => __('maintenance.reports.title'),
+            'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+        ], 'maintenance-operations-report.pdf', 'L');
     }
 
     public function createOrder(Request $request): View
@@ -209,13 +241,59 @@ class MaintenanceController extends Controller
         $maintenanceRequest = $request->filled('request') ? MaintenanceRequest::query()
             ->when($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], fn ($query) => $query->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))
             ->where('doc_num', $request->string('request'))->firstOrFail() : null;
+        $selectedAssetId = $maintenanceRequest?->fixed_asset_id ?: (int) $request->session()->getOldInput('fixed_asset_id');
+        $selectedMoldId = (int) $request->session()->getOldInput('production_mold_id');
+        $selectedSupplierId = (int) $request->session()->getOldInput('supplier_id');
 
         return view('modules.maintenance.orders.form', [
             'requestRecord' => $maintenanceRequest,
-            'assets' => $this->assets($request),
-            'molds' => ProductionMold::query()->when($context['company_id'] && $context['branch_id'], fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))->orderBy('name')->get(),
-            'suppliers' => Supplier::query()->when($context['company_id'], fn ($query) => $query->where('company_id', $context['company_id']), fn ($query) => $query->whereRaw('1 = 0'))->orderBy('name')->get(),
+            'assets' => FixedAsset::query()
+                ->when($context['company_id'] && $context['branch_id'], fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))
+                ->whereKey($selectedAssetId ?: -1)
+                ->get(),
+            'molds' => ProductionMold::query()->when($context['company_id'] && $context['branch_id'], fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))->whereKey($selectedMoldId ?: -1)->get(),
+            'suppliers' => Supplier::query()->when($context['company_id'], fn ($query) => $query->where('company_id', $context['company_id']), fn ($query) => $query->whereRaw('1 = 0'))->whereKey($selectedSupplierId ?: -1)->get(),
         ]);
+    }
+
+    public function select2(
+        Request $request,
+        string $lookup,
+        DataTableSearchService $search,
+        Select2ResponseService $select2,
+    ): JsonResponse {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['branch_id'], 422, __('maintenance.messages.operating_context_required'));
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        return match ($lookup) {
+            'assets' => response()->json($select2->paginated(
+                tap(FixedAsset::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
+                    ->orderBy('asset_name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'asset_name', 'serial_number']])),
+                $request,
+                fn (FixedAsset $asset): array => ['id' => (string) $asset->getKey(), 'text' => trim($asset->doc_num.' — '.$asset->asset_name)],
+            )),
+            'molds' => response()->json($select2->paginated(
+                tap(ProductionMold::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->orderBy('name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['code', 'name']])),
+                $request,
+                fn (ProductionMold $mold): array => ['id' => (string) $mold->getKey(), 'text' => trim($mold->code.' — '.$mold->name)],
+            )),
+            'suppliers' => response()->json($select2->paginated(
+                tap(Supplier::query()
+                    ->where('company_id', $context['company_id'])
+                    ->where('status', 'active')
+                    ->orderBy('name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name', 'phone', 'mobile']])),
+                $request,
+                fn (Supplier $supplier): array => ['id' => (string) $supplier->getKey(), 'text' => trim($supplier->doc_num.' — '.$supplier->name)],
+            )),
+            default => abort(404),
+        };
     }
 
     public function showOrder(Request $request, MaintenanceWorkOrder $maintenanceWorkOrder): View
@@ -310,9 +388,95 @@ class MaintenanceController extends Controller
 
         return MaintenanceWorkOrder::query()
             ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
-            ->with(['asset', 'supplier'])
+            ->with([
+                'asset', 'mold', 'supplier', 'request',
+                'materialRequests.lines.product', 'materialRequests.issueDocument', 'materialRequests.returnDocument',
+                'expenses.currency', 'expenses.cashVoucher', 'expenses.journalEntry',
+            ])
             ->orderByDesc('planned_start_at')
             ->get();
+    }
+
+    /** @return array<string, mixed> */
+    private function maintenanceReport(Request $request): array
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless(
+            $context['company_id'] && $context['financial_period_id'] && $context['branch_id'],
+            422,
+            __('maintenance.messages.operating_context_required'),
+        );
+        $filters = $request->validate([
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'maintenance_type' => ['nullable', 'in:preventive,corrective,emergency,external'],
+            'service_mode' => ['nullable', 'in:internal,external'],
+            'status' => ['nullable', 'in:draft,approved,in_progress,completed,closed,cancelled'],
+        ]);
+
+        $orders = MaintenanceWorkOrder::query()
+            ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+            ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '>=', $date))
+            ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '<=', $date))
+            ->when($filters['maintenance_type'] ?? null, fn ($query, $value) => $query->where('maintenance_type', $value))
+            ->when($filters['service_mode'] ?? null, fn ($query, $value) => $query->where('service_mode', $value))
+            ->when($filters['status'] ?? null, fn ($query, $value) => $query->where('status', $value))
+            ->with([
+                'asset', 'mold', 'supplier', 'request',
+                'materialRequests.lines.product', 'materialRequests.issueDocument', 'materialRequests.returnDocument',
+                'expenses.currency', 'expenses.cashVoucher', 'expenses.journalEntry',
+            ])
+            ->latest('created_at')
+            ->get();
+        $requests = MaintenanceRequest::query()
+            ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+            ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate('reported_at', '>=', $date))
+            ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate('reported_at', '<=', $date))
+            ->count();
+        $materialLines = $orders->flatMap(fn (MaintenanceWorkOrder $order) => $order->materialRequests->flatMap->lines);
+        $expenses = $orders->flatMap->expenses;
+        $expenseTotals = $expenses
+            ->groupBy(fn (ProductionExpenseRequest $expense): string => $expense->currency?->code ?: '—')
+            ->map(fn ($rows, string $currency): array => [
+                'currency' => $currency,
+                'requested' => $rows->sum(fn (ProductionExpenseRequest $expense): float => (float) $expense->amount),
+                'paid' => $rows->where('status', ProductionExpenseRequest::StatusPaid)->sum(fn (ProductionExpenseRequest $expense): float => (float) $expense->amount),
+                'count' => $rows->count(),
+            ])->values();
+        $downtimeMinutes = $orders->sum(function (MaintenanceWorkOrder $order): int {
+            if (! $order->actual_start_at || ! $order->actual_end_at || $order->actual_end_at->lessThan($order->actual_start_at)) {
+                return 0;
+            }
+
+            return (int) $order->actual_start_at->diffInMinutes($order->actual_end_at);
+        });
+
+        return [
+            'context' => $context,
+            'filters' => $filters,
+            'orders' => $orders,
+            'expenseTotals' => $expenseTotals,
+            'canViewFinancial' => (bool) $request->user()?->can('maintenance.reports.financial'),
+            'kpis' => [
+                'breakdown_reports' => $requests,
+                'work_orders' => $orders->count(),
+                'open_orders' => $orders->whereIn('status', [
+                    MaintenanceWorkOrder::StatusDraft,
+                    MaintenanceWorkOrder::StatusApproved,
+                    MaintenanceWorkOrder::StatusInProgress,
+                ])->count(),
+                'completed_orders' => $orders->whereIn('status', [
+                    MaintenanceWorkOrder::StatusCompleted,
+                    MaintenanceWorkOrder::StatusClosed,
+                ])->count(),
+                'internal_orders' => $orders->where('service_mode', 'internal')->count(),
+                'external_orders' => $orders->where('service_mode', 'external')->count(),
+                'downtime_hours' => round($downtimeMinutes / 60, 2),
+                'requested_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->requested_quantity),
+                'issued_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->issued_quantity),
+                'returned_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->returned_quantity),
+            ],
+        ];
     }
 
     private function guard(callable $callback): JsonResponse

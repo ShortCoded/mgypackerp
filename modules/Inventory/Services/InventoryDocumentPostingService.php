@@ -271,6 +271,7 @@ class InventoryDocumentPostingService
         ];
         $outboundTypes = [
             InventoryDocument::TypeSalesDelivery,
+            InventoryDocument::TypeIssue,
             InventoryDocument::TypeAdjustmentOut,
             InventoryDocument::TypeMaterialConsumption,
             InventoryDocument::TypeProductionWaste,

@@ -13,12 +13,12 @@
     @endphp
     <table style="width:100%; margin-bottom:9px;"><tr>
         <td style="border:0;"><h2 style="margin:0;">{{ app(\Modules\Core\Services\Reports\ReportPdfService::class)->stockDocumentTitle($record) }}</h2><strong dir="ltr">{{ $record->doc_num }}</strong></td>
-        <td style="border:0; text-align:{{ $direction === 'rtl' ? 'left' : 'right' }};">{{ $dates->formatDate($record->document_date, '') }}<br>{{ __(str($record->status)->replace('_', ' ')->title()->toString()) }}</td>
+        <td style="border:0; text-align:{{ $direction === 'rtl' ? 'left' : 'right' }};">{{ $dates->formatDate($record->document_date, '') }}<br>{{ __('inventory.movements.statuses.'.$record->status) }}</td>
     </tr></table>
 
     <table class="report-table" style="margin-bottom:9px;"><tbody>
         <tr><th>{{ __('Source store') }}</th><td>{{ $record->branchStore?->name }}</td><th>{{ __('Destination store') }}</th><td>{{ $record->destinationBranchStore?->name ?: '—' }}</td></tr>
-        <tr><th>{{ __('Source status') }}</th><td>{{ __(str($record->source_stock_status)->replace('_', ' ')->title()->toString()) }}</td><th>{{ __('Destination status') }}</th><td>{{ __(str($record->destination_stock_status)->replace('_', ' ')->title()->toString()) ?: '—' }}</td></tr>
+        <tr><th>{{ __('Source status') }}</th><td>{{ $record->source_stock_status ? __('inventory.movements.stock_statuses.'.$record->source_stock_status) : '—' }}</td><th>{{ __('Destination status') }}</th><td>{{ $record->destination_stock_status ? __('inventory.movements.stock_statuses.'.$record->destination_stock_status) : '—' }}</td></tr>
         <tr><th>{{ __('Source document') }}</th><td dir="ltr">{{ $record->source_doc_num ?: '—' }}</td><th>{{ __('Production') }}</th><td dir="ltr">{{ $record->productionOrder?->doc_num }} {{ $record->productionRun?->run_number }}</td></tr>
         <tr><th>{{ __('Reason') }}</th><td colspan="3">{{ $record->movement_reason ?: $record->purpose ?: '—' }}</td></tr>
     </tbody></table>

@@ -82,6 +82,7 @@ return [
         'save_and_new' => 'Save and New',
         'save_and_view' => 'Save and View',
         'save_data' => 'Save Data',
+        'select' => 'Select...',
         'restore' => 'Restore',
         'reset' => 'Reset',
         'update' => 'Update',

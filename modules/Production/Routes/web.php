@@ -47,6 +47,10 @@ Route::middleware('auth')
         Route::get('/quality/reports/data', [ProductionQualityController::class, 'reportsData'])->middleware('can:production.quality.view')->name('quality.reports.data');
         Route::get('/quality/export.xlsx', [ProductionQualityController::class, 'export'])->middleware('can:production.quality.export')->name('quality.export');
         Route::get('/quality/print', [ProductionQualityController::class, 'print'])->middleware('can:production.quality.print')->name('quality.print');
+        Route::get('/quality/select2/{lookup}', [ProductionQualityController::class, 'select2'])
+            ->middleware('can:production.quality.view')
+            ->whereIn('lookup', ['runs', 'products', 'stores', 'inspection-types'])
+            ->name('quality.select2');
         Route::get('/quality/create', [ProductionQualityController::class, 'create'])->middleware('can:production.quality.create')->name('quality.create');
         Route::post('/quality', [ProductionQualityController::class, 'store'])->name('quality.store');
         Route::get('/quality/{inspection}', [ProductionQualityController::class, 'show'])->middleware('can:production.quality.view')->name('quality.show');

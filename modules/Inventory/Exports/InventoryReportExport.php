@@ -28,7 +28,7 @@ class InventoryReportExport implements WithMultipleSheets
         }
 
         $balanceRows = collect($this->report['balances'])->map(function ($row): array {
-            $data = [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->on_hand];
+            $data = [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->on_hand];
 
             if ($this->includeFinancial) {
                 array_push($data, $row->inventory_value, $row->unvalued_receipt_quantity);
@@ -36,38 +36,44 @@ class InventoryReportExport implements WithMultipleSheets
 
             return $data;
         });
-        $balanceTotal = ['TOTAL', null, null, null, null, null, $this->report['reportTotals']['on_hand']];
+        $balanceTotal = [__('Total'), null, null, null, null, null, $this->report['reportTotals']['on_hand']];
 
         if ($this->includeFinancial) {
             array_push($balanceTotal, $this->report['reportTotals']['inventory_value'], $this->report['reportTotals']['unvalued_receipt_quantity']);
         }
 
-        $movementRows = collect($this->report['movements'])->map(fn ($row): array => [$row->transaction_date?->toDateString(), $row->source_doc_num, $row->transaction_type, $row->branchStore?->name, $row->warehouseLocation?->code, $row->stock_status, $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out, $this->includeFinancial ? $row->unit_cost : null, $this->includeFinancial ? $row->total_cost : null, $row->productionRun?->run_number]);
-        $movementTotal = ['TOTAL', null, null, null, null, null, null, null, $this->report['reportTotals']['quantity_in'], $this->report['reportTotals']['quantity_out'], null, null, null];
+        $movementRows = collect($this->report['movements'])->map(fn ($row): array => $this->movementRow($row));
+        $movementTotal = [__('Total'), null, null, null, null, null, null, null, $this->report['reportTotals']['quantity_in'], $this->report['reportTotals']['quantity_out']];
+
+        if ($this->includeFinancial) {
+            array_push($movementTotal, null, null);
+        }
+
+        $movementTotal[] = null;
 
         $sheets = [
-            $this->sheet('Stock Balance', $balanceHeadings, $balanceRows->push($balanceTotal)),
-            $this->sheet('Reservations', ['Product Code', 'Product', 'Store', 'Sales Order', 'Production Order', 'Run', 'Reserved', 'Remaining'], collect($this->report['reservations'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->order?->doc_num, $row->productionOrder?->doc_num, $row->productionRun?->run_number, $row->quantity, $row->remaining_quantity])),
-            $this->sheet('Movement and Stock Card', ['Date', 'Source', 'Type', 'Store', 'Location', 'Status', 'Product Code', 'Product', 'In', 'Out', 'Unit Cost', 'Total Cost', 'Run'], $movementRows->push($movementTotal)),
-            $this->sheet('QC and Quarantine', ['Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'On Hand'], collect($this->report['qualityBalances'])->map(fn ($row): array => [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->on_hand])),
-            $this->sheet('Damage and Scrap', ['Date', 'Source', 'Type', 'Store', 'Product Code', 'Product', 'In', 'Out'], collect($this->report['damageAndScrap'])->map(fn ($row): array => [$row->transaction_date?->toDateString(), $row->source_doc_num, $row->transaction_type, $row->branchStore?->name, $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out])),
-            $this->sheet('Stock Count Variances', ['Count', 'Date', 'Store', 'Product Code', 'Product', 'Status', 'Batch', 'System', 'Physical', 'Variance', 'Reason'], collect($this->report['stockCountVariances'])->map(fn ($row): array => [$row->stockCount?->doc_num, $row->stockCount?->count_date?->toDateString(), $row->stockCount?->branchStore?->name, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->system_quantity, $row->physical_quantity, $row->variance_quantity, $row->variance_reason])),
-            $this->sheet('Reorder', ['Product Code', 'Product', 'Store', 'On Hand', 'Reserved', 'Available', 'Reorder Point', 'Shortage', 'Production Demand'], collect($this->report['reorder'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->on_hand, $row->reserved, $row->available, $row->reorder_point, $row->shortage, $row->production_demand])),
+            $this->sheet(__('Stock Balance'), $this->headings($balanceHeadings), $balanceRows->push($balanceTotal)),
+            $this->sheet(__('Reservations'), $this->headings(['Product Code', 'Product', 'Store', 'Sales Order', 'Production Order', 'Run', 'Reserved', 'Remaining']), collect($this->report['reservations'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->order?->doc_num, $row->productionOrder?->doc_num, $row->productionRun?->run_number, $row->quantity, $row->remaining_quantity])),
+            $this->sheet(__('Movement and Stock Card'), $this->movementHeadings(), $movementRows->push($movementTotal)),
+            $this->sheet(__('QC and Quarantine'), $this->headings(['Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'On Hand']), collect($this->report['qualityBalances'])->map(fn ($row): array => [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->on_hand])),
+            $this->sheet(__('Damage and Scrap'), $this->headings(['Date', 'Source', 'Type', 'Store', 'Product Code', 'Product', 'In', 'Out']), collect($this->report['damageAndScrap'])->map(fn ($row): array => [$row->transaction_date?->toDateString(), $row->source_doc_num, $this->movementTypeLabel($row->transaction_type), $row->branchStore?->name, $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out])),
+            $this->sheet(__('Stock Count Variances'), $this->headings(['Count', 'Date', 'Store', 'Product Code', 'Product', 'Status', 'Batch', 'System', 'Physical', 'Variance', 'Reason']), collect($this->report['stockCountVariances'])->map(fn ($row): array => [$row->stockCount?->doc_num, $row->stockCount?->count_date?->toDateString(), $row->stockCount?->branchStore?->name, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->system_quantity, $row->physical_quantity, $row->variance_quantity, $row->variance_reason])),
+            $this->sheet(__('Reorder'), $this->headings(['Product Code', 'Product', 'Store', 'On Hand', 'Reserved', 'Available', 'Reorder Point', 'Shortage', 'Production Demand']), collect($this->report['reorder'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->on_hand, $row->reserved, $row->available, $row->reorder_point, $row->shortage, $row->production_demand])),
             $this->sheet(
-                'Inventory Aging',
-                array_values(array_filter(['Receipt Date', 'Age Days', 'Age Bucket', 'Receipt Source', 'Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'Remaining Quantity', $this->includeFinancial ? 'Remaining Value' : null])),
-                collect($this->report['agingLayers'])->map(fn ($row): array => array_values(array_filter([$row->original_receipt_date?->toDateString(), $row->age_days, $row->age_bucket, $row->source_doc_num, $row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $row->stock_status, $row->batch_lot, $row->remaining_quantity, $this->includeFinancial ? $row->remaining_value : null], fn ($value): bool => $value !== null))),
+                __('Inventory Aging'),
+                $this->headings(array_values(array_filter(['Receipt Date', 'Age Days', 'Age Bucket', 'Receipt Source', 'Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'Remaining Quantity', $this->includeFinancial ? 'Remaining Value' : null]))),
+                collect($this->report['agingLayers'])->map(fn ($row): array => array_values(array_filter([$row->original_receipt_date?->toDateString(), $row->age_days, $row->age_bucket, $row->source_doc_num, $row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->remaining_quantity, $this->includeFinancial ? $row->remaining_value : null], fn ($value): bool => $value !== null))),
             ),
-            $this->sheet('Inventory Expiry', ['Expiry State', 'Days to Expiry', 'Expiry Date', 'Manufacture Date', 'Batch', 'Product Code', 'Product', 'Store', 'Location', 'Status', 'Remaining Quantity'], collect($this->report['expiryLayers'])->map(fn ($row): array => [$row->expiry_state, $row->days_to_expiry, $row->expiry_date?->toDateString(), $row->manufacture_date?->toDateString(), $row->batch_lot, $row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->warehouseLocation?->code, $row->stock_status, $row->remaining_quantity])),
+            $this->sheet(__('Inventory Expiry'), $this->headings(['Expiry State', 'Days to Expiry', 'Expiry Date', 'Manufacture Date', 'Batch', 'Product Code', 'Product', 'Store', 'Location', 'Status', 'Remaining Quantity']), collect($this->report['expiryLayers'])->map(fn ($row): array => [__(str($row->expiry_state)->replace('_', ' ')->title()->toString()), $row->days_to_expiry, $row->expiry_date?->toDateString(), $row->manufacture_date?->toDateString(), $row->batch_lot, $row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->warehouseLocation?->code, $this->stockStatusLabel($row->stock_status), $row->remaining_quantity])),
         ];
 
         if ($this->includeFinancial) {
             $sheets[] = $this->report['glReconciliation'] === null
-                ? $this->sheet('GL Reconciliation', ['Status', 'Details'], collect([[
-                    'Unavailable',
+                ? $this->sheet(__('GL Reconciliation'), $this->headings(['Status', 'Details']), collect([[
+                    __('Unavailable'),
                     $this->report['glReconciliationUnavailableReason'],
                 ]]))
-                : $this->sheet('GL Reconciliation', ['Control', 'Subledger', 'General Ledger', 'Difference', 'Status'], collect($this->report['glReconciliation'])->map(fn (array $row): array => [$row['label'], $row['subledger'], $row['gl'], $row['difference'], $row['status']]));
+                : $this->sheet(__('GL Reconciliation'), $this->headings(['Control', 'Subledger', 'General Ledger', 'Difference', 'Status']), collect($this->report['glReconciliation'])->map(fn (array $row): array => [$row['label'], $row['subledger'], $row['gl'], $row['difference'], __(str($row['status'])->replace('_', ' ')->title()->toString())]));
         }
 
         return $sheets;
@@ -76,7 +82,58 @@ class InventoryReportExport implements WithMultipleSheets
     /** @param list<string> $headings */
     private function sheet(string $title, array $headings, Collection $rows): InventoryReportSheet
     {
-        return new InventoryReportSheet($title, $headings, $rows->values()->all());
+        return new InventoryReportSheet(mb_substr($title, 0, 31), $headings, $rows->values()->all());
+    }
+
+    /** @return list<string> */
+    private function movementHeadings(): array
+    {
+        $headings = ['Date', 'Source', 'Type', 'Store', 'Location', 'Status', 'Product Code', 'Product', 'In', 'Out'];
+
+        if ($this->includeFinancial) {
+            array_push($headings, 'Unit Cost', 'Total Cost');
+        }
+
+        $headings[] = 'Run';
+
+        return $this->headings($headings);
+    }
+
+    /** @return list<mixed> */
+    private function movementRow($row): array
+    {
+        $data = [$row->transaction_date?->toDateString(), $row->source_doc_num, $this->movementTypeLabel($row->transaction_type), $row->branchStore?->name, $row->warehouseLocation?->code, $this->stockStatusLabel($row->stock_status), $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out];
+
+        if ($this->includeFinancial) {
+            array_push($data, $row->unit_cost, $row->total_cost);
+        }
+
+        $data[] = $row->productionRun?->run_number;
+
+        return $data;
+    }
+
+    private function movementTypeLabel(string $type): string
+    {
+        $key = 'inventory.movements.types.'.$type;
+        $translated = __($key);
+
+        return $translated === $key
+            ? __(str($type)->replace('_', ' ')->title()->toString())
+            : $translated;
+    }
+
+    private function stockStatusLabel(string $status): string
+    {
+        return __('inventory.movements.stock_statuses.'.$status);
+    }
+
+    /** @param list<string> $headings
+     * @return list<string>
+     */
+    private function headings(array $headings): array
+    {
+        return array_map(static fn (string $heading): string => __($heading), $headings);
     }
 }
 

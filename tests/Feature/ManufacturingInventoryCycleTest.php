@@ -655,6 +655,16 @@ test('general quality can inspect warehouse stock across multiple days and be re
         OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(), OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
 
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.quality.create'))
+        ->assertOk()
+        ->assertSee('js-select2-ajax', false)
+        ->assertDontSee($fixture['raw']->name);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.quality.select2', ['lookup' => 'products', 'q' => $fixture['raw']->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $fixture['raw']->getKey());
+
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.store'), [
         'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
         'product_id' => $fixture['raw']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
@@ -948,7 +958,16 @@ test('canonical inventory and production pages use real routes and keep html ope
         ->withSession($session)
         ->get(route('admin.inventory.documents.create'))
         ->assertOk()
-        ->assertSee('New Inventory Movement');
+        ->assertSee('New Inventory Movement')
+        ->assertSee('js-select2-ajax', false)
+        ->assertSee('js-date-picker', false);
+
+    $this->actingAs($fixture['user'])
+        ->withSession($session)
+        ->get(route('admin.inventory.documents.index'))
+        ->assertOk()
+        ->assertSee('data-server-table', false)
+        ->assertSee(route('admin.inventory.documents.data'), false);
 
     $response = $this->actingAs($fixture['user'])
         ->withSession($session)
@@ -1022,6 +1041,198 @@ test('canonical inventory and production pages use real routes and keep html ope
         expect($formalPdf->headers->get('Content-Disposition'))->toContain('inline')
             ->and(str_starts_with($formalPdf->getContent(), '%PDF-'))->toBeTrue();
     }
+});
+
+test('manual inventory receipt issue return and transfer use the full posted movement cycle', function () {
+    $fixture = manufacturingInventoryFixture();
+    $destinationStore = BranchStore::query()->create([
+        'branch_id' => $fixture['branch']->getKey(),
+        'name' => 'Receiving Store',
+        'position' => 2,
+    ]);
+    $permissions = [
+        'inventory.documents.view',
+        'inventory.documents.create',
+        'inventory.documents.receive',
+        'inventory.documents.issue',
+        'inventory.documents.return',
+        'inventory.documents.transfer',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'ar',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.create'))
+        ->assertOk()
+        ->assertSee('إذن استلام مخزني')
+        ->assertSee('إذن صرف مخزني')
+        ->assertSee('إذن مرتجع إلى المخزن')
+        ->assertSee('تحويل مخزني')
+        ->assertSee('متاح');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.index'))
+        ->assertOk()
+        ->assertSee('window.dataTableTranslations', false)
+        ->assertSee('emptyTable');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.select2.stores', ['q' => 'Receiving']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $destinationStore->getKey());
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.select2.products', ['q' => 'Plastic Resin']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $fixture['raw']->getKey());
+
+    $post = function (string $type, array $overrides = []) use ($fixture, $session): InventoryDocument {
+        $this->actingAs($fixture['user'])->withSession($session)
+            ->post(route('admin.inventory.documents.store'), [
+                'branch_store_id' => $fixture['store']->getKey(),
+                'document_type' => $type,
+                'document_date' => now()->toDateString(),
+                'movement_reason' => 'Business cycle verification',
+                'source_stock_status' => InventoryTransaction::StatusAvailable,
+                'destination_stock_status' => InventoryTransaction::StatusAvailable,
+                'lines' => [[
+                    'product_id' => $fixture['raw']->getKey(),
+                    'quantity' => '1',
+                    'unit_cost' => '2',
+                ]],
+                ...$overrides,
+            ])
+            ->assertRedirect();
+
+        return InventoryDocument::query()->latest('id')->firstOrFail();
+    };
+
+    $receipt = $post(InventoryDocument::TypeReceipt, ['lines' => [[
+        'product_id' => $fixture['raw']->getKey(), 'quantity' => '10', 'unit_cost' => '2',
+    ]]]);
+    $issue = $post(InventoryDocument::TypeIssue, ['lines' => [[
+        'product_id' => $fixture['raw']->getKey(), 'quantity' => '4',
+    ]]]);
+    $return = $post(InventoryDocument::TypeReturn, ['lines' => [[
+        'product_id' => $fixture['raw']->getKey(), 'quantity' => '1', 'unit_cost' => '2',
+    ]]]);
+    $transfer = $post(InventoryDocument::TypeTransfer, [
+        'destination_branch_store_id' => $destinationStore->getKey(),
+        'lines' => [['product_id' => $fixture['raw']->getKey(), 'quantity' => '3']],
+    ]);
+
+    expect($receipt->journalEntry)->toBeInstanceOf(JournalEntry::class)
+        ->and($issue->journalEntry)->toBeInstanceOf(JournalEntry::class)
+        ->and($return->journalEntry)->toBeInstanceOf(JournalEntry::class)
+        ->and($transfer->transactions)->toHaveCount(2)
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey(),
+        )['physical_on_hand'])->toBe('1004.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(), $destinationStore->getKey(), $fixture['raw']->getKey(),
+        )['physical_on_hand'])->toBe('3.00000000');
+
+    $dataResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertOk()
+        ->assertJsonPath('recordsTotal', 4);
+    expect(collect($dataResponse->json('data'))->pluck('document_type'))
+        ->toContain('إذن استلام مخزني', 'تحويل مخزني');
+});
+
+test('manual inventory movement supports draft edit datatable navigation and controlled posting', function () {
+    $fixture = manufacturingInventoryFixture();
+    $permissions = [
+        'inventory.documents.view',
+        'inventory.documents.create',
+        'inventory.documents.edit',
+        'inventory.documents.post',
+        'inventory.documents.adjust',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'en',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $payload = [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeAdjustmentIn,
+        'document_date' => now()->toDateString(),
+        'movement_reason' => 'Draft movement lifecycle',
+        'destination_stock_status' => InventoryTransaction::StatusAvailable,
+        'lines' => [[
+            'product_id' => $fixture['raw']->getKey(),
+            'quantity' => '2',
+            'unit_cost' => '3',
+        ]],
+        'submit_action' => 'save_and_edit',
+    ];
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.documents.store'), $payload)
+        ->assertRedirect();
+    $document = InventoryDocument::query()->latest('id')->firstOrFail();
+
+    expect($document->status)->toBe(InventoryDocument::StatusDraft)
+        ->and($document->transactions()->count())->toBe(0)
+        ->and($document->journalEntry)->toBeNull();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.edit', $document))
+        ->assertOk()
+        ->assertSee('Edit Inventory Movement')
+        ->assertSee('Draft movement lifecycle')
+        ->assertSee('window.inventoryMovementLines', false);
+
+    $dataResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertOk();
+    expect($dataResponse->json('data.0.doc_num'))->toContain(route('admin.inventory.documents.edit', $document));
+
+    $payload['lines'][0]['quantity'] = '5';
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.inventory.documents.update', $document), $payload)
+        ->assertRedirect(route('admin.inventory.documents.edit', $document));
+    expect($document->refresh()->lines->first()->quantity)->toBe('5.00000000')
+        ->and($document->transactions()->count())->toBe(0);
+
+    $fixture['user']->revokePermissionTo('inventory.documents.adjust');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.inventory.documents.post', $document))
+        ->assertForbidden();
+    $fixture['user']->givePermissionTo('inventory.documents.adjust');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.inventory.documents.post', $document))
+        ->assertOk()
+        ->assertJsonPath('data.status', InventoryDocument::StatusPosted);
+    expect($document->refresh()->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($document->transactions()->count())->toBe(1)
+        ->and($document->journalEntry)->not->toBeNull();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->from(route('admin.inventory.documents.show', $document))
+        ->put(route('admin.inventory.documents.update', $document), $payload)
+        ->assertRedirect(route('admin.inventory.documents.show', $document))
+        ->assertSessionHasErrors('document');
 });
 
 test('the browser inventory movement contract posts and prints twenty five valued lines', function () {
@@ -1856,6 +2067,9 @@ test('maintenance flows from a breakdown report through external work completion
         'maintenance.expenses.approve',
         'maintenance.expenses.pay',
         'maintenance.expenses.reverse',
+        'maintenance.reports.view',
+        'maintenance.reports.export',
+        'maintenance.reports.financial',
         'production.material_requests.view',
         'production.expenses.view',
     ];
@@ -1872,6 +2086,16 @@ test('maintenance flows from a breakdown report through external work completion
         OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.orders.create'))
+        ->assertOk()
+        ->assertSee('js-select2-ajax', false)
+        ->assertDontSee($asset->asset_name);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.maintenance.select2', ['lookup' => 'assets', 'q' => $asset->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $asset->getKey());
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.maintenance.requests.store'), [
@@ -2003,6 +2227,38 @@ test('maintenance flows from a breakdown report through external work completion
         ->and($order->actual_start_at)->not->toBeNull()
         ->and($order->actual_end_at)->not->toBeNull()
         ->and($maintenanceRequest->refresh()->status)->toBe(MaintenanceRequest::StatusClosed);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.orders.store'), [
+            'fixed_asset_id' => $asset->getKey(),
+            'maintenance_type' => 'preventive',
+            'discipline' => 'mechanical',
+            'priority' => 'normal',
+            'service_mode' => 'internal',
+            'planned_start_at' => now()->addDay()->toDateTimeString(),
+            'planned_end_at' => now()->addDay()->addHours(2)->toDateTimeString(),
+            'work_description' => 'Internal preventive inspection and lubrication.',
+            'next_due_date' => now()->addMonths(2)->toDateString(),
+        ])
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    $internalOrder = MaintenanceWorkOrder::query()->where('id', '<>', $order->getKey())->sole();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.approve', $internalOrder))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.start', $internalOrder))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.orders.complete', $internalOrder), [
+            'diagnosis' => 'Preventive interval reached.',
+            'root_cause' => 'Scheduled maintenance.',
+            'work_performed' => 'Inspected and lubricated internally.',
+            'completion_notes' => 'Asset is ready.',
+            'next_due_date' => now()->addMonths(2)->toDateString(),
+        ])
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.close', $internalOrder))->assertOk();
+    expect($internalOrder->refresh()->status)->toBe(MaintenanceWorkOrder::StatusClosed)
+        ->and($internalOrder->service_mode)->toBe('internal')
+        ->and($internalOrder->supplier_id)->toBeNull()
+        ->and($internalOrder->external_provider_name)->toBeNull();
+
     $pdf = $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.maintenance.orders.print', $order));
     $pdf->assertOk()->assertHeader('Content-Type', 'application/pdf');
@@ -2011,6 +2267,27 @@ test('maintenance flows from a breakdown report through external work completion
         ->get(route('admin.maintenance.orders.export'))
         ->assertOk()
         ->assertDownload();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.reports.index'))
+        ->assertOk()
+        ->assertSee('Maintenance Operational Reports')
+        ->assertSee($order->doc_num)
+        ->assertSee($internalOrder->doc_num)
+        ->assertSee('Issued: 3 / Returned: 3');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.reports.export'))
+        ->assertOk()
+        ->assertDownload();
+    $maintenanceReportPdf = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.reports.print'));
+    $maintenanceReportPdf->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    expect(str_starts_with($maintenanceReportPdf->getContent(), '%PDF-'))->toBeTrue();
+
+    $fixture['user']->revokePermissionTo('maintenance.reports.financial');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.reports.index'))
+        ->assertOk()
+        ->assertDontSee('Expense Totals');
 });
 
 test('inventory and production screens translate labels without changing status values', function (string $locale): void {
@@ -2036,7 +2313,7 @@ test('inventory and production screens translate labels without changing status 
         ->get(route('admin.inventory.documents.create'))
         ->assertOk()
         ->assertSee($arabic ? 'حركة مخزون جديدة' : 'New Inventory Movement')
-        ->assertSee('<option value="inventory_adjustment_in">'.($arabic ? 'تسوية زيادة مخزون' : 'Inventory Adjustment In').'</option>', false);
+        ->assertSee($arabic ? 'تسوية زيادة مخزون' : 'Stock Surplus Adjustment');
 
     $order = app(ProductionCycleService::class)->createMakeToStockOrder([
         'company_id' => $fixture['company']->getKey(),

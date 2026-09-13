@@ -20,6 +20,7 @@
 <script src="{{ $erpAsset->url('vendors/datatables.net-buttons/js/buttons.colVis.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/flatpickr/flatpickr.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/select2/select2.full.min.js') }}"></script>
+<script>window.dataTableTranslations = @json(__('datatables'));</script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/datatables-defaults.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/numeric-input.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/client-context.js') }}"></script>

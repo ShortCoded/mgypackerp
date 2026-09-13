@@ -40,7 +40,7 @@
 
                         <div class="col-12 col-md-6" data-quality-subject-field="production_run">
                             <label class="form-label" for="quality-production-run">{{ __('production_execution.fields.run') }}</label>
-                            <x-forms.select :class="$errors->has('production_run_id') ? 'is-invalid' : null" id="quality-production-run" name="production_run_id">
+                            <x-forms.select variant="ajax" :url="route('admin.production.quality.select2', ['lookup' => 'runs'])" :placeholder="__('common.actions.select')" :class="$errors->has('production_run_id') ? 'is-invalid' : null" id="quality-production-run" name="production_run_id">
                                 <option value="">{{ __('common.actions.select') }}</option>
                                 @foreach ($runs as $run)
                                     <option value="{{ $run->getKey() }}" @selected((string) old('production_run_id', request()->integer('run')) === (string) $run->getKey())>
@@ -53,7 +53,7 @@
 
                         <div class="col-12 col-md-6" data-quality-subject-field="product,inventory_stock">
                             <label class="form-label" for="quality-product">{{ __('production_execution.fields.product') }}</label>
-                            <x-forms.select id="quality-product" name="product_id">
+                            <x-forms.select variant="ajax" :url="route('admin.production.quality.select2', ['lookup' => 'products'])" :placeholder="__('common.actions.select')" id="quality-product" name="product_id">
                                 <option value="">{{ __('common.actions.select') }}</option>
                                 @foreach($products as $product)<option value="{{ $product->id }}" @selected((string) old('product_id') === (string) $product->id)>{{ $product->doc_num }} — {{ $product->name }}</option>@endforeach
                             </x-forms.select>
@@ -61,7 +61,7 @@
 
                         <div class="col-12 col-md-6" data-quality-subject-field="inventory_stock">
                             <label class="form-label" for="quality-store">{{ __('production_execution.fields.store') }}</label>
-                            <x-forms.select id="quality-store" name="branch_store_id">
+                            <x-forms.select variant="ajax" :url="route('admin.production.quality.select2', ['lookup' => 'stores'])" :placeholder="__('common.actions.select')" id="quality-store" name="branch_store_id">
                                 <option value="">{{ __('common.actions.select') }}</option>
                                 @foreach($stores as $store)<option value="{{ $store->id }}" @selected((string) old('branch_store_id') === (string) $store->id)>{{ $store->name }}</option>@endforeach
                             </x-forms.select>
@@ -86,7 +86,7 @@
 
                         <div class="col-12 col-md-6">
                             <label class="form-label" for="quality-inspection-type">{{ __('production_execution.fields.inspection_type') }}</label>
-                            <x-forms.select :class="$errors->has('quality_inspection_type_id') ? 'is-invalid' : null" id="quality-inspection-type" name="quality_inspection_type_id">
+                            <x-forms.select variant="ajax" :url="route('admin.production.quality.select2', ['lookup' => 'inspection-types'])" :placeholder="__('production_execution.quality.general_stage_inspection')" :class="$errors->has('quality_inspection_type_id') ? 'is-invalid' : null" id="quality-inspection-type" name="quality_inspection_type_id">
                                 <option value="">{{ __('production_execution.quality.general_stage_inspection') }}</option>
                                 @foreach ($inspectionTypes as $inspectionType)
                                     <option value="{{ $inspectionType->getKey() }}" @selected((string) old('quality_inspection_type_id') === (string) $inspectionType->getKey())>{{ $inspectionType->name }}</option>

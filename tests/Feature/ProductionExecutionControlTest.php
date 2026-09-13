@@ -1,9 +1,12 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
+use Modules\Inventory\Exports\InventoryReportExport;
+use Modules\Production\Exports\ProductionReportExport;
 
 uses(RefreshDatabase::class);
 
@@ -36,6 +39,7 @@ test('canonical execution routes are registered', function (): void {
         ->and(Route::has('admin.production.expenses.index'))->toBeTrue()
         ->and(Route::has('admin.production.quality.index'))->toBeTrue()
         ->and(Route::has('admin.production.quality.create'))->toBeTrue()
+        ->and(Route::has('admin.production.quality.select2'))->toBeTrue()
         ->and(Route::has('admin.production.quality.store'))->toBeTrue()
         ->and(Route::has('admin.production.quality.show'))->toBeTrue()
         ->and(Route::has('admin.production.quality.evidence'))->toBeTrue()
@@ -50,9 +54,13 @@ test('canonical execution routes are registered', function (): void {
         ->and(Route::has('admin.production.quality.print'))->toBeTrue()
         ->and(Route::has('admin.maintenance.requests.index'))->toBeTrue()
         ->and(Route::has('admin.maintenance.orders.index'))->toBeTrue()
+        ->and(Route::has('admin.maintenance.select2'))->toBeTrue()
         ->and(Route::has('admin.maintenance.orders.show'))->toBeTrue()
         ->and(Route::has('admin.maintenance.orders.export'))->toBeTrue()
-        ->and(Route::has('admin.maintenance.orders.print'))->toBeTrue();
+        ->and(Route::has('admin.maintenance.orders.print'))->toBeTrue()
+        ->and(Route::has('admin.maintenance.reports.index'))->toBeTrue()
+        ->and(Route::has('admin.maintenance.reports.export'))->toBeTrue()
+        ->and(Route::has('admin.maintenance.reports.print'))->toBeTrue();
 });
 
 test('manufacturing warehouse quality and maintenance UI shells are absent from the runtime registry', function (): void {
@@ -154,6 +162,7 @@ test('production quality capture is mobile friendly', function (): void {
     expect($javascript)
         ->toContain('dblclick.productionRowNavigation')
         ->toContain('[data-row-primary-link]')
+        ->toContain('[data-client-report-tables]')
         ->and($css)
         ->toContain('z-index: 1085');
 
@@ -188,9 +197,58 @@ test('production quality capture is mobile friendly', function (): void {
         'maintenance/orders/form.blade.php',
         'maintenance/orders/show.blade.php',
         'maintenance/orders/complete.blade.php',
+        'maintenance/reports/index.blade.php',
     ] as $relativePath) {
         expect(file_get_contents(resource_path('views/modules/'.$relativePath)))
             ->toContain('production-mobile-workflow')
             ->toContain('assets/css/modules/Production/execution.css');
     }
+
+    foreach (['inventory/reports/index.blade.php', 'production/reports/index.blade.php', 'maintenance/reports/index.blade.php'] as $reportPath) {
+        expect(file_get_contents(resource_path('views/modules/'.$reportPath)))
+            ->toContain('data-client-report-tables')
+            ->toContain('assets/js/modules/Production/execution.js');
+    }
+});
+
+test('inventory and production report exports localize headings and protect financial columns', function (): void {
+    app()->setLocale('ar');
+
+    $empty = new Collection;
+    $inventorySheets = (new InventoryReportExport([
+        'balances' => $empty,
+        'reportTotals' => [
+            'on_hand' => 0,
+            'inventory_value' => 0,
+            'unvalued_receipt_quantity' => 0,
+            'quantity_in' => 0,
+            'quantity_out' => 0,
+        ],
+        'reservations' => $empty,
+        'movements' => $empty,
+        'qualityBalances' => $empty,
+        'damageAndScrap' => $empty,
+        'stockCountVariances' => $empty,
+        'reorder' => $empty,
+        'agingLayers' => $empty,
+        'expiryLayers' => $empty,
+        'glReconciliation' => null,
+        'glReconciliationUnavailableReason' => null,
+    ], false))->sheets();
+    $productionSheets = (new ProductionReportExport([
+        'runs' => $empty,
+        'kpis' => ['planned_base_quantity' => 0, 'good_base_quantity' => 0, 'loss_base_quantity' => 0],
+        'orders' => $empty,
+        'qualityInspections' => $empty,
+        'materials' => $empty,
+        'finishedGoodsReceipts' => $empty,
+        'runCosts' => $empty,
+    ], false))->sheets();
+
+    expect($inventorySheets[0]->title())->toBe('رصيد المخزون')
+        ->and($inventorySheets[2]->title())->toBe('الحركات وكارت الصنف')
+        ->and($inventorySheets[2]->headings())->not->toContain('تكلفة الوحدة', 'إجمالي التكلفة')
+        ->and($productionSheets[0]->title())->toBe('أوامر الإنتاج')
+        ->and($productionSheets[4]->title())->toBe('استلامات الإنتاج التام')
+        ->and($productionSheets[4]->headings())->not->toContain('القيمة', 'القيد');
 });

@@ -49,6 +49,51 @@
         : base;
       $table.DataTable(options);
     });
+
+    $('[data-client-report-tables] table:not([data-server-table])').each(function () {
+      const element = this;
+      const $table = $(element);
+      if (!$.fn.DataTable || $.fn.DataTable.isDataTable(element)) {
+        return;
+      }
+
+      $table.find('tbody > tr').filter(function () {
+        return this.children.length === 1 && this.children[0].hasAttribute('colspan');
+      }).remove();
+
+      const base = {
+        pageLength: 25,
+        lengthMenu: [10, 25, 50, 75, 100],
+        stateSave: false,
+        autoWidth: false,
+        responsive: { details: { type: 'inline', target: 0 } },
+        order: [],
+        drawCallback: function () {
+          if (window.AppDataTables && typeof window.AppDataTables.applyFalconEnhancements === 'function') {
+            window.AppDataTables.applyFalconEnhancements(document);
+          }
+        }
+      };
+      const options = window.AppDataTables && typeof window.AppDataTables.options === 'function'
+        ? window.AppDataTables.options(base)
+        : base;
+      $table.addClass('data-table erp-datatable');
+      $table.DataTable(options);
+    });
+  }
+
+  function initializeWorkflowSelects(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+
+    scope.querySelectorAll('.production-mobile-workflow select.form-select:not(.js-select2-ajax):not(.js-select2-local), select.form-select:not(.js-select2-ajax):not(.js-select2-local)').forEach(function (select) {
+      if (select.closest('.production-mobile-workflow')) {
+        select.classList.add('js-select2-local');
+      }
+    });
+
+    if (window.AppSelect2Ajax && typeof window.AppSelect2Ajax.init === 'function') {
+      window.AppSelect2Ajax.init(scope);
+    }
   }
 
   function initializeRowNavigation() {
@@ -323,6 +368,7 @@
     }
     rows.appendChild(template.content.cloneNode(true));
     reindexMaintenanceMaterialRows(form);
+    initializeWorkflowSelects(rows);
   });
 
   $(document).on('click', '[data-remove-maintenance-material]', function () {
@@ -340,6 +386,7 @@
   });
 
   $(function () {
+    initializeWorkflowSelects(document);
     initializeTables();
     initializeRowNavigation();
     filterStageOptions();
