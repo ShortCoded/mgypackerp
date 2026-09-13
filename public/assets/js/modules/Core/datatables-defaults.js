@@ -6,6 +6,7 @@
     const lengthMenuValues = [10, 25, 50, 75, maxPageLength];
     let dropdownOverflowBound = false;
     let selectAllCellBound = false;
+    let activeDropdownPortal = null;
 
     function translations() {
         return window.dataTableTranslations || {};
@@ -71,7 +72,13 @@
 
         dropdownOverflowBound = true;
 
-        const selector = '.erp-datatable-card .dropdown, .erp-datatable-card .btn-reveal-trigger';
+        const selector = [
+            '.erp-datatable-card .dropdown',
+            '.erp-datatable-card .dropstart',
+            '.erp-datatable-card .dropend',
+            '.erp-datatable-card .dropup',
+            '.erp-datatable-card .btn-reveal-trigger'
+        ].join(', ');
 
         $(document)
             .off('show.bs.dropdown.erpDataTables', selector)
@@ -80,12 +87,90 @@
                     .closest('.dataTables_scrollBody, .dt-scroll-body, .erp-datatable-scroll')
                     .addClass('datatable-dropdown-open');
             })
+            .off('shown.bs.dropdown.erpDataTables', selector)
+            .on('shown.bs.dropdown.erpDataTables', selector, function () {
+                portalDropdownMenu(this);
+            })
             .off('hidden.bs.dropdown.erpDataTables', selector)
             .on('hidden.bs.dropdown.erpDataTables', selector, function () {
+                restoreDropdownMenu(this);
                 $(this)
                     .closest('.dataTables_scrollBody, .dt-scroll-body, .erp-datatable-scroll')
                     .removeClass('datatable-dropdown-open');
             });
+
+        window.addEventListener('resize', positionPortalDropdown, { passive: true });
+        window.addEventListener('scroll', positionPortalDropdown, { passive: true, capture: true });
+    }
+
+    function portalDropdownMenu(dropdown) {
+        restoreDropdownMenu();
+
+        const menu = dropdown.querySelector('.dropdown-menu');
+        const toggle = dropdown.querySelector('[data-bs-toggle="dropdown"], .dropdown-toggle');
+
+        if (!menu || !toggle) {
+            return;
+        }
+
+        const placeholder = document.createComment('datatable-actions-menu');
+        menu.parentNode.insertBefore(placeholder, menu);
+        document.body.appendChild(menu);
+        menu.classList.add('erp-datatable-dropdown-portal');
+        menu.style.position = 'fixed';
+        menu.style.inset = 'auto';
+        menu.style.margin = '0';
+        menu.style.zIndex = '1095';
+        menu.style.transform = 'none';
+        activeDropdownPortal = { dropdown: dropdown, menu: menu, placeholder: placeholder, toggle: toggle };
+        positionPortalDropdown();
+    }
+
+    function positionPortalDropdown() {
+        if (!activeDropdownPortal) {
+            return;
+        }
+
+        const toggleRect = activeDropdownPortal.toggle.getBoundingClientRect();
+        const menu = activeDropdownPortal.menu;
+        const menuRect = menu.getBoundingClientRect();
+        const gap = 4;
+        const padding = 8;
+        const alignEnd = menu.classList.contains('dropdown-menu-end');
+        let left = alignEnd ? toggleRect.right - menuRect.width : toggleRect.left;
+        let top = toggleRect.bottom + gap;
+
+        left = Math.max(padding, Math.min(left, window.innerWidth - menuRect.width - padding));
+        if (top + menuRect.height > window.innerHeight - padding && toggleRect.top - menuRect.height - gap >= padding) {
+            top = toggleRect.top - menuRect.height - gap;
+        }
+
+        menu.style.setProperty('--erp-datatable-dropdown-left', Math.round(left) + 'px');
+        menu.style.setProperty('--erp-datatable-dropdown-top', Math.round(Math.max(padding, top)) + 'px');
+    }
+
+    function restoreDropdownMenu(dropdown) {
+        if (!activeDropdownPortal || (dropdown && activeDropdownPortal.dropdown !== dropdown)) {
+            return;
+        }
+
+        const portal = activeDropdownPortal;
+        activeDropdownPortal = null;
+
+        if (portal.placeholder.parentNode) {
+            portal.placeholder.parentNode.insertBefore(portal.menu, portal.placeholder);
+            portal.placeholder.remove();
+        }
+        portal.menu.classList.remove('erp-datatable-dropdown-portal');
+        portal.menu.style.position = '';
+        portal.menu.style.inset = '';
+        portal.menu.style.margin = '';
+        portal.menu.style.zIndex = '';
+        portal.menu.style.transform = '';
+        portal.menu.style.left = '';
+        portal.menu.style.top = '';
+        portal.menu.style.removeProperty('--erp-datatable-dropdown-left');
+        portal.menu.style.removeProperty('--erp-datatable-dropdown-top');
     }
 
     function bindSelectAllCell() {

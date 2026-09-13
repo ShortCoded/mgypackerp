@@ -20,7 +20,6 @@ use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
@@ -118,30 +117,6 @@ class SalesCycleBrowserE2eSeeder extends Seeder
                 'item_classification' => Product::ClassificationService,
                 'item_unit_id' => $piece->getKey(),
                 'status' => 'active',
-            ]);
-
-            $accountId = fn (string $code): int => (int) Account::query()
-                ->where('company_id', $company->getKey())
-                ->where('account_code', $code)
-                ->valueOrFail('id');
-            InventoryAccountingMapping::query()->create([
-                'company_id' => $company->getKey(),
-                'raw_material_inventory_account_id' => $accountId('1131'),
-                'packaging_inventory_account_id' => $accountId('1134'),
-                'semi_finished_inventory_account_id' => $accountId('1132'),
-                'finished_goods_inventory_account_id' => $accountId('1133'),
-                'wip_account_id' => $accountId('1132'),
-                'production_waste_account_id' => $accountId('551'),
-                'recoverable_scrap_inventory_account_id' => $accountId('1134'),
-                'warehouse_damage_loss_account_id' => $accountId('551'),
-                'inventory_adjustment_gain_account_id' => $accountId('432'),
-                'inventory_adjustment_loss_account_id' => $accountId('551'),
-                'production_variance_account_id' => $accountId('551'),
-                'quarantine_inventory_account_id' => $accountId('1134'),
-                'rework_inventory_account_id' => $accountId('1132'),
-                'grni_account_id' => $accountId('212'),
-                'purchase_price_variance_account_id' => $accountId('551'),
-                'created_by' => $admin->getKey(),
             ]);
 
             $receivableClassification = AccountClassification::query()->where('code', 'accounts_receivable')->firstOrFail();

@@ -82,15 +82,7 @@
                 <tbody data-sales-lines>@foreach($lineRows as $index => $line)@include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])@endforeach</tbody>
             </table>
         </div>
-        <div class="card-footer">
-            <div class="row g-2 mb-3">
-                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.line_count') }}</div><div class="fw-semibold" data-sales-summary-lines>0</div></div></div>
-                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.distinct_products') }}</div><div class="fw-semibold" data-sales-summary-products>0</div></div></div>
-                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.total_quantity') }}</div><div class="fw-semibold" data-sales-summary-quantity>0</div></div></div>
-                <div class="col-6 col-lg-3"><div class="border rounded p-2 h-100"><div class="small text-600">{{ __('sales_ui.grand_total') }}</div><div class="fw-semibold"><span data-sales-summary-total>0</span> <span data-sales-summary-currency></span></div></div></div>
-            </div>
-            <button class="btn btn-falcon-default btn-sm" type="button" data-sales-add-line><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button>
-        </div>
+        <x-forms.document-summary />
     </div>
 </form>
 

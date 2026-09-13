@@ -10,7 +10,7 @@
             'credit_note' => __('Sales Credit Note'),
             'customer_receipt' => __('Customer Receipt'),
             'sales_return' => __('Sales Return'),
-            'sales_delivery' => __('Delivery Note'),
+            'sales_delivery' => __('Issue Order'),
             'production_request' => __('Production Request'),
             'payment_schedule' => __('Payment Schedule'),
             'quality_disposition' => __('Return Quality Disposition'),
@@ -29,6 +29,12 @@
             ->join(app()->isLocale('ar') ? '، ' : ', ');
         $sourceSalesOrder = $record->relationLoaded('salesOrder') ? $record->salesOrder : null;
         $sourceOrder = $record->relationLoaded('order') ? $record->order : null;
+        $salesEmployee = match($kind) {
+            'sales_order' => $record->salesEmployee,
+            'sales_delivery', 'production_request' => $sourceSalesOrder?->salesEmployee,
+            'invoice', 'credit_note', 'customer_receipt', 'sales_return', 'quality_disposition', 'payment_schedule' => $sourceOrder?->salesEmployee,
+            default => null,
+        };
         $isInvoiceDocument = in_array($kind, ['invoice', 'credit_note'], true);
         $isLegalCopy = $isInvoiceDocument && ($copy ?? 'operational') === 'legal';
     @endphp
@@ -61,8 +67,8 @@
             @if($record->invoice ?? null)<tr><th>{{ __('Original Invoice') }}</th><td>{{ $record->invoice->doc_num }}</td></tr>@endif
             @if($record->originalInvoice ?? null)<tr><th>{{ __('Original Invoice') }}</th><td>{{ $record->originalInvoice->doc_num }}</td></tr>@endif
             @if($record->branchStore ?? null)<tr><th>{{ __('Store') }}</th><td>{{ $record->branchStore->name }}</td></tr>@endif
+            @if($salesEmployee)<tr><th>{{ __('Sales representative') }}</th><td>{{ $salesEmployee->doc_num }} / {{ $salesEmployee->full_name ?: $salesEmployee->name }}</td></tr>@endif
             @if($kind === 'sales_delivery')
-                @if($sourceSalesOrder?->salesEmployee)<tr><th>{{ __('Sales representative') }}</th><td>{{ $sourceSalesOrder->salesEmployee->doc_num }} / {{ $sourceSalesOrder->salesEmployee->full_name ?: $sourceSalesOrder->salesEmployee->name }}</td></tr>@endif
                 @if($record->recipient_name)<tr><th>{{ __('Recipient') }}</th><td>{{ $record->recipient_name }}</td></tr>@endif
                 @if($record->recipient_phone)<tr><th>{{ __('Recipient phone') }}</th><td dir="ltr">{{ $record->recipient_phone }}</td></tr>@endif
                 @if($record->vehicle_number)<tr><th>{{ __('Vehicle') }}</th><td>{{ $record->vehicle_number }}</td></tr>@endif

@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'leaf_order' => ['purchases' => ['purchase_requisitions', 'purchase_orders', 'supplier_quotations', 'supply_orders', 'purchase_inspections', 'goods_receipts', 'purchase_invoices', 'supplier_payments', 'purchase_returns', 'suppliers', 'purchase_reports'], 'sales' => ['customers', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_reports']],
+    'leaf_order' => ['purchases' => ['purchase_requisitions', 'purchase_orders', 'supplier_quotations', 'supply_orders', 'purchase_inspections', 'goods_receipts', 'purchase_invoices', 'supplier_payments', 'purchase_returns', 'suppliers', 'purchase_reports'], 'sales' => ['customers', 'customer_terms', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_reports']],
     'navigation_children' => [
         'accounting_costing' => ['fixed_assets'],
         'production' => ['maintenance', 'quality'],
@@ -100,7 +100,7 @@ return [
         'production_operational_reports' => 'reports',
         'account_ledger' => 'reports',
         'customer_statement' => 'sales',
-        'supplier_statement' => 'reports',
+        'supplier_statement' => 'purchases',
         'fixed_asset_reports' => 'fixed_assets',
         'products_data_report' => 'reports',
         'customers_report' => 'reports',
@@ -126,6 +126,7 @@ return [
         'auth_logs' => 'application_tools',
         'auth_sessions' => 'application_tools',
         'customers' => null,
+        'customer_terms' => null,
         'quotations' => null,
         'project_structures' => 'sales_setup',
         'project_structure_models' => 'sales_setup',
@@ -162,7 +163,7 @@ return [
         'journal_entries' => 'general_accounting',
         'account_ledger' => 'accounting_costing_reports',
         'customer_statement' => null,
-        'supplier_statement' => 'accounting_costing_reports',
+        'supplier_statement' => 'purchase_reports',
         'currencies' => 'treasury_banks',
         'bank_accounts' => 'treasury_banks',
         'cashboxes' => 'treasury_banks',

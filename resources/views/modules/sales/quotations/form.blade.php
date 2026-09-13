@@ -60,6 +60,7 @@
         action="{{ $action }}"
         method="{{ $method }}"
         data-mode="{{ $mode }}"
+        data-customer-terms-url="{{ route('admin.sales.select2.customer-quotation-terms') }}"
         data-main-currency-doc-num="{{ $mainCurrencyOption['id'] ?? '' }}"
         data-main-currency-label="{{ $mainCurrencyOption['text'] ?? '' }}"
         data-default-quotation-date="{{ $defaultQuotationDate }}"

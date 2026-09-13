@@ -171,6 +171,9 @@
     const rows = Array.from(form.querySelectorAll('[data-sales-lines] [data-sales-line]'));
     const products = new Set();
     let quantity = 0;
+    let subtotal = 0;
+    let discounts = 0;
+    let tax = 0;
     let total = 0;
     rows.forEach((row) => {
       const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
@@ -180,6 +183,9 @@
       const rowTax = window.AppNumbers.number(row.querySelector('.js-sales-tax')?.value || '0', 0);
       if (product) products.add(product);
       quantity += rowQuantity;
+      subtotal += rowQuantity * rowPrice;
+      discounts += rowDiscount;
+      tax += rowTax;
       total += (rowQuantity * rowPrice) - rowDiscount + rowTax;
     });
     const set = (selector, value) => {
@@ -189,6 +195,10 @@
     set('[data-sales-summary-lines]', String(rows.length));
     set('[data-sales-summary-products]', String(products.size));
     set('[data-sales-summary-quantity]', window.AppNumbers.format(quantity));
+    set('[data-sales-summary-subtotal]', window.AppNumbers.format(subtotal));
+    set('[data-sales-summary-discount]', window.AppNumbers.format(discounts));
+    set('[data-sales-summary-taxable]', window.AppNumbers.format(subtotal - discounts));
+    set('[data-sales-summary-tax]', window.AppNumbers.format(tax));
     set('[data-sales-summary-total]', window.AppNumbers.format(total));
     const currency = form.querySelector('[name="currency_doc_num"]');
     set('[data-sales-summary-currency]', currency?.selectedOptions?.[0]?.textContent?.trim() || '');

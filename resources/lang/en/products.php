@@ -308,6 +308,7 @@ return [
         'no_next_record' => 'No next product record.',
     ],
     'messages' => [
+        'active_document_delete_blocked' => 'This product is used by active sales document :document. Close or cancel that document before deleting the product.',
         'action_forbidden' => 'You do not have permission to use this save action.',
         'bulk_deleted' => ':count products deleted successfully.',
         'bulk_delete_confirm_text' => 'You are about to delete :count products.',

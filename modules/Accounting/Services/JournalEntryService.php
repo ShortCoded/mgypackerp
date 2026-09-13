@@ -2,6 +2,7 @@
 
 namespace Modules\Accounting\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -10,7 +11,6 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\OpeningBalance;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
 
@@ -19,6 +19,7 @@ class JournalEntryService
     public function __construct(
         private readonly DocumentNumberService $documents,
         private readonly FinancialPeriodService $financialPeriods,
+        private readonly PostingAccountResolver $accounts,
     ) {}
 
     public function createPostedFromOpeningBalance(OpeningBalance $openingBalance): JournalEntry
@@ -167,14 +168,12 @@ class JournalEntryService
         }
 
         $credits = [];
-        $mappings = app(InventoryAccountingMappingService::class);
-        $mapping = $mappings->requireForCompany((int) $purchaseReturn->company_id);
         foreach ($purchaseReturn->lines as $returnLine) {
             $receiptLine = $returnLine->receiptLine;
             if ($receiptLine === null || $returnLine->from_quarantine) {
                 throw new DomainException(__('The accepted receipt lineage is missing for the Purchase Return.'));
             }
-            $account = $mappings->inventoryAccount($mapping, $returnLine->product, __('Purchase Return'));
+            $account = $this->accounts->inventoryForProduct((int) $purchaseReturn->company_id, $returnLine->product, __('Purchase Return'));
             $inventoryValue = bcdiv(
                 bcmul((string) $receiptLine->provisional_unit_value, (string) $returnLine->quantity, 8),
                 (string) $invoice->exchange_rate,
@@ -185,7 +184,11 @@ class JournalEntryService
             $credits[$key]['amount'] += (float) $inventoryValue;
             $variance = (float) $returnLine->unit_price * (float) $returnLine->quantity - (float) $inventoryValue;
             if (abs($variance) >= 0.00005) {
-                $varianceAccount = $mappings->requirePostableAccount($mapping, 'purchasePriceVarianceAccount', __('Purchase Return'));
+                $varianceAccount = $this->accounts->resolve(
+                    (int) $purchaseReturn->company_id,
+                    PostingAccountResolver::PurchasePriceVariance,
+                    __('Purchase Return'),
+                );
                 $key = (string) $varianceAccount->getKey();
                 $credits[$key] ??= ['account_id' => $varianceAccount->getKey(), 'amount' => 0.0];
                 $credits[$key]['amount'] += $variance;
@@ -194,12 +197,11 @@ class JournalEntryService
 
         $tax = (float) $purchaseReturn->lines->sum('tax_amount');
         if ($tax > 0) {
-            $taxCode = (string) config('purchases.accounts.recoverable_input_vat', '2131');
-            $taxAccount = Account::query()->forCompany((int) $purchaseReturn->company_id)
-                ->where('account_code', $taxCode)->where('status', 'active')->where('is_postable', true)->where('is_group', false)->first();
-            if (! $taxAccount instanceof Account) {
-                throw new DomainException(__('The recoverable Input VAT account is not configured.'));
-            }
+            $taxAccount = $this->accounts->resolve(
+                (int) $purchaseReturn->company_id,
+                PostingAccountResolver::RecoverableVat,
+                __('Purchase Return'),
+            );
             $credits['tax'] = ['account_id' => $taxAccount->getKey(), 'amount' => $tax];
         }
 

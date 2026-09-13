@@ -105,6 +105,11 @@ return [
         'ordered_quantity' => 'Ordered Quantity',
         'received_quantity' => 'Received Quantity',
         'remaining_quantity' => 'Remaining Quantity',
+        'subtotal' => 'Items Subtotal',
+        'line_discounts' => 'Line Discounts',
+        'taxable' => 'Taxable Amount',
+        'tax' => 'Tax',
+        'freight' => 'Freight',
         'net_total' => 'Net Total',
     ],
     'actions' => [

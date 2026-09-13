@@ -241,6 +241,7 @@ class ProductService
     {
         DB::transaction(function () use ($record): void {
             $this->assertRecordBelongsToCurrentCompany($record);
+            $this->assertNotUsedByActiveSalesDocuments($record);
             $this->crudAudit->softDelete($record);
         });
     }
@@ -259,12 +260,44 @@ class ProductService
             $deleted = 0;
 
             foreach ($records as $record) {
+                $this->assertNotUsedByActiveSalesDocuments($record);
                 $this->crudAudit->softDelete($record);
                 $deleted++;
             }
 
             return $deleted;
         });
+    }
+
+    private function assertNotUsedByActiveSalesDocuments(Product $record): void
+    {
+        $quotation = DB::table('quotation_revision_lines as lines')
+            ->join('quotation_revisions as revisions', 'revisions.id', '=', 'lines.quotation_revision_id')
+            ->join('quotations', 'quotations.id', '=', 'revisions.quotation_id')
+            ->where('lines.product_id', $record->getKey())
+            ->whereNull('quotations.deleted_at')
+            ->whereIn('quotations.status', ['draft', 'sent', 'under_review', 'accepted'])
+            ->value('quotations.doc_num');
+
+        $salesRequest = DB::table('sales_request_lines as lines')
+            ->join('sales_requests as documents', 'documents.id', '=', 'lines.sales_request_id')
+            ->where('lines.product_id', $record->getKey())
+            ->whereNull('documents.deleted_at')
+            ->whereIn('documents.status', ['draft', 'submitted', 'approved', 'partially_converted'])
+            ->value('documents.doc_num');
+
+        $salesOrder = DB::table('sales_order_lines as lines')
+            ->join('sales_orders as documents', 'documents.id', '=', 'lines.sales_order_id')
+            ->where('lines.product_id', $record->getKey())
+            ->whereNull('documents.deleted_at')
+            ->whereNotIn('documents.status', ['cancelled', 'closed'])
+            ->value('documents.doc_num');
+
+        $document = $quotation ?? $salesRequest ?? $salesOrder;
+
+        if ($document !== null) {
+            throw new DomainException(__('products.messages.active_document_delete_blocked', ['document' => $document]));
+        }
     }
 
     public function restore(Product $record): Product

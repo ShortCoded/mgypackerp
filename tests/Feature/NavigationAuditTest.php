@@ -230,7 +230,7 @@ test('every visible label has paired menu translations or the approved bilingual
 
     $expectedTranslations = [
         'sales_orders' => ['Sales Orders', 'أوامر المبيعات'],
-        'deliveries' => ['Delivery Notes', 'أذون التسليم'],
+        'deliveries' => ['Issue Orders', 'أوامر الصرف'],
         'sales_invoices' => ['Sales Invoices', 'فواتير المبيعات'],
         'customer_collections' => ['Customer Collections', 'تحصيلات العملاء'],
         'sales_returns' => ['Sales Returns', 'مرتجعات المبيعات'],

@@ -3,6 +3,8 @@
 namespace Modules\Purchases\Services\Reports;
 
 use App\Models\User;
+use App\Services\PostingAccountResolver;
+use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Modules\Accounting\Models\JournalEntry;
@@ -17,7 +19,6 @@ use Modules\Finance\Models\Cheque;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
@@ -46,6 +47,8 @@ class ProcurementCycleReport
     public const SupplierStatement = 'supplier_statement';
 
     public const PurchaseLedger = 'purchase_ledger';
+
+    public function __construct(private readonly PostingAccountResolver $accounts) {}
 
     /** @return array<string, mixed> */
     public function supplierOverview(Supplier $supplier): array
@@ -607,8 +610,13 @@ class ProcurementCycleReport
     /** @return array{subledger: string, gl: string, difference: string, status: string, account: string|null} */
     public function grniReconciliation(int $companyId, int $financialPeriodId, ?int $branchId = null): array
     {
-        $mapping = InventoryAccountingMapping::query()->where('company_id', $companyId)->with('grniAccount')->first();
-        if (! $mapping?->grni_account_id) {
+        try {
+            $grniAccount = $this->accounts->resolve(
+                $companyId,
+                PostingAccountResolver::GoodsReceivedNotInvoiced,
+                __('GRNI reconciliation'),
+            );
+        } catch (DomainException) {
             return ['subledger' => '0.0000', 'gl' => '0.0000', 'difference' => '0.0000', 'status' => 'not_configured', 'account' => null];
         }
 
@@ -621,7 +629,7 @@ class ProcurementCycleReport
             ->whereDate('journal_entries.entry_date', '<=', FinancialPeriod::query()->findOrFail($financialPeriodId)->to_date->toDateString())
             ->where('journal_entries.status', JournalEntry::StatusPosted)
             ->whereNull('journal_entries.deleted_at')
-            ->where('journal_entry_lines.account_id', $mapping->grni_account_id)
+            ->where('journal_entry_lines.account_id', $grniAccount->getKey())
             ->when($branchId, fn ($query) => $query->where(fn ($query) => $query->where('journal_entry_lines.branch_id', $branchId)->orWhere(fn ($query) => $query->whereNull('journal_entry_lines.branch_id')->where('journal_entries.branch_id', $branchId))))
             ->selectRaw('coalesce(sum((journal_entry_lines.credit_amount - journal_entry_lines.debit_amount) * journal_entries.exchange_rate), 0) as balance')
             ->value('balance'), '0', 4);
@@ -632,7 +640,7 @@ class ProcurementCycleReport
             'gl' => $gl,
             'difference' => $difference,
             'status' => bccomp($difference, '0', 4) === 0 ? 'reconciled' : 'difference',
-            'account' => $mapping->grniAccount?->doc_num,
+            'account' => $grniAccount->doc_num,
         ];
     }
 

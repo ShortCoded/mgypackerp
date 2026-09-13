@@ -96,7 +96,7 @@ class SalesCycleDataTable
                     : '—';
             })
             ->addColumn('actions', fn ($record): string => view('modules.sales.cycle.partials.index-actions', ['record' => $record, 'prefix' => $prefix, 'kind' => $kind, 'canDeleteDraft' => $record->status === 'draft' && match ($kind) {
-                'sales_requests' => ! $record->has_quotations && ! $record->has_orders, 'sales_orders' => ! $record->quotation_id && ! $record->sales_request_id && ! $record->has_invoices && ! $record->deliveries_exists && ! $record->production_orders_exists && ! $record->has_receipts && ! $record->has_reservations, default => false
+                'sales_requests' => ! $record->has_quotations && ! $record->has_orders, 'sales_orders' => ! $record->quotation_id && ! $record->sales_request_id && ! $record->has_invoices && ! $record->deliveries_exists && ! $record->production_orders_exists && ! $record->has_receipts && ! $record->has_reservations, 'customer_invoices' => $record->canDeleteDraft(), default => false
             }])->render())
             ->orderColumn('doc_num', $table.'.doc_number $1')
             ->orderColumn('date', $table.'.'.$dateColumn.' $1')

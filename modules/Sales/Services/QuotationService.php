@@ -2,6 +2,7 @@
 
 namespace Modules\Sales\Services;
 
+use App\Services\RichTextSanitizer;
 use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -31,12 +32,15 @@ class QuotationService
         private readonly FilePickerService $filePicker,
         private readonly NumericFormatService $numbers,
         private readonly SalesUnitConversionService $unitConversions,
+        private readonly RichTextSanitizer $richText,
+        private readonly CustomerTermsService $customerTerms,
     ) {}
 
     public function create(array $data, ?Request $request = null): array
     {
         return DB::transaction(function () use ($data, $request): array {
             $companyId = $this->companies->requireCompanyId($request);
+            $data = $this->withCustomerDefaults($data, $companyId);
             $record = Quotation::query()->create([
                 ...$this->quotationValues($data, $companyId),
                 ...$this->document($data, $companyId),
@@ -335,6 +339,32 @@ class QuotationService
         ];
     }
 
+    /** @param array<string, mixed> $data @return array<string, mixed> */
+    private function withCustomerDefaults(array $data, int $companyId): array
+    {
+        $customerDocNum = trim((string) ($data['customer_doc_num'] ?? ''));
+        if ($customerDocNum === '') {
+            return $data;
+        }
+
+        $customer = Customer::query()
+            ->forCompany($companyId)
+            ->active()
+            ->where('doc_num', $customerDocNum)
+            ->first();
+        if (! $customer instanceof Customer) {
+            return $data;
+        }
+
+        foreach ($this->customerTerms->quotationDefaults($customer) as $field => $value) {
+            if (! array_key_exists($field, $data)) {
+                $data[$field] = $value;
+            }
+        }
+
+        return $data;
+    }
+
     /**
      * @return array{doc_number: int, doc_num: string}
      */
@@ -381,13 +411,13 @@ class QuotationService
             'change_reason' => $data['change_reason'] ?? null,
             'customer_feedback' => $data['customer_feedback'] ?? null,
             ...$calculation['revision'],
-            'notes_snapshot' => $this->sanitizeRichText($data['notes'] ?? null),
-            'terms_snapshot' => $this->sanitizeRichText($data['terms'] ?? null),
-            'payment_terms_snapshot' => $this->sanitizeRichText($data['payment_terms'] ?? null),
-            'execution_terms_snapshot' => $this->sanitizeRichText($data['execution_terms'] ?? null),
-            'warranty_terms_snapshot' => $this->sanitizeRichText($data['warranty_terms'] ?? null),
-            'technical_notes_snapshot' => $this->sanitizeRichText($data['technical_notes'] ?? null),
-            'delivery_terms_snapshot' => $this->sanitizeRichText($data['delivery_terms'] ?? null),
+            'notes_snapshot' => $this->richText->sanitize($data['notes'] ?? null),
+            'terms_snapshot' => $this->richText->sanitize($data['terms'] ?? null),
+            'payment_terms_snapshot' => $this->richText->sanitize($data['payment_terms'] ?? null),
+            'execution_terms_snapshot' => $this->richText->sanitize($data['execution_terms'] ?? null),
+            'warranty_terms_snapshot' => $this->richText->sanitize($data['warranty_terms'] ?? null),
+            'technical_notes_snapshot' => $this->richText->sanitize($data['technical_notes'] ?? null),
+            'delivery_terms_snapshot' => $this->richText->sanitize($data['delivery_terms'] ?? null),
         ];
     }
 
@@ -403,6 +433,16 @@ class QuotationService
         foreach ($calculation['lines'] as $index => $line) {
             $product = $this->productByDocNum((int) $record->company_id, $line['product_doc_num'] ?? null);
             $unit = $this->unitByDocNum((int) $record->company_id, $line['unit_doc_num'] ?? null) ?: $product?->unit;
+
+            if (! $product instanceof Product && Product::withTrashed()
+                ->forCompany((int) $record->company_id)
+                ->where('doc_num', $line['product_doc_num'] ?? null)
+                ->whereNotNull('deleted_at')
+                ->exists()) {
+                throw new DomainException(__('quotations.messages.deleted_product_requires_replacement', [
+                    'product' => $line['product_doc_num'] ?? '',
+                ]));
+            }
 
             if (! $product instanceof Product || ! $product->isSalesEligible()) {
                 throw new DomainException(__('quotations.messages.product_sales_ineligible'));
@@ -595,33 +635,5 @@ class QuotationService
 
             $existingArchiveFileIds[] = (int) $file->getKey();
         }
-    }
-
-    private function sanitizeRichText(mixed $value): ?string
-    {
-        $html = trim((string) $value);
-
-        if ($html === '') {
-            return null;
-        }
-
-        $config = \HTMLPurifier_Config::createDefault();
-        $config->set('HTML.Allowed', 'p,br,b,strong,i,em,u,s,ul,ol,li,blockquote,pre,code,a[href|title],img[src|alt|title|width|height],span,div,h1,h2,h3,h4,h5,h6,table,thead,tbody,tr,th,td');
-        $config->set('URI.AllowedSchemes', [
-            'http' => true,
-            'https' => true,
-            'mailto' => true,
-            'tel' => true,
-        ]);
-        $html = (new \HTMLPurifier($config))->purify($html);
-
-        $hasText = trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')) !== '';
-        $hasImage = preg_match('/<img\b/i', $html) === 1;
-
-        if (! $hasText && ! $hasImage) {
-            return null;
-        }
-
-        return $html ?: null;
     }
 }

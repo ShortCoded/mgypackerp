@@ -192,6 +192,7 @@ return [
         'product_or_description_required' => 'اختر منتجًا أو أدخل وصفًا.',
         'product_unavailable' => 'المنتج المحدد غير متاح.',
         'product_sales_ineligible' => 'يمكن إضافة المنتجات التامة والخدمات فقط إلى عرض السعر.',
+        'deleted_product_requires_replacement' => 'تم حذف المنتج :product. سيظل ظاهرًا لحفظ التاريخ، لكن يجب استبداله قبل حفظ مسودة عرض السعر.',
         'quantity_gt_zero' => 'يجب أن تكون الكمية أكبر من صفر.',
         'unit_price_required' => 'سعر الوحدة مطلوب.',
         'valid_until_after_quotation_date' => 'يجب أن يكون تاريخ الصلاحية في نفس تاريخ العرض أو بعده.',

@@ -451,6 +451,6 @@ return [
         ],
     ],
     'reports' => [
-        'gl_reconciliation_unavailable' => "General Ledger reconciliation is unavailable until the company's inventory accounting mappings are configured.",
+        'gl_reconciliation_unavailable' => 'General Ledger reconciliation is unavailable until every required classification has exactly one active postable account in the chart of accounts.',
     ],
 ];

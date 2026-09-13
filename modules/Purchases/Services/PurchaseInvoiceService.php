@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,6 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
@@ -48,7 +48,7 @@ class PurchaseInvoiceService
         private readonly JournalEntryService $journalEntries,
         private readonly PurchaseInvoiceMatchingService $matching,
         private readonly NumericFormatService $numbers,
-        private readonly InventoryAccountingMappingService $inventoryMappings,
+        private readonly PostingAccountResolver $accounts,
         private readonly FixedAssetPurchaseIntegrationService $fixedAssetPurchases,
     ) {}
 
@@ -895,8 +895,6 @@ class PurchaseInvoiceService
         $record->loadMissing('lines.product');
         $posting = [];
         $netAmounts = $this->calculator->netAmountsByLine($record);
-        $mapping = null;
-
         foreach ($record->lines as $line) {
             $finalAmount = (string) ($netAmounts[$line->getKey()] ?? '0.0000');
             if (bccomp($finalAmount, '0', 4) <= 0) {
@@ -920,16 +918,23 @@ class PurchaseInvoiceService
             }
 
             if ($line->receipt_line_id !== null && ! $line->product?->isService() && $line->product?->cost_as_inventory) {
-                $mapping ??= $this->inventoryMappings->requireForCompany((int) $record->company_id);
                 $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
                 $provisionalBase = bcmul((string) $receiptLine->provisional_unit_value, (string) $line->quantity, 4);
                 $provisionalAmount = bcdiv($provisionalBase, (string) $record->exchange_rate, 4);
-                $grniAccount = $this->inventoryMappings->requirePostableAccount($mapping, 'grniAccount', __('Purchase Invoice'));
+                $grniAccount = $this->accounts->resolve(
+                    (int) $record->company_id,
+                    PostingAccountResolver::GoodsReceivedNotInvoiced,
+                    __('Purchase Invoice'),
+                );
                 $this->addPostingAmount($posting, $grniAccount, $provisionalAmount, true, __('GRNI clearing'));
 
                 $variance = bcsub($finalAmount, $provisionalAmount, 4);
                 if (bccomp($variance, '0', 4) !== 0) {
-                    $varianceAccount = $this->inventoryMappings->requirePostableAccount($mapping, 'purchasePriceVarianceAccount', __('Purchase Invoice'));
+                    $varianceAccount = $this->accounts->resolve(
+                        (int) $record->company_id,
+                        PostingAccountResolver::PurchasePriceVariance,
+                        __('Purchase Invoice'),
+                    );
                     $this->addPostingAmount($posting, $varianceAccount, ltrim($variance, '-'), bccomp($variance, '0', 4) > 0, __('Purchase price variance'));
                 }
             } else {
@@ -945,14 +950,20 @@ class PurchaseInvoiceService
         }
 
         if ((float) $record->freight_amount > 0) {
-            $freightCode = (string) config('purchases.accounts.freight_expense', '526');
-            $freightAccount = $this->accountByCode((int) $record->company_id, $freightCode, 'purchase_debit_account_missing', ['code' => $freightCode]);
+            $freightAccount = $this->accounts->resolve(
+                (int) $record->company_id,
+                PostingAccountResolver::FreightIn,
+                __('Purchase Invoice'),
+            );
             $this->addPostingAmount($posting, $freightAccount, (string) $record->freight_amount, true, __('Freight expense'));
         }
 
         if ((float) $record->tax_amount > 0) {
-            $taxCode = (string) config('purchases.accounts.recoverable_input_vat', '2131');
-            $taxAccount = $this->accountByCode((int) $record->company_id, $taxCode, 'input_vat_account_missing');
+            $taxAccount = $this->accounts->resolve(
+                (int) $record->company_id,
+                PostingAccountResolver::RecoverableVat,
+                __('Purchase Invoice'),
+            );
             $this->addPostingAmount($posting, $taxAccount, (string) $record->tax_amount, true, __('purchase_invoices.journal.input_vat'));
         }
 
@@ -1041,17 +1052,13 @@ class PurchaseInvoiceService
 
     private function purchaseDebitAccount(PurchaseInvoiceLine $line): Account
     {
-        $classification = $line->product?->item_classification;
-        $code = match ($classification) {
-            Product::ClassificationRawMaterial => '1131',
-            Product::ClassificationSemiFinished => '1132',
-            Product::ClassificationFinishedProduct => '1133',
-            Product::ClassificationPackaging, Product::ClassificationOther => '1134',
-            Product::ClassificationService => '512',
-            default => '1134',
-        };
+        $product = $line->product;
 
-        return $this->accountByCode((int) $line->company_id, $code, 'purchase_debit_account_missing', ['code' => $code]);
+        if (! $product instanceof Product) {
+            throw new DomainException(__('purchase_invoices.messages.purchase_product_missing'));
+        }
+
+        return $this->accounts->purchaseDebitForProduct((int) $line->company_id, $product, __('Purchase Invoice'));
     }
 
     /** @param array<string, mixed> $line */
@@ -1078,26 +1085,6 @@ class PurchaseInvoiceService
 
         if (! $account instanceof Account || $account->trashed() || $account->status !== 'active' || $account->is_group || ! $account->is_postable) {
             throw new DomainException(__('purchase_invoices.messages.supplier_account_missing'));
-        }
-
-        return $account;
-    }
-
-    /**
-     * @param  array<string, string>  $replace
-     */
-    private function accountByCode(int $companyId, string $code, string $messageKey, array $replace = []): Account
-    {
-        $account = Account::query()
-            ->forCompany($companyId)
-            ->where('account_code', $code)
-            ->where('status', 'active')
-            ->where('is_group', false)
-            ->where('is_postable', true)
-            ->first();
-
-        if (! $account instanceof Account) {
-            throw new DomainException(__('purchase_invoices.messages.'.$messageKey, ['code' => $code, ...$replace]));
         }
 
         return $account;

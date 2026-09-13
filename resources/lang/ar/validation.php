@@ -225,7 +225,7 @@ return [
         'allocations' => 'التخصيصات',
         'allocations.*.invoice_schedule_public_id' => 'القسط',
         'allocations.*.amount' => 'المبلغ',
-        'delivery_doc_num' => 'إذن تسليم',
+        'delivery_doc_num' => 'أمر صرف',
         'lines.*.sales_order_line_public_id' => 'بند أمر المبيعات',
         'lines.*.source_request_line_public_id' => 'بند الطلب المصدر',
         'lines.*.delivery_line_public_id' => 'بند التسليم',

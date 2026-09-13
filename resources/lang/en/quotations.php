@@ -192,6 +192,7 @@ return [
         'product_or_description_required' => 'Select a product or enter a description.',
         'product_unavailable' => 'The selected product is not available.',
         'product_sales_ineligible' => 'Only finished products and services may be quoted.',
+        'deleted_product_requires_replacement' => 'Product :product was deleted. It remains visible for history, but must be replaced before this draft quotation can be saved.',
         'quantity_gt_zero' => 'Quantity must be greater than zero.',
         'unit_price_required' => 'Unit price is required.',
         'valid_until_after_quotation_date' => 'Valid until must be on or after the quotation date.',

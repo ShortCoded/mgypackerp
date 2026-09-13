@@ -16,7 +16,6 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
@@ -105,28 +104,6 @@ function salesCycleFixture(): array
     $bankParent = Account::query()->where('company_id', $company->getKey())->where('account_code', '1112')->firstOrFail();
     $bankLedgerAccount = Account::query()->create(['doc_number' => 9803, 'doc_num' => 'Account-Bank-Sales', 'company_id' => $company->getKey(), 'account_code' => '11129803', 'name' => 'Sales Collection Bank Account', 'parent_id' => $bankParent->getKey(), 'level' => ((int) $bankParent->level) + 1, 'account_classification_id' => $cashClassification->getKey(), 'account_type' => Account::TypeAsset, 'statement_type' => Account::StatementFinancialPosition, 'normal_balance' => Account::BalanceDebit, 'is_group' => false, 'is_postable' => true, 'status' => 'active']);
     $bankAccount = BankAccount::query()->create(['doc_number' => 9801, 'doc_num' => 'BankAccount-SALES', 'company_id' => $company->getKey(), 'account_id' => $bankLedgerAccount->getKey(), 'currency_id' => $currency->getKey(), 'account_name' => 'Sales Collection Bank', 'account_number' => 'E2E-9801', 'status' => 'active']);
-
-    $accountId = fn (string $code): int => (int) Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $code)
-        ->valueOrFail('id');
-    InventoryAccountingMapping::query()->create([
-        'company_id' => $company->getKey(),
-        'raw_material_inventory_account_id' => $accountId('1131'),
-        'packaging_inventory_account_id' => $accountId('1134'),
-        'semi_finished_inventory_account_id' => $accountId('1132'),
-        'finished_goods_inventory_account_id' => $accountId('1133'),
-        'wip_account_id' => $accountId('1132'),
-        'production_waste_account_id' => $accountId('551'),
-        'warehouse_damage_loss_account_id' => $accountId('551'),
-        'inventory_adjustment_gain_account_id' => $accountId('432'),
-        'inventory_adjustment_loss_account_id' => $accountId('551'),
-        'quarantine_inventory_account_id' => $accountId('1134'),
-        'rework_inventory_account_id' => $accountId('1132'),
-        'grni_account_id' => $accountId('212'),
-        'purchase_price_variance_account_id' => $accountId('551'),
-        'created_by' => $user->getKey(),
-    ]);
 
     InventoryTransaction::query()->create(['posting_key' => 'sales-cycle-opening-stock', 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'branch_store_id' => $store->getKey(), 'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock', 'product_id' => $finished->getKey(), 'unit_id' => $unit->getKey(), 'batch_lot' => 'SALES-OPENING-BATCH', 'quantity_in' => '100', 'quantity_out' => 0, 'source_type' => 'test_opening_stock', 'source_id' => 1, 'source_doc_num' => 'TEST-STOCK', 'unit_cost' => '5', 'total_cost' => '500', 'created_by' => $user->getKey()]);
 

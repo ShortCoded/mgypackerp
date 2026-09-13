@@ -55,6 +55,20 @@ return [
                 ],
                 'children' => [],
             ],
+            [
+                'label' => 'customer_terms',
+                'title' => 'Customer Terms and Conditions',
+                'icon' => 'file-contract',
+                'route' => 'admin.sales.customer-terms.index',
+                'permission' => 'customers.view',
+                'keywords' => ['customer terms', 'quotation defaults', 'الشروط والأحكام', 'شروط العملاء'],
+                'actions' => [
+                    'view' => 'customers.view',
+                    'edit' => 'customers.edit',
+                ],
+                'active' => ['admin.sales.customer-terms.*'],
+                'children' => [],
+            ],
             ['label' => 'sales_requests', 'title' => 'Sales Requests', 'icon' => 'file-alt', 'route' => 'admin.sales.customer-requests.index', 'permission' => 'sales_requests.view', 'active' => ['admin.sales.customer-requests.*'], 'children' => []],
             [
                 'label' => 'quotations',
@@ -104,6 +118,7 @@ return [
                 'route' => 'admin.sales.sales-invoices.index',
                 'permission' => 'customer_invoices.view',
                 'actions' => [
+                    'delete' => 'customer_invoices.delete',
                     'credit_allocate' => 'customer_credits.allocate',
                     'credit_refund' => 'customer_credits.refund',
                     'electronic_invoice_submit' => 'customer_invoices.electronic_invoice.submit',
@@ -114,11 +129,11 @@ return [
             ],
             [
                 'label' => 'deliveries',
-                'title' => 'Deliveries',
+                'title' => 'Issue Orders',
                 'icon' => 'truck-loading',
                 'route' => 'admin.sales.delivery-notes.index',
                 'permission' => 'sales_deliveries.view',
-                'keywords' => ['delivery notes', 'deliveries', 'أذون التسليم', 'التسليم'],
+                'keywords' => ['issue orders', 'stock issue', 'أوامر الصرف', 'أمر صرف'],
                 'active' => ['admin.sales.delivery-notes.*', 'admin.sales.sales-deliveries.*'],
                 'children' => [],
             ],

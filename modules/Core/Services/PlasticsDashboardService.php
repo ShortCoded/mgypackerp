@@ -13,6 +13,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Models\UserTask;
+use Modules\Core\Services\Reports\ProductDataReport;
 
 class PlasticsDashboardService
 {
@@ -130,7 +131,10 @@ class PlasticsDashboardService
             $componentLines = $this->tableExists('product_components')
                 ? ProductComponent::query()
                     ->forCompany($companyId)
-                    ->whereIn('product_id', $this->productQuery($user, 'products', $companyId)->select('products.id'))
+                    ->whereIn('product_id', $this->productQuery($user, 'products', $companyId)
+                        ->productItems()
+                        ->where('products.status', 'active')
+                        ->select('products.id'))
                     ->count()
                 : 0;
 
@@ -140,7 +144,7 @@ class PlasticsDashboardService
                 __('dashboard.plastics.metrics.products.meta'),
                 'box',
                 'primary',
-                $this->routeUrl('admin.products.index'),
+                $this->routeUrl('admin.products.index', ['status' => 'active']),
             );
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.products_with_bom.title'),
@@ -148,7 +152,10 @@ class PlasticsDashboardService
                 __('dashboard.plastics.metrics.products_with_bom.meta', ['without' => $this->formatCount($withoutComponents)]),
                 'sitemap',
                 $withoutComponents > 0 ? 'warning' : 'success',
-                $this->routeUrl('admin.products.index'),
+                $this->routeUrl('admin.products.index', [
+                    'status' => 'active',
+                    'components_state' => 'with',
+                ]),
             );
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.bom_lines.title'),
@@ -156,7 +163,18 @@ class PlasticsDashboardService
                 __('dashboard.plastics.metrics.bom_lines.meta'),
                 'layer-group',
                 'info',
-                $this->routeUrl('admin.products.index'),
+                $this->can($user, 'reports.products_data.view')
+                    ? $this->routeUrl('admin.reports.products-data.index', [
+                        'result_mode' => ProductDataReport::ModeDetailed,
+                        'item_scope' => ProductDataReport::ItemScopeProducts,
+                        'record_state' => 'active',
+                        'status' => 'active',
+                        'components_state' => 'with',
+                    ])
+                    : $this->routeUrl('admin.products.index', [
+                        'status' => 'active',
+                        'components_state' => 'with',
+                    ]),
             );
 
             if ($withoutComponents > 0) {
@@ -187,7 +205,7 @@ class PlasticsDashboardService
                 __('dashboard.plastics.metrics.raw_materials.meta'),
                 'cubes',
                 'warning',
-                $this->routeUrl('admin.raw-materials.index'),
+                $this->routeUrl('admin.raw-materials.index', ['status' => 'active']),
             );
 
             $this->appendMaterialUnitChart(
@@ -208,7 +226,7 @@ class PlasticsDashboardService
                 __('dashboard.plastics.metrics.packaging_materials.meta'),
                 'boxes',
                 'info',
-                $this->routeUrl('admin.packaging-materials.index'),
+                $this->routeUrl('admin.packaging-materials.index', ['status' => 'active']),
             );
 
             $this->appendMaterialUnitChart(
@@ -828,9 +846,10 @@ class PlasticsDashboardService
         ];
     }
 
-    private function routeUrl(string $route): ?string
+    /** @param array<string, mixed> $parameters */
+    private function routeUrl(string $route, array $parameters = []): ?string
     {
-        return Route::has($route) ? route($route) : null;
+        return Route::has($route) ? route($route, $parameters) : null;
     }
 
     private function can(User $user, string $permission): bool

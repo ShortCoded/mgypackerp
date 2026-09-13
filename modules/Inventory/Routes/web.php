@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Modules\Inventory\Http\Controllers\InventoryAccountingController;
 use Modules\Inventory\Http\Controllers\InventoryDocumentController;
 use Modules\Inventory\Http\Controllers\InventoryReportController;
 use Modules\Inventory\Http\Controllers\OpeningStockController;
@@ -14,12 +13,6 @@ Route::middleware('auth')
     ->prefix('admin/inventory')
     ->as('admin.inventory.')
     ->group(function (): void {
-        Route::prefix('accounting')->name('accounting.')->controller(InventoryAccountingController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:inventory.accounting.view')->name('index');
-            Route::post('/', 'store')->middleware('can:inventory.accounting.configure')->name('store');
-            Route::get('/select2/accounts', 'accounts')->middleware('can:inventory.accounting.view')->name('accounts');
-            Route::get('/select2/cost-centers', 'costCenters')->middleware('can:inventory.accounting.view')->name('cost-centers');
-        });
         Route::get('/warehouse-locations', [WarehouseLocationController::class, 'index'])
             ->middleware('can:inventory.locations.view')
             ->name('warehouse-locations.index');

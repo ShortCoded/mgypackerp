@@ -374,8 +374,15 @@ class StoreQuotationRequest extends FormRequest
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('validation.required', ['attribute' => __('quotations.attributes.product')]));
             }
 
-            $product = $productDocNum === '' ? null : Product::query()->active()->forCompany($companyId)->where('doc_num', $productDocNum)->first();
-            if ($productDocNum !== '' && (! $product instanceof Product || ! $product->isSalesEligible())) {
+            $product = $productDocNum === '' ? null : Product::withTrashed()
+                ->forCompany($companyId)
+                ->where('doc_num', $productDocNum)
+                ->first();
+            if ($product instanceof Product && $product->trashed()) {
+                $validator->errors()->add("lines.{$index}.product_doc_num", __('quotations.messages.deleted_product_requires_replacement', [
+                    'product' => $productDocNum,
+                ]));
+            } elseif ($productDocNum !== '' && (! $product instanceof Product || ! $product->isSalesEligible())) {
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('quotations.messages.product_sales_ineligible'));
             }
 

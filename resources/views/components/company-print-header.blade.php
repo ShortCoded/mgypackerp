@@ -18,7 +18,7 @@
     </div>
 
     @php
-        $companyMetadata = [
+        $companyMetadata = $policy === 'quotation' ? [] : [
             __('companies.print.commercial_register_number') => $identity['commercial_register_number'],
             __('companies.print.tax_card_number') => $identity['tax_card_number'],
             __('companies.print.vat_registration_number') => $identity['vat_registration_number'],

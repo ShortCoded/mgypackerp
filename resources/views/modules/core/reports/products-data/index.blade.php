@@ -79,41 +79,41 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-result-mode">{{ __('product_data_report.filters.result_mode') }}</label>
                 <select class="{{ $staticSelectClass }}" id="product-data-result-mode" name="result_mode" data-filter-label="{{ __('product_data_report.filters.result_mode') }}" data-placeholder="{{ __('product_data_report.filters.result_mode') }}" data-allow-clear="false">
-                    <option value="summary">{{ __('product_data_report.modes.summary') }}</option>
-                    <option value="detailed">{{ __('product_data_report.modes.detailed') }}</option>
+                    <option value="summary" @selected(($initialFilters['result_mode'] ?? 'summary') === 'summary')>{{ __('product_data_report.modes.summary') }}</option>
+                    <option value="detailed" @selected(($initialFilters['result_mode'] ?? null) === 'detailed')>{{ __('product_data_report.modes.detailed') }}</option>
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-item-scope">{{ __('product_data_report.filters.item_scope') }}</label>
                 <select class="{{ $staticSelectClass }}" id="product-data-item-scope" name="item_scope" data-filter-label="{{ __('product_data_report.filters.item_scope') }}" data-placeholder="{{ __('product_data_report.filters.item_scope') }}" data-allow-clear="false">
-                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeAll }}">{{ __('product_data_report.item_scopes.all') }}</option>
-                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeProducts }}">{{ __('product_data_report.item_scopes.products') }}</option>
-                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeRawMaterials }}">{{ __('product_data_report.item_scopes.raw_materials') }}</option>
-                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopePackagingMaterials }}">{{ __('product_data_report.item_scopes.packaging_materials') }}</option>
+                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeAll }}" @selected(($initialFilters['item_scope'] ?? 'all') === \Modules\Core\Services\Reports\ProductDataReport::ItemScopeAll)>{{ __('product_data_report.item_scopes.all') }}</option>
+                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeProducts }}" @selected(($initialFilters['item_scope'] ?? null) === \Modules\Core\Services\Reports\ProductDataReport::ItemScopeProducts)>{{ __('product_data_report.item_scopes.products') }}</option>
+                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopeRawMaterials }}" @selected(($initialFilters['item_scope'] ?? null) === \Modules\Core\Services\Reports\ProductDataReport::ItemScopeRawMaterials)>{{ __('product_data_report.item_scopes.raw_materials') }}</option>
+                    <option value="{{ \Modules\Core\Services\Reports\ProductDataReport::ItemScopePackagingMaterials }}" @selected(($initialFilters['item_scope'] ?? null) === \Modules\Core\Services\Reports\ProductDataReport::ItemScopePackagingMaterials)>{{ __('product_data_report.item_scopes.packaging_materials') }}</option>
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-record-state">{{ __('product_data_report.filters.record_state') }}</label>
                 <select class="{{ $staticSelectClass }}" id="product-data-record-state" name="record_state" data-filter-label="{{ __('product_data_report.filters.record_state') }}" data-placeholder="{{ __('product_data_report.filters.record_state') }}" data-allow-clear="false">
-                    <option value="active">{{ __('product_data_report.record_states.active') }}</option>
-                    <option value="deleted">{{ __('product_data_report.record_states.deleted') }}</option>
-                    <option value="all">{{ __('product_data_report.record_states.all') }}</option>
+                    <option value="active" @selected(($initialFilters['record_state'] ?? 'active') === 'active')>{{ __('product_data_report.record_states.active') }}</option>
+                    <option value="deleted" @selected(($initialFilters['record_state'] ?? null) === 'deleted')>{{ __('product_data_report.record_states.deleted') }}</option>
+                    <option value="all" @selected(($initialFilters['record_state'] ?? null) === 'all')>{{ __('product_data_report.record_states.all') }}</option>
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-status">{{ __('product_data_report.filters.status') }}</label>
                 <select class="{{ $staticSelectClass }}" id="product-data-status" name="status" data-filter-label="{{ __('product_data_report.filters.status') }}" data-placeholder="{{ __('product_data_report.options.all') }}" data-allow-clear="true">
-                    <option value=""></option>
-                    <option value="active">{{ __('products.statuses.active') }}</option>
-                    <option value="inactive">{{ __('products.statuses.inactive') }}</option>
+                    <option value="" @selected(! isset($initialFilters['status']))></option>
+                    <option value="active" @selected(($initialFilters['status'] ?? null) === 'active')>{{ __('products.statuses.active') }}</option>
+                    <option value="inactive" @selected(($initialFilters['status'] ?? null) === 'inactive')>{{ __('products.statuses.inactive') }}</option>
                 </select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-components-state">{{ __('product_data_report.filters.components_state') }}</label>
                 <select class="{{ $staticSelectClass }}" id="product-data-components-state" name="components_state" data-filter-label="{{ __('product_data_report.filters.components_state') }}" data-placeholder="{{ __('product_data_report.filters.components_state') }}" data-allow-clear="false">
-                    <option value="all">{{ __('product_data_report.components_states.all') }}</option>
-                    <option value="with">{{ __('product_data_report.components_states.with') }}</option>
-                    <option value="without">{{ __('product_data_report.components_states.without') }}</option>
+                    <option value="all" @selected(($initialFilters['components_state'] ?? 'all') === 'all')>{{ __('product_data_report.components_states.all') }}</option>
+                    <option value="with" @selected(($initialFilters['components_state'] ?? null) === 'with')>{{ __('product_data_report.components_states.with') }}</option>
+                    <option value="without" @selected(($initialFilters['components_state'] ?? null) === 'without')>{{ __('product_data_report.components_states.without') }}</option>
                 </select>
             </div>
 

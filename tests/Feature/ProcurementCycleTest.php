@@ -50,6 +50,14 @@ use Symfony\Component\Process\Process;
 
 require_once __DIR__.'/../ProcurementSupport.php';
 
+function procurementAccountByClassification(Company $company, string $classificationCode): Account
+{
+    return Account::query()
+        ->where('company_id', $company->getKey())
+        ->whereHas('classification', fn ($query) => $query->where('code', $classificationCode))
+        ->firstOrFail();
+}
+
 test('unapproved requisitions cannot open the request for quotation creation screen', function () {
     $fixture = procurementFixture();
     $requisition = procurementManualRequisition($fixture);
@@ -282,8 +290,8 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
         'supplier_id' => $firstOrder->supplier_id, 'purchase_order_id' => $firstOrder->getKey(),
         'invoice_date' => now()->toDateString(), 'currency_id' => $fixture['currency']->getKey(), 'exchange_rate' => 1.25,
-        'subtotal_amount' => 10, 'line_discount_amount' => 1, 'taxable_amount' => 9,
-        'tax_amount' => 0.9, 'total_amount' => 9.9, 'remaining_amount' => 9.9,
+        'subtotal_amount' => 10, 'line_discount_amount' => 1, 'taxable_amount' => 12,
+        'freight_amount' => 3, 'tax_amount' => 0.9, 'total_amount' => 12.9, 'remaining_amount' => 12.9,
         'status' => PurchaseInvoice::StatusDraft,
     ]);
     $invoice->lines()->create([
@@ -353,7 +361,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and((float) $returnedBalance->inventory_value)->toBe(6.75)
         ->and($return->journal_entry_id)->not->toBeNull()
         ->and($invoice->fresh()->credited_amount)->toBe('3.9600')
-        ->and($invoice->fresh()->remaining_amount)->toBe('5.9400')
+        ->and($invoice->fresh()->remaining_amount)->toBe('8.9400')
         ->and(fn () => $settlement->createPurchaseReturn([
             'purchase_order_doc_num' => $firstOrder->doc_num, 'return_date' => now()->toDateString(),
             'reason_code' => 'latent_defect',
@@ -372,7 +380,7 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and((float) $restoredBalance->on_hand)->toBe(5.0)
         ->and((float) $restoredBalance->inventory_value)->toBe(11.25)
         ->and($invoice->fresh()->credited_amount)->toBe('0.0000')
-        ->and($invoice->fresh()->remaining_amount)->toBe('9.9000');
+        ->and($invoice->fresh()->remaining_amount)->toBe('12.9000');
 
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo([
@@ -1092,13 +1100,16 @@ test('freight discount tax posting, invoice reversal, and period locks are exact
 
     $invoice = app(PurchaseInvoiceService::class)->approve($invoice);
     $journal = $invoice->journalEntry()->with('lines.account')->firstOrFail();
-    $debitsByCode = $journal->lines->filter(fn ($line) => (float) $line->debit_amount > 0)
-        ->mapWithKeys(fn ($line): array => [$line->account->account_code => (float) $line->debit_amount]);
+    $debitsByAccount = $journal->lines->filter(fn ($line) => (float) $line->debit_amount > 0)
+        ->mapWithKeys(fn ($line): array => [$line->account_id => (float) $line->debit_amount]);
+    $rawInventoryAccount = procurementAccountByClassification($fixture['company'], 'raw_material_inventory');
+    $freightAccount = procurementAccountByClassification($fixture['company'], 'freight_in');
+    $recoverableVatAccount = procurementAccountByClassification($fixture['company'], 'recoverable_vat');
 
     expect($invoice->matching_status)->toBe('authorized_direct')
-        ->and($debitsByCode->get('1131'))->toBe(18.0)
-        ->and($debitsByCode->get('526'))->toBe(5.0)
-        ->and($debitsByCode->get('2131'))->toBe(3.22)
+        ->and($debitsByAccount->get($rawInventoryAccount->getKey()))->toBe(18.0)
+        ->and($debitsByAccount->get($freightAccount->getKey()))->toBe(5.0)
+        ->and($debitsByAccount->get($recoverableVatAccount->getKey()))->toBe(3.22)
         ->and((float) $journal->lines->sum('debit_amount'))->toBe(26.22)
         ->and((float) $journal->lines->sum('credit_amount'))->toBe(26.22);
 
@@ -1297,10 +1308,12 @@ test('accepted returns and multiple partial invoices clear grni exactly with pur
         $billedReturn = $settlement->approvePurchaseReturn($billedReturn);
         $movement = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$billedReturn->lines->sole()->getKey())->firstOrFail();
         $entry = $billedReturn->journalEntry()->with('lines.account')->firstOrFail();
+        $rawInventoryAccount = procurementAccountByClassification($fixture['company'], 'raw_material_inventory');
+        $purchasePriceVarianceAccount = procurementAccountByClassification($fixture['company'], 'purchase_price_variance');
         expect((float) $movement->total_cost)->toBe(100.0)
-            ->and((float) $entry->lines->where('account.account_code', '1131')->sum('credit_amount'))->toBe(100.0)
+            ->and((float) $entry->lines->where('account_id', $rawInventoryAccount->getKey())->sum('credit_amount'))->toBe(100.0)
             ->and((float) $entry->lines->sum('debit_amount'))->toBe((float) $entry->lines->sum('credit_amount'));
-        $varianceLines = $entry->lines->where('account.account_code', '551');
+        $varianceLines = $entry->lines->where('account_id', $purchasePriceVarianceAccount->getKey());
         expect((float) $varianceLines->sum('credit_amount') - (float) $varianceLines->sum('debit_amount'))
             ->toBe($billedInvoice->is($firstInvoice) ? 20.0 : -10.0);
         $settlement->reversePurchaseReturn($billedReturn, 'Restore the source receipt at its original cost');
@@ -1894,8 +1907,8 @@ test('warehouse procurement acceptance completes ten thousand units through rece
         ->where('account_id', $accountId)->whereHas('journalEntry', fn ($query) => $query->where('status', 'posted'))
         ->selectRaw('COALESCE(SUM(debit_amount - credit_amount), 0) AS balance')->value('balance');
     expect($ledgerBalance($supplierAccount->getKey()))->toBe(0.0)
-        ->and($ledgerBalance((int) Account::query()->where('account_code', '212')->value('id')))->toBe(0.0)
-        ->and($ledgerBalance((int) Account::query()->where('account_code', '1131')->value('id')))->toBe(20000.0);
+        ->and($ledgerBalance(procurementAccountByClassification($fixture['company'], 'goods_received_not_invoiced')->getKey()))->toBe(0.0)
+        ->and($ledgerBalance(procurementAccountByClassification($fixture['company'], 'raw_material_inventory')->getKey()))->toBe(20000.0);
     foreach (JournalEntry::query()->with('lines')->get() as $journal) {
         expect(round((float) $journal->lines->sum('debit_amount') - (float) $journal->lines->sum('credit_amount'), 4))->toBe(0.0);
     }

@@ -8,7 +8,7 @@
         $showDiscount = $revision->lines->contains(fn ($line) => (float) $line->discount_amount > 0);
         $showTax = $revision->lines->contains(fn ($line) => (float) $line->tax_amount > 0);
     @endphp
-    @include('reports.partials.company-identity')
+    @include('reports.partials.company-identity', ['showRegistrationNumbers' => false])
     @php
         $information = array_filter([
             __('quotations.attributes.customer') => $record->customer?->name,

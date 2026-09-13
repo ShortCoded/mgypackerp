@@ -330,7 +330,8 @@ if (process.env.MFG_E2E_POSTCHECK_ONLY === '1') {
 
     if (process.env.MFG_E2E_EXPECT_UNCONFIGURED_REPORT === '1') {
       await navigate('/admin/inventory/reports/operations');
-      await assertBody("General Ledger reconciliation is unavailable until the company's inventory accounting mappings are configured.", 'Unconfigured Inventory report');
+      await assertBody('raw_material_inventory', 'Unconfigured Inventory report classification guidance');
+      await assertBody('Create or update one active postable account in the chart of accounts', 'Unconfigured Inventory report remediation');
       await assertBody('E2E PP Raw Material', 'Unconfigured Inventory operational balances');
       const reconciliationBadges = await evaluate(`Array.from(document.querySelectorAll('.badge')).map((node) => node.innerText.trim()).filter((text) => text === 'Reconciled')`);
       assert(reconciliationBadges.length === 0, `Unconfigured report falsely displayed reconciliation: ${JSON.stringify(reconciliationBadges)}`);
@@ -384,36 +385,7 @@ try {
     assert(!/ERP UI Shell|interface only|placeholder/i.test(body), `Shell content remained visible at ${route}`);
   }
 
-  await navigate('/admin/inventory/accounting');
-  const accountingAccounts = {
-    raw: await remoteOption('#raw_material_inventory_account_doc_num', '1131'),
-    packaging: await remoteOption('#packaging_inventory_account_doc_num', '1134'),
-    wip: await remoteOption('#wip_account_doc_num', '1132'),
-    finished: await remoteOption('#finished_goods_inventory_account_doc_num', '1133'),
-    grni: await remoteOption('#grni_account_doc_num', '212'),
-    waste: await remoteOption('#production_waste_account_doc_num', '551'),
-    gain: await remoteOption('#inventory_adjustment_gain_account_doc_num', '432'),
-  };
-  await postVisibleForm('/inventory/accounting', [
-    ['raw_material_inventory_account_doc_num', accountingAccounts.raw.id],
-    ['packaging_inventory_account_doc_num', accountingAccounts.packaging.id],
-    ['semi_finished_inventory_account_doc_num', accountingAccounts.wip.id],
-    ['finished_goods_inventory_account_doc_num', accountingAccounts.finished.id],
-    ['wip_account_doc_num', accountingAccounts.wip.id],
-    ['quarantine_inventory_account_doc_num', accountingAccounts.packaging.id],
-    ['rework_inventory_account_doc_num', accountingAccounts.wip.id],
-    ['grni_account_doc_num', accountingAccounts.grni.id],
-    ['purchase_price_variance_account_doc_num', accountingAccounts.waste.id],
-    ['production_waste_account_doc_num', accountingAccounts.waste.id],
-    ['recoverable_scrap_inventory_account_doc_num', accountingAccounts.packaging.id],
-    ['warehouse_damage_loss_account_doc_num', accountingAccounts.waste.id],
-    ['inventory_adjustment_gain_account_doc_num', accountingAccounts.gain.id],
-    ['inventory_adjustment_loss_account_doc_num', accountingAccounts.waste.id],
-    ['production_variance_account_doc_num', accountingAccounts.waste.id],
-  ]);
-  await navigate('/admin/inventory/accounting');
-  await assertBodyInsensitive('moving weighted average', 'Inventory accounting configuration reload');
-  assert((await evaluate('document.querySelectorAll("select option:checked").length')) >= 9, 'Inventory accounting mappings did not reload.');
+  assert((await browserResponseStatus('/admin/inventory/accounting')) === 404, 'Removed Inventory accounting mapping screen is still reachable.');
 
   const openingProducts = [
     ['Product-E2E-MFG-PP', '1000', 'E2E-PP-OPENING'],
@@ -807,7 +779,7 @@ try {
   await navigate('/admin/inventory/reports/operations');
   assert(!(await evaluate('document.documentElement.innerHTML.includes("<th>Value</th>")')), 'Warehouse user received financial Inventory values.');
   assert((await browserResponseStatus('/admin/production/reports/operations')) === 403, 'Warehouse user accessed Production reports.');
-  assert((await browserResponseStatus('/admin/inventory/accounting')) === 403, 'Warehouse user accessed Inventory accounting configuration.');
+  assert((await browserResponseStatus('/admin/inventory/accounting')) === 404, 'Removed Inventory accounting mapping screen is still reachable for warehouse users.');
 
   await logoutCurrentUser();
   await loginAs('e2e_planner');
@@ -826,7 +798,7 @@ try {
   await navigate('/admin/inventory/reports/operations');
   assert((await evaluate('document.documentElement.innerHTML.includes("<th>Value</th>")')), 'Cost user did not receive authorized Inventory values.');
   assert((await browserResponseStatus('/admin/production/reports/operations')) === 200, 'Cost user could not access Production financial reporting.');
-  assert((await browserResponseStatus('/admin/inventory/accounting')) === 200, 'Cost user could not view Inventory accounting configuration.');
+  assert((await browserResponseStatus('/admin/inventory/accounting')) === 404, 'Removed Inventory accounting mapping screen is still reachable for cost users.');
   assert((await browserResponseStatus('/admin/inventory/documents/create')) === 403, 'Cost user accessed warehouse document creation.');
 
   await logoutCurrentUser();
@@ -842,7 +814,7 @@ try {
 
   const result = {
     navigation: { opened: visibleRoutes.length, routes: visibleRoutes },
-    accounting: { valuation: 'moving weighted average', browser_configured: true, reconciliation: reconciliationStatuses },
+    accounting: { source: 'chart-of-accounts classifications', mapping_screen_removed: true, reconciliation: reconciliationStatuses },
     openingStock: { doc_num: openingDoc, pricing_doc_num: pricingResult.payload.data.doc_num, finance_opening_balance: financeOpeningDoc, browser_created_lines: openingProducts.length },
     salesOrigin: { sales_order_url: primaryDemand.salesOrderUrl, production_requirement_url: primaryDemand.productionUrl, real_fk_lineage: true },
     order: { doc_num: orderDoc, target_cartons: '10', target_base_pieces: '1000.00000000', status: 'completed' },

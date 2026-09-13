@@ -50,4 +50,28 @@ class StoreCustomerReceiptRequest extends FormRequest
             'allocations.*.amount' => ['required', 'numeric', 'gt:0'],
         ];
     }
+
+    /** @return array<string, string> */
+    public function attributes(): array
+    {
+        return [
+            'customer_doc_num' => __('Customer'),
+            'sales_order_doc_num' => __('Sales Order'),
+            'received_by_employee_doc_num' => __('sales_ui.received_by_employee'),
+            'receipt_date' => __('Receipt date'),
+            'currency_doc_num' => __('Currency'),
+            'payment_method' => __('Payment method'),
+            'cashbox_doc_num' => __('Cashbox'),
+            'bank_account_doc_num' => __('Bank account'),
+            'amount' => __('Amount'),
+            'receipt_type' => __('Type'),
+            'reference_no' => __('Reference'),
+            'cheque_due_date' => __('Cheque due date'),
+            'external_bank_name' => __('Drawer bank'),
+            'notes' => __('Notes'),
+            'allocations' => __('Invoice / schedule allocations'),
+            'allocations.*.invoice_schedule_public_id' => __('Installment'),
+            'allocations.*.amount' => __('Allocate'),
+        ];
+    }
 }

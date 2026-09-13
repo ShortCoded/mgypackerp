@@ -645,6 +645,46 @@ test('quotation rejects forged internal inventory products server side', functio
     expect(Quotation::query()->count())->toBe(0);
 });
 
+test('quotation product picker excludes trashed products and legacy drafts require replacement', function (): void {
+    ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp();
+
+    $product->delete();
+
+    $picker = $this->actingAs($actor)
+        ->getJson(route('admin.sales.select2.quotation-products', ['q' => $product->doc_num]))
+        ->assertOk()
+        ->json();
+
+    expect(json_encode($picker, JSON_THROW_ON_ERROR))->not->toContain($product->doc_num);
+
+    $response = $this->actingAs($actor)
+        ->putJson(route('admin.sales.quotations.update', $quotation->doc_num), quotationPayload($product, $unit, $currency))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['lines.0.product_doc_num']);
+
+    expect($response->json('errors')['lines.0.product_doc_num'][0] ?? null)
+        ->toBe(__('quotations.messages.deleted_product_requires_replacement', [
+            'product' => $product->doc_num,
+        ]));
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.edit', $quotation->doc_num))
+        ->assertOk()
+        ->assertSee($product->name);
+});
+
+test('active sales documents prevent deleting a referenced product', function (): void {
+    ['actor' => $actor, 'quotation' => $quotation, 'product' => $product] = createQuotationThroughHttp(['products.delete']);
+
+    $this->actingAs($actor)
+        ->deleteJson(route('admin.products.destroy', $product->doc_num))
+        ->assertConflict()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', __('products.messages.active_document_delete_blocked', ['document' => $quotation->doc_num]));
+
+    expect($product->fresh()?->trashed())->toBeFalse();
+});
+
 test('quotations data table returns expected public columns', function (): void {
     ['actor' => $actor] = createQuotationThroughHttp();
 
@@ -777,19 +817,23 @@ test('quotation exchange rate keeps maximum accepted precision before persistenc
     expect($capturedExchangeRate)->toBe('999999999999.999999');
 });
 
-test('quotation always prints full company identity even when operational identity is disabled', function (): void {
+test('quotation prints company identity without commercial or tax registration numbers', function (): void {
     ['quotation' => $quotation, 'company' => $company, 'actor' => $actor] = createQuotationThroughHttp(['quotations.print']);
     $company->forceFill(['show_company_identity_on_prints' => false])->save();
     $identity = $quotation->print_identity_snapshot ?? [];
     $quotation->forceFill(['print_identity_snapshot' => [
         ...$identity, 'company_id' => $company->getKey(), 'name' => 'QUOTATION IDENTITY REQUIRED', 'legal_name' => 'QUOTATION IDENTITY REQUIRED',
         'address' => 'Factory Road 42', 'email' => 'factory@example.test',
+        'commercial_register_number' => 'CR-SHOULD-NOT-PRINT',
+        'tax_card_number' => 'TAX-CARD-SHOULD-NOT-PRINT',
+        'vat_registration_number' => 'VAT-SHOULD-NOT-PRINT',
         'logo_source' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAAAyCAIAAABUA0cyAAAACXBIWXMAAA7EAAAOxAGVKw4bAAABR0lEQVR4nO3bUY6CMBgA4XWz91hvocfYPSnX4BgcxYcmTfNTaolFzTjfk8GChBGoJJ5+L39f4vp+9Q7oWAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBob76Rm0zFN1+fn6H8aUS6rrpgF3N1gOqC6sbrBnfz5NV+CkcbDyoV/mqXGUl3lKA0KzsOVyYV6luhvrdxUMuETnHuHsXMfrKRHWap/xYcuNj/5Yjwbe2+O4g16e8dbNdlyiq/fF56ve1PNr6wZj7sEv8W778552BG64e48caGvypaoxv4PTDKucHm8Z9VXonHzpwAcd6wY9PfrnwzbuMeYSvSXNevbOzsJaXocfcfLPZ2w+i4YzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAx3A4Npkgj1aQnLAAAAAElFTkSuQmCC',
     ]])->save();
     foreach (['ar', 'en'] as $locale) {
         $pdf = $this->actingAs($actor)->withSession(['locale' => $locale])->get(route('admin.sales.quotations.print', $quotation))
             ->assertOk()->assertHeader('content-type', 'application/pdf')->getContent();
         expect(quotationPdfText($pdf))->toContain('QUOTATION IDENTITY REQUIRED')->toContain('factory@example.test')
+            ->not->toContain('CR-SHOULD-NOT-PRINT', 'TAX-CARD-SHOULD-NOT-PRINT', 'VAT-SHOULD-NOT-PRINT')
             ->and(substr_count($pdf, '/Subtype /Image'))->toBeGreaterThan(0);
         if ($directory = getenv('PROCUREMENT_PRINT_SAMPLES')) {
             file_put_contents($directory.'/quotation-identity-'.$locale.'.pdf', $pdf);

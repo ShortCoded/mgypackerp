@@ -308,6 +308,7 @@ return [
         'no_next_record' => 'لا يوجد سجل منتج تالٍ.',
     ],
     'messages' => [
+        'active_document_delete_blocked' => 'هذا المنتج مستخدم في مستند مبيعات نشط :document. أغلق المستند أو ألغِه قبل حذف المنتج.',
         'action_forbidden' => 'ليس لديك صلاحية لاستخدام إجراء الحفظ هذا.',
         'bulk_deleted' => 'تم حذف :count منتج بنجاح.',
         'bulk_delete_confirm_text' => 'أنت على وشك حذف :count منتج.',

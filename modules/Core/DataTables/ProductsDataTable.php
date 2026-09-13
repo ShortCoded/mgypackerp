@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\DataTables\Concerns\FormatsNullableColumns;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -34,7 +35,10 @@ class ProductsDataTable
         $permissionPrefix = $this->permissionPrefix($context);
         $trashFilter = $this->trashFilter($request, $permissionPrefix);
         $canView = (bool) $request->user()?->can("{$permissionPrefix}.view");
-        $query = $this->baseQuery($trashFilter, $context);
+        $query = $this->applyListingFilters(
+            $this->baseQuery($trashFilter, $context),
+            $this->listingFilters($request),
+        );
         if ($request->user()) {
             $query = $this->visibility->applyToEloquent($query, $request->user(), $permissionPrefix);
         }
@@ -151,6 +155,20 @@ class ProductsDataTable
     }
 
     /**
+     * @return array{status: ?string, components_state: ?string}
+     */
+    public function listingFilters(Request $request): array
+    {
+        $status = $request->string('status')->trim()->toString();
+        $componentsState = $request->string('components_state')->trim()->toString();
+
+        return [
+            'status' => in_array($status, ['active', 'inactive'], true) ? $status : null,
+            'components_state' => in_array($componentsState, ['with', 'without'], true) ? $componentsState : null,
+        ];
+    }
+
+    /**
      * @return Builder<Product>
      */
     private function baseQuery(string $trashFilter, string $context): Builder
@@ -164,6 +182,24 @@ class ProductsDataTable
         return $this->companyContext->applyCompanyScope($query, 'products')
             ->forProductContext($context)
             ->with('mainImageUsage.file');
+    }
+
+    /**
+     * @param  Builder<Product>  $query
+     * @param  array{status: ?string, components_state: ?string}  $filters
+     * @return Builder<Product>
+     */
+    private function applyListingFilters(Builder $query, array $filters): Builder
+    {
+        if ($filters['status'] !== null) {
+            $query->where('products.status', $filters['status']);
+        }
+
+        return match ($filters['components_state']) {
+            'with' => $query->whereIn('products.id', ProductComponent::query()->select('product_id')),
+            'without' => $query->whereNotIn('products.id', ProductComponent::query()->select('product_id')),
+            default => $query,
+        };
     }
 
     private function trashFilter(Request $request, string $permissionPrefix): string

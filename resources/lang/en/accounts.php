@@ -94,6 +94,10 @@ return [
         'clone_not_allowed' => 'This account can no longer be cloned. Please open the clone page again.',
         'filters_hint' => 'Filter by code, name, classification, statement direction, normal balance, hierarchy, or status.',
         'no_data_found' => 'No accounts match the current filters.',
+        'posting_classification_missing' => ':event cannot be posted because the required account classification ":classification" does not exist. Run the account classification synchronization command, then review the chart of accounts.',
+        'posting_account_missing' => ':event cannot be posted. Create or update one active postable account in the chart of accounts with classification ":classification" (:code).',
+        'posting_account_ambiguous' => ':event cannot be posted because classification ":classification" (:code) is assigned to more than one active postable account: :accounts. Keep exactly one posting account for this classification.',
+        'non_inventory_product' => ':event cannot resolve an inventory account for this product type. Review the product classification.',
     ],
     'filters' => [
         'all' => 'All',

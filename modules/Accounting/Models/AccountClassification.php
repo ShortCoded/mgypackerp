@@ -2,6 +2,7 @@
 
 namespace Modules\Accounting\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -59,6 +60,11 @@ class AccountClassification extends Model
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
         ];
+    }
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where($this->getTable().'.status', 'active');
     }
 
     public function getRouteKeyName(): string

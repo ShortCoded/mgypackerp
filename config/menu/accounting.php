@@ -109,20 +109,6 @@ return [
                 'active' => ['admin.accounting.reports.customer-statement'],
                 'children' => [],
             ],
-            [
-                'label' => 'supplier_statement',
-                'title' => 'Supplier Statement',
-                'icon' => 'file-invoice',
-                'route' => 'admin.accounting.reports.supplier-statement',
-                'permission' => 'reports.supplier_statement.view',
-                'keywords' => ['supplier statement', 'supplier ledger', 'كشف حساب مورد'],
-                'actions' => [
-                    'view' => 'reports.supplier_statement.view',
-                    'export' => 'reports.supplier_statement.export',
-                ],
-                'active' => ['admin.accounting.reports.supplier-statement'],
-                'children' => [],
-            ],
         ],
     ],
 ];

@@ -44,9 +44,18 @@ class ProductController extends Controller
         private readonly ProductComponentUnitConversionService $unitConversions,
     ) {}
 
-    public function index(Request $request, ProductDocumentNumberSettingsService $documentNumberSettings): View
-    {
+    public function index(
+        Request $request,
+        ProductDocumentNumberSettingsService $documentNumberSettings,
+        ProductsDataTable $dataTable,
+    ): View {
         $context = $this->productContext($request);
+        $listingFilters = $dataTable->listingFilters($request);
+        $routes = $this->resourceRoutes($context);
+        $routes['data'] = route(
+            $this->routeName($context, 'data'),
+            array_filter($listingFilters),
+        );
 
         return view('modules.core.products.index', [
             'productContext' => $context,
@@ -54,7 +63,7 @@ class ProductController extends Controller
             'isMaterialContext' => $this->isMaterialContext($context),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($this->routeName($context, 'index')),
             'documentNumberSettings' => $documentNumberSettings->current($this->documentNumberKey($context)),
-            'routes' => $this->resourceRoutes($context),
+            'routes' => $routes,
         ]);
     }
 

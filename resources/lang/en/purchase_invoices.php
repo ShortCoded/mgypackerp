@@ -223,6 +223,7 @@ return [
         'purchase_order_supplier_mismatch' => 'The selected supplier does not match the purchase order supplier. Change the supplier or clear the purchase order link.',
         'purchase_order_context_mismatch' => 'The supplier, branch, or currency does not match the linked purchase order. Correct the data or clear the link before approval.',
         'unlinked_order_line' => 'Additional line not linked to the purchase order',
+        'purchase_product_missing' => 'The purchase invoice line product is unavailable. Replace the deleted or invalid item before approval.',
         'linked_order_line' => 'Linked to a purchase order line',
         'discount_percentage_invalid' => 'Percentage discount must be between 0 and 100.',
         'line_discount_exceeds_subtotal' => 'Line discount cannot exceed the line subtotal.',

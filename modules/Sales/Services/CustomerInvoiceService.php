@@ -4,11 +4,11 @@ namespace Modules\Sales\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
-use Modules\Core\Services\DocumentNumberService;
-use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
@@ -312,6 +312,12 @@ class CustomerInvoiceService
     {
         return DB::transaction(function () use ($invoice, $lines, $schedules): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
+
+            if (! $locked->isEditable() && CustomerInvoice::allowsFullCrud() && $locked->canReopenSafely()) {
+                $this->reopen($locked, __('Automatic accounting reversal before invoice amendment.'));
+                $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
+            }
+
             if ($locked->document_type !== CustomerInvoice::TypeInvoice || ! $locked->isEditable()) {
                 throw new DomainException(__('Only a draft or safely reopened invoice may be amended.'));
             }
@@ -331,9 +337,29 @@ class CustomerInvoiceService
                     throw new DomainException(__('The invoice correction contains an unknown or missing line.'));
                 }
 
-                $orderLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($invoiceLine->sales_order_line_id);
                 $quantity = (string) $input['quantity'];
                 $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
+
+                if ($invoiceLine->sales_order_line_id === null) {
+                    $ratio = bcdiv($quantity, (string) $invoiceLine->quantity, 12);
+                    $gross = $this->amounts->multiply(
+                        $this->amounts->multiply((string) $invoiceLine->unit_price, (string) $invoiceLine->quantity),
+                        $ratio,
+                    );
+                    $prepared[] = [
+                        'invoiceLine' => $invoiceLine,
+                        'orderLine' => null,
+                        'quantity' => $quantity,
+                        'baseQuantity' => bcmul($quantity, (string) $invoiceLine->conversion_factor, 8),
+                        'discount' => $this->amounts->multiply((string) $invoiceLine->discount_amount, $ratio),
+                        'tax' => $this->amounts->multiply((string) $invoiceLine->tax_amount, $ratio),
+                        'gross' => $gross,
+                    ];
+
+                    continue;
+                }
+
+                $orderLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($invoiceLine->sales_order_line_id);
 
                 if ($invoiceLine->delivery_line_id) {
                     $deliveryLine = InventoryDocumentLine::query()->lockForUpdate()->findOrFail($invoiceLine->delivery_line_id);
@@ -370,8 +396,8 @@ class CustomerInvoiceService
             foreach ($prepared as $row) {
                 $quantityDelta = $this->amounts->subtract($row['quantity'], $row['invoiceLine']->quantity, 8);
                 $baseDelta = $this->amounts->subtract($row['baseQuantity'], $row['invoiceLine']->base_quantity, 8);
-                $row['orderLine']->increment('invoiced_quantity', $quantityDelta);
-                $row['orderLine']->increment('invoiced_base_quantity', $baseDelta);
+                $row['orderLine']?->increment('invoiced_quantity', $quantityDelta);
+                $row['orderLine']?->increment('invoiced_base_quantity', $baseDelta);
                 $row['invoiceLine']->update([
                     'quantity' => $row['quantity'], 'base_quantity' => $row['baseQuantity'],
                     'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
@@ -392,6 +418,57 @@ class CustomerInvoiceService
             $this->audit->record($locked, 'customer_invoice.amended', ['posting_revision' => $locked->posting_revision]);
 
             return $locked->refresh()->load(['lines', 'paymentSchedules']);
+        });
+    }
+
+    public function deleteDraft(CustomerInvoice $invoice): void
+    {
+        DB::transaction(function () use ($invoice): void {
+            $locked = CustomerInvoice::query()
+                ->with(['lines', 'deliveries', 'allocations', 'returns', 'creditNotes'])
+                ->lockForUpdate()
+                ->findOrFail($invoice->getKey());
+
+            if (! $locked->canDeleteDraft()
+                || $locked->journal_entry_id !== null
+                || $locked->deliveries->isNotEmpty()
+                || $locked->allocations->isNotEmpty()
+                || $locked->returns->isNotEmpty()
+                || $locked->creditNotes->isNotEmpty()) {
+                throw new DomainException(__('Only an unused draft sales invoice can be deleted.'));
+            }
+
+            foreach ($locked->lines as $line) {
+                if ($line->sales_order_line_id !== null) {
+                    $orderLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
+                    $orderLine->decrement('invoiced_quantity', $line->quantity);
+                    $orderLine->decrement('invoiced_base_quantity', $line->base_quantity);
+                }
+            }
+
+            if ($locked->source_type === 'sales_request' && $locked->source_id !== null) {
+                $source = SalesRequest::query()->with('lines')->lockForUpdate()->find($locked->source_id);
+                if ($source instanceof SalesRequest) {
+                    foreach ($locked->lines as $line) {
+                        $sourceLinePublicId = $line->source_snapshot['sales_request_line_public_id'] ?? null;
+                        $sourceLine = $source->lines->firstWhere('public_id', $sourceLinePublicId);
+                        if ($sourceLine instanceof SalesRequestLine) {
+                            $remainingConverted = bcsub((string) $sourceLine->converted_quantity, (string) $line->quantity, 8);
+                            if (bccomp($remainingConverted, '0', 8) < 0) {
+                                $remainingConverted = '0.00000000';
+                            }
+                            $sourceLine->forceFill(['converted_quantity' => $remainingConverted])->save();
+                        }
+                    }
+                    $source->forceFill([
+                        'status' => $source->lines()->where('converted_quantity', '>', 0)->exists() ? 'partially_converted' : 'approved',
+                    ])->save();
+                }
+            }
+
+            $locked->forceFill(['deleted_by' => auth()->id()])->saveQuietly();
+            $locked->delete();
+            $this->audit->record($locked, 'customer_invoice.deleted');
         });
     }
 

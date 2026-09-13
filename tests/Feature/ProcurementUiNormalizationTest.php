@@ -348,6 +348,14 @@ test('approved request selectors and source import preserve each source line and
         ->assertSee('js-order-requisitions')
         ->assertSee($fixture['currency']->doc_num)
         ->assertSee('data-input-name="lines[0][attachment_file_doc_nums][]"', false)
+        ->assertSee('data-document-summary', false)
+        ->assertSee('js-total-subtotal', false)
+        ->assertSee('js-total-discount', false)
+        ->assertSee('js-total-taxable', false)
+        ->assertSee('js-total-tax', false)
+        ->assertSee('js-total-freight', false)
+        ->assertSee('<div class="card mb-3 js-procurement-attachment-scope erp-document-attachments-card">', false)
+        ->assertDontSee('<section class="card mb-3 js-procurement-attachment-scope', false)
         ->assertDontSee('[cost_center_doc_num]', false);
     $this->getJson(route('admin.purchases.select2.currency-rate', ['currency_doc_num' => $fixture['currency']->doc_num]))->assertOk()->assertJsonPath('rate', 1)->assertJsonPath('is_main', true);
 });
@@ -645,6 +653,21 @@ test('purchase navigation follows the operational document sequence', function (
 
     app()->setLocale('ar');
     expect(__('menu.purchase_inspections'))->toBe('فحوص المشتريات');
+});
+
+test('supplier payment form compiles all fields and Arabic labels', function (): void {
+    $fixture = procurementUiFixture();
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+    app()->setLocale('ar');
+
+    $this->get(route('admin.purchases.supplier-payments.create'))
+        ->assertOk()
+        ->assertSee('دفعة / دفعة مقدمة لمورد')
+        ->assertSee('تخصيصات الفواتير / الأقساط')
+        ->assertSee('name="supplier_doc_num"', false)
+        ->assertSee('name="payment_method"', false)
+        ->assertDontSee('@csrf')
+        ->assertDontSee("{{ __('Supplier') }}", false);
 });
 
 test('purchase cycle tables consistently support permission aware double click editing', function (): void {

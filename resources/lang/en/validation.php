@@ -225,7 +225,7 @@ return [
         'allocations' => 'Allocations',
         'allocations.*.invoice_schedule_public_id' => 'Installment',
         'allocations.*.amount' => 'Amount',
-        'delivery_doc_num' => 'Delivery Note',
+        'delivery_doc_num' => 'Issue Order',
         'lines.*.sales_order_line_public_id' => 'Sales order line',
         'lines.*.source_request_line_public_id' => 'Source request line',
         'lines.*.delivery_line_public_id' => 'Delivery line',

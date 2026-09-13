@@ -2,17 +2,17 @@
 
 namespace Modules\Inventory\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryDocument;
 
 class InventoryAccountingPostingService
 {
     public function __construct(
-        private readonly InventoryAccountingMappingService $mappings,
+        private readonly PostingAccountResolver $accounts,
         private readonly JournalEntryService $journals,
     ) {}
 
@@ -28,9 +28,8 @@ class InventoryAccountingPostingService
             return $document->journalEntry;
         }
 
-        $mapping = $this->mappings->requireForCompany((int) $document->company_id);
         $event = $this->eventLabel($document);
-        $lines = $this->journalLines($document, $mapping, $event);
+        $lines = $this->journalLines($document, $event);
 
         if ($lines === []) {
             throw new DomainException(__('inventory_accounting.errors.zero_cost', ['event' => $event]));
@@ -91,7 +90,6 @@ class InventoryAccountingPostingService
     /** @return list<array<string, mixed>> */
     private function journalLines(
         InventoryDocument $document,
-        InventoryAccountingMapping $mapping,
         string $event,
     ): array {
         $grouped = [];
@@ -101,7 +99,7 @@ class InventoryAccountingPostingService
             InventoryDocument::TypeMaterialReturn,
             InventoryDocument::TypeProductionWaste,
             InventoryDocument::TypeProductionReceipt,
-        ], true) ? ($document->productionRun?->cost_center_id ?? $this->mappings->productionCostCenterId($mapping, $event)) : null;
+        ], true) ? $document->productionRun?->cost_center_id : null;
 
         foreach ($document->lines as $line) {
             $amount = bcadd((string) $line->total_cost, '0', 4);
@@ -110,35 +108,39 @@ class InventoryAccountingPostingService
                 continue;
             }
 
-            $inventoryAccount = $this->mappings->inventoryAccount($mapping, $line->product, $event);
+            $inventoryAccount = $this->accounts->inventoryForProduct(
+                (int) $document->company_id,
+                $line->product,
+                $event,
+            );
             [$debitAccountId, $creditAccountId] = match ($document->document_type) {
                 InventoryDocument::TypeMaterialIssue,
                 InventoryDocument::TypeAdditionalMaterialIssue => [
-                    $this->mappings->requirePostableAccount($mapping, 'wipAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
                     $inventoryAccount->getKey(),
                 ],
                 InventoryDocument::TypeMaterialReturn => [
                     $inventoryAccount->getKey(),
-                    $this->mappings->requirePostableAccount($mapping, 'wipAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
                 ],
                 InventoryDocument::TypeProductionWaste => [
-                    $this->mappings->requirePostableAccount($mapping, 'productionWasteAccount', $event)->getKey(),
-                    $this->mappings->requirePostableAccount($mapping, 'wipAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::AbnormalWasteLoss, $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
                 ],
                 InventoryDocument::TypeProductionReceipt => [
                     $inventoryAccount->getKey(),
-                    $this->mappings->requirePostableAccount($mapping, 'wipAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WorkInProcessInventory, $event)->getKey(),
                 ],
                 InventoryDocument::TypeAdjustmentIn => [
                     $inventoryAccount->getKey(),
-                    $this->mappings->requirePostableAccount($mapping, 'inventoryAdjustmentGainAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentGain, $event)->getKey(),
                 ],
                 InventoryDocument::TypeAdjustmentOut => [
-                    $this->mappings->requirePostableAccount($mapping, 'inventoryAdjustmentLossAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::InventoryAdjustmentLoss, $event)->getKey(),
                     $inventoryAccount->getKey(),
                 ],
                 InventoryDocument::TypeScrap => [
-                    $this->mappings->requirePostableAccount($mapping, 'warehouseDamageLossAccount', $event)->getKey(),
+                    $this->accounts->resolve((int) $document->company_id, PostingAccountResolver::WarehouseDamageLoss, $event)->getKey(),
                     $inventoryAccount->getKey(),
                 ],
                 default => throw new DomainException(__('Unsupported inventory accounting event.')),

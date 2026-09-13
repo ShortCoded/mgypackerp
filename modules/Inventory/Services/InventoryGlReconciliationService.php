@@ -2,6 +2,7 @@
 
 namespace Modules\Inventory\Services;
 
+use App\Services\PostingAccountResolver;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Product;
@@ -10,16 +11,15 @@ use Modules\Inventory\Models\InventoryTransaction;
 
 class InventoryGlReconciliationService
 {
-    public function __construct(private readonly InventoryAccountingMappingService $mappings) {}
+    public function __construct(private readonly PostingAccountResolver $accounts) {}
 
     /** @return list<array{key: string, label: string, subledger: string, gl: string, difference: string, status: string}> */
     public function reconcile(int $companyId, ?int $financialPeriodId = null, ?int $branchId = null): array
     {
-        $mapping = $this->mappings->requireForCompany($companyId);
         $rawAccountIds = collect([
-            $mapping->raw_material_inventory_account_id,
-            $mapping->packaging_inventory_account_id,
-        ])->filter()->unique()->values()->all();
+            $this->accounts->resolve($companyId, PostingAccountResolver::RawMaterialInventory, __('Inventory reconciliation'))->getKey(),
+            $this->accounts->resolve($companyId, PostingAccountResolver::PackagingMaterialInventory, __('Inventory reconciliation'))->getKey(),
+        ])->unique()->values()->all();
 
         return [
             $this->row(
@@ -36,19 +36,25 @@ class InventoryGlReconciliationService
                 'wip',
                 __('Production work in process'),
                 $this->wipValue($companyId, $financialPeriodId, $branchId),
-                $this->accountBalance($companyId, [(int) $mapping->wip_account_id], $financialPeriodId, $branchId),
+                $this->accountBalance($companyId, [
+                    $this->accounts->resolve($companyId, PostingAccountResolver::WorkInProcessInventory, __('Inventory reconciliation'))->getKey(),
+                ], $financialPeriodId, $branchId),
             ),
             $this->row(
                 'finished_goods',
                 __('Finished goods inventory'),
                 $this->inventoryValue($companyId, [Product::ClassificationFinishedProduct], [], $financialPeriodId, $branchId),
-                $this->accountBalance($companyId, [(int) $mapping->finished_goods_inventory_account_id], $financialPeriodId, $branchId),
+                $this->accountBalance($companyId, [
+                    $this->accounts->resolve($companyId, PostingAccountResolver::FinishedGoodsInventory, __('Inventory reconciliation'))->getKey(),
+                ], $financialPeriodId, $branchId),
             ),
             $this->row(
                 'production_waste',
                 __('Production waste'),
                 $this->eventValue($companyId, [InventoryDocument::TypeProductionWaste], $financialPeriodId, $branchId),
-                $this->eventGlValue($companyId, [InventoryDocument::TypeProductionWaste], [(int) $mapping->production_waste_account_id], $financialPeriodId, $branchId),
+                $this->eventGlValue($companyId, [InventoryDocument::TypeProductionWaste], [
+                    $this->accounts->resolve($companyId, PostingAccountResolver::AbnormalWasteLoss, __('Inventory reconciliation'))->getKey(),
+                ], $financialPeriodId, $branchId),
             ),
             $this->row(
                 'inventory_adjustments',
@@ -63,9 +69,9 @@ class InventoryGlReconciliationService
                     InventoryDocument::TypeAdjustmentOut,
                     InventoryDocument::TypeScrap,
                 ], [
-                    (int) $mapping->inventory_adjustment_gain_account_id,
-                    (int) $mapping->inventory_adjustment_loss_account_id,
-                    (int) $mapping->warehouse_damage_loss_account_id,
+                    $this->accounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentGain, __('Inventory reconciliation'))->getKey(),
+                    $this->accounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentLoss, __('Inventory reconciliation'))->getKey(),
+                    $this->accounts->resolve($companyId, PostingAccountResolver::WarehouseDamageLoss, __('Inventory reconciliation'))->getKey(),
                 ], $financialPeriodId, $branchId),
             ),
         ];

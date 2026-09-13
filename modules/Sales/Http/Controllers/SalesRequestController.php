@@ -116,7 +116,7 @@ class SalesRequestController extends Controller
     {
         $this->assertBranch($request, $salesRequest);
 
-        return $pdf->stream('reports.sales.request', ['record' => $salesRequest->load('company', 'customer', 'branchStore', 'lines.product.color', 'lines.unit'),
+        return $pdf->stream('reports.sales.request', ['record' => $salesRequest->load('company', 'customer', 'salesEmployee', 'branchStore', 'lines.product.color', 'lines.unit'),
             'title' => __('Sales Request').' — '.$salesRequest->doc_num, 'documentHeaderTitle' => __('Sales Request'),
             'printIdentityPolicy' => 'report', 'companyPrintIdentity' => $salesRequest->print_identity_snapshot ?: app(CompanyPrintIdentityService::class)->forCompany($salesRequest->company),
             'showPrices' => $request->user()->can('sales_orders.view_prices'), 'customerFacing' => true], 'sales-request-'.$salesRequest->doc_num.'.pdf');

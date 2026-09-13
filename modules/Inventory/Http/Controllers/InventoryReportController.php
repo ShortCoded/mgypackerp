@@ -3,6 +3,7 @@
 namespace Modules\Inventory\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
@@ -29,7 +30,6 @@ use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Models\WarehouseLocation;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryReportService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -39,7 +39,6 @@ class InventoryReportController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly InventoryReportService $reports,
-        private readonly InventoryAccountingMappingService $accountingMappings,
         private readonly InventoryGlReconciliationService $reconciliation,
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
@@ -307,14 +306,14 @@ class InventoryReportController extends Controller
         $report['glReconciliationUnavailableReason'] = null;
 
         if ($canViewFinancial) {
-            if ($this->accountingMappings->forCompany($context['company_id']) === null) {
-                $report['glReconciliationUnavailableReason'] = __('inventory.reports.gl_reconciliation_unavailable');
-            } else {
+            try {
                 $report['glReconciliation'] = $this->reconciliation->reconcile(
                     $context['company_id'],
                     $context['financial_period_id'],
                     $context['branch_id'],
                 );
+            } catch (DomainException $exception) {
+                $report['glReconciliationUnavailableReason'] = $exception->getMessage();
             }
         }
 

@@ -257,7 +257,6 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
         'suppliers' => 3,
         'cashboxes' => 1,
         'bank_accounts' => 1,
-        'inventory_accounting_mappings' => 1,
         'inventory_opening_stocks' => 2,
         'purchase_requisitions' => 2,
         'request_for_quotations' => 1,

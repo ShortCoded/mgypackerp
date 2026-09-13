@@ -23,11 +23,12 @@ class ProductDataReportController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
         return view('modules.core.reports.products-data.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.reports.products-data.index'),
             'classificationOptions' => $this->report->classificationOptions(),
+            'initialFilters' => $this->report->filtersFromRequest($request),
         ]);
     }
 

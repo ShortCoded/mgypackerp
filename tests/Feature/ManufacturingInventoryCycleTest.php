@@ -3,9 +3,11 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
@@ -17,7 +19,6 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\OperatingContextService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
@@ -82,23 +83,6 @@ function manufacturingInventoryFixture(): array
         'product_id' => $raw->getKey(), 'unit_id' => $unit->getKey(), 'quantity_in' => '1000',
         'quantity_out' => 0, 'source_type' => 'test', 'source_id' => 1,
         'source_doc_num' => 'OPEN-MFG', 'unit_cost' => '2', 'total_cost' => '2000',
-        'created_by' => $user->getKey(),
-    ]);
-    $accountId = fn (string $code): int => (int) Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $code)
-        ->valueOrFail('id');
-    InventoryAccountingMapping::query()->create([
-        'company_id' => $company->getKey(),
-        'raw_material_inventory_account_id' => $accountId('1131'),
-        'packaging_inventory_account_id' => $accountId('1134'),
-        'semi_finished_inventory_account_id' => $accountId('1132'),
-        'finished_goods_inventory_account_id' => $accountId('1133'),
-        'wip_account_id' => $accountId('1132'),
-        'production_waste_account_id' => $accountId('551'),
-        'warehouse_damage_loss_account_id' => $accountId('551'),
-        'inventory_adjustment_gain_account_id' => $accountId('432'),
-        'inventory_adjustment_loss_account_id' => $accountId('551'),
         'created_by' => $user->getKey(),
     ]);
     $machine = ProductionMachine::query()->create([
@@ -1094,9 +1078,7 @@ test('capability permissions separate warehouse planning quality and cost access
         ->assertOk()
         ->assertDontSee('<th>'.__('Value').'</th>', false)
         ->assertDontSee(__('Inventory / Production to General Ledger Reconciliation'));
-    $this->actingAs($operator)->withSession($session)
-        ->get(route('admin.inventory.accounting.index'))
-        ->assertForbidden();
+    expect(Route::has('admin.inventory.accounting.index'))->toBeFalse();
     $this->actingAs($operator)->withSession($session)
         ->get(route('admin.inventory.documents.create'))
         ->assertOk()
@@ -1142,7 +1124,6 @@ test('capability permissions separate warehouse planning quality and cost access
         'production.reports.operational',
         'production.reports.financial',
         'production.reports.export',
-        'inventory.accounting.view',
     ]);
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.index'))
@@ -1174,18 +1155,17 @@ test('capability permissions separate warehouse planning quality and cost access
         ->assertHeader('content-disposition', 'inline; filename="production-operations-report.pdf"');
     expect(str_starts_with($productionPdf->getContent(), '%PDF-'))->toBeTrue();
     $this->actingAs($costUser)->withSession($session)
-        ->post(route('admin.inventory.accounting.store'))
-        ->assertForbidden();
-    $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.documents.create'))
         ->assertForbidden();
 });
 
-test('financial inventory reports remain operational before accounting mappings are configured', function () {
+test('financial inventory reports remain operational when a required account classification is missing', function () {
     $fixture = manufacturingInventoryFixture();
-    InventoryAccountingMapping::query()
+    $rawInventoryClassification = AccountClassification::query()->where('code', 'raw_material_inventory')->firstOrFail();
+    Account::query()
         ->where('company_id', $fixture['company']->getKey())
-        ->delete();
+        ->where('account_classification_id', $rawInventoryClassification->getKey())
+        ->update(['account_classification_id' => null]);
 
     $permissions = [
         'inventory.reports.operational',
@@ -1207,7 +1187,11 @@ test('financial inventory reports remain operational before accounting mappings 
         OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
-    $unavailableMessage = __('inventory.reports.gl_reconciliation_unavailable');
+    $unavailableMessage = __('accounts.messages.posting_account_missing', [
+        'classification' => $rawInventoryClassification->displayName(),
+        'code' => $rawInventoryClassification->code,
+        'event' => __('Inventory reconciliation'),
+    ]);
 
     $this->actingAs($financialUser)->withSession($session)
         ->get(route('admin.inventory.reports.index'))

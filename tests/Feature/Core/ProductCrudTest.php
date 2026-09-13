@@ -27,6 +27,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Core\Services\Reports\ProductDataReport;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -225,6 +226,130 @@ test('products index renders through standard core crud shell', function () {
         ->assertDontSee('assets/js/modules/Core/production-guard.js', false)
         ->assertDontSee('is_coolable', false)
         ->assertDontSee('data-id=', false);
+});
+
+test('product list preserves valid dashboard filters in its data endpoint', function () {
+    $actor = productCrudActor(['products.view']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.index', [
+            'status' => 'active',
+            'components_state' => 'with',
+        ]))
+        ->assertOk()
+        ->assertSee(route('admin.products.data', [
+            'status' => 'active',
+            'components_state' => 'with',
+        ]));
+
+    $this->actingAs($actor)
+        ->get(route('admin.products.index', [
+            'status' => 'unsupported',
+            'components_state' => 'unsupported',
+        ]))
+        ->assertOk()
+        ->assertSee(route('admin.products.data'), false)
+        ->assertDontSee(route('admin.products.data', ['status' => 'unsupported']))
+        ->assertDontSee(route('admin.products.data', ['components_state' => 'unsupported']));
+});
+
+test('product data table filters active products by component availability', function () {
+    $actor = productCrudActor(['products.view']);
+    $componentProduct = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 2250,
+        'doc_num' => 'RawMaterial-02250',
+        'name' => 'Dashboard Filter Component',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'status' => 'active',
+    ]);
+    $activeWithComponents = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 2251,
+        'doc_num' => 'Product-02251',
+        'name' => 'Active Product With Components',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'active',
+    ]);
+    $activeWithoutComponents = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 2252,
+        'doc_num' => 'Product-02252',
+        'name' => 'Active Product Without Components',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'active',
+    ]);
+    $inactiveWithComponents = Product::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'doc_number' => 2253,
+        'doc_num' => 'Product-02253',
+        'name' => 'Inactive Product With Components',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'inactive',
+    ]);
+
+    foreach ([$activeWithComponents, $inactiveWithComponents] as $product) {
+        ProductComponent::query()->create([
+            'company_id' => $this->productCompany->getKey(),
+            'product_id' => $product->getKey(),
+            'component_product_id' => $componentProduct->getKey(),
+            'quantity' => 1,
+        ]);
+    }
+
+    ProductComponent::query()->create([
+        'company_id' => $this->productCompany->getKey(),
+        'product_id' => $activeWithoutComponents->getKey(),
+        'component_product_id' => $componentProduct->getKey(),
+        'quantity' => 1,
+    ])->delete();
+
+    $withComponents = $this->actingAs($actor)
+        ->getJson(route('admin.products.data', [
+            'draw' => 1,
+            'start' => 0,
+            'length' => 10,
+            'status' => 'active',
+            'components_state' => 'with',
+        ]))
+        ->assertOk()
+        ->json();
+
+    expect($withComponents['recordsFiltered'])->toBe(1)
+        ->and(array_column($withComponents['data'], 'doc_num'))->toHaveCount(1)
+        ->and($withComponents['data'][0]['doc_num'])->toContain($activeWithComponents->doc_num);
+
+    $withoutComponents = $this->actingAs($actor)
+        ->getJson(route('admin.products.data', [
+            'draw' => 1,
+            'start' => 0,
+            'length' => 10,
+            'status' => 'active',
+            'components_state' => 'without',
+        ]))
+        ->assertOk()
+        ->json();
+
+    expect($withoutComponents['recordsFiltered'])->toBe(1)
+        ->and($withoutComponents['data'][0]['doc_num'])->toContain($activeWithoutComponents->doc_num);
+});
+
+test('product component report applies dashboard filters on first render', function () {
+    $actor = productCrudActor(['reports.products_data.view']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.reports.products-data.index', [
+            'result_mode' => ProductDataReport::ModeDetailed,
+            'item_scope' => ProductDataReport::ItemScopeProducts,
+            'record_state' => 'active',
+            'status' => 'active',
+            'components_state' => 'with',
+        ]))
+        ->assertOk()
+        ->assertSee('value="detailed" selected', false)
+        ->assertSee('value="products" selected', false)
+        ->assertSee('value="active" selected', false)
+        ->assertSee('value="with" selected', false);
 });
 
 test('production guard script is included only for production authenticated layout', function (string $environment, bool $shouldLoad): void {

@@ -394,6 +394,32 @@ class ProcurementWorkflowRequest extends FormRequest
         ];
     }
 
+    /** @return array<string, string> */
+    public function attributes(): array
+    {
+        return [
+            'supplier_doc_num' => __('Supplier'),
+            'purchase_order_doc_num' => __('Related PO (advance)'),
+            'payment_method' => __('Payment method'),
+            'payment_date' => __('Payment date'),
+            'cashbox_doc_num' => __('Cashbox'),
+            'bank_account_doc_num' => __('Bank account'),
+            'currency_doc_num' => __('Currency'),
+            'exchange_rate' => __('Exchange rate'),
+            'amount' => __('Amount'),
+            'cheque_number' => __('Cheque number'),
+            'cheque_date' => __('Cheque date'),
+            'cheque_due_date' => __('Cheque due date'),
+            'is_advance' => __('Supplier advance / allow unapplied balance'),
+            'reason' => __('Reason'),
+            'notes' => __('Notes'),
+            'allocations' => __('Invoice / installment allocations'),
+            'allocations.*.purchase_invoice_doc_num' => __('Invoice'),
+            'allocations.*.payment_schedule_public_id' => __('Installment'),
+            'allocations.*.amount' => __('Allocate'),
+        ];
+    }
+
     private function companyId(): int
     {
         return (int) (app(OperatingContextService::class)->snapshot($this)['company_id'] ?? 0);

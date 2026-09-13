@@ -18,6 +18,10 @@
     if (! is_array($lineRows) || $lineRows === []) {
         $lineRows = [[]];
     }
+    $purchaseOrderLines = $record?->lines ?? collect();
+    $purchaseOrderDiscountTotal = $purchaseOrderLines->sum('discount_amount');
+    $purchaseOrderTaxableTotal = $purchaseOrderLines->sum('total_before_tax');
+    $purchaseOrderTaxTotal = $purchaseOrderLines->sum('tax_amount');
 @endphp
 
 @section('title', $title)
@@ -32,10 +36,6 @@
             width: 2rem;
             height: 2rem;
             object-fit: cover;
-        }
-
-        .purchase-order-total-box {
-            max-width: 24rem;
         }
 
         @media (max-width: 767.98px) {
@@ -438,6 +438,7 @@
             </div>
         </div>
 
+        @if((! $isCreateLike && $record?->cancel_reason) || $mode === 'view')
         <div class="row g-3 align-items-start">
             <div class="col-lg-6">
                 @if(! $isCreateLike && $record?->cancel_reason)
@@ -463,26 +464,67 @@
                     </div>
                 @endif
             </div>
-            <div class="col-lg-6">
-                <div class="card purchase-order-total-box ms-lg-auto">
-                    <div class="card-body">
-                        <h6 class="text-700 mb-3">{{ __('purchase_orders.sections.totals') }}</h6>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>{{ __('purchase_orders.totals.ordered_quantity') }}</span>
-                            <strong class="js-total-ordered" dir="ltr">{{ $numbers->format($record?->total_ordered_quantity ?? 0) }}</strong>
+        </div>
+        @endif
+
+        <div class="card mb-3 erp-document-summary" data-document-summary>
+            <div class="card-header py-2">
+                <h6 class="mb-0">{{ __('purchase_orders.sections.totals') }}</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-start">
+                    <div class="col-lg-6">
+                        <div class="row g-2">
+                            <div class="col-12 col-sm-4">
+                                <div class="border rounded p-2 h-100">
+                                    <div class="small text-600">{{ __('purchase_orders.totals.ordered_quantity') }}</div>
+                                    <div class="fw-semibold js-total-ordered" dir="ltr">{{ $numbers->format($record?->total_ordered_quantity ?? 0) }}</div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-sm-4">
+                                <div class="border rounded p-2 h-100">
+                                    <div class="small text-600">{{ __('purchase_orders.totals.received_quantity') }}</div>
+                                    <div class="fw-semibold js-total-received" dir="ltr">{{ $numbers->format($record?->total_received_quantity ?? 0) }}</div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-sm-4">
+                                <div class="border rounded p-2 h-100">
+                                    <div class="small text-600">{{ __('purchase_orders.totals.remaining_quantity') }}</div>
+                                    <div class="fw-semibold js-total-remaining" dir="ltr">{{ $numbers->format($record?->total_remaining_quantity ?? 0) }}</div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>{{ __('purchase_orders.totals.received_quantity') }}</span>
-                            <strong class="js-total-received" dir="ltr">{{ $numbers->format($record?->total_received_quantity ?? 0) }}</strong>
-                        </div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span>{{ __('purchase_orders.totals.remaining_quantity') }}</span>
-                            <strong class="js-total-remaining" dir="ltr">{{ $numbers->format($record?->total_remaining_quantity ?? 0) }}</strong>
-                        </div>
-                        <hr>
-                        <div class="d-flex justify-content-between fs-8">
-                            <span>{{ __('purchase_orders.totals.net_total') }}</span>
-                            <strong class="js-total-amount" dir="ltr">{{ $numbers->format($record?->total_amount ?? 0) }}</strong>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="table-responsive erp-document-total-box ms-lg-auto">
+                            <table class="table table-sm mb-0">
+                                <tbody>
+                                    <tr>
+                                        <th>{{ __('purchase_orders.totals.subtotal') }}</th>
+                                        <td class="text-end js-total-subtotal" dir="ltr">{{ $numbers->format($record?->subtotal_amount ?? 0) }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>{{ __('purchase_orders.totals.line_discounts') }}</th>
+                                        <td class="text-end js-total-discount" dir="ltr">{{ $numbers->format($purchaseOrderDiscountTotal) }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>{{ __('purchase_orders.totals.taxable') }}</th>
+                                        <td class="text-end js-total-taxable" dir="ltr">{{ $numbers->format($purchaseOrderTaxableTotal) }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>{{ __('purchase_orders.totals.tax') }}</th>
+                                        <td class="text-end js-total-tax" dir="ltr">{{ $numbers->format($purchaseOrderTaxTotal) }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>{{ __('purchase_orders.totals.freight') }}</th>
+                                        <td class="text-end js-total-freight" dir="ltr">{{ $numbers->format($record?->freight_amount ?? 0) }}</td>
+                                    </tr>
+                                    <tr class="fw-bold">
+                                        <th>{{ __('purchase_orders.totals.net_total') }}</th>
+                                        <td class="text-end js-total-amount" dir="ltr">{{ $numbers->format($record?->total_amount ?? 0) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

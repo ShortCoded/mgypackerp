@@ -67,7 +67,7 @@ class ProductionOrderController extends Controller
     private function printDocument(Request $request, ProductionOrder $productionOrder, string $documentTitle, string $filenamePrefix): Response
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['company', 'salesOrder', 'lines.product', 'lines.unit']);
+        $record = $productionOrder->load(['company', 'salesOrder.salesEmployee', 'lines.product', 'lines.unit']);
 
         return $this->pdf->stream('reports.sales.document', [
             'title' => $documentTitle.' — '.$record->doc_num,

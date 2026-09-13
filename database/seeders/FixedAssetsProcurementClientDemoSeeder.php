@@ -37,7 +37,6 @@ use Modules\FixedAssets\Services\FixedAssetService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\WarehouseLocation;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Inventory\Services\OpeningStockPricingService;
 use Modules\Inventory\Services\OpeningStockService;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -176,25 +175,6 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
         $packing = $this->costCenter($company, $productionRoot, 'CD1002', 'Packing & Quality — Client Demo', $user);
         $administration = $this->costCenter($company, $serviceRoot, 'CD2001', 'Administration — Client Demo', $user);
         $procurement = $this->costCenter($company, $serviceRoot, 'CD2002', 'Procurement — Client Demo', $user);
-
-        app(InventoryAccountingMappingService::class)->save($company->getKey(), [
-            'raw_material_inventory_account_doc_num' => $this->postingAccount($company, '1131')->doc_num,
-            'packaging_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'semi_finished_inventory_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'finished_goods_inventory_account_doc_num' => $this->postingAccount($company, '1133')->doc_num,
-            'wip_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'production_waste_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'recoverable_scrap_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'warehouse_damage_loss_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'inventory_adjustment_gain_account_doc_num' => $this->postingAccount($company, '432')->doc_num,
-            'inventory_adjustment_loss_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'production_variance_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'quarantine_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'rework_inventory_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'grni_account_doc_num' => $this->postingAccount($company, '212')->doc_num,
-            'purchase_price_variance_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'production_cost_center_doc_num' => $injection->doc_num,
-        ]);
 
         $cashAccount = $this->childPostingAccount($company, '1111', '1111901', 'Client Demo Factory Cash');
         $bankAccountGl = $this->childPostingAccount($company, '1112', '1112901', 'Client Demo Procurement Bank');

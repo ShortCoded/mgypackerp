@@ -2,19 +2,19 @@
 
 namespace Modules\Purchases\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Purchases\Models\PurchaseReturn;
 
 class InventoryGrniService
 {
     public function __construct(
-        private readonly InventoryAccountingMappingService $mappings,
+        private readonly PostingAccountResolver $accounts,
         private readonly JournalEntryService $journals,
     ) {}
 
@@ -32,9 +32,12 @@ class InventoryGrniService
             throw new DomainException(__('Cannot post Goods Receipt because the approved Purchase Order value is unavailable.'));
         }
 
-        $mapping = $this->mappings->requireForCompany((int) $receipt->company_id);
-        $inventoryAccount = $this->mappings->inventoryAccount($mapping, $receiptLine->product, __('Goods Receipt'));
-        $grniAccount = $this->mappings->requirePostableAccount($mapping, 'grniAccount', __('Goods Receipt'));
+        $inventoryAccount = $this->accounts->inventoryForProduct((int) $receipt->company_id, $receiptLine->product, __('Goods Receipt'));
+        $grniAccount = $this->accounts->resolve(
+            (int) $receipt->company_id,
+            PostingAccountResolver::GoodsReceivedNotInvoiced,
+            __('Goods Receipt'),
+        );
         $unitValue = bcdiv((string) $orderLine->total_before_tax, (string) $orderLine->ordered_quantity, 8);
         $provisionalValue = bcmul($unitValue, (string) $receiptLine->accepted_quantity, 4);
         $baseUnitValue = bcmul($unitValue, (string) $order->exchange_rate, 8);
@@ -87,8 +90,11 @@ class InventoryGrniService
             return null;
         }
 
-        $mapping = $this->mappings->requireForCompany((int) $return->company_id);
-        $grniAccount = $this->mappings->requirePostableAccount($mapping, 'grniAccount', __('Purchase Return'));
+        $grniAccount = $this->accounts->resolve(
+            (int) $return->company_id,
+            PostingAccountResolver::GoodsReceivedNotInvoiced,
+            __('Purchase Return'),
+        );
         $posting = [];
         $total = '0.0000';
 
@@ -107,7 +113,7 @@ class InventoryGrniService
                 throw new DomainException(__('Purchase Return quantity exceeds the accepted uninvoiced quantity.'));
             }
 
-            $inventoryAccount = $this->mappings->inventoryAccount($mapping, $receiptLine->product, __('Purchase Return'));
+            $inventoryAccount = $this->accounts->inventoryForProduct((int) $return->company_id, $receiptLine->product, __('Purchase Return'));
             $key = (string) $inventoryAccount->getKey();
             $posting[$key] = bcadd($posting[$key] ?? '0.0000', $value, 4);
             $total = bcadd($total, $value, 4);

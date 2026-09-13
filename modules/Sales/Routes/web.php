@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Finance\Services\FinanceSelect2Service;
 use Modules\Sales\Http\Controllers\CustomerController;
 use Modules\Sales\Http\Controllers\CustomerDataReportController;
+use Modules\Sales\Http\Controllers\CustomerTermsController;
 use Modules\Sales\Http\Controllers\ProjectStructureController;
 use Modules\Sales\Http\Controllers\ProjectStructureModelController;
 use Modules\Sales\Http\Controllers\QuotationController;
@@ -60,6 +61,7 @@ Route::middleware('auth')
             Route::get('/sales-invoices/{customerInvoice}', 'showInvoice')->middleware('can:customer_invoices.view')->name('sales-invoices.show');
             Route::get('/sales-invoices/{customerInvoice}/edit', 'editInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.edit');
             Route::put('/sales-invoices/{customerInvoice}', 'updateInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.update');
+            Route::delete('/sales-invoices/{customerInvoice}', 'destroyInvoice')->middleware('can:customer_invoices.delete')->name('sales-invoices.destroy');
             Route::get('/sales-invoices/{customerInvoice}/print', 'printInvoice')->middleware('can:customer_invoices.print')->name('sales-invoices.print');
             Route::post('/sales-invoices/{customerInvoice}/post', 'postInvoice')->middleware('can:customer_invoices.post')->name('sales-invoices.post');
             Route::post('/sales-invoices/{customerInvoice}/credit-allocations', 'allocateCustomerCredit')->middleware('can:customer_credits.allocate')->name('sales-invoices.credit-allocations.store');
@@ -142,6 +144,8 @@ Route::middleware('auth')
             ->name('select2.customers');
         Route::get('/select2/quotation-products', [QuotationController::class, 'products'])
             ->name('select2.quotation-products');
+        Route::get('/select2/customer-quotation-terms', [QuotationController::class, 'customerTerms'])
+            ->name('select2.customer-quotation-terms');
         Route::get('/select2/project-structures', [ProjectStructureController::class, 'select2'])
             ->name('select2.project-structures');
 
@@ -159,6 +163,12 @@ Route::middleware('auth')
             Route::get('/{customer}/edit', 'edit')->middleware('can:customers.edit')->name('edit');
             Route::put('/{customer}', 'update')->middleware('can:customers.edit')->name('update');
             Route::delete('/{customer}', 'destroy')->middleware('can:customers.delete')->name('destroy');
+        });
+
+        Route::prefix('customer-terms')->name('customer-terms.')->controller(CustomerTermsController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:customers.view')->name('index');
+            Route::get('/{customer}/edit', 'edit')->middleware('can:customers.edit')->name('edit');
+            Route::put('/{customer}', 'update')->middleware('can:customers.edit')->name('update');
         });
 
         Route::prefix('project-structures')->name('project-structures.')->controller(ProjectStructureController::class)->group(function (): void {

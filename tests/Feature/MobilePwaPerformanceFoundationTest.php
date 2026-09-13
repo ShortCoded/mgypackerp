@@ -131,6 +131,12 @@ test('dashboard product master data stays within its query budget', function () 
         'item_classification' => Product::ClassificationFinishedProduct,
         'status' => 'active',
     ]);
+    $inactiveProduct = Product::query()->create([
+        'company_id' => $company->getKey(),
+        'name' => 'Inactive product',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'inactive',
+    ]);
     $rawMaterial = Product::query()->create([
         'company_id' => $company->getKey(),
         'name' => 'Raw material',
@@ -155,12 +161,18 @@ test('dashboard product master data stays within its query budget', function () 
         'component_product_id' => $rawMaterial->getKey(),
         'quantity' => 1,
     ])->delete();
+    ProductComponent::query()->create([
+        'company_id' => $company->getKey(),
+        'product_id' => $inactiveProduct->getKey(),
+        'component_product_id' => $rawMaterial->getKey(),
+        'quantity' => 1,
+    ]);
 
     $user = new class extends User
     {
         public function can($abilities, $arguments = []): bool
         {
-            return in_array($abilities, ['products.view', 'raw_materials.view', 'packaging_materials.view'], true);
+            return in_array($abilities, ['products.view', 'raw_materials.view', 'packaging_materials.view', 'reports.products_data.view'], true);
         }
     };
     $visibility = Mockery::mock(ScreenDataVisibilityService::class);
@@ -189,6 +201,7 @@ test('dashboard product master data stays within its query budget', function () 
     $charts = collect($dashboard['charts'])->keyBy('id');
     $productTypeData = $charts->get('dashboard-product-types')['options']['series'][0]['data'];
     $bomCoverageData = $charts->get('dashboard-bom-coverage')['options']['series'][0]['data'];
+    $metrics = collect($dashboard['metrics'])->keyBy('title');
 
     expect($queryCount)->toBe(6)
         ->and($charts->keys()->all())->toContain(
@@ -199,6 +212,26 @@ test('dashboard product master data stays within its query budget', function () 
         )
         ->and($dashboard['metrics'])->toHaveCount(5)
         ->and(collect($dashboard['metrics'])->pluck('value')->all())->toBe(['2', '1', '1', '1', '1'])
+        ->and($metrics->get(__('dashboard.plastics.metrics.products.title'))['url'])->toBe(route('admin.products.index', [
+            'status' => 'active',
+        ]))
+        ->and($metrics->get(__('dashboard.plastics.metrics.products_with_bom.title'))['url'])->toBe(route('admin.products.index', [
+            'status' => 'active',
+            'components_state' => 'with',
+        ]))
+        ->and($metrics->get(__('dashboard.plastics.metrics.bom_lines.title'))['url'])->toBe(route('admin.reports.products-data.index', [
+            'result_mode' => 'detailed',
+            'item_scope' => 'products',
+            'record_state' => 'active',
+            'status' => 'active',
+            'components_state' => 'with',
+        ]))
+        ->and($metrics->get(__('dashboard.plastics.metrics.raw_materials.title'))['url'])->toBe(route('admin.raw-materials.index', [
+            'status' => 'active',
+        ]))
+        ->and($metrics->get(__('dashboard.plastics.metrics.packaging_materials.title'))['url'])->toBe(route('admin.packaging-materials.index', [
+            'status' => 'active',
+        ]))
         ->and(array_sum(array_column($productTypeData, 'value')))->toBe(4)
         ->and(array_column($bomCoverageData, 'value'))->toBe([1, 1]);
 });

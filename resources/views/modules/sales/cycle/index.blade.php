@@ -1,6 +1,6 @@
 @extends('layouts.app')
 @php
-    $titles = ['sales_requests' => __('Sales Requests'), 'sales_orders' => __('Sales Orders'), 'customer_invoices' => __('Sales Invoices and Credit Notes'), 'customer_receipts' => __('Customer Receipts'), 'sales_returns' => __('Sales Returns'), 'sales_deliveries' => __('Delivery Notes')];
+    $titles = ['sales_requests' => __('Sales Requests'), 'sales_orders' => __('Sales Orders'), 'customer_invoices' => __('Sales Invoices and Credit Notes'), 'customer_receipts' => __('Customer Receipts'), 'sales_returns' => __('Sales Returns'), 'sales_deliveries' => __('Issue Orders')];
     $prefix = \Modules\Sales\DataTables\SalesCycleDataTable::routePrefix($kind);
     $canCreate = in_array($kind, ['sales_requests', 'sales_orders', 'customer_receipts', 'customer_invoices', 'sales_returns', 'sales_deliveries']);
     $states = match($kind) {

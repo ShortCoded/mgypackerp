@@ -2,6 +2,7 @@
 
 namespace Modules\Core\Services;
 
+use App\Services\PostingAccountConfigurationAudit;
 use Database\Seeders\IntegratedPlasticFactorySeeder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -24,14 +25,7 @@ class IntegratedPlasticFactoryVerifier
         $branchIds = DB::table('branches')->where('company_id', $companyId)->pluck('id');
         $storeIds = DB::table('branch_stores')->whereIn('branch_id', $branchIds)->pluck('id');
         $productIds = DB::table('products')->where('company_id', $companyId)->pluck('id');
-        $mapping = DB::table('inventory_accounting_mappings')->where('company_id', $companyId)->first();
-        $mappingColumns = [
-            'raw_material_inventory_account_id', 'packaging_inventory_account_id', 'semi_finished_inventory_account_id',
-            'finished_goods_inventory_account_id', 'wip_account_id', 'production_waste_account_id',
-            'warehouse_damage_loss_account_id', 'inventory_adjustment_gain_account_id', 'inventory_adjustment_loss_account_id',
-            'quarantine_inventory_account_id', 'rework_inventory_account_id', 'grni_account_id',
-            'purchase_price_variance_account_id', 'production_cost_center_id',
-        ];
+        $postingAccounts = app(PostingAccountConfigurationAudit::class)->forCompany($companyId);
         $quotationId = DB::table('quotations')->where('company_id', $companyId)->where('customer_reference', 'CP-PO-DEMO-260705')->value('id');
         $salesOrderId = DB::table('sales_orders')->where('company_id', $companyId)->where('quotation_id', $quotationId)->value('id');
         $invoiceId = DB::table('customer_invoices')->where('company_id', $companyId)->where('sales_order_id', $salesOrderId)->value('id');
@@ -45,8 +39,7 @@ class IntegratedPlasticFactoryVerifier
         $checks = [
             'demo_company_exists' => true,
             'required_masters_exist' => $branchIds->isNotEmpty() && $storeIds->isNotEmpty() && $productIds->isNotEmpty(),
-            'inventory_accounting_mapping_complete' => $mapping !== null
-                && collect($mappingColumns)->every(fn (string $column): bool => $mapping->{$column} !== null),
+            'classification_posting_accounts_complete' => $postingAccounts['ok'],
             'all_journals_balance' => $this->unbalancedJournalCount($companyId) === 0,
             'inventory_has_no_negative_positions' => $this->negativePositionCount($companyId) === 0,
             'sales_lineage_complete' => $quotationId !== null && $salesOrderId !== null && $invoiceId !== null

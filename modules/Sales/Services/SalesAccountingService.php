@@ -2,9 +2,9 @@
 
 namespace Modules\Sales\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Modules\Accounting\Models\Account;
-use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
@@ -13,7 +13,6 @@ use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\Inventory\Models\InventoryDocument;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesReturn;
@@ -23,7 +22,7 @@ class SalesAccountingService
     public function __construct(
         private readonly JournalEntryService $journals,
         private readonly SalesAmountService $amounts,
-        private readonly InventoryAccountingMappingService $inventoryMappings,
+        private readonly PostingAccountResolver $accounts,
     ) {}
 
     public function postInvoice(CustomerInvoice $invoice): JournalEntry
@@ -39,16 +38,16 @@ class SalesAccountingService
             'credit_amount' => 0, 'description' => 'Customer receivable', 'customer_id' => $invoice->customer_id,
         ]];
         if ($this->amounts->compare($goods, '0') > 0) {
-            $lines[] = $this->creditLine($this->account($invoice->company_id, 'sales_revenue'), $goods, 'Finished goods revenue');
+            $lines[] = $this->creditLine($this->account($invoice->company_id, PostingAccountResolver::SalesRevenue), $goods, 'Finished goods revenue');
         }
         if ($this->amounts->compare($services, '0') > 0) {
             $serviceCreditAccount = $invoice->source_type === 'fixed_asset_disposal'
                 ? $this->fixedAssetDisposalClearingAccount($invoice)
-                : $this->account($invoice->company_id, 'service_revenue');
+                : $this->account($invoice->company_id, PostingAccountResolver::ServiceRevenue);
             $lines[] = $this->creditLine($serviceCreditAccount, $services, $invoice->source_type === 'fixed_asset_disposal' ? 'Fixed Asset disposal clearing' : 'Service revenue');
         }
         if ($this->amounts->compare($invoice->tax_amount, '0') > 0) {
-            $lines[] = $this->creditLine($this->account($invoice->company_id, 'tax_payable'), (string) $invoice->tax_amount, 'Output tax');
+            $lines[] = $this->creditLine($this->account($invoice->company_id, PostingAccountResolver::OutputVatPayable), (string) $invoice->tax_amount, 'Output tax');
         }
 
         $sourceType = (int) $invoice->posting_revision === 0
@@ -99,13 +98,12 @@ class SalesAccountingService
             throw new DomainException(__('A delivery cannot post COGS without an inventory cost.'));
         }
 
-        $mapping = $this->inventoryMappings->requireForCompany((int) $delivery->company_id);
         $credits = [];
         foreach ($delivery->lines as $line) {
-            $account = $this->inventoryMappings->inventoryAccount($mapping, $line->product, __('Sales Delivery'));
+            $account = $this->accounts->inventoryForProduct((int) $delivery->company_id, $line->product, __('Sales Delivery'));
             $credits[$account->id] = $this->amounts->add($credits[$account->id] ?? '0', $line->total_cost);
         }
-        $lines = [['account_id' => $this->account($delivery->company_id, 'cost_of_goods_sold')->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Cost of goods sold']];
+        $lines = [['account_id' => $this->account($delivery->company_id, PostingAccountResolver::CostOfGoodsSold)->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Cost of goods sold']];
         foreach ($credits as $accountId => $amount) {
             if ($this->amounts->compare($amount, '0') > 0) {
                 $lines[] = ['account_id' => $accountId, 'debit_amount' => 0, 'credit_amount' => $amount, 'description' => 'Inventory issue by product classification'];
@@ -123,10 +121,10 @@ class SalesAccountingService
         }
         $net = $this->amounts->subtract($creditNote->total_amount, $creditNote->tax_amount);
         $lines = [
-            ['account_id' => $this->account($creditNote->company_id, 'sales_returns')->getKey(), 'debit_amount' => $net, 'credit_amount' => 0, 'description' => 'Sales return'],
+            ['account_id' => $this->account($creditNote->company_id, PostingAccountResolver::SalesReturns)->getKey(), 'debit_amount' => $net, 'credit_amount' => 0, 'description' => 'Sales return'],
         ];
         if ($this->amounts->compare($creditNote->tax_amount, '0') > 0) {
-            $lines[] = ['account_id' => $this->account($creditNote->company_id, 'tax_payable')->getKey(), 'debit_amount' => $creditNote->tax_amount, 'credit_amount' => 0, 'description' => 'Output tax reversal'];
+            $lines[] = ['account_id' => $this->account($creditNote->company_id, PostingAccountResolver::OutputVatPayable)->getKey(), 'debit_amount' => $creditNote->tax_amount, 'credit_amount' => 0, 'description' => 'Output tax reversal'];
         }
         $lines[] = ['account_id' => (int) $creditNote->customer->account_id, 'debit_amount' => 0, 'credit_amount' => $creditNote->total_amount, 'description' => 'Customer credit', 'customer_id' => $creditNote->customer_id];
 
@@ -135,16 +133,44 @@ class SalesAccountingService
 
     public function postSaleableReturnCost(SalesReturn $return): ?JournalEntry
     {
-        $return->loadMissing('lines');
+        $return->loadMissing('lines.product');
         $cost = $this->amounts->sum($return->lines->map(fn ($line): string => $this->amounts->multiply($line->saleable_base_quantity, $line->original_unit_cost, 4)));
         if ($this->amounts->compare($cost, '0') <= 0) {
             return null;
         }
 
-        return $this->journals->createPostedFromSource($this->header($return, 'sales_return_cogs', 'Returned inventory cost '.$return->doc_num), [
-            ['account_id' => $this->account($return->company_id, 'inventory')->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Saleable inventory returned'],
-            ['account_id' => $this->account($return->company_id, 'cost_of_goods_sold')->getKey(), 'debit_amount' => 0, 'credit_amount' => $cost, 'description' => 'Cost of sales reversal'],
-        ]);
+        $inventoryDebits = [];
+        foreach ($return->lines as $line) {
+            $lineCost = $this->amounts->multiply($line->saleable_base_quantity, $line->original_unit_cost, 4);
+            if ($this->amounts->compare($lineCost, '0') <= 0) {
+                continue;
+            }
+
+            $inventoryAccount = $this->accounts->inventoryForProduct(
+                (int) $return->company_id,
+                $line->product,
+                __('Sales Return'),
+            );
+            $inventoryDebits[$inventoryAccount->getKey()] = $this->amounts->add(
+                $inventoryDebits[$inventoryAccount->getKey()] ?? '0.0000',
+                $lineCost,
+            );
+        }
+
+        $lines = collect($inventoryDebits)->map(fn (string $amount, int $accountId): array => [
+            'account_id' => $accountId,
+            'debit_amount' => $amount,
+            'credit_amount' => 0,
+            'description' => 'Saleable inventory returned',
+        ])->values()->all();
+        $lines[] = [
+            'account_id' => $this->account($return->company_id, PostingAccountResolver::CostOfGoodsSold)->getKey(),
+            'debit_amount' => 0,
+            'credit_amount' => $cost,
+            'description' => 'Cost of sales reversal',
+        ];
+
+        return $this->journals->createPostedFromSource($this->header($return, 'sales_return_cogs', 'Returned inventory cost '.$return->doc_num), $lines);
     }
 
     public function postReturnedGoodsToQuarantine(SalesReturn $return): ?JournalEntry
@@ -156,28 +182,34 @@ class SalesAccountingService
             return null;
         }
 
-        $mapping = $this->inventoryMappings->requireForCompany((int) $return->company_id);
-        $quarantine = $this->inventoryMappings->requirePostableAccount($mapping, 'quarantineInventoryAccount', __('Sales Return Receipt'));
+        $quarantine = $this->accounts->resolve(
+            (int) $return->company_id,
+            PostingAccountResolver::QuarantineInventory,
+            __('Sales Return Receipt'),
+        );
 
         return $this->journals->createPostedFromSource($this->header($return, 'sales_return_quarantine_receipt', 'Returned goods to quarantine '.$return->doc_num), [
             ['account_id' => $quarantine->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Returned goods quarantine'],
-            ['account_id' => $this->account($return->company_id, 'cost_of_goods_sold')->getKey(), 'debit_amount' => 0, 'credit_amount' => $cost, 'description' => 'Cost of sales reversal'],
+            ['account_id' => $this->account($return->company_id, PostingAccountResolver::CostOfGoodsSold)->getKey(), 'debit_amount' => 0, 'credit_amount' => $cost, 'description' => 'Cost of sales reversal'],
         ]);
     }
 
     public function postReturnDisposition(SalesReturn $return): ?JournalEntry
     {
         $return->loadMissing('lines.product');
-        $mapping = $this->inventoryMappings->requireForCompany((int) $return->company_id);
-        $quarantine = $this->inventoryMappings->requirePostableAccount($mapping, 'quarantineInventoryAccount', __('Sales Return Disposition'));
+        $quarantine = $this->accounts->resolve(
+            (int) $return->company_id,
+            PostingAccountResolver::QuarantineInventory,
+            __('Sales Return Disposition'),
+        );
         $debits = [];
         $total = '0.0000';
 
         foreach ($return->lines->where('is_service', false) as $line) {
             $profiles = [
-                'saleable_base_quantity' => $this->inventoryMappings->inventoryAccount($mapping, $line->product, __('Sales Return Disposition')),
-                'rework_base_quantity' => $this->inventoryMappings->requirePostableAccount($mapping, 'reworkInventoryAccount', __('Sales Return Disposition')),
-                'scrap_base_quantity' => $this->inventoryMappings->requirePostableAccount($mapping, 'warehouseDamageLossAccount', __('Sales Return Disposition')),
+                'saleable_base_quantity' => $this->accounts->inventoryForProduct((int) $return->company_id, $line->product, __('Sales Return Disposition')),
+                'rework_base_quantity' => $this->accounts->resolve((int) $return->company_id, PostingAccountResolver::ReworkInventory, __('Sales Return Disposition')),
+                'scrap_base_quantity' => $this->accounts->resolve((int) $return->company_id, PostingAccountResolver::WarehouseDamageLoss, __('Sales Return Disposition')),
             ];
             foreach ($profiles as $quantityField => $account) {
                 $amount = $this->amounts->multiply($line->{$quantityField}, $line->original_unit_cost, 4);
@@ -210,21 +242,7 @@ class SalesAccountingService
 
     private function account(int $companyId, string $classification): Account
     {
-        $account = Account::query()->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->where('accounts.company_id', $companyId)->where('accounts.status', 'active')->where('accounts.is_postable', true)
-            ->where('account_classifications.code', $classification)->orderBy('accounts.account_code')->select('accounts.*')->first();
-        if (! $account instanceof Account && $classification === 'cost_of_goods_sold') {
-            $account = Account::query()->forCompany($companyId)
-                ->where('account_code', '511')->where('status', 'active')
-                ->where('is_postable', true)->where('is_group', false)
-                ->whereHas('classification', fn ($query) => $query->where('code', AccountClassification::Expenses))
-                ->first();
-        }
-        if (! $account instanceof Account) {
-            throw new DomainException(__('No active postable account is mapped for :classification.', ['classification' => $classification]));
-        }
-
-        return $account;
+        return $this->accounts->resolveFirst($companyId, $classification, __('Sales accounting'));
     }
 
     private function fixedAssetDisposalClearingAccount(CustomerInvoice $invoice): Account

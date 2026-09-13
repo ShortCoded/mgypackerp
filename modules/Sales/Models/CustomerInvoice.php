@@ -68,6 +68,26 @@ class CustomerInvoice extends Model
         return in_array($this->status, [self::StatusDraft, self::StatusReopened], true) && ! $this->is_closed;
     }
 
+    public static function allowsFullCrud(): bool
+    {
+        return (bool) config('erp_features.sales.allow_full_invoice_crud', true);
+    }
+
+    public function canAmend(): bool
+    {
+        return $this->document_type === self::TypeInvoice
+            && ($this->isEditable() || (self::allowsFullCrud() && $this->canReopenSafely()));
+    }
+
+    public function canDeleteDraft(): bool
+    {
+        return self::allowsFullCrud()
+            && $this->document_type === self::TypeInvoice
+            && $this->status === self::StatusDraft
+            && $this->posting_status === 'unposted'
+            && ! $this->is_closed;
+    }
+
     public function canReopenSafely(): bool
     {
         if ($this->document_type !== self::TypeInvoice

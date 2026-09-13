@@ -47,17 +47,7 @@ class IntegratedPlasticFactoryDemoVerifier
             ->where('status', 'posted')
             ->pluck('document_type')
             ->unique();
-        $mapping = DB::table('inventory_accounting_mappings')->where('company_id', $companyId)->first();
-        $requiredMappingColumns = [
-            'raw_material_inventory_account_id', 'packaging_inventory_account_id',
-            'semi_finished_inventory_account_id', 'finished_goods_inventory_account_id',
-            'wip_account_id', 'production_waste_account_id', 'warehouse_damage_loss_account_id',
-            'inventory_adjustment_gain_account_id', 'inventory_adjustment_loss_account_id',
-            'quarantine_inventory_account_id', 'rework_inventory_account_id', 'grni_account_id',
-            'purchase_price_variance_account_id', 'production_cost_center_id',
-        ];
-        $mappingComplete = $mapping !== null
-            && collect($requiredMappingColumns)->every(fn (string $column): bool => $mapping->{$column} !== null);
+        $postingAccounts = app(PostingAccountConfigurationAudit::class)->forCompany($companyId);
         $unbalancedJournals = DB::table('journal_entries as journals')
             ->join('journal_entry_lines as lines', 'lines.journal_entry_id', '=', 'journals.id')
             ->where('journals.company_id', $companyId)
@@ -119,7 +109,7 @@ class IntegratedPlasticFactoryDemoVerifier
                 && DB::table('customers')->where('company_id', $companyId)->count() >= 5
                 && DB::table('suppliers')->where('company_id', $companyId)->count() >= 8
                 && DB::table('products')->where('company_id', $companyId)->count() >= 18,
-            'inventory_accounting_mapping_complete' => $mappingComplete,
+            'classification_posting_accounts_complete' => $postingAccounts['ok'],
             'all_journals_are_balanced_and_nonzero' => $unbalancedJournals === 0 && $zeroValueJournals === 0,
             'inventory_has_no_negative_positions' => $negativePositions === 0 && $negativeReceiptLayers === 0,
             'inventory_subledger_reconciles_to_gl' => $inventoryReconciliation !== [] && collect($inventoryReconciliation)
@@ -304,7 +294,7 @@ class IntegratedPlasticFactoryDemoVerifier
             'locations' => DB::table('warehouse_locations')->whereIn('branch_store_id', $storeIds)->count(),
             'cost_centers' => $companyCount('cost_centers'),
             'accounts' => $companyCount('accounts'),
-            'accounting_mappings' => $companyCount('inventory_accounting_mappings'),
+            'classified_posting_accounts' => app(PostingAccountConfigurationAudit::class)->forCompany($companyId)['valid_count'],
             'bank_accounts' => $companyCount('bank_accounts'),
             'cash_safes' => $companyCount('cashboxes'),
             'customers' => $companyCount('customers'),

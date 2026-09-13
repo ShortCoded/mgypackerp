@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\PostingAccountResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -8,7 +9,6 @@ use Modules\Core\Models\ArchiveFileUsage;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
@@ -241,9 +241,9 @@ test('sales delivery credits the configured finished goods account', function ()
     $fixture = salesCycleFixture();
     $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)));
     $delivery = app(SalesFulfillmentService::class)->deliver($order, [['sales_order_line_id' => $order->lines->first()->id, 'quantity' => '10']]);
-    $mapping = InventoryAccountingMapping::query()->where('company_id', $fixture['company']->id)->firstOrFail();
+    $inventoryAccount = app(PostingAccountResolver::class)->inventoryForProduct($fixture['company']->id, $fixture['finished'], 'Sales delivery test');
     $credit = $delivery->journalEntry->lines()->where('credit_amount', '>', 0)->sole();
-    expect($credit->account_id)->toBe($mapping->finished_goods_inventory_account_id)->and($credit->credit_amount)->toBe('50.0000');
+    expect($credit->account_id)->toBe($inventoryAccount->getKey())->and($credit->credit_amount)->toBe('50.0000');
 });
 
 test('sales supporting documents reuse the archive with company scope and duplicate protection', function (): void {

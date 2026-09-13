@@ -8,6 +8,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
@@ -822,7 +823,7 @@ test('transaction units snapshot base quantities through reservation delivery in
         ->and($return->returnInventoryDocument->lines->first()->fresh()->quantity)->toBe('10.00000000');
 });
 
-test('posted invoice correction reverses the original journal before amendment and reposts a new revision', function () {
+test('full invoice CRUD automatically reverses a safe posted invoice before amendment and reposts a new revision', function () {
     $fixture = salesCycleFixture();
     $payload = salesCycleOrderPayload($fixture, [
         'lines' => [[
@@ -843,19 +844,18 @@ test('posted invoice correction reverses the original journal before amendment a
     ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '100']]));
     $originalJournalId = $invoice->journal_entry_id;
 
-    $invoice = $invoices->reopen($invoice, 'Customer accepted a controlled quantity correction.');
+    expect($invoice->canAmend())->toBeTrue();
+    $invoice = $invoices->amend($invoice, [[
+        'invoice_line_public_id' => $invoice->lines()->firstOrFail()->public_id,
+        'quantity' => '8',
+    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '80']]);
     $originalJournal = JournalEntry::query()->findOrFail($originalJournalId);
     expect($invoice->status)->toBe(CustomerInvoice::StatusReopened)
         ->and($invoice->posting_status)->toBe('reopen_pending_repost')
         ->and($invoice->posting_revision)->toBe(1)
         ->and($invoice->reversal_journal_entry_id)->not->toBeNull()
-        ->and($originalJournal->reversed_entry_id)->toBe($invoice->reversal_journal_entry_id);
-
-    $invoice = $invoices->amend($invoice, [[
-        'invoice_line_public_id' => $invoice->lines()->firstOrFail()->public_id,
-        'quantity' => '8',
-    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '80']]);
-    expect($invoice->total_amount)->toBe('80.0000')
+        ->and($originalJournal->reversed_entry_id)->toBe($invoice->reversal_journal_entry_id)
+        ->and($invoice->total_amount)->toBe('80.0000')
         ->and($invoice->lines->first()->quantity)->toBe('8.00000000')
         ->and($orderLine->fresh()->invoiced_quantity)->toBe('8.00000000');
 
@@ -878,6 +878,47 @@ test('posted invoice correction reverses the original journal before amendment a
     ]]);
     expect(fn () => $invoices->reopen($invoice->fresh(), 'Unsafe descendant mutation attempt.'))
         ->toThrow(DomainException::class, __('An invoice with a delivery, return, receipt, or credit note cannot be reopened.'));
+});
+
+test('full invoice CRUD feature can be disabled and safely deletes only unused drafts', function () {
+    $fixture = salesCycleFixture();
+    $invoices = app(CustomerInvoiceService::class);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Deletable draft service',
+            'quantity' => '2',
+            'unit_price' => '50',
+            'discount_amount' => 0,
+            'tax_amount' => 0,
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Due',
+            'amount' => '100',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $orderLine = $order->lines->sole();
+    $draft = $invoices->createFromOrder($order, [[
+        'sales_order_line_id' => $orderLine->getKey(),
+        'quantity' => '2',
+    ]], [['due_date' => now()->toDateString(), 'amount' => '100']]);
+
+    expect($draft->canDeleteDraft())->toBeTrue()
+        ->and($orderLine->fresh()->invoiced_quantity)->toBe('2.00000000');
+    $invoices->deleteDraft($draft);
+    expect(CustomerInvoice::withTrashed()->findOrFail($draft->getKey())->trashed())->toBeTrue()
+        ->and($orderLine->fresh()->invoiced_quantity)->toBe('0.00000000');
+
+    $posted = salesPostedServiceInvoice($fixture, '100');
+    config()->set('erp_features.sales.allow_full_invoice_crud', false);
+    expect($posted->fresh()->canAmend())->toBeFalse()
+        ->and(fn () => $invoices->amend($posted->fresh(), [[
+            'invoice_line_public_id' => $posted->lines()->sole()->public_id,
+            'quantity' => '1',
+        ]], [['due_date' => now()->toDateString(), 'amount' => '100']]))
+        ->toThrow(DomainException::class, __('Only a draft or safely reopened invoice may be amended.'));
 });
 
 test('reservation oversubscription is rejected and an audited release restores reservable quantity', function () {
@@ -1050,6 +1091,15 @@ test('authorized users can load the concrete create edit collection reporting an
 
 test('every formal sales document streams canonical inline mPDF with operational price privacy', function () {
     $fixture = salesCycleFixture();
+    $salesRepresentative = HrEmployee::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'doc_number' => 98701,
+        'doc_num' => 'EMP-SALES-PRINT',
+        'full_name' => 'Printed Sales Representative',
+        'name' => 'Printed Sales Representative',
+        'status' => 'active',
+    ]);
     CustomerCommercialAgreement::query()->where('customer_id', $fixture['customer']->getKey())->update(['credit_limit' => '20000']);
     $permissions = [
         'sales_orders.print', 'sales_orders.view_prices', 'sales_orders.production',
@@ -1068,6 +1118,7 @@ test('every formal sales document streams canonical inline mPDF with operational
     $receipts = app(CustomerReceiptService::class);
     $returns = app(SalesReturnService::class);
     $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+        'business_employee_id' => $salesRepresentative->getKey(),
         'lines' => [[
             'product_id' => $fixture['finished']->getKey(),
             'unit_id' => $fixture['unit']->getKey(),
@@ -1121,6 +1172,7 @@ test('every formal sales document streams canonical inline mPDF with operational
         'financial_period_id' => $fixture['period']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'customer_id' => $fixture['customer']->getKey(),
+        'sales_order_id' => $order->getKey(),
         'receipt_date' => now()->toDateString(),
         'currency_id' => $fixture['currency']->getKey(),
         'exchange_rate' => 1,
@@ -1137,6 +1189,7 @@ test('every formal sales document streams canonical inline mPDF with operational
         'financial_period_id' => $fixture['period']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'customer_id' => $fixture['customer']->getKey(),
+        'sales_order_id' => $order->getKey(),
         'receipt_date' => now()->toDateString(),
         'currency_id' => $fixture['currency']->getKey(),
         'exchange_rate' => 1,
@@ -1205,6 +1258,10 @@ test('every formal sales document streams canonical inline mPDF with operational
     foreach (['sales-origin production request', 'production work order', 'delivery note', 'return quality disposition'] as $operationalDocument) {
         $text = salesPdfText($responses[$operationalDocument]->getContent());
         expect($text)->not->toContain('Unit price')->not->toContain('876.54');
+    }
+    foreach (['sales order', 'sales-origin production request', 'production work order', 'delivery note', 'sales invoice', 'payment schedule', 'cash customer receipt', 'cheque customer receipt', 'sales return', 'return quality disposition', 'sales credit note'] as $salesDocument) {
+        expect(salesPdfText($responses[$salesDocument]->getContent()))
+            ->toContain($salesRepresentative->full_name);
     }
     expect(salesPdfText($responses['cash customer receipt']->getContent()))->toContain($cashReceipt->cashVoucher->doc_num)
         ->and(salesPdfText($responses['cheque customer receipt']->getContent()))->toContain($chequeReceipt->cheque->doc_num);

@@ -140,7 +140,6 @@ test('inventory and manufacturing navigation exposes canonical workflows without
     $destinations = $leaves->pluck('route')->all();
     $labels = $leaves->pluck('label')->all();
     $requiredDestinations = [
-        'admin.inventory.accounting.index',
         'admin.inventory.documents.index',
         'admin.inventory.stock-counts.index',
         'admin.inventory.reports.index',
@@ -152,8 +151,8 @@ test('inventory and manufacturing navigation exposes canonical workflows without
     ];
 
     expect($destinations)->toContain(...$requiredDestinations)
+        ->and($destinations)->not->toContain('admin.inventory.accounting.index')
         ->and($labels)->toContain(
-            'inventory_accounting',
             'inventory_movements',
             'inventory_stock_counts',
             'inventory_operational_reports',

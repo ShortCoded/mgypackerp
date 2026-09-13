@@ -428,6 +428,15 @@ body {
   z-index: 1080;
 }
 
+.erp-datatable-dropdown-portal {
+  position: fixed !important;
+  inset: auto !important;
+  left: var(--erp-datatable-dropdown-left, 0) !important;
+  top: var(--erp-datatable-dropdown-top, 0) !important;
+  transform: none !important;
+  z-index: 1095 !important;
+}
+
 .erp-datatable-card div.dataTables_wrapper div.dataTables_length select,
 .erp-datatable-card .dt-container .dt-length select {
   min-width: 4.5rem;

@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\User;
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Auth;
@@ -41,12 +42,10 @@ use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\WarehouseLocation;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryPositionReconciliationService;
@@ -294,25 +293,6 @@ class IntegratedPlasticFactorySeeder extends Seeder
                 'notes' => $this->note('Secondary collection and supplier-transfer bank account.'),
             ]);
         }
-
-        app(InventoryAccountingMappingService::class)->save($company->getKey(), [
-            'raw_material_inventory_account_doc_num' => $this->postingAccount($company, '1131')->doc_num,
-            'packaging_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'semi_finished_inventory_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'finished_goods_inventory_account_doc_num' => $this->postingAccount($company, '1133')->doc_num,
-            'wip_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'production_waste_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'recoverable_scrap_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'warehouse_damage_loss_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'inventory_adjustment_gain_account_doc_num' => $this->postingAccount($company, '432')->doc_num,
-            'inventory_adjustment_loss_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'production_variance_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'quarantine_inventory_account_doc_num' => $this->postingAccount($company, '1134')->doc_num,
-            'rework_inventory_account_doc_num' => $this->postingAccount($company, '1132')->doc_num,
-            'grni_account_doc_num' => $this->postingAccount($company, '212')->doc_num,
-            'purchase_price_variance_account_doc_num' => $this->postingAccount($company, '551')->doc_num,
-            'production_cost_center_doc_num' => $injectionCostCenter->doc_num,
-        ]);
 
         return [
             'company' => $company, 'branch' => $branch, 'user' => $user,
@@ -1202,11 +1182,11 @@ class IntegratedPlasticFactorySeeder extends Seeder
             throw new DomainException('The persisted inventory reconciliation no longer agrees with the stock subledger.');
         }
 
-        $mapping = InventoryAccountingMapping::query()->where('company_id', $companyId)->firstOrFail();
+        $postingAccounts = app(PostingAccountResolver::class);
         $controlAccounts = [
-            'raw_materials' => (int) $mapping->raw_material_inventory_account_id,
-            'wip' => (int) $mapping->wip_account_id,
-            'finished_goods' => (int) $mapping->finished_goods_inventory_account_id,
+            'raw_materials' => $postingAccounts->resolve($companyId, PostingAccountResolver::RawMaterialInventory, 'Inventory reconciliation')->getKey(),
+            'wip' => $postingAccounts->resolve($companyId, PostingAccountResolver::WorkInProcessInventory, 'Inventory reconciliation')->getKey(),
+            'finished_goods' => $postingAccounts->resolve($companyId, PostingAccountResolver::FinishedGoodsInventory, 'Inventory reconciliation')->getKey(),
         ];
         $lines = [];
         $signedControlAdjustment = '0.0000';
@@ -1224,8 +1204,8 @@ class IntegratedPlasticFactorySeeder extends Seeder
         }
         $lines[] = [
             'account_id' => bccomp($signedControlAdjustment, '0', 4) > 0
-                ? (int) $mapping->inventory_adjustment_gain_account_id
-                : (int) $mapping->inventory_adjustment_loss_account_id,
+                ? $postingAccounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentGain, 'Inventory reconciliation')->getKey()
+                : $postingAccounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentLoss, 'Inventory reconciliation')->getKey(),
             'debit_amount' => bccomp($signedControlAdjustment, '0', 4) < 0
                 ? bcmul($signedControlAdjustment, '-1', 4)
                 : '0.0000',

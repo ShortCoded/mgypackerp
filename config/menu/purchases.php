@@ -157,8 +157,15 @@ return [
             [
                 'label' => 'purchase_reports', 'title' => 'Purchase Reports', 'icon' => 'chart-pie',
                 'route' => null, 'permission' => null,
-                'active' => ['admin.purchases.procurement-cycle-report.*', 'admin.reports.suppliers.*'],
+                'active' => ['admin.purchases.procurement-cycle-report.*', 'admin.reports.suppliers.*', 'admin.accounting.reports.supplier-statement*'],
                 'children' => [
+                    [
+                        'label' => 'supplier_statement', 'title' => 'Supplier Statement', 'icon' => 'file-invoice',
+                        'route' => 'admin.accounting.reports.supplier-statement', 'permission' => 'reports.supplier_statement.view',
+                        'keywords' => ['supplier statement', 'supplier ledger', 'كشف حساب مورد'],
+                        'actions' => ['view' => 'reports.supplier_statement.view', 'export' => 'reports.supplier_statement.export'],
+                        'active' => ['admin.accounting.reports.supplier-statement'], 'children' => [],
+                    ],
                     [
                         'label' => 'suppliers_report', 'title' => 'Suppliers Report', 'icon' => 'address-book',
                         'route' => 'admin.reports.suppliers.index', 'permission' => 'reports.suppliers.view',

@@ -105,6 +105,11 @@ return [
         'ordered_quantity' => 'الكمية المطلوبة',
         'received_quantity' => 'الكمية المستلمة',
         'remaining_quantity' => 'الكمية المتبقية',
+        'subtotal' => 'إجمالي الأصناف',
+        'line_discounts' => 'خصومات البنود',
+        'taxable' => 'الخاضع للضريبة',
+        'tax' => 'الضريبة',
+        'freight' => 'الشحن',
         'net_total' => 'صافي الإجمالي',
     ],
     'actions' => [

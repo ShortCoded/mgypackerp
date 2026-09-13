@@ -284,7 +284,7 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
             ]);
             $this->restrictedUser($company, $branch, $period, 996013, 'e2e_cost', [
                 'dashboard.view', 'inventory.reports.operational', 'inventory.reports.financial', 'inventory.reports.export',
-                'production.reports.operational', 'production.reports.financial', 'production.reports.export', 'inventory.accounting.view',
+                'production.reports.operational', 'production.reports.financial', 'production.reports.export',
             ]);
         });
 

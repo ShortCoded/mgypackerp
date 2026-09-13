@@ -398,7 +398,12 @@
     let totalOrdered = 0;
     let totalReceived = 0;
     let totalRemaining = 0;
-    let totalAmount = number($('#freight_amount').val() || $('#freight_amount').text() || '0');
+    let subtotalAmount = 0;
+    let totalDiscount = 0;
+    let totalTaxable = 0;
+    let totalTax = 0;
+    const freightAmount = number($('#freight_amount').val() || $('#freight_amount').text() || '0');
+    let totalAmount = freightAmount;
 
     $('.js-purchase-order-line').each(function () {
       const $row = $(this);
@@ -413,8 +418,9 @@
       const discountAmount = discountType === 'percentage'
         ? subtotal * Math.min(100, Math.max(0, discountValue)) / 100
         : Math.min(subtotal, Math.max(0, discountValue));
-      const taxableAmount = Math.max(0, subtotal - discountAmount);
-      const lineTotal = taxableAmount + taxableAmount * taxRate / 100;
+      const lineTaxable = Math.max(0, subtotal - discountAmount);
+      const lineTax = lineTaxable * taxRate / 100;
+      const lineTotal = lineTaxable + lineTax;
 
       $row.find('.js-line-total').text(formatAmount(lineTotal));
       $row.find('.js-line-remaining').text(formatQuantity(remaining));
@@ -422,12 +428,21 @@
       totalOrdered += quantity;
       totalReceived += received;
       totalRemaining += remaining;
+      subtotalAmount += subtotal;
+      totalDiscount += discountAmount;
+      totalTaxable += lineTaxable;
+      totalTax += lineTax;
       totalAmount += lineTotal;
     });
 
     $('.js-total-ordered').text(formatQuantity(totalOrdered));
     $('.js-total-received').text(formatQuantity(totalReceived));
     $('.js-total-remaining').text(formatQuantity(totalRemaining));
+    $('.js-total-subtotal').text(formatAmount(subtotalAmount));
+    $('.js-total-discount').text(formatAmount(totalDiscount));
+    $('.js-total-taxable').text(formatAmount(totalTaxable));
+    $('.js-total-tax').text(formatAmount(totalTax));
+    $('.js-total-freight').text(formatAmount(freightAmount));
     $('.js-total-amount').text(formatAmount(totalAmount));
   }
 

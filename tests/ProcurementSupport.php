@@ -16,7 +16,6 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
-use Modules\Inventory\Models\InventoryAccountingMapping;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Purchases\Models\PurchaseRequisition;
@@ -63,28 +62,6 @@ function procurementFixture(bool $isolatedCompany = false): array
     $finished = Product::query()->create(['company_id' => $company->getKey(), 'doc_number' => 9103, 'doc_num' => 'Product-FINISHED-PROC', 'name' => 'Finished Container', 'item_classification' => Product::ClassificationFinishedProduct, 'item_unit_id' => $unit->getKey(), 'status' => 'active']);
     $firstSupplier = Supplier::query()->create(['doc_number' => 9101, 'doc_num' => 'Supplier-PROC-1', 'company_id' => $company->getKey(), 'name' => 'Resin Supplier One', 'status' => 'active']);
     $secondSupplier = Supplier::query()->create(['doc_number' => 9102, 'doc_num' => 'Supplier-PROC-2', 'company_id' => $company->getKey(), 'name' => 'Resin Supplier Two', 'status' => 'active']);
-
-    $accountId = fn (string $code): int => (int) Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $code)
-        ->valueOrFail('id');
-    InventoryAccountingMapping::query()->create([
-        'company_id' => $company->getKey(),
-        'raw_material_inventory_account_id' => $accountId('1131'),
-        'packaging_inventory_account_id' => $accountId('1134'),
-        'semi_finished_inventory_account_id' => $accountId('1132'),
-        'finished_goods_inventory_account_id' => $accountId('1133'),
-        'wip_account_id' => $accountId('1132'),
-        'production_waste_account_id' => $accountId('551'),
-        'warehouse_damage_loss_account_id' => $accountId('551'),
-        'inventory_adjustment_gain_account_id' => $accountId('432'),
-        'inventory_adjustment_loss_account_id' => $accountId('551'),
-        'quarantine_inventory_account_id' => $accountId('1134'),
-        'rework_inventory_account_id' => $accountId('1132'),
-        'grni_account_id' => $accountId('212'),
-        'purchase_price_variance_account_id' => $accountId('551'),
-        'created_by' => $user->getKey(),
-    ]);
 
     $context = [
         OperatingContextService::CompanyIdKey => $company->getKey(),

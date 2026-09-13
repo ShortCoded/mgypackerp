@@ -38,6 +38,7 @@ use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\QuotationRevisionLine;
 use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Services\CustomerTermsService;
 use Modules\Sales\Services\QuotationService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesRequestService;
@@ -373,6 +374,18 @@ class QuotationController extends Controller
         abort_unless($this->canUseQuotations($request), 403);
 
         return response()->json($select2->products($request));
+    }
+
+    public function customerTerms(Request $request, CustomerTermsService $terms): JsonResponse
+    {
+        abort_unless($this->canUseQuotations($request), 403);
+
+        $customer = Customer::query()
+            ->forCompany(app(OperatingCompanyContextService::class)->requireCompanyId($request))
+            ->where('doc_num', $request->string('customer_doc_num')->toString())
+            ->firstOrFail();
+
+        return response()->json(['data' => $terms->quotationDefaults($customer)]);
     }
 
     private function form(string $mode, ?Quotation $record = null, ?string $cloneSourceToken = null, ?QuotationRevision $selectedRevision = null, ?SalesRequest $sourceRequest = null): View

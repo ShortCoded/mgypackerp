@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use App\Services\IntegratedPlasticFactoryDemoVerifier;
+use App\Services\PostingAccountResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Accounting\Services\JournalEntryService;
@@ -11,7 +12,6 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Services\ChequeService;
 use Modules\Inventory\Models\InventoryDocument;
-use Modules\Inventory\Services\InventoryAccountingMappingService;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
@@ -143,11 +143,10 @@ test('populated sales reconciliation evidence is available for release review', 
     $deliveries = InventoryDocument::query()->with('lines.product', 'journalEntry.lines')
         ->where('company_id', $this->sourceRequest->company_id)->where('document_type', InventoryDocument::TypeSalesDelivery)
         ->whereHas('salesOrder', fn ($query) => $query->whereIn('customer_reference', ['SALES-RC-STOCK-EXAMPLE', 'SALES-RC-CONCURRENCY']))->get();
-    $mappings = app(InventoryAccountingMappingService::class);
-    $mapping = $mappings->requireForCompany($this->sourceRequest->company_id);
+    $postingAccounts = app(PostingAccountResolver::class);
     foreach ($deliveries as $delivery) {
         $credits = $delivery->journalEntry->lines->where('credit_amount', '>', 0);
-        $expectedAccount = $mappings->inventoryAccount($mapping, $delivery->lines->first()->product, 'Sales release verification');
+        $expectedAccount = $postingAccounts->inventoryForProduct($this->sourceRequest->company_id, $delivery->lines->first()->product, 'Sales release verification');
         if ($credits->count() === 1 && $credits->first()->account_id !== $expectedAccount->id) {
             $credit = $credits->first();
             app(JournalEntryService::class)->createPostedFromSource([

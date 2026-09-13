@@ -13,20 +13,6 @@ return [
         ],
         'children' => [
             [
-                'label' => 'inventory_accounting',
-                'title' => 'Inventory & Manufacturing Accounting',
-                'icon' => 'balance-scale',
-                'route' => 'admin.inventory.accounting.index',
-                'permission' => 'inventory.accounting.view',
-                'keywords' => ['inventory accounting', 'wip', 'manufacturing accounts', 'حسابات المخزون', 'تحت التشغيل'],
-                'actions' => [
-                    'view' => 'inventory.accounting.view',
-                    'configure' => 'inventory.accounting.configure',
-                ],
-                'active' => ['admin.inventory.accounting.*'],
-                'children' => [],
-            ],
-            [
                 'label' => 'warehouse_locations',
                 'title' => 'Warehouse Locations',
                 'icon' => 'map-marker-alt',

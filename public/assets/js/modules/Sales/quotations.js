@@ -644,6 +644,50 @@
     calculateTotals($form);
   }
 
+  function editorValue($editor) {
+    return $editor.data('summernote') ? String($editor.summernote('code') || '') : String($editor.val() || '');
+  }
+
+  function setEditorDefault($editor, value) {
+    const next = String(value || '');
+    const current = editorValue($editor);
+    const previousDefault = String($editor.data('customer-default') || '');
+    const currentIsEmpty = $('<div>').html(current).text().trim() === '' && !/<img\b/i.test(current);
+
+    if (!currentIsEmpty && current !== previousDefault) {
+      return;
+    }
+
+    if ($editor.data('summernote')) {
+      $editor.summernote('code', next);
+    } else {
+      $editor.val(next);
+    }
+    $editor.data('customer-default', next);
+  }
+
+  function loadCustomerTerms($form) {
+    const customerDocNum = String($form.find('[name="customer_doc_num"]').val() || '');
+    const url = String($form.data('customer-terms-url') || '');
+
+    if (!customerDocNum || !url || !['create', 'clone'].includes(String($form.data('mode') || ''))) {
+      return;
+    }
+
+    $.getJSON(url, { customer_doc_num: customerDocNum }).done(function (response) {
+      if (String($form.find('[name="customer_doc_num"]').val() || '') !== customerDocNum) {
+        return;
+      }
+
+      const defaults = response && response.data ? response.data : {};
+      ['terms', 'payment_terms', 'execution_terms', 'warranty_terms', 'delivery_terms', 'technical_notes'].forEach(function (field) {
+        setEditorDefault($form.find('[name="' + field + '"]'), defaults[field]);
+      });
+    }).fail(function (xhr) {
+      showToast('error', responseMessage(xhr));
+    });
+  }
+
   function initForm() {
     const $form = $('.js-quotation-form').first();
 
@@ -654,6 +698,7 @@
     syncDiscountInputs($form);
     syncMainCurrency($form);
     calculateTotals($form);
+    loadCustomerTerms($form);
 
     const $sourceRequest = $form.find('[data-quotation-source]');
     $sourceRequest.off('.quotationSource').on('select2:select.quotationSource select2:clear.quotationSource', function () {
@@ -747,6 +792,7 @@
       .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"]', function () {
         const $currentForm = $(this).closest('.js-quotation-form');
         syncMainCurrency($currentForm);
+        if ($(this).is('[name="customer_doc_num"]')) loadCustomerTerms($currentForm);
         $currentForm.find('.js-quotation-line').each(function () {window.AppSalesPricing?.suggest(this);});
       })
       .off('click.quotationsAddLine', '.js-quotation-add-line')

@@ -369,7 +369,7 @@ class SalesCycleController extends Controller
 
     public function editInvoice(CustomerInvoice $customerInvoice): View
     {
-        abort_unless($customerInvoice->isEditable() && $customerInvoice->document_type === CustomerInvoice::TypeInvoice, 409, 'The invoice is locked.');
+        abort_unless($customerInvoice->canAmend(), 409, __('The invoice is locked.'));
 
         return view('modules.sales.cycle.invoice-form', [
             'record' => $customerInvoice->load(['customer', 'order', 'lines.product', 'lines.unit', 'lines.deliveryLine.document', 'paymentSchedules']),
@@ -381,6 +381,13 @@ class SalesCycleController extends Controller
         $invoice = $service->amend($customerInvoice, $request->validated('lines'), $request->validated('payment_schedules'));
 
         return response()->json(['data' => ['doc_num' => $invoice->doc_num, 'url' => route('admin.sales.sales-invoices.show', $invoice)]]);
+    }
+
+    public function destroyInvoice(CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
+    {
+        $service->deleteDraft($customerInvoice);
+
+        return response()->json(['message' => __('Saved successfully')]);
     }
 
     public function showReceipt(CustomerReceipt $customerReceipt): View
@@ -710,12 +717,12 @@ class SalesCycleController extends Controller
 
     public function printOrder(SalesOrder $salesOrder): Response
     {
-        return $this->print('sales_order', $salesOrder->load(['company', 'customer', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
+        return $this->print('sales_order', $salesOrder->load(['company', 'customer', 'salesEmployee', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
     }
 
     public function printInvoice(CustomerInvoice $customerInvoice): Response
     {
-        return $this->print($customerInvoice->document_type, $customerInvoice->load(['company', 'customer', 'order', 'delivery', 'deliveries', 'originalInvoice', 'salesReturn', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
+        return $this->print($customerInvoice->document_type, $customerInvoice->load(['company', 'customer', 'order.salesEmployee', 'delivery', 'deliveries', 'originalInvoice', 'salesReturn', 'lines.product', 'lines.unit', 'paymentSchedules']), true);
     }
 
     public function printReceipt(CustomerReceipt $customerReceipt): Response
@@ -724,7 +731,7 @@ class SalesCycleController extends Controller
             'company', 'customer', 'receivedByEmployee', 'currency', 'cashbox', 'bankAccount.bank',
             'cashVoucher.company', 'cashVoucher.cashbox.account', 'cashVoucher.currency', 'cashVoucher.lines.account',
             'cheque.company', 'cheque.bankAccount.bank', 'cheque.bankAccount.account', 'cheque.currency', 'cheque.lines.account',
-            'order', 'allocations.invoice', 'allocations.invoiceSchedule',
+            'order.salesEmployee', 'allocations.invoice', 'allocations.invoiceSchedule',
         ]);
 
         return $this->print('customer_receipt', $receipt, true);
@@ -732,7 +739,7 @@ class SalesCycleController extends Controller
 
     public function printReturn(SalesReturn $salesReturn): Response
     {
-        return $this->print('sales_return', $salesReturn->load(['company', 'customer', 'invoice', 'delivery', 'returnInventoryDocument', 'creditNote', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), true);
+        return $this->print('sales_return', $salesReturn->load(['company', 'customer', 'order.salesEmployee', 'invoice', 'delivery', 'returnInventoryDocument', 'creditNote', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), true);
     }
 
     public function printDelivery(InventoryDocument $inventoryDocument): Response
@@ -749,17 +756,17 @@ class SalesCycleController extends Controller
 
     public function printProduction(ProductionOrder $productionOrder): Response
     {
-        return $this->print('production_request', $productionOrder->load(['company', 'salesOrder', 'lines.product', 'lines.unit']), false);
+        return $this->print('production_request', $productionOrder->load(['company', 'salesOrder.salesEmployee', 'lines.product', 'lines.unit']), false);
     }
 
     public function printPaymentSchedule(CustomerInvoice $customerInvoice): Response
     {
-        return $this->print('payment_schedule', $customerInvoice->load(['company', 'customer', 'order', 'paymentSchedules']), true);
+        return $this->print('payment_schedule', $customerInvoice->load(['company', 'customer', 'order.salesEmployee', 'paymentSchedules']), true);
     }
 
     public function printQualityDisposition(SalesReturn $salesReturn): Response
     {
-        return $this->print('quality_disposition', $salesReturn->load(['company', 'customer', 'invoice', 'returnInventoryDocument', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), false);
+        return $this->print('quality_disposition', $salesReturn->load(['company', 'customer', 'order.salesEmployee', 'invoice', 'returnInventoryDocument', 'quarantineJournalEntry', 'dispositionJournalEntry', 'inspectedBy', 'lines.product', 'lines.unit']), false);
     }
 
     private function listing(Request $request, string $kind, $query): View|JsonResponse
@@ -883,7 +890,7 @@ class SalesCycleController extends Controller
             'credit_note' => __('Sales Credit Note'),
             'customer_receipt' => __('Customer Receipt'),
             'sales_return' => __('Sales Return'),
-            'sales_delivery' => __('Delivery Note'),
+            'sales_delivery' => __('Issue Order'),
             'production_request' => __('Production Request'),
             'payment_schedule' => __('Payment Schedule'),
             'quality_disposition' => __('Return Quality Disposition'),

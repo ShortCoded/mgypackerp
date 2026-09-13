@@ -126,6 +126,40 @@ test('quotation dispatch records audit while cancellation preserves history and 
     expect($draft->refresh()->trashed())->toBeTrue();
 });
 
+test('customer quotation terms are tenant scoped sanitized and applied by default', function (): void {
+    $fixture = salesUiFixture();
+    foreach (['customers.view', 'customers.edit'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = salesCycleSession($fixture);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.sales.customer-terms.update', $fixture['customer']), [
+            'quotation_terms' => '<p onclick="alert(1)">Customer terms</p>',
+            'quotation_payment_terms' => '<p>30 days</p>',
+            'quotation_execution_terms' => '<p>Two phases</p>',
+            'quotation_warranty_terms' => '<p>One year</p>',
+            'quotation_delivery_terms' => '<p>Customer warehouse</p>',
+            'quotation_technical_notes' => '<p>Approved specification</p>',
+        ])
+        ->assertRedirect(route('admin.sales.customer-terms.edit', $fixture['customer']));
+
+    $customer = $fixture['customer']->refresh();
+    expect($customer->quotation_terms)->toContain('Customer terms')->not->toContain('onclick');
+
+    $this->getJson(route('admin.sales.select2.customer-quotation-terms', [
+        'customer_doc_num' => $customer->doc_num,
+    ]))
+        ->assertOk()
+        ->assertJsonPath('data.payment_terms', '<p>30 days</p>')
+        ->assertJsonPath('data.warranty_terms', '<p>One year</p>');
+
+    $quotation = salesUiQuote($fixture)->refresh();
+    expect($quotation->currentRevision->terms_snapshot)->toContain('Customer terms')
+        ->and($quotation->currentRevision->payment_terms_snapshot)->toBe('<p>30 days</p>')
+        ->and($quotation->currentRevision->technical_notes_snapshot)->toBe('<p>Approved specification</p>');
+});
+
 test('quotation customer PDF hides empty rich terms and system audit and separates number from revision', function () {
     $f = salesUiFixture();
     $quote = salesUiQuote($f);
@@ -191,8 +225,12 @@ test('sales request customer type requires customer and internal type uses separ
         ->assertDontSee('[description]', false)
         ->assertDontSee('[specifications][packaging]', false)
         ->assertDontSee('[specifications][units_per_package]', false)
+        ->assertSee('data-document-summary', false)
+        ->assertSee('data-sales-summary-subtotal', false)
         ->assertSee('data-sales-summary-total', false)
         ->assertSee('data-sales-summary-quantity', false)
+        ->assertDontSee('data-sales-summary-discount', false)
+        ->assertDontSee('data-sales-summary-tax', false)
         ->assertSee(__('sales_ui.optional_unit_price'))
         ->assertSee('data-shortcut-action="line.add"', false);
     expect($requestForm->getContent())->not->toMatch('/name="lines\[[^]]+\]\[unit_price\]"[^>]*required/');
@@ -212,7 +250,7 @@ test('sales navigation is one ordered journey with canonical statement and colle
     }
     $menu = app(MenuService::class)->getMenu($f['user']);
     $sales = collect($menu)->firstWhere('label', 'sales');
-    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports']);
+    expect(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'customer_terms', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports']);
     $reportLabels = collect($sales['children'])->firstWhere('label', 'sales_cycle_reports')['children'] ?? [];
     expect(collect($reportLabels)->pluck('label')->all())->toBe([
         'customer_statement',
@@ -240,7 +278,13 @@ test('sales order and quotation omit production packing fields and expose a seco
         ->assertDontSee('[specifications][customer_specification]', false)
         ->assertDontSee('[warehouse_notes]', false)
         ->assertDontSee('[production_notes]', false)
-        ->assertDontSee('[requested_date]', false);
+        ->assertDontSee('[requested_date]', false)
+        ->assertSee('data-document-summary', false)
+        ->assertSee('data-sales-summary-subtotal', false)
+        ->assertSee('data-sales-summary-discount', false)
+        ->assertSee('data-sales-summary-taxable', false)
+        ->assertSee('data-sales-summary-tax', false)
+        ->assertSee('data-sales-summary-total', false);
     expect(substr_count($order->getContent(), 'data-sales-add-line'))->toBe(2);
 
     $quotation = $this->get(route('admin.sales.quotations.create'))->assertOk()
@@ -270,7 +314,12 @@ test('sales invoice creation starts from an invoiceable sales order without dupl
         ->assertSee(route('admin.select2.currencies'), false)
         ->assertSee(route('admin.sales.select2.quotation-products'), false)
         ->assertDontSee('[requested_date]', false)
-        ->assertDontSee('[description]', false);
+        ->assertDontSee('[description]', false)
+        ->assertSee('data-document-summary', false)
+        ->assertSee('data-sales-summary-subtotal', false)
+        ->assertSee('data-sales-summary-discount', false)
+        ->assertSee('data-sales-summary-taxable', false)
+        ->assertSee('data-sales-summary-tax', false);
 });
 
 test('approved sales request can prefill quotation order and invoice forms', function () {
@@ -617,6 +666,7 @@ test('customer collection records the receiving employee and prints conditional 
     $this->get(route('admin.sales.customer-receipts.show', $receipt))->assertOk()
         ->assertSee('data-customer-receipt-details', false)
         ->assertSee('data-sales-attachments', false)
+        ->assertSee('erp-document-attachments-card', false)
         ->assertSee('receipt-cheque.pdf')
         ->assertSee($employee->full_name)
         ->assertSee('CHQ-EMP-997')

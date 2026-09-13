@@ -2,6 +2,10 @@
     overflow: visible !important;
 }
 
+.erp-document-total-box {
+    max-width: 30rem;
+}
+
 .line-card-repeater {
     display: block;
     width: 100% !important;

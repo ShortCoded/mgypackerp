@@ -27,7 +27,7 @@
     ];
     $editRoute = match (true) {
         $kind === 'sales_order' && $record->isEditable() => ['admin.sales.sales-orders.edit', 'sales_orders.edit'],
-        $kind === 'invoice' && $record->isEditable() => ['admin.sales.sales-invoices.edit', 'customer_invoices.edit'],
+        $kind === 'invoice' && $record->canAmend() => ['admin.sales.sales-invoices.edit', 'customer_invoices.edit'],
         default => null,
     };
     $visibleLineSpecifications = fn ($line) => collect($line->specifications ?? [])
