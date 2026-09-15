@@ -5,14 +5,17 @@
 @section('content')
     <div class="production-mobile-workflow">
     @php
+        $numbers = app(\Modules\Core\Services\NumericFormatService::class);
         $laborRows = collect($record->labor_details ?? []);
+        $requiredStages = $record->orderLine?->stageSnapshots?->where('is_required', true)->sortBy('sequence') ?? collect();
+        $isFinalStage = $requiredStages->isEmpty() || (int) $record->stageSnapshot?->sequence === (int) $requiredStages->max('sequence');
         $relatedDocuments = collect([
             ['label' => __('Production Order'), 'number' => $record->order?->doc_num, 'url' => $record->order ? route('admin.production.work-orders.show', $record->order) : null, 'permission' => 'production.orders.view'],
             ['label' => __('Sales Requirement / Order'), 'number' => $record->order?->salesOrder?->doc_num, 'url' => $record->order?->salesOrder ? route('admin.sales.sales-orders.show', $record->order->salesOrder) : null, 'permission' => 'sales_orders.view'],
             ...$record->inventoryDocuments->map(fn ($document) => ['label' => __('inventory.movements.types.'.$document->document_type), 'number' => $document->doc_num, 'url' => route('admin.inventory.documents.show', $document), 'permission' => 'inventory.documents.view', 'meta' => __('inventory.movements.statuses.'.$document->status)])->all(),
             ...$record->inspections->map(fn ($inspection) => ['label' => __('QC Sample'), 'number' => $inspection->doc_num, 'url' => route('admin.production.quality.show', $inspection->getKey()), 'permission' => 'production.quality.view', 'meta' => __('production_execution.quality_results.'.$inspection->result)])->all(),
-            ...$record->materialRequests->map(fn ($materialRequest) => ['label' => __('production_execution.material_requests.title'), 'number' => $materialRequest->doc_num, 'url' => route('admin.production.material-requests.index'), 'permission' => 'production.material_requests.view', 'meta' => __('production_execution.statuses.'.$materialRequest->status)])->all(),
-            ...$record->expenseRequests->map(fn ($expenseRequest) => ['label' => __('production_execution.expenses.title'), 'number' => $expenseRequest->doc_num, 'url' => route('admin.production.expenses.index'), 'permission' => 'production.expenses.view', 'meta' => __('production_execution.statuses.'.$expenseRequest->status)])->all(),
+            ...$record->materialRequests->map(fn ($materialRequest) => ['label' => __('production_execution.material_requests.title'), 'number' => $materialRequest->doc_num, 'url' => route('admin.production.material-requests.show', $materialRequest), 'permission' => 'production.material_requests.view', 'meta' => __('production_execution.statuses.'.$materialRequest->status)])->all(),
+            ...$record->expenseRequests->map(fn ($expenseRequest) => ['label' => __('production_execution.expenses.title'), 'number' => $expenseRequest->doc_num, 'url' => route('admin.production.expenses.show', $expenseRequest), 'permission' => 'production.expenses.view', 'meta' => __('production_execution.statuses.'.$expenseRequest->status)])->all(),
         ]);
     @endphp
     @if ($errors->any())
@@ -29,8 +32,8 @@
             <div class="col-md-3"><strong>{{ __('Product') }}:</strong> {{ $record->product?->name }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.stage') }}:</strong> {{ $record->stageSnapshot?->sequence }} — {{ $record->stageSnapshot?->stage_name ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.fixed_asset') }}:</strong> {{ $record->fixedAsset?->asset_name ?? '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('Planned') }}:</strong> {{ $record->planned_base_quantity }}</div>
-            <div class="col-md-3"><strong>{{ __('Good / Received') }}:</strong> {{ $record->good_base_quantity }} / {{ $record->received_base_quantity }}</div>
+            <div class="col-md-3"><strong>{{ __('Planned') }}:</strong> {{ $numbers->format($record->planned_base_quantity) }}</div>
+            <div class="col-md-3"><strong>{{ __('Good / Received') }}:</strong> {{ $numbers->format($record->good_base_quantity) }} / {{ $numbers->format($record->received_base_quantity) }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_labor_count') }}:</strong> {{ $record->planned_labor_count ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_labor_count') }}:</strong> {{ $record->actual_labor_count ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_start_at') }}:</strong> {{ $record->planned_start_at?->format('Y-m-d H:i') ?? '—' }}</div>
@@ -38,7 +41,7 @@
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_start_at') }}:</strong> {{ $record->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_end_at') }}:</strong> {{ $record->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_duration') }}:</strong> {{ $record->actualDurationHours() !== null ? __('production_execution.labor.hours_value', ['hours' => $record->actualDurationHours()]) : '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('production_execution.fields.total_labor_hours') }}:</strong> {{ $record->totalLaborHours() }}</div>
+            <div class="col-md-3"><strong>{{ __('production_execution.fields.total_labor_hours') }}:</strong> {{ $numbers->format($record->totalLaborHours()) }}</div>
             <div class="col-12"><strong>{{ __('production_execution.fields.work_description') }}:</strong> {{ $record->work_description ?: '—' }}</div>
         </div></div>
     </div>
@@ -51,8 +54,8 @@
             <thead><tr><th>{{ __('Material') }}</th><th>{{ __('Planned') }}</th><th>{{ __('Reserved') }}</th><th>{{ __('Issued') }}</th><th>{{ __('Additional') }}</th><th>{{ __('Returned') }}</th><th>{{ __('Consumed') }}</th><th>{{ __('Waste') }}</th></tr></thead>
             <tbody>@foreach ($record->requirements as $line)<tr>
                 <td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td>
-                <td>{{ $line->planned_quantity }}</td><td>{{ $line->reserved_quantity }}</td><td>{{ $line->issued_quantity }}</td>
-                <td>{{ $line->additional_issued_quantity }}</td><td>{{ $line->returned_quantity }}</td><td>{{ $line->consumed_quantity }}</td><td>{{ $line->waste_quantity }}</td>
+                <td>{{ $numbers->format($line->planned_quantity) }}</td><td>{{ $numbers->format($line->reserved_quantity) }}</td><td>{{ $numbers->format($line->issued_quantity) }}</td>
+                <td>{{ $numbers->format($line->additional_issued_quantity) }}</td><td>{{ $numbers->format($line->returned_quantity) }}</td><td>{{ $numbers->format($line->consumed_quantity) }}</td><td>{{ $numbers->format($line->waste_quantity) }}</td>
             </tr>@endforeach</tbody>
         </table></div>
     </div>
@@ -82,29 +85,30 @@
         </div>
         @if(in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.labor'))
             <form method="POST" action="{{ route('admin.production.runs.labor', $record) }}">@csrf
+                <x-forms.line-item-cards :line-label="__('production_execution.labor.worker_line')" />
                 <div class="card-body">
-                    <div class="row g-3 mb-3"><div class="col-12 col-md-4"><label class="form-label">{{ __('production_execution.fields.actual_labor_count') }}</label><x-forms.input class="form-control" name="actual_labor_count" type="number" min="1" :value="$record->actual_labor_count ?? max($record->planned_labor_count ?? 0, $laborRows->count(), 1)" required /></div></div>
+                    <div class="row g-3 mb-3"><div class="col-12 col-md-4"><label class="form-label">{{ __('production_execution.fields.actual_labor_count') }}</label><x-forms.numeric-input class="form-control" name="actual_labor_count" :scale="0" min="1" step="1" arrow-step="1" :value="$record->actual_labor_count ?? max($record->planned_labor_count ?? 0, $laborRows->count(), 1)" required /></div></div>
                     <div class="table-responsive">
                         <table class="table table-sm align-middle mb-0">
                             <thead><tr><th>{{ __('production_execution.fields.worker_name') }}</th><th>{{ __('production_execution.fields.worker_role') }}</th><th>{{ __('production_execution.fields.planned_hours') }}</th><th>{{ __('production_execution.fields.actual_hours') }}</th><th>{{ __('production_execution.fields.notes') }}</th><th></th></tr></thead>
                             <tbody data-labor-rows>
                                 @forelse($laborRows as $index => $labor)
                                     <tr data-labor-row>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[{{ $index }}][name]" :value="$labor['name'] ?? ''" required /></td>
+                                        <td><x-forms.select class="form-select form-select-sm" name="labor_details[{{ $index }}][employee_id]" required>@foreach($workers as $worker)<option value="{{ $worker->id }}" @selected((int)($labor['employee_id'] ?? 0) === (int)$worker->id)>{{ $worker->doc_num }} — {{ $worker->full_name ?: $worker->name }}</option>@endforeach</x-forms.select></td>
                                         <td><x-forms.input class="form-control form-control-sm" name="labor_details[{{ $index }}][role]" :value="$labor['role'] ?? ''" /></td>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[{{ $index }}][planned_hours]" type="number" min="0" step="0.25" inputmode="decimal" :value="$labor['planned_hours'] ?? ''" /></td>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[{{ $index }}][actual_hours]" type="number" min="0.01" step="0.25" inputmode="decimal" :value="$labor['actual_hours'] ?? ''" required /></td>
+                                        <td><x-forms.numeric-input class="form-control-sm" name="labor_details[{{ $index }}][planned_hours]" :scale="2" min="0" step="0.25" arrow-step="1" :value="$labor['planned_hours'] ?? ''" /></td>
+                                        <td><x-forms.numeric-input class="form-control-sm" name="labor_details[{{ $index }}][actual_hours]" :scale="2" min="0.01" step="0.25" arrow-step="1" :value="$labor['actual_hours'] ?? ''" required /></td>
                                         <td><x-forms.input class="form-control form-control-sm" name="labor_details[{{ $index }}][notes]" :value="$labor['notes'] ?? ''" /></td>
-                                        <td><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></td>
+                                        <td><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-duplicate-labor-row aria-label="{{ __('production_execution.actions.duplicate_line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></div></td>
                                     </tr>
                                 @empty
                                     <tr data-labor-row>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[0][name]" required /></td>
+                                        <td><x-forms.select class="form-select form-select-sm" name="labor_details[0][employee_id]" required><option value="">—</option>@foreach($workers as $worker)<option value="{{ $worker->id }}">{{ $worker->doc_num }} — {{ $worker->full_name ?: $worker->name }}</option>@endforeach</x-forms.select></td>
                                         <td><x-forms.input class="form-control form-control-sm" name="labor_details[0][role]" /></td>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[0][planned_hours]" type="number" min="0" step="0.25" inputmode="decimal" /></td>
-                                        <td><x-forms.input class="form-control form-control-sm" name="labor_details[0][actual_hours]" type="number" min="0.01" step="0.25" inputmode="decimal" required /></td>
+                                        <td><x-forms.numeric-input class="form-control-sm" name="labor_details[0][planned_hours]" :scale="2" min="0" step="0.25" arrow-step="1" /></td>
+                                        <td><x-forms.numeric-input class="form-control-sm" name="labor_details[0][actual_hours]" :scale="2" min="0.01" step="0.25" arrow-step="1" required /></td>
                                         <td><x-forms.input class="form-control form-control-sm" name="labor_details[0][notes]" /></td>
-                                        <td><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></td>
+                                        <td><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-duplicate-labor-row aria-label="{{ __('production_execution.actions.duplicate_line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></div></td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -112,26 +116,26 @@
                     </div>
                     <template data-labor-row-template>
                         <tr data-labor-row>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][name]" type="text" required></td>
+                            <td><select class="form-select form-select-sm" name="labor_details[__INDEX__][employee_id]" required><option value="">—</option>@foreach($workers as $worker)<option value="{{ $worker->id }}">{{ $worker->doc_num }} — {{ $worker->full_name ?: $worker->name }}</option>@endforeach</select></td>
                             <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][role]" type="text"></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][planned_hours]" type="number" min="0" step="0.25" inputmode="decimal"></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][actual_hours]" type="number" min="0.01" step="0.25" inputmode="decimal" required></td>
+                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][planned_hours]" type="text" inputmode="decimal" min="0" step="0.25" data-numeric-input data-numeric-scale="2" data-numeric-min="0" data-numeric-arrow-step="1"></td>
+                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][actual_hours]" type="text" inputmode="decimal" min="0.01" step="0.25" data-numeric-input data-numeric-scale="2" data-numeric-min="0.01" data-numeric-arrow-step="1" required></td>
                             <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][notes]" type="text"></td>
-                            <td><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></td>
+                            <td><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-duplicate-labor-row aria-label="{{ __('production_execution.actions.duplicate_line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></div></td>
                         </tr>
                     </template>
                 </div>
-                <div class="card-footer text-end"><button class="btn btn-primary">{{ __('production_execution.actions.save_labor') }}</button></div>
+                <div class="card-footer d-flex flex-wrap justify-content-between gap-2"><button class="btn btn-falcon-primary btn-sm" type="button" data-add-labor-row><span class="fas fa-plus me-1"></span>{{ __('production_execution.actions.add_worker') }}</button><button class="btn btn-primary">{{ __('production_execution.actions.save_labor') }}</button></div>
             </form>
         @else
-            <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('production_execution.fields.worker_name') }}</th><th>{{ __('production_execution.fields.worker_role') }}</th><th>{{ __('production_execution.fields.planned_hours') }}</th><th>{{ __('production_execution.fields.actual_hours') }}</th><th>{{ __('production_execution.fields.notes') }}</th></tr></thead><tbody>@foreach($laborRows as $labor)<tr><td>{{ $labor['name'] ?? '—' }}</td><td>{{ $labor['role'] ?? '—' }}</td><td>{{ $labor['planned_hours'] ?? '—' }}</td><td>{{ $labor['actual_hours'] ?? '—' }}</td><td>{{ $labor['notes'] ?? '—' }}</td></tr>@endforeach</tbody></table></div>
+                <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('production_execution.fields.worker_name') }}</th><th>{{ __('production_execution.fields.worker_role') }}</th><th>{{ __('production_execution.fields.planned_hours') }}</th><th>{{ __('production_execution.fields.actual_hours') }}</th><th>{{ __('production_execution.fields.notes') }}</th></tr></thead><tbody>@foreach($laborRows as $labor)<tr><td>{{ $labor['name'] ?? '—' }}</td><td>{{ $labor['role'] ?? '—' }}</td><td>{{ filled($labor['planned_hours'] ?? null) ? $numbers->format($labor['planned_hours']) : '—' }}</td><td>{{ filled($labor['actual_hours'] ?? null) ? $numbers->format($labor['actual_hours']) : '—' }}</td><td>{{ $labor['notes'] ?? '—' }}</td></tr>@endforeach</tbody></table></div>
         @endif
     </div>
     @endif
 
     <div class="row g-3">
         @can('production.material_requests.create')
-        <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h6 class="mb-0">{{ __('production_execution.material_requests.title') }}</h6></div><div class="card-body">{{ __('production_execution.material_requests.bom_help') }}</div><div class="card-footer d-flex gap-2"><a class="btn btn-primary btn-sm" href="{{ route('admin.production.material-requests.index', ['run' => $record->id]) }}">{{ __('production_execution.actions.request_bom') }}</a><a class="btn btn-outline-primary btn-sm" href="{{ route('admin.production.material-requests.index', ['run' => $record->id, 'additional' => 1]) }}">{{ __('Additional Material Issue Request') }}</a></div></div></div>
+        <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h6 class="mb-0">{{ __('production_execution.material_requests.title') }}</h6></div><div class="card-body">{{ __('production_execution.material_requests.bom_help') }}</div><div class="card-footer d-flex gap-2"><a class="btn btn-primary btn-sm" href="{{ route('admin.production.material-requests.create', ['run' => $record->id]) }}">{{ __('production_execution.actions.request_bom') }}</a><a class="btn btn-outline-primary btn-sm" href="{{ route('admin.production.material-requests.create', ['run' => $record->id, 'additional' => 1]) }}">{{ __('Additional Material Issue Request') }}</a></div></div></div>
         @endcan
 
         @if(!in_array($record->status, ['completed', 'cancelled'], true))
@@ -144,7 +148,7 @@
                 <div class="card-body">
                     <x-forms.select class="form-select mb-2" name="branch_store_id" required>@foreach ($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select>
                     @foreach ($record->requirements as $index => $line)
-                        <div class="input-group input-group-sm mb-2"><span class="input-group-text flex-grow-1">{{ $line->product?->name }}</span><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><x-forms.input class="form-control" type="number" step="0.00000001" min="0.00000001" name="lines[{{ $index }}][quantity]" placeholder="{{ __('Qty') }}" /></div>
+                        <div class="input-group input-group-sm mb-2"><span class="input-group-text flex-grow-1">{{ $line->product?->name }}</span><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><x-forms.numeric-input class="form-control" :scale="8" step="0.00000001" arrow-step="1" min="0.00000001" name="lines[{{ $index }}][quantity]" placeholder="{{ __('Qty') }}" /></div>
                     @endforeach
                 </div>
                 <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ $materialAction['button'] }}</button></div>
@@ -159,10 +163,10 @@
             @csrf
             <div class="card-header"><h6 class="mb-0">{{ __('Production Progress') }}</h6></div>
             <div class="card-body row g-2">
-                <div class="col-6"><x-forms.input class="form-control" type="number" step="0.00000001" min="0" name="good_base_quantity" placeholder="{{ __('Good') }}" /></div>
-                <div class="col-6"><x-forms.input class="form-control" type="number" step="0.00000001" min="0" name="rejected_base_quantity" placeholder="{{ __('Rejected') }}" /></div>
-                <div class="col-6"><x-forms.input class="form-control" type="number" step="0.00000001" min="0" name="rework_base_quantity" placeholder="{{ __('Rework') }}" /></div>
-                <div class="col-6"><x-forms.input class="form-control" type="number" step="0.00000001" min="0" name="scrap_base_quantity" placeholder="{{ __('Scrap') }}" /></div>
+                <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="good_base_quantity" placeholder="{{ __('Good') }}" /></div>
+                <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rejected_base_quantity" placeholder="{{ __('Rejected') }}" /></div>
+                <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rework_base_quantity" placeholder="{{ __('Rework') }}" /></div>
+                <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="scrap_base_quantity" placeholder="{{ __('Scrap') }}" /></div>
                 <div class="col-12"><x-forms.input class="form-control" name="notes" placeholder="{{ __('production_execution.fields.notes') }}" /></div>
             </div>
             <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ __('Record progress') }}</button></div>
@@ -191,7 +195,7 @@
                 <x-forms.select class="form-select mb-2" name="branch_store_id" required>@foreach ($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select>
                 @foreach ($record->requirements as $index => $line)
                     @php($unaccounted = bcsub(bcsub(bcadd($line->issued_quantity, $line->additional_issued_quantity, 8), $line->returned_quantity, 8), bcadd($line->consumed_quantity, $line->waste_quantity, 8), 8))
-                    <div class="row g-2 mb-2"><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><div class="col-4">{{ $line->product?->name }}</div><div class="col-4"><x-forms.input class="form-control form-control-sm" type="number" step="0.00000001" min="0" name="lines[{{ $index }}][consumed_quantity]" value="{{ $unaccounted }}" aria-label="{{ __('Consumed') }}" /></div><div class="col-4"><x-forms.input class="form-control form-control-sm" type="number" step="0.00000001" min="0" name="lines[{{ $index }}][waste_quantity]" value="0" aria-label="{{ __('Waste') }}" /></div></div>
+                    <div class="row g-2 mb-2"><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><div class="col-4">{{ $line->product?->name }}</div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][consumed_quantity]" :value="$unaccounted" aria-label="{{ __('Consumed') }}" /></div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][waste_quantity]" value="0" aria-label="{{ __('Waste') }}" /></div></div>
                 @endforeach
             </div>
             <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ __('Post consumption / waste') }}</button></div>
@@ -199,12 +203,12 @@
         @endcan
         @endif
 
-        @if(in_array($record->status, ['running', 'held'], true))
+        @if($record->status === 'running' && $isFinalStage)
         @can('production.runs.receive')
         <div class="col-lg-6"><form class="card h-100" method="POST" action="{{ route('admin.production.runs.receive', $record) }}">
             @csrf
             <div class="card-header"><h6 class="mb-0">{{ __('Finished Goods Receipt') }}</h6></div>
-            <div class="card-body row g-2"><div class="col-7"><x-forms.select class="form-select" name="branch_store_id" required>@foreach ($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select></div><div class="col-5"><x-forms.input class="form-control" type="number" step="0.00000001" min="0.00000001" name="base_quantity" placeholder="{{ __('Accepted base qty') }}" required /></div></div>
+            <div class="card-body row g-2"><div class="col-7"><x-forms.select class="form-select" name="branch_store_id" required>@foreach ($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select></div><div class="col-5"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0.00000001" name="base_quantity" placeholder="{{ __('Accepted base qty') }}" required /></div></div>
             <div class="card-footer text-end"><button class="btn btn-success btn-sm">{{ __('Receive finished goods') }}</button></div>
         </form></div>
         @endcan

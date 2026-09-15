@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Currency;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
@@ -58,6 +59,18 @@ class ProductionExpenseRequest extends Model
         return 'doc_num';
     }
 
+    public function resolveRouteBinding($value, $field = null): ?self
+    {
+        $context = app(OperatingContextService::class)->snapshot(request());
+
+        return $context['company_id'] && $context['financial_period_id'] && $context['branch_id']
+            ? $this->newQuery()
+                ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+                ->where($field ?? $this->getRouteKeyName(), $value)
+                ->first()
+            : null;
+    }
+
     public function run(): BelongsTo
     {
         return $this->belongsTo(ProductionRun::class, 'production_run_id');
@@ -101,6 +114,11 @@ class ProductionExpenseRequest extends Model
     public function reversalJournalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id');
+    }
+
+    public function isEditable(): bool
+    {
+        return ! $this->trashed() && $this->status === self::StatusSubmitted;
     }
 
     public function scopeForContext(Builder $query, int $companyId, int $periodId, int $branchId): Builder

@@ -41,6 +41,7 @@ class ProductProductionStageController extends Controller
             'product' => $product,
             'stages' => ProductionStage::query()->forCompany($companyId)->where('status', ProductionStage::StatusActive)->orderBy('display_order')->get(),
             'routeStages' => ProductProductionStage::query()->forCompany($companyId)->where('product_id', $product->getKey())->with('stage')->orderBy('sequence')->get(),
+            'components' => $product->components()->with(['componentProduct', 'productionStage'])->orderBy('id')->get(),
         ]);
     }
 
@@ -54,7 +55,7 @@ class ProductProductionStageController extends Controller
                 ->sortBy('sequence')
                 ->map(fn (array $row): array => ['production_stage_id' => $row['production_stage_id']])
                 ->values()->all();
-            $routing->replaceProductRoute($product, $rows);
+            $routing->replaceProductRoute($product, $rows, $data['component_stage_ids'] ?? []);
 
             return redirect()->route('admin.production.product-stages.index')->with('success', __('production_execution.messages.product_route_saved'));
         } catch (DomainException $exception) {

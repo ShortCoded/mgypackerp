@@ -18,6 +18,11 @@ return [
         'load_lines' => 'Load lines',
         'load_received_lines' => 'Load received lines',
         'finalize_quality_inspection' => 'Finalize purchase inspection',
+        'take_photo' => 'Take photo',
+        'take_photos' => 'Take inspection photos',
+        'uploading_photos' => 'Uploading inspection photos…',
+        'photos_uploaded' => 'Inspection photos were uploaded and attached.',
+        'photo_upload_failed' => 'An inspection photo could not be uploaded. Please try again.',
         'statuses' => [
             'draft' => 'Draft',
             'pending_approval' => 'Submitted',

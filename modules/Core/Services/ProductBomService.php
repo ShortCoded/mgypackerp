@@ -54,6 +54,7 @@ final class ProductBomService
                     'public_id' => null,
                     'component_product_id' => $component->component_product_id,
                     'unit_id' => $component->unit_id,
+                    'production_stage_id' => $component->production_stage_id,
                     'calculation_method' => $component->calculation_method,
                     'quantity' => (string) $component->quantity,
                     'percentage' => $component->percentage === null ? null : (string) $component->percentage,
@@ -187,6 +188,7 @@ final class ProductBomService
                 'public_id' => (string) $component->public_id,
                 'component_product_id' => $component->component_product_id,
                 'unit_id' => $component->unit_id,
+                'production_stage_id' => $component->production_stage_id,
                 'calculation_method' => $component->calculation_method,
                 'quantity' => (string) $component->quantity,
                 'percentage' => $component->percentage === null ? null : (string) $component->percentage,
@@ -234,6 +236,7 @@ final class ProductBomService
             $values = [
                 'component_product_id' => (int) $row['component_product_id'],
                 'unit_id' => $row['unit_id'] === null ? null : (int) $row['unit_id'],
+                'production_stage_id' => isset($row['production_stage_id']) ? (int) $row['production_stage_id'] : null,
                 'calculation_method' => $row['calculation_method'],
                 'quantity' => $row['quantity'],
                 'percentage' => $row['percentage'],

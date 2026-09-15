@@ -17,6 +17,7 @@ class MaintenanceMaterialRequestLine extends Model
             'requested_quantity' => 'decimal:8',
             'approved_quantity' => 'decimal:8',
             'issued_quantity' => 'decimal:8',
+            'consumed_quantity' => 'decimal:8',
             'returned_quantity' => 'decimal:8',
         ];
     }

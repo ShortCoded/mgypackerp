@@ -16,6 +16,7 @@ use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Models\ChatConversation;
 use Modules\Core\Models\ChatMessage;
 use Modules\Core\Models\ChatMessageAttachment;
+use Modules\Core\Models\UserNotification;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class ChatService
@@ -92,20 +93,33 @@ class ChatService
         array $attachments = [],
         ?string $replyToMessageUuid = null,
         ?ChatMessage $forwardedFromMessage = null,
+        ?string $clientMessageId = null,
     ): ChatMessage {
         $this->abortUnlessParticipant($conversation, $sender);
         $replyToMessage = $this->resolveReplyToMessage($conversation, $replyToMessageUuid);
 
-        return DB::transaction(function () use ($conversation, $sender, $body, $attachments, $replyToMessage, $forwardedFromMessage): ChatMessage {
+        return DB::transaction(function () use ($conversation, $sender, $body, $attachments, $replyToMessage, $forwardedFromMessage, $clientMessageId): ChatMessage {
             $sentAt = now();
-            $message = $conversation->messages()->create([
+            $messageValues = [
                 'sender_id' => $sender->getKey(),
+                'client_message_id' => $clientMessageId,
                 'reply_to_message_id' => $replyToMessage?->getKey(),
                 'forwarded_from_message_id' => $forwardedFromMessage?->getKey(),
                 'forwarded_from_user_id' => $forwardedFromMessage?->sender_id,
                 'body' => filled($body) ? trim((string) $body) : null,
                 'sent_at' => $sentAt,
-            ]);
+            ];
+
+            $message = filled($clientMessageId)
+                ? $conversation->messages()->firstOrCreate([
+                    'sender_id' => $sender->getKey(),
+                    'client_message_id' => $clientMessageId,
+                ], $messageValues)
+                : $conversation->messages()->create($messageValues);
+
+            if (! $message->wasRecentlyCreated) {
+                return $message->load(['sender', 'attachments', 'replyToMessage.sender', 'replyToMessage.attachments', 'forwardedFromUser']);
+            }
 
             foreach ($attachments as $attachment) {
                 if (! $attachment instanceof UploadedFile || ! $attachment->isValid()) {
@@ -132,18 +146,6 @@ class ChatService
                 'deleted_at' => null,
                 'updated_at' => now(),
             ]);
-
-            $recipientIds = $conversation->participants()
-                ->whereKeyNot($sender->getKey())
-                ->pluck('users.id')
-                ->all();
-
-            foreach ($recipientIds as $recipientId) {
-                $conversation->participants()->updateExistingPivot($recipientId, [
-                    'deleted_at' => null,
-                    'updated_at' => now(),
-                ]);
-            }
 
             $this->notifyRecipients($conversation, $message, $sender);
 
@@ -216,10 +218,20 @@ class ChatService
     {
         $this->abortUnlessParticipant($conversation, $user);
 
-        $conversation->participants()->updateExistingPivot($user->getKey(), [
-            'last_read_at' => now(),
-            'updated_at' => now(),
-        ]);
+        DB::transaction(function () use ($conversation, $user): void {
+            $readAt = now();
+            $conversation->participants()->updateExistingPivot($user->getKey(), [
+                'last_read_at' => $readAt,
+                'updated_at' => $readAt,
+            ]);
+            UserNotification::query()
+                ->where('user_id', $user->getKey())
+                ->where('conversation_id', $conversation->getKey())
+                ->where('type', 'chat.message')
+                ->whereNotNull('delivered_at')
+                ->whereNull('read_at')
+                ->update(['read_at' => $readAt]);
+        });
     }
 
     /**
@@ -690,9 +702,11 @@ class ChatService
                 continue;
             }
 
-            if ($this->pivotTimestamp($participant->pivot?->muted_at) !== null) {
+            if ($participant->status !== 'active' || ! $participant->can('chat.view')) {
                 continue;
             }
+
+            $muted = $this->pivotTimestamp($participant->pivot?->muted_at) !== null;
 
             $this->notifications->createImmediate(
                 $participant,
@@ -705,8 +719,21 @@ class ChatService
                     'message_uuid' => $message->public_uuid,
                     'sender_doc_num' => $sender->doc_num,
                     'sender_name' => $sender->name,
+                    'muted' => $muted,
                 ],
                 "chat.message:{$message->getKey()}:{$participant->getKey()}",
+                [
+                    'event_uuid' => $message->public_uuid,
+                    'module' => 'chat',
+                    'severity' => 'information',
+                    'requires_action' => false,
+                    'sound_key' => $muted ? null : 'chat',
+                    'suppress_in_app_alert' => $muted,
+                    'external_title' => __('notifications.types.chat_message'),
+                    'external_body' => __('notifications.messages.chat_message_external'),
+                    'required_permission' => 'chat.view',
+                    'conversation_id' => $conversation->getKey(),
+                ],
             );
         }
     }

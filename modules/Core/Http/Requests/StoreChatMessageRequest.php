@@ -26,6 +26,7 @@ class StoreChatMessageRequest extends FormRequest
         return [
             'body' => ['nullable', 'required_without:attachments', 'string', 'max:5000'],
             'reply_to_message_id' => ['nullable', 'string', 'max:255'],
+            'client_message_id' => ['nullable', 'uuid'],
             'attachments' => ['nullable', 'array', 'max:5'],
             'attachments.*' => [
                 'file',
@@ -44,6 +45,7 @@ class StoreChatMessageRequest extends FormRequest
         return [
             'body' => __('chat.fields.message'),
             'reply_to_message_id' => __('chat.reply'),
+            'client_message_id' => __('chat.fields.message'),
             'attachments' => __('chat.attachments'),
             'attachments.*' => __('chat.attachments'),
         ];

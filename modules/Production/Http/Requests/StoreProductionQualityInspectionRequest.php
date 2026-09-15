@@ -19,7 +19,11 @@ class StoreProductionQualityInspectionRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('production.quality.create');
+        $permission = $this->isMethod('PUT') || $this->isMethod('PATCH')
+            ? 'production.quality.edit'
+            : 'production.quality.create';
+
+        return (bool) $this->user()?->can($permission);
     }
 
     /** @return array<string, mixed> */
@@ -78,7 +82,12 @@ class StoreProductionQualityInspectionRequest extends FormRequest
                     ->where('is_active', true)
                     ->whereNull('deleted_at')),
             ],
-            'affected_base_quantity' => ['nullable', 'numeric', 'min:0'],
+            'affected_base_quantity' => [
+                'nullable',
+                'required_if:subject_type,'.ProductionQualityInspection::SubjectInventoryStock,
+                'numeric',
+                'gt:0',
+            ],
             'notes' => ['nullable', 'string', 'max:5000'],
         ];
     }

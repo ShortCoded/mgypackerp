@@ -107,9 +107,14 @@ class InventoryMovementService
             ? BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($header['destination_branch_store_id'])
             : null;
 
-        if ((int) $sourceStore->branch_id !== (int) $header['branch_id']
-            || ($destinationStore && (int) $destinationStore->branch_id !== (int) $header['branch_id'])) {
-            throw new DomainException(__('Inventory stores must belong to the selected operating branch.'));
+        if ((int) $sourceStore->branch_id !== (int) $header['branch_id']) {
+            throw new DomainException(__('The source inventory store must belong to the operating branch.'));
+        }
+
+        if ($destinationStore
+            && ((int) $destinationStore->branch?->company_id !== (int) $header['company_id']
+                || $destinationStore->branch?->status !== 'active')) {
+            throw new DomainException(__('The destination inventory store must belong to an active branch in the operating company.'));
         }
 
         $this->assertLocationBelongsToStore($header['warehouse_location_id'] ?? null, (int) $sourceStore->getKey());

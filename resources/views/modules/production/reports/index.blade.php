@@ -1,47 +1,103 @@
 @extends('layouts.app')
 
-@section('title', __('Production Operational Reports'))
+@php
+    $sectionRoutes = [
+        'overview' => 'admin.production.reports.index',
+        'orders' => 'admin.production.reports.orders',
+        'runs' => 'admin.production.reports.runs',
+        'materials' => 'admin.production.reports.materials',
+        'quality' => 'admin.production.reports.quality',
+        'receipts' => 'admin.production.reports.receipts',
+    ];
+    $exportQuery = [...request()->query(), 'section' => $section];
+@endphp
+
+@section('title', __('production_execution.reports.sections.'.$section))
 
 @section('content')
-<div class="production-mobile-workflow" data-client-report-tables>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div><h4 class="mb-1">{{ __('Production Operational Reports') }}</h4><div class="text-muted">{{ __('Orders, runs, consumption, yield, traceability, receipts, and supported WIP cost.') }}</div></div>
-    @can('production.reports.export')<div class="d-flex gap-2"><a class="btn btn-outline-success" href="{{ route('admin.production.reports.export', request()->query()) }}">{{ __('Export XLSX') }}</a><a class="btn btn-outline-secondary" target="_blank" href="{{ route('admin.production.reports.print', request()->query()) }}">{{ __('Print PDF') }}</a></div>@endcan
-</div>
+    <div class="production-mobile-workflow" data-client-report-tables>
+        <div class="card mb-3">
+            <div class="card-header py-2">
+                <div class="row flex-between-center g-2">
+                    <div class="col"><h5 class="mb-0">{{ __('production_execution.reports.sections.'.$section) }}</h5></div>
+                    @can('production.reports.export')
+                        <div class="col-auto d-flex flex-wrap gap-2">
+                            <a class="btn btn-falcon-success btn-sm" href="{{ route('admin.production.reports.export', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('production_execution.actions.export_excel') }}</a>
+                            <a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.production.reports.print', $exportQuery) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('production_execution.actions.print_pdf') }}</a>
+                        </div>
+                    @endcan
+                </div>
+            </div>
+            <div class="card-body py-3">
+                <form method="GET" action="{{ route($sectionRoutes[$section]) }}" class="row g-3 align-items-end">
+                    <div class="col-md-3"><x-forms.label for="production-report-from" :label="__('production_execution.reports.filters.from')" /><x-forms.date-input id="production-report-from" name="from" :value="request('from')" /></div>
+                    <div class="col-md-3"><x-forms.label for="production-report-to" :label="__('production_execution.reports.filters.to')" /><x-forms.date-input id="production-report-to" name="to" :value="request('to')" /></div>
+                    <div class="col-md-3">
+                        <x-forms.label for="production-report-status" :label="__('production_execution.fields.status')" />
+                        <x-forms.select variant="local" id="production-report-status" name="status" :placeholder="__('production_execution.reports.filters.all_statuses')">
+                            @foreach(['draft', 'planned', 'released', 'setup', 'ready', 'running', 'held', 'partially_completed', 'completed', 'short_closed', 'cancelled'] as $status)
+                                <option value="{{ $status }}" @selected(request('status') === $status)>{{ __('production_execution.statuses.'.$status) }}</option>
+                            @endforeach
+                        </x-forms.select>
+                    </div>
+                    <div class="col-md-3 d-flex gap-2">
+                        <button class="btn btn-primary flex-fill" type="submit"><span class="fas fa-filter me-1"></span>{{ __('production_execution.reports.filters.apply') }}</button>
+                        <a class="btn btn-falcon-default" href="{{ route($sectionRoutes[$section]) }}">{{ __('production_execution.reports.filters.reset') }}</a>
+                    </div>
+                </form>
+            </div>
+        </div>
 
-<div class="row g-3 mb-3">@foreach($kpis as $label => $value)<div class="col-md-3"><div class="card"><div class="card-body"><div class="text-500">{{ __(str($label)->replace('_', ' ')->title()->toString()) }}</div><div class="fs-5 fw-bold">{{ $value }}</div></div></div></div>@endforeach</div>
+        <div class="d-flex flex-wrap gap-2 mb-3" role="navigation" aria-label="{{ __('production_execution.reports.title') }}">
+            @foreach($sectionRoutes as $reportSection => $routeName)
+                <a class="btn btn-sm {{ $section === $reportSection ? 'btn-primary' : 'btn-falcon-default' }}" href="{{ route($routeName, request()->only(['from', 'to', 'status'])) }}">{{ __('production_execution.reports.sections.'.$reportSection) }}</a>
+            @endforeach
+        </div>
 
-<div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Production Orders and Sales Origin') }}</h5></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Date') }}</th><th>{{ __('Source') }}</th><th>{{ __('Sales order') }}</th><th class="text-end">{{ __('Planned') }}</th><th class="text-end">{{ __('Received') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@forelse($orders as $order)<tr><td><a href="{{ route('admin.production.work-orders.show', $order) }}">{{ $order->doc_num }}</a></td><td>{{ $order->production_order_date?->toDateString() }}</td><td>{{ __('production_execution.source_types.'.$order->source_type) }}</td><td>{{ $order->salesOrder?->doc_num }}</td><td class="text-end">{{ $order->lines->sum('base_quantity') }}</td><td class="text-end">{{ $order->lines->sum('received_base_quantity') }}</td><td>{{ __('production_execution.statuses.'.$order->status) }}</td></tr>@empty<tr><td colspan="7" class="text-center text-muted">{{ __('No production orders match the filters.') }}</td></tr>@endforelse</tbody></table></div></div>
-
-<div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Run Performance — Plan vs Actual, Waste and Yield') }}</h5></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Run') }}</th><th>{{ __('Order / Sales') }}</th><th>{{ __('Stage') }}</th><th>{{ __('Fixed Asset') }}</th><th>{{ __('Product') }}</th><th>{{ __('production_execution.fields.actual_start_at') }}</th><th>{{ __('production_execution.fields.actual_end_at') }}</th><th class="text-end">{{ __('production_execution.fields.actual_duration') }}</th><th class="text-end">{{ __('production_execution.fields.total_labor_hours') }}</th><th class="text-end">{{ __('Planned') }}</th><th class="text-end">{{ __('Good') }}</th><th class="text-end">{{ __('Rejected') }}</th><th class="text-end">{{ __('Rework') }}</th><th class="text-end">{{ __('Scrap') }}</th><th class="text-end">{{ __('Yield %') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@forelse($runs as $run)<tr><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->run_number }}</a></td><td>{{ $run->order?->doc_num }} / {{ $run->order?->salesOrder?->doc_num }}</td><td>{{ $run->stageSnapshot?->stage_name }}</td><td>{{ $run->fixedAsset?->asset_name }}</td><td>{{ $run->product?->name }}</td><td>{{ $run->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</td><td>{{ $run->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</td><td class="text-end">{{ $run->actualDurationHours() ?? '—' }}</td><td class="text-end">{{ $run->totalLaborHours() }}</td><td class="text-end">{{ $run->planned_base_quantity }}</td><td class="text-end">{{ $run->good_base_quantity }}</td><td class="text-end">{{ $run->rejected_base_quantity }}</td><td class="text-end">{{ $run->rework_base_quantity }}</td><td class="text-end">{{ $run->scrap_base_quantity }}</td><td class="text-end">{{ $run->yield_percent }}</td><td>{{ __('production_execution.statuses.'.$run->status) }}</td></tr>@empty<tr><td colspan="16" class="text-center text-muted">{{ __('No runs match the filters.') }}</td></tr>@endforelse</tbody><tfoot><tr class="fw-bold"><td colspan="9">{{ __('Total') }}</td><td class="text-end">{{ $kpis['planned_base_quantity'] }}</td><td class="text-end">{{ $kpis['good_base_quantity'] }}</td><td colspan="5"></td></tr></tfoot></table></div></div>
-
-<div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('production_execution.quality.stage_inspections') }}</h5></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('production_execution.fields.document') }}</th><th>{{ __('production_execution.fields.sampled_at') }}</th><th>{{ __('production_execution.fields.run') }}</th><th>{{ __('production_execution.fields.stage') }}</th><th>{{ __('production_execution.fields.inspection_type') }}</th><th>{{ __('production_execution.fields.result') }}</th><th>{{ __('production_execution.fields.disposition') }}</th><th>{{ __('production_execution.fields.affected_quantity') }}</th><th>{{ __('production_execution.fields.attachments') }}</th><th>{{ __('production_execution.fields.status') }}</th></tr></thead><tbody>@forelse($qualityInspections as $inspection)<tr><td><a href="{{ route('admin.production.quality.show', $inspection->getKey()) }}">{{ $inspection->doc_num }}</a></td><td>{{ $inspection->sampled_at?->format('Y-m-d H:i') }}</td><td>{{ $inspection->run?->run_number }}</td><td>{{ $inspection->stageSnapshot?->stage_name }}</td><td>{{ $inspection->qualityType?->name }}</td><td>{{ __('production_execution.quality_results.'.$inspection->result) }}</td><td>{{ __('production_execution.quality_dispositions.'.($inspection->disposition ?: 'hold')) }}</td><td>{{ $inspection->affected_base_quantity ?? '—' }}</td><td>{{ count($inspection->evidence ?? []) }}</td><td>{{ __('production_execution.statuses.'.$inspection->status) }}</td></tr>@empty<tr><td colspan="10" class="text-center text-muted">{{ __('production_execution.quality.no_inspections') }}</td></tr>@endforelse</tbody></table></div></div>
-
-<div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('Material Requirements, Consumption and Variance') }}</h5></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Run') }}</th><th>{{ __('Material') }}</th><th class="text-end">{{ __('Planned') }}</th><th class="text-end">{{ __('Issued total') }}</th><th class="text-end">{{ __('Returned') }}</th><th class="text-end">{{ __('Consumed') }}</th><th class="text-end">{{ __('Waste') }}</th><th class="text-end">{{ __('Qty variance') }}</th><th class="text-end">{{ __('Accountability variance') }}</th>@if($canViewFinancial)<th class="text-end">{{ __('Planned cost') }}</th><th class="text-end">{{ __('Actual cost') }}</th><th class="text-end">{{ __('Waste cost') }}</th><th class="text-end">{{ __('Cost variance') }}</th>@endif</tr></thead><tbody>@forelse($materials as $line)<tr><td>{{ $line->run?->run_number }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td class="text-end">{{ $line->planned_quantity }}</td><td class="text-end">{{ $line->issued_total_quantity }}</td><td class="text-end">{{ $line->returned_quantity }}</td><td class="text-end">{{ $line->consumed_quantity }}</td><td class="text-end">{{ $line->waste_quantity }}</td><td class="text-end">{{ $line->quantity_variance }}</td><td class="text-end">{{ $line->accountability_variance }}</td>@if($canViewFinancial)<td class="text-end">{{ $line->planned_cost }}</td><td class="text-end">{{ $line->actual_cost }}</td><td class="text-end">{{ $line->waste_cost }}</td><td class="text-end">{{ $line->cost_variance }}</td>@endif</tr>@empty<tr><td colspan="{{ $canViewFinancial ? 13 : 9 }}" class="text-center text-muted">{{ __('No material requirements match the filters.') }}</td></tr>@endforelse</tbody></table></div></div>
-
-<div class="card mb-3">
-    <div class="card-header"><h5 class="mb-0">{{ __('Finished Goods Receipts and Traceability') }}</h5></div>
-    <div class="table-responsive">
-        <table class="table table-sm mb-0">
-            <thead><tr><th>{{ __('Receipt') }}</th><th>{{ __('Date') }}</th><th>{{ __('Run') }}</th><th>{{ __('Order / Sales') }}</th><th>{{ __('Product') }}</th><th class="text-end">{{ __('Quantity') }}</th>@if($canViewFinancial)<th class="text-end">{{ __('Value') }}</th><th>{{ __('Journal') }}</th>@endif</tr></thead>
-            <tbody>
-                @forelse($finishedGoodsReceipts as $document)
-                    @foreach($document->lines as $line)
-                        <tr><td>{{ $document->doc_num }}</td><td>{{ $document->document_date?->toDateString() }}</td><td>{{ $document->productionRun?->run_number }}</td><td>{{ $document->productionRun?->order?->doc_num }} / {{ $document->productionRun?->order?->salesOrder?->doc_num }}</td><td>{{ $line->product?->name }}</td><td class="text-end">{{ $line->base_quantity }}</td>@if($canViewFinancial)<td class="text-end">{{ $line->total_cost }}</td><td>{{ $document->journalEntry?->doc_num }}</td>@endif</tr>
-                    @endforeach
-                @empty
-                    <tr><td colspan="{{ $canViewFinancial ? 8 : 6 }}" class="text-center text-muted">{{ __('No finished goods receipts match the filters.') }}</td></tr>
-                @endforelse
-            </tbody>
-        </table>
+        @if($section === 'overview')
+            <div class="row g-3 mb-3">
+                @foreach($kpis as $label => $value)
+                    <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body py-3"><div class="fw-semi-bold text-700">{{ __('production_execution.reports.kpis.'.$label) }}</div><div class="fs-4 fw-bold mt-1" dir="ltr">{{ $numbers->format($value) }}</div></div></div></div>
+                @endforeach
+            </div>
+            <div class="row g-3">
+                @foreach(array_diff(array_keys($sectionRoutes), ['overview']) as $reportSection)
+                    <div class="col-md-6 col-xl-4"><a class="card h-100 text-decoration-none" href="{{ route($sectionRoutes[$reportSection], request()->only(['from', 'to', 'status'])) }}"><div class="card-body d-flex justify-content-between align-items-center gap-3"><h6 class="mb-0 text-900">{{ __('production_execution.reports.sections.'.$reportSection) }}</h6><span class="fas fa-chevron-left text-primary rtl-flip"></span></div></a></div>
+                @endforeach
+            </div>
+        @elseif($section === 'orders')
+            <x-production.report-card :title="__('production_execution.reports.sections.orders')" :empty-message="__('production_execution.reports.empty.orders')" :has-rows="$orders->isNotEmpty()" :columns="7">
+                <x-slot:head><th>{{ __('production_execution.reports.columns.order') }}</th><th>{{ __('production_execution.reports.columns.date') }}</th><th>{{ __('production_execution.reports.columns.source') }}</th><th>{{ __('production_execution.reports.columns.sales_order') }}</th><th class="text-end">{{ __('production_execution.reports.columns.planned_quantity') }}</th><th class="text-end">{{ __('production_execution.reports.columns.received_quantity') }}</th><th>{{ __('production_execution.reports.columns.status') }}</th></x-slot:head>
+                @foreach($orders as $order)<tr><td><a href="{{ route('admin.production.work-orders.show', $order) }}">{{ $order->doc_num }}</a></td><td>{{ $dates->formatDate($order->production_order_date) }}</td><td>{{ __('production_execution.source_types.'.$order->source_type) }}</td><td>{{ $order->salesOrder?->doc_num ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($order->lines->sum('base_quantity')) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($order->lines->sum('received_base_quantity')) }}</td><td>{{ __('production_execution.statuses.'.$order->status) }}</td></tr>@endforeach
+            </x-production.report-card>
+        @elseif($section === 'runs')
+            <x-production.report-card :title="__('production_execution.reports.sections.runs')" :empty-message="__('production_execution.reports.empty.runs')" :has-rows="$runs->isNotEmpty()" :columns="12">
+                <x-slot:head><th>{{ __('production_execution.reports.columns.run') }}</th><th>{{ __('production_execution.reports.columns.order') }}</th><th>{{ __('production_execution.reports.columns.stage') }}</th><th>{{ __('production_execution.reports.columns.fixed_asset') }}</th><th>{{ __('production_execution.reports.columns.product') }}</th><th class="text-end">{{ __('production_execution.reports.columns.planned') }}</th><th class="text-end">{{ __('production_execution.reports.columns.good') }}</th><th class="text-end">{{ __('production_execution.reports.columns.rejected') }}</th><th class="text-end">{{ __('production_execution.reports.columns.rework') }}</th><th class="text-end">{{ __('production_execution.reports.columns.scrap') }}</th><th class="text-end">{{ __('production_execution.reports.columns.yield_percent') }}</th><th>{{ __('production_execution.reports.columns.status') }}</th></x-slot:head>
+                @foreach($runs as $run)<tr><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->run_number }}</a></td><td>{{ $run->order?->doc_num }}</td><td>{{ $run->stageSnapshot?->stage_name ?: '—' }}</td><td>{{ $run->fixedAsset?->asset_name ?: '—' }}</td><td>{{ $run->product?->name }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->planned_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->good_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->rejected_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->rework_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->scrap_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($run->yield_percent) }}</td><td>{{ __('production_execution.statuses.'.$run->status) }}</td></tr>@endforeach
+            </x-production.report-card>
+        @elseif($section === 'materials')
+            <x-production.report-card :title="__('production_execution.reports.sections.materials')" :empty-message="__('production_execution.reports.empty.materials')" :has-rows="$materials->isNotEmpty()" :columns="9">
+                <x-slot:head><th>{{ __('production_execution.reports.columns.run') }}</th><th>{{ __('production_execution.reports.columns.material') }}</th><th class="text-end">{{ __('production_execution.reports.columns.planned') }}</th><th class="text-end">{{ __('production_execution.reports.columns.issued') }}</th><th class="text-end">{{ __('production_execution.reports.columns.returned') }}</th><th class="text-end">{{ __('production_execution.reports.columns.consumed') }}</th><th class="text-end">{{ __('production_execution.reports.columns.waste') }}</th><th class="text-end">{{ __('production_execution.reports.columns.quantity_variance') }}</th><th class="text-end">{{ __('production_execution.reports.columns.accountability_variance') }}</th></x-slot:head>
+                @foreach($materials as $line)<tr><td>{{ $line->run?->run_number }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->planned_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->issued_total_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->returned_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->consumed_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->waste_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->quantity_variance) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->accountability_variance) }}</td></tr>@endforeach
+            </x-production.report-card>
+        @elseif($section === 'quality')
+            <x-production.report-card :title="__('production_execution.reports.sections.quality')" :empty-message="__('production_execution.reports.empty.quality')" :has-rows="$qualityInspections->isNotEmpty()" :columns="9">
+                <x-slot:head><th>{{ __('production_execution.reports.columns.inspection') }}</th><th>{{ __('production_execution.reports.columns.sampled_at') }}</th><th>{{ __('production_execution.reports.columns.run') }}</th><th>{{ __('production_execution.reports.columns.stage') }}</th><th>{{ __('production_execution.reports.columns.inspection_type') }}</th><th>{{ __('production_execution.reports.columns.result') }}</th><th>{{ __('production_execution.reports.columns.disposition') }}</th><th class="text-end">{{ __('production_execution.reports.columns.affected_quantity') }}</th><th>{{ __('production_execution.reports.columns.status') }}</th></x-slot:head>
+                @foreach($qualityInspections as $inspection)<tr><td><a href="{{ route('admin.production.quality.show', $inspection) }}">{{ $inspection->doc_num }}</a></td><td>{{ $dates->formatDateTime($inspection->sampled_at) }}</td><td>{{ $inspection->run?->run_number }}</td><td>{{ $inspection->stageSnapshot?->stage_name ?: '—' }}</td><td>{{ $inspection->qualityType?->name ?: '—' }}</td><td>{{ __('production_execution.quality_results.'.$inspection->result) }}</td><td>{{ __('production_execution.quality_dispositions.'.($inspection->disposition ?: 'hold')) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($inspection->affected_base_quantity) ?: '—' }}</td><td>{{ __('production_execution.statuses.'.$inspection->status) }}</td></tr>@endforeach
+            </x-production.report-card>
+        @elseif($section === 'receipts')
+            @php($receiptLineCount = $finishedGoodsReceipts->sum(fn ($document) => $document->lines->count()))
+            <x-production.report-card :title="__('production_execution.reports.sections.receipts')" :empty-message="__('production_execution.reports.empty.receipts')" :has-rows="$receiptLineCount > 0" :columns="7">
+                <x-slot:head><th>{{ __('production_execution.reports.columns.receipt') }}</th><th>{{ __('production_execution.reports.columns.date') }}</th><th>{{ __('production_execution.reports.columns.run') }}</th><th>{{ __('production_execution.reports.columns.order') }}</th><th>{{ __('production_execution.reports.columns.store') }}</th><th>{{ __('production_execution.reports.columns.product') }}</th><th class="text-end">{{ __('production_execution.reports.columns.quantity') }}</th></x-slot:head>
+                @foreach($finishedGoodsReceipts as $document)@foreach($document->lines as $line)<tr><td><a href="{{ route('admin.inventory.documents.show', $document) }}">{{ $document->doc_num }}</a></td><td>{{ $dates->formatDate($document->document_date) }}</td><td>{{ $document->productionRun?->run_number }}</td><td>{{ $document->productionRun?->order?->doc_num }}</td><td>{{ $document->branchStore?->name }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->base_quantity) }}</td></tr>@endforeach @endforeach
+            </x-production.report-card>
+        @endif
     </div>
-</div>
-
-@if($canViewFinancial)<div class="card"><div class="card-header"><h5 class="mb-0">{{ __('Production Cost and Work in Process') }}</h5></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Run') }}</th><th>{{ __('Order') }}</th><th class="text-end">{{ __('Issued') }}</th><th class="text-end">{{ __('Returned') }}</th><th class="text-end">{{ __('Waste') }}</th><th class="text-end">{{ __('Capitalizable') }}</th><th class="text-end">{{ __('Finished goods') }}</th><th class="text-end">{{ __('WIP') }}</th></tr></thead><tbody>@forelse($runCosts as $row)<tr><td>{{ $row->run?->run_number }}</td><td>{{ $row->run?->order?->doc_num }}</td><td class="text-end">{{ $row->issued }}</td><td class="text-end">{{ $row->returned }}</td><td class="text-end">{{ $row->waste }}</td><td class="text-end">{{ $row->capitalizable }}</td><td class="text-end">{{ $row->finished_goods }}</td><td class="text-end">{{ $row->wip }}</td></tr>@empty<tr><td colspan="8" class="text-center text-muted">{{ __('No production cost movements.') }}</td></tr>@endforelse</tbody></table></div></div>@endif
-@include('modules.sales.cycle.partials.production-demand-summary')
-@include('modules.sales.cycle.partials.backorders')
-</div>
 @endsection
 
-@push('styles')<link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Production/execution.css') }}">@endpush
-@push('scripts')<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Production/execution.js') }}"></script>@endpush
+@push('styles')
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Production/execution.css') }}">
+@endpush
+@push('scripts')
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Production/execution.js') }}"></script>
+@endpush

@@ -1,6 +1,26 @@
 <?php
 
 return [
+    'personal' => [
+        'title' => 'My work dashboard',
+        'summary' => 'You have :required open items, including :overdue overdue and :approvals awaiting your decision.',
+        'last_updated' => 'Last updated: :time', 'stale' => 'Update failed; showing the last successful data.',
+        'required_work' => 'Required from me', 'recent_updates' => 'Recent updates for me',
+        'empty_work' => 'No open work is currently assigned to you.', 'empty_updates' => 'No recent updates.',
+        'source_unavailable' => '“:source” is unavailable and was not shown as a misleading zero.',
+        'cards' => ['open_tasks' => 'Open tasks', 'due_today' => 'Due today', 'overdue' => 'Overdue', 'approvals' => 'Awaiting my decision', 'unread' => 'New notifications'],
+        'meta' => ['open_tasks' => 'From current task states', 'due_today' => 'Due during today', 'overdue' => 'Still open after due time', 'approvals' => 'No requests await your decision', 'approvals_oldest' => 'Oldest has waited :time', 'unread' => 'Reading notifications does not complete work'],
+        'sources' => [
+            'purchase_requisitions' => 'Purchase requisitions to approve', 'purchase_orders' => 'Purchase orders to approve',
+            'material_requests' => 'Material requests to approve', 'quality' => 'Inspections to review',
+            'expenses' => 'Amount requests to approve', 'expenses_payment' => 'Amount requests ready for payment',
+            'maintenance' => 'Maintenance orders to approve', 'sales_orders' => 'Sales orders to approve',
+            'credit_holds' => 'Credit-held sales orders', 'sales_returns' => 'Returns to authorize',
+            'return_receipts' => 'Returns ready to receive', 'return_inspections' => 'Returns to inspect',
+            'hr_requests' => 'HR requests to review',
+        ],
+        'work' => ['document' => 'Document :document', 'waiting_since' => 'Waiting :time', 'task' => 'Task assigned to you', 'due' => 'Due: :time', 'no_due_date' => 'No due date', 'open' => 'Open'],
+    ],
     'title' => 'Dashboard',
     'create_something_beautiful' => 'Create Something Beautiful.',
     'getting_started' => 'Getting started',

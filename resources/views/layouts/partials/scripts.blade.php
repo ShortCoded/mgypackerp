@@ -71,13 +71,28 @@
             'jitterMaxMs' => 10000,
             'messages' => [
                 'empty' => __('notifications.empty'),
+                'updatedNow' => __('notifications.updated_now'),
+                'updateFailed' => __('notifications.update_failed'),
+                'batchReceived' => __('notifications.batch_received'),
             ],
         ];
         $appNotificationSound = [
-            'source' => $erpAsset->url('assets/sounds/notification.mp3'),
-            'storageKey' => 'erp_notification_sound_enabled',
-            'throttleMs' => 3000,
-            'volume' => 0.32,
+            'sources' => [
+                'chat' => $erpAsset->url('assets/sounds/chat.mp3'),
+                'action' => $erpAsset->url('assets/sounds/action.mp3'),
+                'urgent' => $erpAsset->url('assets/sounds/urgent.mp3'),
+            ],
+            'enabledStorageKey' => 'erp_notification_sound_enabled_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
+            'volumeStorageKey' => 'erp_notification_sound_volume_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
+            'lastTestStorageKey' => 'erp_notification_sound_last_test_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
+            'throttleMs' => 2500,
+            'defaultVolume' => 0.55,
+            'messages' => [
+                'ready' => __('notifications.sound.ready'),
+                'needsActivation' => __('notifications.sound.needs_activation'),
+                'blocked' => __('notifications.sound.blocked'),
+                'lastTest' => __('notifications.sound.last_test'),
+            ],
         ];
         $webPushConfigured = filled(config('webpush.vapid.subject'))
             && filled(config('webpush.vapid.public_key'))
@@ -85,11 +100,7 @@
         $appPushNotifications = [
             'enabled' => $appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled'] && $webPushConfigured,
             'publicKey' => $webPushConfigured ? config('webpush.vapid.public_key') : null,
-            'coordinationIdentity' => hash_hmac(
-                'sha256',
-                'push-notifications:v1|' . (string) auth()->user()->getRouteKey(),
-                (string) config('app.key'),
-            ),
+            'coordinationIdentity' => $appSession['identity'],
             'coordinationTtlMs' => 24 * 60 * 60 * 1000,
             'storeUrl' => route('admin.notifications.push-subscriptions.store', [], false),
             'destroyUrl' => route('admin.notifications.push-subscriptions.destroy', [], false),
@@ -101,6 +112,9 @@
                 'denied' => __('notifications.push.denied'),
                 'unavailable' => __('notifications.push.unavailable'),
                 'failed' => __('notifications.push.failed'),
+                'permissionDefault' => __('notifications.push.permission_default'),
+                'subscriptionActive' => __('notifications.push.subscription_active'),
+                'subscriptionInactive' => __('notifications.push.subscription_inactive'),
             ],
         ];
         $appNavigationSearch = [

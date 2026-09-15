@@ -21,7 +21,12 @@ class InventoryDocumentsDataTable
     {
         $context = $this->context->snapshot($request);
         $dateFormat = app(SettingService::class)->dateFormat();
-        $query = InventoryDocument::query()
+        $query = match ($request->user()?->can('inventory.documents.view_trashed') ? $request->string('trash_filter')->toString() : 'active') {
+            'trashed' => InventoryDocument::onlyTrashed(),
+            'all' => InventoryDocument::withTrashed(),
+            default => InventoryDocument::query(),
+        };
+        $query
             ->when(
                 $context['company_id'] && $context['financial_period_id'] && $context['branch_id'],
                 fn ($query) => $query
@@ -57,9 +62,9 @@ class InventoryDocumentsDataTable
                 }
             })
             ->editColumn('doc_num', function (InventoryDocument $record) use ($request): string {
-                $url = $record->status === InventoryDocument::StatusDraft && $request->user()?->can('inventory.documents.edit')
+                $url = ! $record->trashed() && $record->status === InventoryDocument::StatusDraft && $request->user()?->can('inventory.documents.edit')
                     ? route('admin.inventory.documents.edit', $record)
-                    : route('admin.inventory.documents.show', $record);
+                    : ($record->trashed() ? '#' : route('admin.inventory.documents.show', $record));
 
                 return '<a class="fw-semibold dt-code-value" data-row-primary-link href="'.e($url).'">'.e($record->doc_num).'</a>';
             })

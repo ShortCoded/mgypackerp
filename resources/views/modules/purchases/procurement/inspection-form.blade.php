@@ -67,9 +67,9 @@
                                 <th>{{ __('Unit') }}</th>
                                 <th>{{ __('Delivery schedule') }}</th>
                                 <th class="text-end">{{ __('Available to inspect') }}</th>
-                                <th>{{ __('Delivered for inspection') }}</th>
-                                <th>{{ __('Accepted') }}</th>
-                                <th>{{ __('Rejected') }}</th>
+                                <th>{{ __('Delivered for inspection') }} <span class="text-danger">*</span></th>
+                                <th>{{ __('Accepted') }} <span class="text-danger">*</span></th>
+                                <th>{{ __('Rejected') }} <span class="text-danger">*</span></th>
                                 <th>{{ __('Supplier lot') }}</th>
                                 <th>{{ __('Manufacture date') }}</th>
                                 <th>{{ __('Expiry date') }}</th>

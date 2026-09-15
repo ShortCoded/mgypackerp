@@ -9,6 +9,7 @@ use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
@@ -32,16 +33,27 @@ class ProductionExpenseRequestService
             $context = $this->requiredContext();
             $locked = ProductionRun::query()->lockForUpdate()->findOrFail($run->getKey());
             $this->assertContext($locked, $context);
+            if (in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.expense_run_closed'));
+            }
+
+            $paymentChannel = $data['payment_channel'] ?? 'cashbox';
             $currency = Currency::query()->forCompany($context['company_id'])->active()->findOrFail($data['currency_id']);
-            $cashbox = filled($data['cashbox_id'] ?? null)
+            $cashbox = $paymentChannel === 'cashbox' && filled($data['cashbox_id'] ?? null)
                 ? Cashbox::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->active()->findOrFail($data['cashbox_id'])
                 : null;
-            $account = filled($data['expense_account_id'] ?? null)
-                ? Account::query()->forCompany($context['company_id'])->active()->where('is_postable', true)->findOrFail($data['expense_account_id'])
+            $account = $paymentChannel === 'cashbox' && filled($data['expense_account_id'] ?? null)
+                ? Account::query()->forCompany($context['company_id'])->active()->where('is_postable', true)->where('account_type', Account::TypeExpense)->findOrFail($data['expense_account_id'])
+                : null;
+            $bankAccount = $paymentChannel === 'bank' && filled($data['bank_account_id'] ?? null)
+                ? BankAccount::query()->forCompany($context['company_id'])->active()->findOrFail($data['bank_account_id'])
                 : null;
 
-            if (($data['payment_channel'] ?? 'cashbox') === 'cashbox' && (! $cashbox || ! $account)) {
+            if ($paymentChannel === 'cashbox' && (! $cashbox || ! $account)) {
                 throw new DomainException(__('production_execution.messages.expense_cashbox_account_required'));
+            }
+            if ($paymentChannel === 'bank' && ! $bankAccount) {
+                throw new DomainException(__('production_execution.messages.expense_bank_account_required'));
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -59,9 +71,9 @@ class ProductionExpenseRequestService
                 'request_date' => now()->toDateString(),
                 'amount' => $data['amount'],
                 'currency_id' => $currency->getKey(),
-                'payment_channel' => $data['payment_channel'] ?? 'cashbox',
+                'payment_channel' => $paymentChannel,
                 'cashbox_id' => $cashbox?->getKey(),
-                'bank_account_id' => $data['bank_account_id'] ?? null,
+                'bank_account_id' => $bankAccount?->getKey(),
                 'expense_account_id' => $account?->getKey(),
                 'reason' => trim($data['reason']),
                 'notes' => $data['notes'] ?? null,
@@ -70,6 +82,99 @@ class ProductionExpenseRequestService
                 'submitted_at' => now(),
                 'created_by' => auth()->id(),
             ])->refresh();
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function update(ProductionExpenseRequest $request, array $data): ProductionExpenseRequest
+    {
+        return DB::transaction(function () use ($request, $data): ProductionExpenseRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionExpenseRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if (! $locked->isEditable() || $locked->production_run_id === null) {
+                throw new DomainException(__('production_execution.messages.expense_submitted_edit_only'));
+            }
+
+            $run = ProductionRun::query()
+                ->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])
+                ->lockForUpdate()
+                ->findOrFail($data['production_run_id']);
+            $this->assertContext($run, $context);
+            $paymentChannel = $data['payment_channel'];
+            $currency = Currency::query()->forCompany($context['company_id'])->active()->findOrFail($data['currency_id']);
+            $cashbox = $paymentChannel === 'cashbox' && filled($data['cashbox_id'] ?? null)
+                ? Cashbox::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->active()->findOrFail($data['cashbox_id'])
+                : null;
+            $account = $paymentChannel === 'cashbox' && filled($data['expense_account_id'] ?? null)
+                ? Account::query()->forCompany($context['company_id'])->active()->where('is_postable', true)->where('account_type', Account::TypeExpense)->findOrFail($data['expense_account_id'])
+                : null;
+            $bankAccount = $paymentChannel === 'bank' && filled($data['bank_account_id'] ?? null)
+                ? BankAccount::query()->forCompany($context['company_id'])->active()->findOrFail($data['bank_account_id'])
+                : null;
+
+            if ($paymentChannel === 'cashbox' && (! $cashbox || ! $account)) {
+                throw new DomainException(__('production_execution.messages.expense_cashbox_account_required'));
+            }
+            if ($paymentChannel === 'bank' && ! $bankAccount) {
+                throw new DomainException(__('production_execution.messages.expense_bank_account_required'));
+            }
+
+            $locked->update([
+                'production_order_id' => $run->production_order_id,
+                'production_run_id' => $run->getKey(),
+                'amount' => $data['amount'],
+                'currency_id' => $currency->getKey(),
+                'payment_channel' => $paymentChannel,
+                'cashbox_id' => $cashbox?->getKey(),
+                'bank_account_id' => $bankAccount?->getKey(),
+                'expense_account_id' => $account?->getKey(),
+                'reason' => trim($data['reason']),
+                'notes' => $data['notes'] ?? null,
+                'updated_by' => auth()->id(),
+            ]);
+
+            return $locked->refresh()->load(['run', 'currency', 'cashbox', 'bankAccount', 'expenseAccount']);
+        });
+    }
+
+    public function delete(ProductionExpenseRequest $request): void
+    {
+        DB::transaction(function () use ($request): void {
+            $context = $this->requiredContext();
+            $locked = ProductionExpenseRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if (! $locked->isEditable() || $locked->production_run_id === null) {
+                throw new DomainException(__('production_execution.messages.expense_submitted_edit_only'));
+            }
+
+            $locked->update(['deleted_by' => auth()->id()]);
+            $locked->delete();
+        });
+    }
+
+    public function restore(ProductionExpenseRequest $request): ProductionExpenseRequest
+    {
+        return DB::transaction(function () use ($request): ProductionExpenseRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionExpenseRequest::withTrashed()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if (! $locked->trashed() || $locked->status !== ProductionExpenseRequest::StatusSubmitted || $locked->production_run_id === null) {
+                throw new DomainException(__('production_execution.messages.expense_not_restorable'));
+            }
+
+            $run = ProductionRun::query()
+                ->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])
+                ->lockForUpdate()
+                ->findOrFail($locked->production_run_id);
+            $this->assertContext($run, $context);
+            $locked->restore();
+            $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
+
+            return $locked->refresh();
         });
     }
 
@@ -91,8 +196,14 @@ class ProductionExpenseRequestService
             $account = filled($data['expense_account_id'] ?? null)
                 ? Account::query()->forCompany($context['company_id'])->active()->where('is_postable', true)->findOrFail($data['expense_account_id'])
                 : null;
+            $bankAccount = filled($data['bank_account_id'] ?? null)
+                ? BankAccount::query()->forCompany($context['company_id'])->active()->findOrFail($data['bank_account_id'])
+                : null;
             if (($data['payment_channel'] ?? 'cashbox') === 'cashbox' && (! $cashbox || ! $account)) {
                 throw new DomainException(__('production_execution.messages.expense_cashbox_account_required'));
+            }
+            if (($data['payment_channel'] ?? 'cashbox') === 'bank' && ! $bankAccount) {
+                throw new DomainException(__('production_execution.messages.expense_bank_account_required'));
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -111,7 +222,7 @@ class ProductionExpenseRequestService
                 'currency_id' => $currency->getKey(),
                 'payment_channel' => $data['payment_channel'] ?? 'cashbox',
                 'cashbox_id' => $cashbox?->getKey(),
-                'bank_account_id' => $data['bank_account_id'] ?? null,
+                'bank_account_id' => $bankAccount?->getKey(),
                 'expense_account_id' => $account?->getKey(),
                 'reason' => trim($data['reason']),
                 'notes' => $data['notes'] ?? null,
@@ -120,6 +231,57 @@ class ProductionExpenseRequestService
                 'submitted_at' => now(),
                 'created_by' => auth()->id(),
             ])->refresh();
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function updateForMaintenance(ProductionExpenseRequest $request, array $data): ProductionExpenseRequest
+    {
+        return DB::transaction(function () use ($request, $data): ProductionExpenseRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionExpenseRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            if ($locked->maintenance_work_order_id === null || $locked->status !== ProductionExpenseRequest::StatusSubmitted) {
+                throw new DomainException(__('maintenance.messages.expense_not_editable'));
+            }
+
+            $workOrder = MaintenanceWorkOrder::query()->lockForUpdate()->findOrFail($data['maintenance_work_order_id']);
+            $this->assertContext($workOrder, $context);
+            if (in_array($workOrder->status, [MaintenanceWorkOrder::StatusCompleted, MaintenanceWorkOrder::StatusClosed, MaintenanceWorkOrder::StatusCancelled], true)) {
+                throw new DomainException(__('maintenance.messages.expense_order_closed'));
+            }
+
+            $currency = Currency::query()->forCompany($context['company_id'])->active()->findOrFail($data['currency_id']);
+            $cashbox = filled($data['cashbox_id'] ?? null)
+                ? Cashbox::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->active()->findOrFail($data['cashbox_id'])
+                : null;
+            $account = filled($data['expense_account_id'] ?? null)
+                ? Account::query()->forCompany($context['company_id'])->active()->where('is_postable', true)->findOrFail($data['expense_account_id'])
+                : null;
+            $bankAccount = filled($data['bank_account_id'] ?? null)
+                ? BankAccount::query()->forCompany($context['company_id'])->active()->findOrFail($data['bank_account_id'])
+                : null;
+            if (($data['payment_channel'] ?? 'cashbox') === 'cashbox' && (! $cashbox || ! $account)) {
+                throw new DomainException(__('production_execution.messages.expense_cashbox_account_required'));
+            }
+            if (($data['payment_channel'] ?? 'cashbox') === 'bank' && ! $bankAccount) {
+                throw new DomainException(__('production_execution.messages.expense_bank_account_required'));
+            }
+
+            $locked->update([
+                'maintenance_work_order_id' => $workOrder->getKey(),
+                'amount' => $data['amount'],
+                'currency_id' => $currency->getKey(),
+                'payment_channel' => $data['payment_channel'],
+                'cashbox_id' => $cashbox?->getKey(),
+                'bank_account_id' => $bankAccount?->getKey(),
+                'expense_account_id' => $account?->getKey(),
+                'reason' => trim($data['reason']),
+                'notes' => $data['notes'] ?? null,
+                'updated_by' => auth()->id(),
+            ]);
+
+            return $locked->refresh()->load(['maintenanceWorkOrder.asset', 'maintenanceWorkOrder.mold', 'currency', 'cashbox', 'bankAccount', 'expenseAccount']);
         });
     }
 

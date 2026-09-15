@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
 
 class MaintenanceMaterialRequest extends Model
@@ -48,6 +49,18 @@ class MaintenanceMaterialRequest extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function resolveRouteBinding($value, $field = null): ?self
+    {
+        $context = app(OperatingContextService::class)->snapshot(request());
+
+        return $context['company_id'] && $context['financial_period_id'] && $context['branch_id']
+            ? $this->newQuery()
+                ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+                ->where($field ?? $this->getRouteKeyName(), $value)
+                ->first()
+            : null;
     }
 
     public function workOrder(): BelongsTo

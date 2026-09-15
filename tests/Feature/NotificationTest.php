@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Modules\Auth\Models\AuthLog;
@@ -164,8 +165,16 @@ test('notification poll keeps its contract and ordering within its database budg
         ->and($payload['notifications'])->toHaveCount(10)
         ->and(array_keys($payload['notifications'][0]))->toBe([
             'id',
+            'sequence',
+            'event_id',
             'type',
             'category',
+            'module',
+            'severity',
+            'requires_action',
+            'sound_key',
+            'suppress_in_app_alert',
+            'conversation_uuid',
             'title',
             'body',
             'url',
@@ -244,6 +253,29 @@ test('notification polling assets load only in authenticated app layout', functi
         ->assertOk()
         ->assertDontSee('data-notifications-root', false)
         ->assertDontSee('assets/js/modules/Core/notifications.js', false);
+});
+
+test('notification diagnostics are permission protected and expose non-sensitive runtime states', function () {
+    $unauthorized = notificationActor();
+
+    $this->actingAs($unauthorized)
+        ->get(route('admin.notifications.diagnostics'))
+        ->assertForbidden();
+
+    $operator = notificationActor(['settings.pwa.view']);
+    $this->actingAs($operator);
+    config()->set('webpush.vapid.private_key', 'never-visible-diagnostic-key');
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+
+    $runtime = Cache::get('notifications.runtime.last_dispatch');
+    expect($runtime)->toBeArray()
+        ->and($runtime['status'])->toBe('successful')
+        ->and($runtime)->not->toHaveKeys(['private_key', 'subscriptions']);
+
+    $this->get(route('admin.notifications.diagnostics'))
+        ->assertOk()
+        ->assertSee(__('notifications.diagnostics.title'))
+        ->assertDontSee('never-visible-diagnostic-key');
 });
 
 test('notification can be marked read only by recipient', function () {
@@ -336,4 +368,66 @@ test('updating board task assignment notifies newly added assignee once', functi
         ->where('user_id', $secondAssignee->getKey())
         ->where('type', 'task.assigned')
         ->count())->toBe(1);
+});
+
+test('scheduled task reminders cover approaching due and overdue without duplicate runs', function () {
+    Carbon::setTestNow(Carbon::create(2026, 9, 15, 9));
+    $assignee = notificationActor();
+    $task = UserTask::factory()->assignedTo($assignee)->create([
+        'status' => UserTask::StatusTodo,
+        'due_at' => now()->addMinutes(20),
+    ]);
+
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    expect(UserNotification::query()->where('user_id', $assignee->getKey())->where('type', 'task.due_soon')->count())->toBe(1);
+
+    $this->travel(21)->minutes();
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    expect(UserNotification::query()->where('user_id', $assignee->getKey())->where('type', 'task.due')->count())->toBe(1)
+        ->and(UserNotification::query()->where('user_id', $assignee->getKey())->where('type', 'task.overdue')->count())->toBe(0);
+
+    $this->travel(10)->minutes();
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    expect(UserNotification::query()->where('user_id', $assignee->getKey())->where('type', 'task.overdue')->count())->toBe(1);
+
+    $task->forceFill(['status' => UserTask::StatusDone, 'completed_at' => now()])->save();
+    $this->travel(1)->day();
+    $this->artisan('notifications:dispatch-due')->assertSuccessful();
+    expect(UserNotification::query()->where('user_id', $assignee->getKey())->count())->toBe(3);
+
+    Carbon::setTestNow();
+});
+
+test('task due dispatch catches scheduler downtime and scans beyond duplicate reminders', function () {
+    Carbon::setTestNow(Carbon::create(2026, 9, 15, 12));
+    $assignee = notificationActor();
+    $alreadyDispatchedTask = UserTask::factory()->assignedTo($assignee)->create([
+        'status' => UserTask::StatusTodo,
+        'due_at' => now()->subHours(3),
+    ]);
+    $waitingTask = UserTask::factory()->assignedTo($assignee)->create([
+        'status' => UserTask::StatusTodo,
+        'due_at' => now()->subHours(2),
+    ]);
+
+    UserNotification::query()->create([
+        'user_id' => $assignee->getKey(),
+        'type' => 'task.due',
+        'category' => 'task',
+        'title' => 'Already dispatched',
+        'delivered_at' => now()->subHours(3),
+        'dedupe_key' => "task.due:{$alreadyDispatchedTask->getKey()}:{$assignee->getKey()}:{$alreadyDispatchedTask->due_at?->format('YmdHis')}",
+    ]);
+
+    $this->artisan('notifications:dispatch-due --limit=1')->assertSuccessful();
+
+    expect(UserNotification::query()
+        ->where('user_id', $assignee->getKey())
+        ->where('type', 'task.due')
+        ->where('dedupe_key', "task.due:{$waitingTask->getKey()}:{$assignee->getKey()}:{$waitingTask->due_at?->format('YmdHis')}")
+        ->count())->toBe(1);
+
+    Carbon::setTestNow();
 });

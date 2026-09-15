@@ -11,7 +11,8 @@
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   const countElement = root.querySelector('[data-notifications-count]');
   const listElement = root.querySelector('[data-notifications-list]');
-  const readAllButton = root.querySelector('[data-notifications-read-all]');
+  const readAllButtons = Array.from(document.querySelectorAll('[data-notifications-read-all]'));
+  const healthElements = Array.from(document.querySelectorAll('[data-notifications-health]'));
   const coordinationIdentity = String(config.coordinationIdentity || '');
   const tabId = createTabId();
   const coordinationNamespace = `erp-notifications:${coordinationIdentity}:${String(config.pollUrl)}`;
@@ -32,7 +33,7 @@
   let inFlight = false;
   let failureCount = 0;
   let baselineReady = false;
-  let knownUnreadIds = new Set();
+  let highWaterSequence = 0;
   let lastPayload = null;
   let messageSequence = 0;
 
@@ -410,6 +411,18 @@
       return 'fas fa-tasks';
     }
 
+    if (category === 'chat') {
+      return 'fas fa-comment-alt';
+    }
+
+    if (category === 'maintenance') {
+      return 'fas fa-tools';
+    }
+
+    if (category === 'quality') {
+      return 'fas fa-clipboard-check';
+    }
+
     return 'fas fa-bell';
   }
 
@@ -488,32 +501,109 @@
     }
   }
 
-  function unreadIds(notifications) {
-    return new Set(notifications.filter(function (notification) {
-      return notification && notification.id && !notification.is_read;
-    }).map(function (notification) {
-      return String(notification.id);
-    }));
+  function notificationSequence(notification) {
+    const sequence = Number(notification?.sequence || 0);
+
+    return Number.isFinite(sequence) ? sequence : 0;
   }
 
   function notifyForNewUnread(notifications, suppressSound) {
-    const currentUnreadIds = unreadIds(notifications);
+    const highestSequence = notifications.reduce(function (highest, notification) {
+      return Math.max(highest, notificationSequence(notification));
+    }, highWaterSequence);
 
     if (!baselineReady) {
-      knownUnreadIds = currentUnreadIds;
+      highWaterSequence = highestSequence;
       baselineReady = true;
       return;
     }
 
-    const hasNewUnread = Array.from(currentUnreadIds).some(function (id) {
-      return !knownUnreadIds.has(id);
+    const newUnread = notifications.filter(function (notification) {
+      return notification && !notification.is_read && notificationSequence(notification) > highWaterSequence;
     });
 
-    knownUnreadIds = currentUnreadIds;
+    highWaterSequence = highestSequence;
 
-    if (hasNewUnread && !suppressSound && window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
-      window.AppNotificationSound.play();
+    if (!newUnread.length || suppressSound) {
+      return;
     }
+
+    const visibleNotifications = newUnread.filter(function (notification) {
+      const viewing = window.AppChatNotificationContext
+        && typeof window.AppChatNotificationContext.isViewing === 'function'
+        && window.AppChatNotificationContext.isViewing(notification);
+
+      return !viewing && notification?.suppress_in_app_alert !== true;
+    });
+
+    if (!visibleNotifications.length) {
+      return;
+    }
+
+    const soundNotification = visibleNotifications.find(function (notification) {
+      return notification.sound_key === 'urgent';
+    }) || visibleNotifications.find(function (notification) {
+      return notification.sound_key === 'action';
+    }) || visibleNotifications.find(function (notification) {
+      return notification.sound_key === 'chat';
+    });
+
+    if (soundNotification && window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
+      window.AppNotificationSound.play(soundNotification.sound_key);
+    }
+
+    if (!window.AppAlerts || typeof window.AppAlerts.toast !== 'function') {
+      return;
+    }
+
+    if (visibleNotifications.length > 3) {
+      const title = String(config.messages?.batchReceived || '')
+        .replace(':count', String(visibleNotifications.length));
+      window.AppAlerts.toast('info', title);
+      return;
+    }
+
+    visibleNotifications.forEach(showNotificationToast);
+  }
+
+  function showNotificationToast(notification) {
+    const icon = notification.severity === 'urgent'
+      ? 'warning'
+      : (notification.requires_action ? 'info' : 'success');
+
+    window.AppAlerts.toast(icon, notification.title, {
+      text: notification.body || '',
+      timer: notification.severity === 'urgent' ? 9000 : 6000,
+      didOpen: function (element) {
+        element.setAttribute('role', 'button');
+        element.setAttribute('tabindex', '0');
+        element.style.cursor = 'pointer';
+
+        function openNotification() {
+          markAsRead(notification.id, notification.url);
+        }
+
+        element.addEventListener('click', openNotification);
+        element.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openNotification();
+          }
+        });
+
+        if (window.Swal) {
+          element.addEventListener('mouseenter', window.Swal.stopTimer);
+          element.addEventListener('mouseleave', window.Swal.resumeTimer);
+        }
+      }
+    });
+  }
+
+  function renderHealth(message, failed) {
+    healthElements.forEach(function (element) {
+      element.textContent = message || '';
+      element.classList.toggle('text-danger', Boolean(failed));
+    });
   }
 
   function handleCoordinationMessage(message) {
@@ -529,6 +619,7 @@
 
       lastPayload = message.payload;
       render(message.payload, { suppressSound: true });
+      window.dispatchEvent(new CustomEvent('erp:notifications-updated', { detail: message.payload.data || {} }));
       return;
     }
 
@@ -665,13 +756,16 @@
         }
 
         failureCount = 0;
+        renderHealth(config.messages?.updatedNow || '', false);
         lastPayload = payload;
         render(payload, options);
         postCoordinationMessage({ type: 'payload', payload: payload });
+        window.dispatchEvent(new CustomEvent('erp:notifications-updated', { detail: payload.data || {} }));
       })
       .catch(function () {
         if (pollIsCurrent(pollVersion)) {
           failureCount += 1;
+          renderHealth(config.messages?.updateFailed || '', true);
         }
       })
       .finally(function () {
@@ -715,19 +809,24 @@
     markAsRead(item.getAttribute('data-notification-id'), item.getAttribute('data-notification-url'));
   });
 
-  if (readAllButton) {
+  readAllButtons.forEach(function (readAllButton) {
     readAllButton.addEventListener('click', function (event) {
       event.preventDefault();
 
       request(config.readAllUrl, { method: 'POST' })
         .then(function (response) {
-          if (response.ok) {
-            renderCount(0);
-            fetchNotifications();
+          if (!response.ok) {
+            throw new Error('Could not mark notifications as read');
           }
+
+          return response.json();
+        })
+        .then(function (payload) {
+          renderCount(payload?.data?.unread_count || 0);
+          fetchNotifications({ suppressSound: true });
         });
     });
-  }
+  });
 
   document.addEventListener('visibilitychange', function () {
     window.clearTimeout(visibleDebounceId);

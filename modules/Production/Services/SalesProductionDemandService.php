@@ -34,9 +34,6 @@ class SalesProductionDemandService
             if (! $order->isApprovedForFulfillment()) {
                 throw new DomainException(__('Production demand requires an approved sales order.'));
             }
-            if (ProductionOrder::query()->where('company_id', $order->company_id)->where('sales_order_id', $order->getKey())->exists()) {
-                throw new DomainException(__('production_execution.messages.sales_order_already_linked'));
-            }
             $period = $this->periods->resolveOpenForPostingDate((int) $order->company_id, now()->toDateString(), lockForUpdate: true);
             BranchStore::query()->lockForUpdate()->findOrFail($order->branch_store_id);
             $numbers = $this->documents->nextForCompany('production_orders', ProductionOrder::class, (int) $order->company_id, fn ($query) => $query->where('financial_period_id', $period->getKey()));

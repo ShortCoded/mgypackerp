@@ -3,6 +3,7 @@
 namespace Modules\Auth\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\PushSubscriptionController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,8 @@ use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Services\InactiveSessionService;
 use Modules\Core\Services\IntendedUrlService;
 use Modules\Core\Services\LocalePreferenceService;
+use Modules\Core\Services\SessionIdentityService;
+use NotificationChannels\WebPush\PushSubscription;
 
 class AuthenticatedSessionController extends Controller
 {
@@ -128,10 +131,13 @@ class AuthenticatedSessionController extends Controller
         AuthLogService $authLogService,
         LocalePreferenceService $locales,
         LockScreenService $lockScreen,
-        UserPresenceService $presence
+        UserPresenceService $presence,
+        SessionIdentityService $sessionIdentities,
     ): JsonResponse|RedirectResponse {
         $user = $request->user();
         $locale = $locales->resolve($request);
+        $sessionIdentity = $sessionIdentities->for($request);
+        $pushEndpoint = $request->session()->get(PushSubscriptionController::SessionEndpointKey);
 
         if ($user !== null) {
             $authLogService->log($request, 'logout_success', 'success', [
@@ -140,6 +146,16 @@ class AuthenticatedSessionController extends Controller
             ]);
             $presence->markOffline($request, $user, UserPresenceService::ReasonLogout, ['event' => 'logout_success']);
             $presence->markFingerprintsOffline($presence->sessionFingerprints($request), UserPresenceService::ReasonLogout);
+
+            if (is_string($pushEndpoint) && $pushEndpoint !== '') {
+                $user->deletePushSubscription($pushEndpoint);
+            } elseif (is_string($sessionIdentity)) {
+                PushSubscription::query()
+                    ->where('subscribable_type', $user->getMorphClass())
+                    ->where('subscribable_id', $user->getKey())
+                    ->where('session_identity', $sessionIdentity)
+                    ->delete();
+            }
         }
 
         Auth::guard('web')->logout();

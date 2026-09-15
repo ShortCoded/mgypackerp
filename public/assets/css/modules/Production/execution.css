@@ -1,7 +1,3 @@
-.production-mobile-workflow .card {
-  border-radius: 0.75rem;
-}
-
 .production-mobile-workflow .erp-datatable-card {
   position: relative;
   z-index: 1;
@@ -13,12 +9,6 @@
 
 .production-mobile-workflow .erp-datatable tbody tr:has([data-row-primary-link]) {
   cursor: pointer;
-}
-
-.production-mobile-workflow .form-control,
-.production-mobile-workflow .form-select,
-.production-mobile-workflow .btn {
-  min-block-size: 2.75rem;
 }
 
 .production-mobile-workflow .quality-evidence-preview {
@@ -193,12 +183,6 @@
   .production-mobile-workflow .card-header.d-flex > .btn,
   .production-mobile-workflow > .d-flex > .btn {
     inline-size: 100%;
-  }
-
-  .production-mobile-workflow .card-header,
-  .production-mobile-workflow .card-body,
-  .production-mobile-workflow .card-footer {
-    padding-inline: 0.875rem;
   }
 
   .production-mobile-workflow .card-footer .btn,

@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\DataTables\BoundedDataTableRequest;
+use App\Observers\OperationalNotificationObserver;
 use App\Services\EffectivePermissionResolver;
 use App\View\Composers\AppLayoutComposer;
 use App\View\Composers\AuthLayoutComposer;
@@ -15,6 +16,25 @@ use Modules\Auth\Models\Role;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\RequestMemo;
 use Modules\Core\Services\ScreenDataVisibilityScopeRegistrar;
+use Modules\Finance\Models\FundTransfer;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\HR\Models\HrEmployeeServiceRequest;
+use Modules\Inventory\Models\InventoryDocument;
+use Modules\Maintenance\Models\MaintenanceMaterialRequest;
+use Modules\Maintenance\Models\MaintenancePlanDue;
+use Modules\Maintenance\Models\MaintenanceRequest;
+use Modules\Maintenance\Models\MaintenanceWorkOrder;
+use Modules\Production\Models\ProductionExpenseRequest;
+use Modules\Production\Models\ProductionMaterialRequest;
+use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionQualityInspection;
+use Modules\Production\Models\ProductionRun;
+use Modules\Purchases\Models\GoodsReceiptInspection;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Models\SupplyOrder;
+use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesReturn;
 use Spatie\Permission\Events\PermissionAttached;
 use Spatie\Permission\Events\PermissionDetached;
 use Spatie\Permission\Events\RoleAttached;
@@ -67,5 +87,29 @@ class AppServiceProvider extends ServiceProvider
         View::composer('layouts.app', AppLayoutComposer::class);
         View::composer('layouts.auth', AuthLayoutComposer::class);
         $screenDataVisibilityScopes->register();
+
+        foreach ([
+            PurchaseRequisition::class,
+            PurchaseOrder::class,
+            GoodsReceiptInspection::class,
+            SupplyOrder::class,
+            ProductionMaterialRequest::class,
+            ProductionOrder::class,
+            ProductionRun::class,
+            ProductionQualityInspection::class,
+            ProductionExpenseRequest::class,
+            MaintenanceRequest::class,
+            MaintenanceWorkOrder::class,
+            MaintenancePlanDue::class,
+            MaintenanceMaterialRequest::class,
+            InventoryDocument::class,
+            FundTransfer::class,
+            SalesOrder::class,
+            SalesReturn::class,
+            HrEmployeeServiceRequest::class,
+            FixedAsset::class,
+        ] as $model) {
+            $model::observe(OperationalNotificationObserver::class);
+        }
     }
 }

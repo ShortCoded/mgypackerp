@@ -218,9 +218,15 @@ class MyBoardController extends Controller
         $addedAssignees = User::query()
             ->whereIn('id', $result['added_assignee_user_ids'] ?? [])
             ->get();
+        $removedAssignees = User::query()
+            ->whereIn('id', $result['removed_assignee_user_ids'] ?? [])
+            ->get();
+        $updatedAssignees = $record->assignees
+            ->reject(fn (User $assignee): bool => $addedAssignees->contains('id', $assignee->getKey()));
 
         $this->notifications->notifyTaskAssigned($record, $addedAssignees, $user);
-        $this->notifications->notifyTaskUpdated($record, $record->assignees, $user);
+        $this->notifications->notifyTaskUnassigned($record, $removedAssignees, $user);
+        $this->notifications->notifyTaskUpdated($record, $updatedAssignees, $user);
 
         return response()->json([
             'success' => true,
@@ -246,6 +252,8 @@ class MyBoardController extends Controller
                 $result['changes'],
                 $this->tasks->publicProperties($record),
             ));
+
+            $this->notifications->notifyTaskUpdated($record, $record->assignees, $user);
         }
 
         return response()->json([

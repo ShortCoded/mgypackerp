@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Support\Facades\Route;
 use Modules\Inventory\Http\Controllers\InventoryDocumentController;
 use Modules\Inventory\Http\Controllers\InventoryReportController;
@@ -18,9 +19,13 @@ Route::middleware('auth')
             Route::get('/select2/stores', 'stores')->middleware('can:inventory.documents.view')->name('select2.stores');
             Route::get('/select2/products', 'products')->middleware('can:inventory.documents.view')->name('select2.products');
             Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');
-            Route::post('/', 'store')->middleware('can:inventory.documents.create')->name('store');
+            Route::post('/', 'store')->middleware(['can:inventory.documents.create', IdempotentDocumentSubmission::class])->name('store');
+            Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:inventory.documents.delete')->name('bulk-delete');
+            Route::patch('/{inventoryDocument}/restore', 'restore')->middleware('can:inventory.documents.restore')->name('restore');
+            Route::get('/{inventoryDocument}/clone', 'clone')->middleware('can:inventory.documents.clone')->name('clone');
             Route::get('/{inventoryDocument}/edit', 'edit')->middleware('can:inventory.documents.edit')->name('edit');
             Route::put('/{inventoryDocument}', 'update')->middleware('can:inventory.documents.edit')->name('update');
+            Route::delete('/{inventoryDocument}', 'destroy')->middleware('can:inventory.documents.delete')->name('destroy');
             Route::post('/{inventoryDocument}/post', 'post')->middleware('can:inventory.documents.post')->name('post');
             Route::get('/{inventoryDocument}/print', 'print')->middleware('can:inventory.documents.print')->name('print');
             Route::post('/{inventoryDocument}/reverse', 'reverse')->middleware('can:inventory.documents.reverse')->name('reverse');

@@ -4,6 +4,7 @@ use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Models\UserPresenceSession;
@@ -464,6 +465,8 @@ test('own message read status changes when recipient reads conversation', functi
         ->postJson(route('admin.chat.messages.read', $conversationId))
         ->assertOk();
 
+    expect(UserNotification::query()->where('user_id', $recipient->getKey())->where('type', 'chat.message')->sole()->read_at)->not->toBeNull();
+
     $this->actingAs($actor)
         ->getJson(route('admin.chat.messages.poll', $conversationId))
         ->assertOk()
@@ -496,12 +499,93 @@ test('sending a chat message creates one notification for recipient only', funct
             ->where('type', 'chat.message')
             ->first()?->dedupe_key)->toStartWith('chat.message:')
         ->and(UserNotification::query()
+            ->where('user_id', $recipient->getKey())
+            ->where('type', 'chat.message')
+            ->first()?->required_permission)->toBe('chat.view')
+        ->and(UserNotification::query()
             ->where('user_id', $actor->getKey())
             ->where('type', 'chat.message')
             ->count())->toBe(0);
 });
 
-test('muted conversation suppresses new chat notifications for muted participant', function () {
+test('revoked chat participant cannot poll old notifications or receive new ones', function () {
+    $actor = chatActor();
+    $recipient = chatActor(['chat.view']);
+    $conversationId = $this->actingAs($actor)
+        ->postJson(route('admin.chat.conversations.store'), ['user_doc_num' => $recipient->doc_num])
+        ->json('data.conversation.id');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), ['body' => 'Before permission removal'])
+        ->assertOk();
+
+    $recipient->revokePermissionTo('chat.view');
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $recipient->unsetRelation('permissions')->unsetRelation('roles');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), ['body' => 'After permission removal'])
+        ->assertOk();
+
+    $poll = $this->actingAs($recipient)
+        ->getJson(route('admin.notifications.poll'))
+        ->assertOk();
+
+    expect(UserNotification::query()->where('user_id', $recipient->getKey())->where('type', 'chat.message')->count())->toBe(1)
+        ->and($poll->json('data.unread_count'))->toBe(0)
+        ->and($poll->json('data.notifications'))->toBe([]);
+});
+
+test('retrying the same client message creates one message and one notification', function () {
+    $actor = chatActor();
+    $recipient = chatActor(['chat.view']);
+    $conversationId = $this->actingAs($actor)
+        ->postJson(route('admin.chat.conversations.store'), ['user_doc_num' => $recipient->doc_num])
+        ->json('data.conversation.id');
+    $clientMessageId = (string) Str::uuid();
+    $payload = ['body' => 'Send exactly once', 'client_message_id' => $clientMessageId];
+
+    $firstMessageId = $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), $payload)
+        ->assertOk()
+        ->json('data.message.id');
+    $secondMessageId = $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), $payload)
+        ->assertOk()
+        ->json('data.message.id');
+
+    expect($secondMessageId)->toBe($firstMessageId)
+        ->and(ChatMessage::query()->where('client_message_id', $clientMessageId)->count())->toBe(1)
+        ->and(UserNotification::query()->where('user_id', $recipient->getKey())->where('type', 'chat.message')->count())->toBe(1);
+});
+
+test('a participant who left cannot poll old chat notifications or receive new ones', function () {
+    $actor = chatActor();
+    $recipient = chatActor(['chat.view']);
+    $conversationId = $this->actingAs($actor)
+        ->postJson(route('admin.chat.conversations.store'), ['user_doc_num' => $recipient->doc_num])
+        ->json('data.conversation.id');
+    $conversation = ChatConversation::query()->where('public_uuid', $conversationId)->sole();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), ['body' => 'Before leaving'])
+        ->assertOk();
+    DB::table('chat_conversation_user')
+        ->where('conversation_id', $conversation->getKey())
+        ->where('user_id', $recipient->getKey())
+        ->update(['deleted_at' => now()]);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.chat.messages.store', $conversationId), ['body' => 'After leaving'])
+        ->assertOk();
+    $poll = $this->actingAs($recipient)->getJson(route('admin.notifications.poll'))->assertOk();
+
+    expect(UserNotification::query()->where('user_id', $recipient->getKey())->where('type', 'chat.message')->count())->toBe(1)
+        ->and($poll->json('data.unread_count'))->toBe(0)
+        ->and($poll->json('data.notifications'))->toBe([]);
+});
+
+test('muted conversation keeps a durable notification while suppressing its alert and sound', function () {
     $actor = chatActor();
     $recipient = chatActor(['chat.view']);
 
@@ -518,10 +602,13 @@ test('muted conversation suppresses new chat notifications for muted participant
         ->postJson(route('admin.chat.messages.store', $conversationId), ['body' => 'Quiet notification'])
         ->assertOk();
 
-    expect(UserNotification::query()
+    $notification = UserNotification::query()
         ->where('user_id', $recipient->getKey())
         ->where('type', 'chat.message')
-        ->count())->toBe(0);
+        ->sole();
+
+    expect($notification->sound_key)->toBeNull()
+        ->and($notification->suppress_in_app_alert)->toBeTrue();
 });
 
 test('chat polling endpoints do not touch active presence', function () {

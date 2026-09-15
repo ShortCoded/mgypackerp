@@ -17,7 +17,7 @@
 @if($editableDraft && Route::has($prefix.'.edit') && $isOwnBranch) @can($permission.'.edit')<a class="dropdown-item" href="{{ route($prefix.'.edit', $record->doc_num) }}">{{ __('common.actions.edit') }}</a>@endcan @endif
 @if($screen === 'purchase_requisitions')
     @if($record->status === 'draft' && $isOwnBranch) @can($permission.'.submit')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.submit', $record->doc_num) }}">{{ __('Submit') }}</button>@endcan @endif
-    @if($record->status === 'pending_approval' && ($isAdministrativeBranch ?? false))
+    @if($record->status === 'pending_approval' && (($isOwnBranch && ($isFactoryBranch ?? false)) || ($isAdministrativeBranch ?? false)))
         @can('purchases.purchase_requisition_approvals.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.approve', $record->doc_num) }}">{{ __('Approve') }}</button>@endcan
         @can('purchases.purchase_requisition_approvals.reject')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.reject', $record->doc_num) }}" data-reason-field="rejection_reason">{{ __('Reject') }}</button>@endcan
     @endif

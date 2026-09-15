@@ -48,3 +48,4 @@ Route::get('lang/{locale}', function (
 Route::redirect('/', '/dashboard')->middleware(['auth']);
 
 Route::get('/dashboard', DashboardController::class)->middleware(['auth'])->name('dashboard');
+Route::get('/dashboard/data', [DashboardController::class, 'data'])->middleware(['auth'])->name('dashboard.data');

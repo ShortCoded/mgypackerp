@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
+use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionMold;
@@ -32,7 +33,13 @@ class MaintenanceWorkOrder extends Model
 
     protected $guarded = ['id'];
 
-    protected $attributes = ['status' => self::StatusDraft, 'service_mode' => 'internal', 'priority' => 'normal'];
+    protected $attributes = [
+        'status' => self::StatusDraft,
+        'service_mode' => 'internal',
+        'priority' => 'normal',
+        'total_paused_minutes' => 0,
+        'external_in_transit' => false,
+    ];
 
     protected static function booted(): void
     {
@@ -46,10 +53,19 @@ class MaintenanceWorkOrder extends Model
             'planned_start_at' => 'datetime',
             'planned_end_at' => 'datetime',
             'actual_start_at' => 'datetime',
+            'paused_at' => 'datetime',
+            'total_paused_minutes' => 'integer',
+            'external_in_transit' => 'boolean',
+            'external_dispatched_at' => 'datetime',
+            'external_received_at' => 'datetime',
             'actual_end_at' => 'datetime',
+            'machine_released_at' => 'datetime',
+            'follow_up_due_at' => 'datetime',
+            'cost_closed_at' => 'datetime',
             'approved_at' => 'datetime',
             'next_due_date' => 'date',
             'restored_at' => 'datetime',
+            'labor_details' => 'array',
         ];
     }
 
@@ -58,9 +74,26 @@ class MaintenanceWorkOrder extends Model
         return 'doc_num';
     }
 
+    public function resolveRouteBinding($value, $field = null): ?self
+    {
+        $context = app(OperatingContextService::class)->snapshot(request());
+
+        return $context['company_id'] && $context['financial_period_id'] && $context['branch_id']
+            ? $this->newQuery()
+                ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+                ->where($field ?? $this->getRouteKeyName(), $value)
+                ->first()
+            : null;
+    }
+
     public function request(): BelongsTo
     {
         return $this->belongsTo(MaintenanceRequest::class, 'maintenance_request_id');
+    }
+
+    public function maintenancePlanDue(): BelongsTo
+    {
+        return $this->belongsTo(MaintenancePlanDue::class, 'maintenance_plan_due_id');
     }
 
     public function asset(): BelongsTo
@@ -81,6 +114,11 @@ class MaintenanceWorkOrder extends Model
     public function materialRequests(): HasMany
     {
         return $this->hasMany(MaintenanceMaterialRequest::class)->latest('id');
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(MaintenanceWorkOrderEvent::class)->orderBy('occurred_at')->orderBy('id');
     }
 
     public function expenses(): HasMany

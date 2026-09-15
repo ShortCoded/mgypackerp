@@ -27,8 +27,8 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
 
             $row = [
                 $order->doc_num,
-                $order->asset?->asset_code,
-                $order->asset?->asset_name,
+                $order->asset?->doc_num ?? $order->mold?->code,
+                $order->asset?->asset_name ?? $order->mold?->name,
                 __('maintenance.maintenance_types.'.$order->maintenance_type),
                 __('maintenance.service_modes.'.$order->service_mode),
                 $order->supplier?->name ?: $order->external_provider_name ?: __('maintenance.internal'),
@@ -36,9 +36,14 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
                 $order->planned_start_at?->format('Y-m-d H:i:s'),
                 $order->actual_start_at?->format('Y-m-d H:i:s'),
                 $order->actual_end_at?->format('Y-m-d H:i:s'),
+                $order->machine_released_at?->format('Y-m-d H:i:s'),
+                $order->total_paused_minutes + ($order->paused_at ? (int) $order->paused_at->diffInMinutes(now()) : 0),
+                $order->test_result ? __('maintenance.test_results.'.$order->test_result) : null,
+                $order->repair_outcome ? __('maintenance.repair_outcomes.'.$order->repair_outcome) : null,
                 $order->external_cost,
                 $materialLines->sum('requested_quantity'),
                 $materialLines->sum('issued_quantity'),
+                $materialLines->sum('consumed_quantity'),
                 $materialLines->sum('returned_quantity'),
                 $expenseSummary,
                 __('maintenance.statuses.'.$order->status),
@@ -49,7 +54,7 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
             ];
 
             if (! $this->canViewFinancial) {
-                unset($row[10], $row[14]);
+                unset($row[14], $row[19]);
             }
 
             return array_values($row);
@@ -69,9 +74,14 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
             __('maintenance.fields.planned_start'),
             __('maintenance.fields.actual_start'),
             __('maintenance.fields.actual_end'),
+            __('maintenance.fields.machine_released_at'),
+            __('maintenance.fields.total_paused_minutes'),
+            __('maintenance.fields.test_result'),
+            __('maintenance.fields.repair_outcome'),
             __('maintenance.fields.external_cost'),
             __('maintenance.reports.requested_material_quantity'),
             __('maintenance.reports.issued_material_quantity'),
+            __('maintenance.reports.consumed_material_quantity'),
             __('maintenance.reports.returned_material_quantity'),
             __('maintenance.reports.expenses'),
             __('maintenance.fields.status'),
@@ -82,7 +92,7 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
         ];
 
         if (! $this->canViewFinancial) {
-            unset($headings[10], $headings[14]);
+            unset($headings[14], $headings[19]);
         }
 
         return array_values($headings);

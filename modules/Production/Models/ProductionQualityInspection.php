@@ -5,9 +5,12 @@ namespace Modules\Production\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
+use Modules\Inventory\Models\WarehouseLocation;
+use Modules\Maintenance\Models\MaintenanceRequest;
 
 class ProductionQualityInspection extends Model
 {
@@ -38,8 +41,8 @@ class ProductionQualityInspection extends Model
     protected $fillable = [
         'doc_number', 'doc_num', 'parent_inspection_id', 'root_inspection_id', 'company_id', 'financial_period_id', 'branch_id',
         'production_order_id', 'production_run_id', 'production_order_stage_id', 'subject_type',
-        'product_id', 'branch_store_id', 'stock_status', 'batch_lot', 'source_reference',
-        'quality_inspection_type_id', 'version', 'reinspection_number', 'inspection_date', 'sampled_at', 'status',
+        'product_id', 'branch_store_id', 'warehouse_location_id', 'stock_status', 'batch_lot', 'source_reference',
+        'quality_inspection_type_id', 'inspection_plan_snapshot', 'version', 'reinspection_number', 'inspection_date', 'sampled_at', 'status',
         'result', 'disposition', 'defect_code', 'affected_base_quantity', 'inspector_id', 'notes',
         'rework_notes', 'corrective_action', 'evidence', 'submitted_by', 'submitted_at',
         'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason',
@@ -62,6 +65,7 @@ class ProductionQualityInspection extends Model
             'version' => 'integer', 'reinspection_number' => 'integer',
             'received_at' => 'datetime', 'started_at' => 'datetime', 'closed_at' => 'datetime',
             'affected_base_quantity' => 'decimal:8', 'evidence' => 'array',
+            'inspection_plan_snapshot' => 'array',
             'submitted_at' => 'datetime', 'approved_at' => 'datetime', 'rejected_at' => 'datetime',
             'reviewed_at' => 'datetime', 'released_at' => 'datetime', 'restored_at' => 'datetime',
         ];
@@ -80,6 +84,21 @@ class ProductionQualityInspection extends Model
     public function branchStore(): BelongsTo
     {
         return $this->belongsTo(BranchStore::class)->withTrashed();
+    }
+
+    public function warehouseLocation(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseLocation::class)->withTrashed();
+    }
+
+    public function stockHold(): HasOne
+    {
+        return $this->hasOne(QualityStockHold::class, 'quality_inspection_id');
+    }
+
+    public function maintenanceRequest(): HasOne
+    {
+        return $this->hasOne(MaintenanceRequest::class, 'quality_inspection_id');
     }
 
     public function stageSnapshot(): BelongsTo

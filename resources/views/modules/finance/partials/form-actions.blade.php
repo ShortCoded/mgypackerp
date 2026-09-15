@@ -8,7 +8,9 @@
     $canClone = $canClone ?? auth()->user()?->can($resource.'.clone');
     $isCreateLike = in_array($mode, ['create', 'clone'], true);
     $isTrashed = $record?->trashed() ?? false;
-    $canRestore = $isView && $isTrashed && auth()->user()?->can($resource.'.restore') && $record?->doc_num !== null;
+    $recordKey = $record?->getRouteKey();
+    $recordLabel = $record?->doc_num ?? $record?->run_number ?? $recordKey;
+    $canRestore = $isView && $isTrashed && auth()->user()?->can($resource.'.restore') && $recordKey !== null;
     $shortcutTitles = [
         'back' => __('common.shortcuts.back'),
         'clone' => __('common.shortcuts.clone'),
@@ -32,25 +34,25 @@
     @if($isView && $record)
         @if(! $isTrashed)
             @if($canEdit && $canEditRecord)
-                <a class="btn btn-primary btn-sm" href="{{ route($routePrefix.'.edit', $record->doc_num) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">
+                <a class="btn btn-primary btn-sm" href="{{ route($routePrefix.'.edit', $recordKey) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">
                     <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}
                 </a>
             @endif
             @if($canClone)
-                <a class="btn btn-falcon-default btn-sm js-clone-record" href="{{ route($routePrefix.'.clone', $record->doc_num) }}" data-shortcut-action="form.clone" title="{{ $shortcutTitles['clone'] }}" data-bs-title="{{ $shortcutTitles['clone'] }}">
+                <a class="btn btn-falcon-default btn-sm js-clone-record" href="{{ route($routePrefix.'.clone', $recordKey) }}" data-shortcut-action="form.clone" title="{{ $shortcutTitles['clone'] }}" data-bs-title="{{ $shortcutTitles['clone'] }}">
                     <span class="fas fa-copy me-1"></span>{{ __('common.actions.clone_record') }}
                 </a>
             @endif
             @can($resource.'.delete')
                 @if($canDeleteRecord)
-                <button type="button" class="btn btn-falcon-default text-danger btn-sm js-delete-record" data-shortcut-action="form.delete" data-doc-num="{{ $record->doc_num }}" data-delete-url="{{ route($routePrefix.'.destroy', $record->doc_num) }}" data-redirect-url="{{ route($routePrefix.'.index') }}" title="{{ $shortcutTitles['delete'] }}" data-bs-title="{{ $shortcutTitles['delete'] }}">
+                <button type="button" class="btn btn-falcon-default text-danger btn-sm js-delete-record" data-shortcut-action="form.delete" data-doc-num="{{ $recordLabel }}" data-delete-url="{{ route($routePrefix.'.destroy', $recordKey) }}" data-redirect-url="{{ route($routePrefix.'.index') }}" title="{{ $shortcutTitles['delete'] }}" data-bs-title="{{ $shortcutTitles['delete'] }}">
                     <span class="fas fa-trash-alt me-1"></span>{{ __('common.actions.delete') }}
                 </button>
                 @endif
             @endcan
         @else
             @if($canRestore)
-                <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $record->doc_num }}" data-restore-url="{{ route($routePrefix.'.restore', $record->doc_num) }}">
+                <button type="button" class="btn btn-falcon-default text-success btn-sm js-restore-record" data-doc-num="{{ $recordLabel }}" data-restore-url="{{ route($routePrefix.'.restore', $recordKey) }}">
                     <span class="fas fa-undo me-1"></span>{{ __('common.actions.restore') }}
                 </button>
             @endif

@@ -8,6 +8,7 @@ use Modules\Auth\Models\Role;
 use Modules\Core\Models\BoardList;
 use Modules\Core\Models\MyBoardTaskComment;
 use Modules\Core\Models\MyBoardTaskView;
+use Modules\Core\Models\UserNotification;
 use Modules\Core\Models\UserTask;
 use Modules\Core\Services\MenuService;
 use Spatie\Permission\Models\Permission;
@@ -1334,7 +1335,7 @@ test('MyBoard can update and move allowed items but cannot update unrelated task
     $other = User::factory()->create();
 
     $task = UserTask::factory()->create([
-        'created_by' => $actor->id,
+        'created_by' => $other->id,
         'assigned_to' => $actor->id,
         'status' => UserTask::StatusTodo,
         'position' => 0,
@@ -1364,7 +1365,11 @@ test('MyBoard can update and move allowed items but cannot update unrelated task
 
     expect($task->title)->toBe('Updated board item')
         ->and($task->status)->toBe(UserTask::StatusDone)
-        ->and($task->completed_at)->not->toBeNull();
+        ->and($task->completed_at)->not->toBeNull()
+        ->and(UserNotification::query()
+            ->where('user_id', $other->getKey())
+            ->where('type', 'task.updated')
+            ->count())->toBe(2);
 
     $this->actingAs($actor)
         ->putJson(route('admin.my-board.update', $unrelated->doc_num), userTaskPayload([

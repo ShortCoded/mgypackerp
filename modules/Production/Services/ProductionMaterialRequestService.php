@@ -11,6 +11,8 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryReservationService;
 use Modules\Production\Models\ProductionMaterialRequest;
+use Modules\Production\Models\ProductionMaterialRequestLine;
+use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionRun;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Services\ProcurementSourcingService;
@@ -39,6 +41,9 @@ class ProductionMaterialRequestService
             $context = $this->requiredContext();
             $locked = ProductionRun::query()->with(['requirements.product', 'requirements.unit', 'orderLine'])->lockForUpdate()->findOrFail($run->getKey());
             $this->assertContext($locked, $context);
+            if (in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_run_closed'));
+            }
             $store = BranchStore::query()->where('branch_id', $context['branch_id'])->lockForUpdate()->findOrFail($branchStoreId);
 
             if ($additional && blank($reason)) {
@@ -70,7 +75,7 @@ class ProductionMaterialRequestService
             foreach ($locked->requirements as $index => $requirement) {
                 $defaultQuantity = $additional
                     ? '0'
-                    : bcsub((string) $requirement->planned_quantity, (string) $requirement->issued_quantity, 8);
+                    : $this->remainingRequestableFor($requirement);
                 $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? $defaultQuantity), '0', 8);
 
                 if (bccomp($quantity, '0', 8) <= 0) {
@@ -95,6 +100,116 @@ class ProductionMaterialRequestService
             }
 
             return $request->load(['lines.product', 'lines.unit', 'run']);
+        });
+    }
+
+    /** @param array<int, string|int|float> $quantitiesByRequirementId */
+    public function update(
+        ProductionMaterialRequest $request,
+        int $branchStoreId,
+        array $quantitiesByRequirementId,
+        bool $additional = false,
+        ?string $reason = null,
+        ?string $requiredByDate = null,
+    ): ProductionMaterialRequest {
+        return DB::transaction(function () use ($request, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionMaterialRequest::query()
+                ->with(['run.requirements.product', 'run.requirements.unit'])
+                ->lockForUpdate()
+                ->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if ($locked->status !== ProductionMaterialRequest::StatusSubmitted) {
+                throw new DomainException(__('production_execution.messages.material_request_submitted_edit_only'));
+            }
+            if (in_array($locked->run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_run_closed'));
+            }
+            if ($additional && blank($reason)) {
+                throw new DomainException(__('production_execution.messages.additional_material_reason_required'));
+            }
+
+            $store = BranchStore::query()
+                ->where('branch_id', $context['branch_id'])
+                ->lockForUpdate()
+                ->findOrFail($branchStoreId);
+            $locked->lines()->delete();
+
+            foreach ($locked->run->requirements as $index => $requirement) {
+                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? '0'), '0', 8);
+
+                if (bccomp($quantity, '0', 8) <= 0) {
+                    continue;
+                }
+                if (! $additional) {
+                    $remaining = $this->remainingRequestableFor($requirement, (int) $locked->getKey());
+                    if (bccomp($quantity, $remaining, 8) > 0) {
+                        throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
+                    }
+                }
+
+                $locked->lines()->create([
+                    'production_material_requirement_id' => $requirement->getKey(),
+                    'line_number' => $index + 1,
+                    'product_id' => $requirement->product_id,
+                    'unit_id' => $requirement->unit_id,
+                    'planned_quantity' => $requirement->planned_quantity,
+                    'requested_quantity' => $quantity,
+                ]);
+            }
+
+            if (! $locked->lines()->exists()) {
+                throw new DomainException(__('production_execution.messages.material_request_lines_required'));
+            }
+
+            $locked->update([
+                'branch_store_id' => $store->getKey(),
+                'required_by_date' => $requiredByDate,
+                'request_type' => $additional ? 'additional' : 'planned',
+                'reason' => $reason,
+                'updated_by' => auth()->id(),
+            ]);
+
+            return $locked->refresh()->load(['lines.product', 'lines.unit', 'run']);
+        });
+    }
+
+    public function delete(ProductionMaterialRequest $request): void
+    {
+        DB::transaction(function () use ($request): void {
+            $context = $this->requiredContext();
+            $locked = ProductionMaterialRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if ($locked->status !== ProductionMaterialRequest::StatusSubmitted || $locked->inventoryDocuments()->exists()) {
+                throw new DomainException(__('production_execution.messages.material_request_submitted_edit_only'));
+            }
+
+            $locked->update(['deleted_by' => auth()->id()]);
+            $locked->delete();
+        });
+    }
+
+    public function restore(ProductionMaterialRequest $request): ProductionMaterialRequest
+    {
+        return DB::transaction(function () use ($request): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionMaterialRequest::withTrashed()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if (! $locked->trashed() || $locked->status !== ProductionMaterialRequest::StatusSubmitted) {
+                throw new DomainException(__('production_execution.messages.material_request_not_restorable'));
+            }
+
+            $run = ProductionRun::query()->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])
+                ->lockForUpdate()
+                ->findOrFail($locked->production_run_id);
+            $this->assertContext($run, $context);
+            $locked->restore();
+            $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
+
+            return $locked->refresh();
         });
     }
 
@@ -153,9 +268,10 @@ class ProductionMaterialRequestService
         });
     }
 
-    public function issue(ProductionMaterialRequest $request): InventoryDocument
+    /** @param array<int, string|int|float> $quantitiesByRequestLineId */
+    public function issue(ProductionMaterialRequest $request, array $quantitiesByRequestLineId = []): InventoryDocument
     {
-        return DB::transaction(function () use ($request): InventoryDocument {
+        return DB::transaction(function () use ($request, $quantitiesByRequestLineId): InventoryDocument {
             $context = $this->requiredContext();
             $locked = ProductionMaterialRequest::query()->with(['lines', 'run.requirements'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
@@ -163,10 +279,27 @@ class ProductionMaterialRequestService
             if (! in_array($locked->status, [ProductionMaterialRequest::StatusApproved, ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_not_issuable'));
             }
+            if (array_diff(array_map('intval', array_keys($quantitiesByRequestLineId)), $locked->lines->modelKeys()) !== []) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+            }
 
-            $quantities = $locked->run->requirements->mapWithKeys(fn ($requirement): array => [$requirement->getKey() => '0'])->all();
+            $quantities = $locked->run->requirements->mapWithKeys(fn ($requirement): array => [$requirement->getKey() => '0.00000000'])->all();
+            $issuedByRequestLineId = [];
             foreach ($locked->lines as $line) {
-                $quantities[$line->production_material_requirement_id] = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+                $remainingReserved = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+                $quantity = $quantitiesByRequestLineId === []
+                    ? $remainingReserved
+                    : bcadd((string) ($quantitiesByRequestLineId[$line->getKey()] ?? '0'), '0', 8);
+
+                if (bccomp($quantity, '0', 8) < 0 || bccomp($quantity, $remainingReserved, 8) > 0) {
+                    throw new DomainException(__('production_execution.messages.material_request_issue_exceeds_reserved'));
+                }
+                if (bccomp($quantity, '0', 8) <= 0) {
+                    continue;
+                }
+
+                $quantities[$line->production_material_requirement_id] = $quantity;
+                $issuedByRequestLineId[$line->getKey()] = $quantity;
             }
 
             if (! collect($quantities)->contains(fn (string $quantity): bool => bccomp($quantity, '0', 8) > 0)) {
@@ -179,9 +312,18 @@ class ProductionMaterialRequestService
                 $quantities,
                 $locked->request_type === 'additional',
             );
+            $document->update(['production_material_request_id' => $locked->getKey()]);
+
+            $requestLines = $locked->lines->keyBy('production_material_requirement_id');
+            foreach ($document->load('lines')->lines as $documentLine) {
+                $requestLine = $requestLines->get($documentLine->source_line_id);
+                if ($requestLine !== null) {
+                    $documentLine->update(['production_material_request_line_id' => $requestLine->getKey()]);
+                }
+            }
 
             foreach ($locked->lines as $line) {
-                $issued = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+                $issued = $issuedByRequestLineId[$line->getKey()] ?? '0.00000000';
                 if (bccomp($issued, '0', 8) > 0) {
                     $line->increment('issued_quantity', $issued);
                 }
@@ -283,6 +425,20 @@ class ProductionMaterialRequestService
             'notes' => __('production_execution.messages.generated_from_material_request', ['number' => $request->doc_num]),
             'lines' => $lines,
         ]);
+    }
+
+    public function remainingRequestableFor(ProductionMaterialRequirement $requirement, ?int $excludeRequestId = null): string
+    {
+        $alreadyRequested = (string) ProductionMaterialRequestLine::query()
+            ->where('production_material_requirement_id', $requirement->getKey())
+            ->whereHas('request', fn ($query) => $query
+                ->where('request_type', 'planned')
+                ->whereNotIn('status', [ProductionMaterialRequest::StatusRejected, ProductionMaterialRequest::StatusCancelled])
+                ->when($excludeRequestId !== null, fn ($requests) => $requests->whereKeyNot($excludeRequestId)))
+            ->sum('requested_quantity');
+        $remaining = bcsub((string) $requirement->planned_quantity, $alreadyRequested, 8);
+
+        return bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000';
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */

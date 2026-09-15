@@ -454,7 +454,14 @@ return [
         'title' => 'حركات المخزون',
         'create' => 'حركة مخزون جديدة',
         'edit' => 'تعديل حركة مخزون',
+        'clone' => 'نسخ حركة مخزون',
         'edit_document' => 'تعديل حركة المخزون :document',
+        'copy_of' => 'نسخة من حركة المخزون :document',
+        'header_data' => 'بيانات حركة المخزون',
+        'line' => 'بند حركة مخزنية',
+        'add_line_shortcut' => 'إضافة بند جديد (Alt + N)',
+        'duplicate_line_shortcut' => 'تكرار بيانات البند (Alt + D)',
+        'delete_line_shortcut' => 'حذف البند (Alt + Delete)',
         'posting_notice' => 'المسودة قابلة للتعديل. الترحيل يحدّث الرصيد والقيد المحاسبي، وتصحيح المستند المُرحّل يكون بعكس الحركة.',
         'fields' => [
             'document' => 'المستند',
@@ -531,6 +538,7 @@ return [
         ],
         'actions' => [
             'add_line' => 'إضافة بند',
+            'duplicate_line' => 'تكرار البند',
             'remove_line' => 'حذف البند',
             'save_draft' => 'حفظ كمسودة',
             'edit' => 'تعديل المسودة',

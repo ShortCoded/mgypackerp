@@ -49,8 +49,10 @@
             const input=form.querySelector('[name="submit_action"]');
             if(button && input) input.value=button.dataset.submitAction;
         });
-        const enhance = () => form.querySelectorAll('table').forEach(table => {
-            if (!table.querySelector('tbody [name^="lines["], tbody [name^="items["], tbody [name^="allocations["], tbody [name^="results["], tbody [name^="payment_schedules["]')) return;
+        const enhance = () => {
+            if (marker.dataset.lineCardLayout === 'table') return;
+            form.querySelectorAll('table').forEach(table => {
+            if (!table.querySelector('tbody [name^="lines["], tbody [name^="items["], tbody [name^="allocations["], tbody [name^="results["], tbody [name^="payment_schedules["], tbody [name^="labor_details["]')) return;
             if (!table.querySelector('input:not([type="hidden"]):not([readonly]):not([disabled]), select:not([disabled]), textarea:not([readonly])')) return;
             const headings = Array.from(table.tHead?.rows[0]?.cells || []).map(cell => cell.textContent.trim());
             table.classList.add('line-card-repeater');
@@ -112,7 +114,8 @@
                     }
                 });
             });
-        });
+            });
+        };
         form.addEventListener('invalid', event => {
             const field = event.target;
             const key = field.name?.replace(/\[([^\]]+)\]/g, '.$1');

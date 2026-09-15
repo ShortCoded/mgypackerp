@@ -170,6 +170,24 @@
     });
   }
 
+  function permissionStatus() {
+    if (!('Notification' in window)) {
+      return config.messages?.unavailable || '';
+    }
+
+    if (window.Notification.permission === 'denied') {
+      return config.messages?.denied || '';
+    }
+
+    if (window.Notification.permission === 'granted') {
+      return subscription
+        ? (config.messages?.subscriptionActive || config.messages?.enabled || '')
+        : (config.messages?.subscriptionInactive || '');
+    }
+
+    return config.messages?.permissionDefault || '';
+  }
+
   function updateToggles() {
     const subscribed = Boolean(subscription);
 
@@ -344,6 +362,7 @@
       } else {
         clearSyncState();
       }
+      setStatus(permissionStatus(), window.Notification.permission === 'denied');
     } catch (error) {
       setStatus(config.messages?.failed, true);
     } finally {
@@ -376,12 +395,8 @@
         handledPushIds.add(pushId);
       }
 
-      if (window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
-        window.AppNotificationSound.play();
-      }
-
       if (window.AppNotificationsClient && typeof window.AppNotificationsClient.refresh === 'function') {
-        window.AppNotificationsClient.refresh({ suppressSound: true });
+        window.AppNotificationsClient.refresh();
       }
     });
   }

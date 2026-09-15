@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -37,7 +38,7 @@ class ProductionOrder extends Model
 
     protected function casts(): array
     {
-        return ['production_order_date' => 'date', 'expected_start_date' => 'date', 'expected_finish_date' => 'date', 'expected_delivery_date' => 'date', 'overproduction_tolerance_percent' => 'decimal:4', 'released_at' => 'datetime', 'cancelled_at' => 'datetime', 'short_closed_at' => 'datetime', 'print_identity_snapshot' => 'array'];
+        return ['production_order_date' => 'date', 'expected_start_date' => 'date', 'expected_finish_date' => 'date', 'expected_delivery_date' => 'date', 'overproduction_tolerance_percent' => 'decimal:4', 'released_at' => 'datetime', 'cancelled_at' => 'datetime', 'short_closed_at' => 'datetime', 'restored_at' => 'datetime', 'print_identity_snapshot' => 'array'];
     }
 
     public function getRouteKeyName(): string
@@ -55,6 +56,11 @@ class ProductionOrder extends Model
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function salesOrder(): BelongsTo

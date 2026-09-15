@@ -30,6 +30,55 @@
   min-width: 18rem !important;
 }
 
+.erp-entry-lines-table {
+  min-width: 68rem;
+  table-layout: fixed;
+}
+
+.erp-entry-lines-table.erp-entry-lines-table-wide {
+  min-width: 86rem;
+}
+
+.erp-entry-lines-table th,
+.erp-entry-lines-table td {
+  vertical-align: middle;
+}
+
+.erp-entry-lines-table .erp-entry-line-number {
+  width: 3.5rem;
+}
+
+.erp-entry-lines-table .erp-entry-line-item {
+  width: 24rem;
+}
+
+.erp-entry-lines-table .erp-entry-line-quantity,
+.erp-entry-lines-table .erp-entry-line-date,
+.erp-entry-lines-table .erp-entry-line-batch {
+  width: 10rem;
+}
+
+.erp-entry-lines-table .erp-entry-line-text {
+  width: 14rem;
+}
+
+.erp-entry-lines-table .erp-entry-line-actions {
+  width: 6rem;
+  white-space: nowrap;
+}
+
+.erp-entry-lines-table .select2-container {
+  max-width: 100%;
+  min-width: 0;
+  width: 100% !important;
+}
+
+.erp-entry-lines-table .select2-selection__rendered {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .erp-status-indicator {
   align-items: center;
   color: var(--falcon-gray-700);

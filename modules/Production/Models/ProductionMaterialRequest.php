@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Purchases\Models\PurchaseRequisition;
 
 class ProductionMaterialRequest extends Model
@@ -57,6 +59,18 @@ class ProductionMaterialRequest extends Model
         return 'doc_num';
     }
 
+    public function resolveRouteBinding($value, $field = null): ?self
+    {
+        $context = app(OperatingContextService::class)->snapshot(request());
+
+        return $context['company_id'] && $context['financial_period_id'] && $context['branch_id']
+            ? $this->newQuery()
+                ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+                ->where($field ?? $this->getRouteKeyName(), $value)
+                ->first()
+            : null;
+    }
+
     public function run(): BelongsTo
     {
         return $this->belongsTo(ProductionRun::class, 'production_run_id');
@@ -80,6 +94,11 @@ class ProductionMaterialRequest extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(ProductionMaterialRequestLine::class)->orderBy('line_number');
+    }
+
+    public function inventoryDocuments(): HasMany
+    {
+        return $this->hasMany(InventoryDocument::class, 'production_material_request_id');
     }
 
     public function scopeForContext(Builder $query, int $companyId, int $periodId, int $branchId): Builder

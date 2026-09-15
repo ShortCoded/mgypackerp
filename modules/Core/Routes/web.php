@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Core\Http\Controllers\BranchController;
 use Modules\Core\Http\Controllers\CalendarController;
 use Modules\Core\Http\Controllers\ChatController;
+use Modules\Core\Http\Controllers\ChatConversationReportController;
 use Modules\Core\Http\Controllers\CompanyController;
 use Modules\Core\Http\Controllers\CurrencyController;
 use Modules\Core\Http\Controllers\ExcelImportController;
@@ -145,6 +146,13 @@ Route::middleware('auth')
 
         Route::get('/notifications/poll', [NotificationController::class, 'poll'])
             ->name('notifications.poll');
+        Route::get('/notifications', [NotificationController::class, 'index'])
+            ->name('notifications.index');
+        Route::get('/notifications/diagnostics', [NotificationController::class, 'diagnostics'])
+            ->middleware('can:settings.pwa.view')
+            ->name('notifications.diagnostics');
+        Route::get('/notifications/{notification:public_uuid}/open', [NotificationController::class, 'open'])
+            ->name('notifications.open');
         Route::post('/notifications/{notification:public_uuid}/read', [NotificationController::class, 'read'])
             ->name('notifications.read');
         Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])
@@ -456,6 +464,21 @@ Route::middleware('auth')
             ->name('chat.')
             ->controller(ChatController::class)
             ->group(function (): void {
+                Route::prefix('reports')
+                    ->name('reports.')
+                    ->controller(ChatConversationReportController::class)
+                    ->group(function (): void {
+                        Route::get('/', 'index')->middleware('can:chat.reports.view')->name('index');
+                        Route::get('/excel', 'excel')->middleware(['can:chat.reports.view', 'can:chat.reports.export'])->name('excel');
+                        Route::get('/pdf', 'pdf')->middleware(['can:chat.reports.view', 'can:chat.reports.pdf'])->name('pdf');
+                        Route::get('/print', 'print')->middleware(['can:chat.reports.view', 'can:chat.reports.print'])->name('print');
+                        Route::get('/attachments/{attachment:public_uuid}', 'attachment')->middleware('can:chat.reports.view')->name('attachments.show');
+                        Route::get('/{conversation:public_uuid}', 'show')->withTrashed()->middleware('can:chat.reports.view')->name('show');
+                        Route::get('/{conversation:public_uuid}/excel', 'conversationExcel')->withTrashed()->middleware(['can:chat.reports.view', 'can:chat.reports.export'])->name('conversation.excel');
+                        Route::get('/{conversation:public_uuid}/pdf', 'conversationPdf')->withTrashed()->middleware(['can:chat.reports.view', 'can:chat.reports.pdf'])->name('conversation.pdf');
+                        Route::get('/{conversation:public_uuid}/print', 'conversationPrint')->withTrashed()->middleware(['can:chat.reports.view', 'can:chat.reports.print'])->name('conversation.print');
+                    });
+
                 Route::get('/', 'index')
                     ->middleware('can:chat.view')
                     ->name('index');

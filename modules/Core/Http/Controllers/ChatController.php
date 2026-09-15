@@ -104,6 +104,8 @@ class ChatController extends Controller
             $request->validated('body'),
             $request->file('attachments', []),
             $request->validated('reply_to_message_id'),
+            null,
+            $request->validated('client_message_id'),
         );
 
         return response()->json([

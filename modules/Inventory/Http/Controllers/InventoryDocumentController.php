@@ -8,6 +8,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
@@ -53,6 +55,21 @@ class InventoryDocumentController extends Controller
 
         return view('modules.inventory.documents.create', [
             'record' => null,
+            'isClone' => false,
+            'allowedDocumentTypes' => $allowedDocumentTypes,
+            'stockStatuses' => $this->stockStatuses(),
+        ]);
+    }
+
+    public function clone(Request $request, InventoryDocument $inventoryDocument): View
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $allowedDocumentTypes = $this->allowedDocumentTypes($request);
+        abort_unless(in_array($inventoryDocument->document_type, $allowedDocumentTypes, true), 403);
+
+        return view('modules.inventory.documents.create', [
+            'record' => $inventoryDocument->load(['branchStore', 'destinationBranchStore.branch', 'lines.product']),
+            'isClone' => true,
             'allowedDocumentTypes' => $allowedDocumentTypes,
             'stockStatuses' => $this->stockStatuses(),
         ]);
@@ -67,7 +84,8 @@ class InventoryDocumentController extends Controller
         abort_unless(in_array($inventoryDocument->document_type, $allowedDocumentTypes, true), 403);
 
         return view('modules.inventory.documents.create', [
-            'record' => $inventoryDocument->load(['branchStore', 'destinationBranchStore', 'lines.product']),
+            'record' => $inventoryDocument->load(['branchStore', 'destinationBranchStore.branch', 'lines.product']),
+            'isClone' => false,
             'allowedDocumentTypes' => $allowedDocumentTypes,
             'stockStatuses' => $this->stockStatuses(),
         ]);
@@ -77,7 +95,15 @@ class InventoryDocumentController extends Controller
     {
         $context = $this->requiredContext($request);
         $query = BranchStore::query()
-            ->where('branch_id', $context['branch_id'])
+            ->with('branch')
+            ->when(
+                $request->string('scope')->toString() === 'destination',
+                fn ($query) => $query->whereHas('branch', fn ($branch) => $branch
+                    ->where('company_id', $context['company_id'])
+                    ->where('status', 'active')
+                    ->whereNull('deleted_at')),
+                fn ($query) => $query->where('branch_id', $context['branch_id']),
+            )
             ->orderBy('position')
             ->orderBy('name');
         $terms = $search->terms($request->input('q', $request->input('term')));
@@ -87,8 +113,10 @@ class InventoryDocumentController extends Controller
         }
 
         return response()->json($select2->paginated($query, $request, fn (BranchStore $store): array => [
-            'id' => (string) $store->getKey(),
-            'text' => (string) $store->name,
+            'id' => (string) $store->public_uuid,
+            'text' => $request->string('scope')->toString() === 'destination'
+                ? trim(($store->branch?->name ?? '').' — '.$store->name, ' —')
+                : (string) $store->name,
         ]));
     }
 
@@ -107,7 +135,7 @@ class InventoryDocumentController extends Controller
         }
 
         return response()->json($select2->paginated($query, $request, fn (Product $product): array => [
-            'id' => (string) $product->getKey(),
+            'id' => (string) $product->doc_num,
             'text' => trim($product->doc_num.' — '.$product->name),
         ]));
     }
@@ -115,28 +143,19 @@ class InventoryDocumentController extends Controller
     public function store(StoreInventoryOperationRequest $request, InventoryMovementService $service): JsonResponse|RedirectResponse
     {
         $context = $this->requiredContext($request);
-        $header = [
-            ...$context,
-            ...$request->safe()->except('lines'),
-            'purpose' => $request->validated('movement_reason'),
-        ];
-        $draftAction = in_array($request->string('submit_action')->toString(), ['save_draft', 'save_and_edit'], true);
-        $document = $this->guard(fn (): InventoryDocument => $draftAction
-            ? $service->createDraft($header, $request->validated('lines'))
-            : $service->createAndPost($header, $request->validated('lines')));
-
-        $url = $request->string('submit_action')->toString() === 'save_and_new'
-            ? route('admin.inventory.documents.create')
-            : ($draftAction
-                ? route('admin.inventory.documents.edit', $document)
-                : route('admin.inventory.documents.show', $document));
+        [$header, $lines] = $this->movementPayload($request, $context);
+        $shouldPost = $request->string('submit_action')->toString() === 'post_and_view';
+        $document = $this->guard(fn (): InventoryDocument => $shouldPost
+            ? $service->createAndPost($header, $lines)
+            : $service->createDraft($header, $lines));
+        $url = $this->submitRedirectUrl($request, $document, $shouldPost);
 
         return $this->respond(
             $request,
             ['doc_num' => $document->doc_num, 'status' => $document->status, 'url' => $url],
             $url,
             201,
-            $draftAction ? 'inventory.movements.messages.draft_saved' : 'inventory.movements.messages.posted',
+            $shouldPost ? 'inventory.movements.messages.posted' : 'inventory.movements.messages.draft_saved',
         );
     }
 
@@ -148,20 +167,14 @@ class InventoryDocumentController extends Controller
     ): JsonResponse|RedirectResponse {
         $this->assertInCurrentContext($request, $inventoryDocument);
         $context = $this->requiredContext($request);
-        $header = [
-            ...$context,
-            ...$request->safe()->except('lines'),
-            'purpose' => $request->validated('movement_reason'),
-        ];
+        [$header, $lines] = $this->movementPayload($request, $context);
         $shouldPost = $request->string('submit_action')->toString() === 'post_and_view';
-        $document = $this->guard(function () use ($service, $posting, $inventoryDocument, $header, $request, $shouldPost): InventoryDocument {
-            $draft = $service->updateDraft($inventoryDocument, $header, $request->validated('lines'));
+        $document = $this->guard(function () use ($service, $posting, $inventoryDocument, $header, $lines, $shouldPost): InventoryDocument {
+            $draft = $service->updateDraft($inventoryDocument, $header, $lines);
 
             return $shouldPost ? $posting->post($draft) : $draft;
         });
-        $url = $shouldPost
-            ? route('admin.inventory.documents.show', $document)
-            : route('admin.inventory.documents.edit', $document);
+        $url = $this->submitRedirectUrl($request, $document, $shouldPost);
 
         return $this->respond(
             $request,
@@ -188,6 +201,69 @@ class InventoryDocumentController extends Controller
         );
     }
 
+    public function destroy(Request $request, InventoryDocument $inventoryDocument): JsonResponse|RedirectResponse
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        abort_unless($inventoryDocument->status === InventoryDocument::StatusDraft && ! $inventoryDocument->transactions()->exists(), 409, __('Only an unposted draft inventory movement can be deleted.'));
+        $inventoryDocument->update(['deleted_by' => $request->user()?->getKey()]);
+        $inventoryDocument->delete();
+
+        return $request->expectsJson()
+            ? response()->json(['success' => true])
+            : to_route('admin.inventory.documents.index')->with('success', __('Inventory movement deleted successfully.'));
+    }
+
+    public function restore(Request $request, string $inventoryDocument): JsonResponse|RedirectResponse
+    {
+        $context = $this->requiredContext($request);
+        $record = InventoryDocument::onlyTrashed()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('doc_num', $inventoryDocument)
+            ->firstOrFail();
+        $record->restore();
+        $record->update(['restored_by' => $request->user()?->getKey(), 'restored_at' => now(), 'updated_by' => $request->user()?->getKey()]);
+
+        return $request->expectsJson()
+            ? response()->json(['success' => true])
+            : to_route('admin.inventory.documents.show', $record)->with('success', __('Inventory movement restored successfully.'));
+    }
+
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $validated = $request->validate([
+            'doc_nums' => ['required', 'array', 'min:1', 'max:100'],
+            'doc_nums.*' => ['required', 'string', 'distinct', Rule::exists('inventory_documents', 'doc_num')->where(fn ($query) => $query
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->where('status', InventoryDocument::StatusDraft)
+                ->whereNull('deleted_at'))],
+        ]);
+
+        DB::transaction(function () use ($validated, $context, $request): void {
+            $records = InventoryDocument::query()
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->whereIn('doc_num', $validated['doc_nums'])
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($records as $record) {
+                if ($record->status !== InventoryDocument::StatusDraft || $record->transactions()->exists()) {
+                    throw ValidationException::withMessages(['doc_nums' => __('Only unposted draft inventory movements can be deleted.')]);
+                }
+                $record->update(['deleted_by' => $request->user()?->getKey()]);
+                $record->delete();
+            }
+        });
+
+        return response()->json(['success' => true]);
+    }
+
     public function show(Request $request, InventoryDocument $inventoryDocument): View
     {
         $this->assertInCurrentContext($request, $inventoryDocument);
@@ -197,9 +273,7 @@ class InventoryDocumentController extends Controller
                 'lines.product', 'lines.unit', 'transactions', 'branchStore',
                 'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
                 'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'salesOrder',
-                'journalEntry', 'reversalJournalEntry',
             ]),
-            'canViewFinancial' => (bool) $request->user()?->can('inventory.reports.financial'),
         ]);
     }
 
@@ -208,7 +282,7 @@ class InventoryDocumentController extends Controller
         $this->assertInCurrentContext($request, $inventoryDocument);
         $record = $inventoryDocument->load([
             'company', 'lines.product', 'lines.unit', 'lines.warehouseLocation', 'branchStore', 'destinationBranchStore',
-            'productionOrder', 'productionRun', 'journalEntry',
+            'productionOrder', 'productionRun',
         ]);
 
         return $this->pdf->stream('reports.inventory.document', [
@@ -268,6 +342,62 @@ class InventoryDocumentController extends Controller
         } catch (DomainException $exception) {
             throw ValidationException::withMessages(['document' => $exception->getMessage()]);
         }
+    }
+
+    /**
+     * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
+     * @return array{0: array<string, mixed>, 1: list<array<string, mixed>>}
+     */
+    private function movementPayload(StoreInventoryOperationRequest $request, array $context): array
+    {
+        $data = $request->validated();
+        $sourceStore = BranchStore::query()
+            ->where('branch_id', $context['branch_id'])
+            ->where('public_uuid', $data['branch_store_uuid'])
+            ->firstOrFail();
+        $destinationStore = filled($data['destination_branch_store_uuid'] ?? null)
+            ? BranchStore::query()
+                ->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id']))
+                ->where('public_uuid', $data['destination_branch_store_uuid'])
+                ->firstOrFail()
+            : null;
+        $products = Product::query()
+            ->forCompany($context['company_id'])
+            ->active()
+            ->nonService()
+            ->whereIn('doc_num', collect($data['lines'])->pluck('product_doc_num'))
+            ->get()
+            ->keyBy('doc_num');
+        $lines = collect($data['lines'])->map(function (array $line) use ($products): array {
+            $product = $products->get($line['product_doc_num']);
+
+            return [
+                ...collect($line)->except('product_doc_num')->all(),
+                'product_id' => $product->getKey(),
+            ];
+        })->values()->all();
+
+        return [[
+            ...$context,
+            ...collect($data)->except(['lines', 'submit_action', 'branch_store_uuid', 'destination_branch_store_uuid'])->all(),
+            'branch_store_id' => $sourceStore->getKey(),
+            'destination_branch_store_id' => $destinationStore?->getKey(),
+            'purpose' => $data['movement_reason'],
+        ], $lines];
+    }
+
+    private function submitRedirectUrl(Request $request, InventoryDocument $document, bool $posted): string
+    {
+        if ($posted) {
+            return route('admin.inventory.documents.show', $document);
+        }
+
+        return match ($request->string('submit_action')->trim()->toString() ?: 'save') {
+            'save_view' => route('admin.inventory.documents.show', $document),
+            'save_back' => route('admin.inventory.documents.index'),
+            'save_clone' => route('admin.inventory.documents.clone', $document),
+            default => route('admin.inventory.documents.edit', $document),
+        };
     }
 
     /** @return list<string> */

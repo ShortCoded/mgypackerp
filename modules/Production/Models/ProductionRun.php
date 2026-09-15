@@ -14,6 +14,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReservation;
 
 class ProductionRun extends Model
 {
@@ -188,6 +189,11 @@ class ProductionRun extends Model
     public function inventoryDocuments(): HasMany
     {
         return $this->hasMany(InventoryDocument::class, 'production_run_id')->orderBy('document_date')->orderBy('id');
+    }
+
+    public function reservations(): HasMany
+    {
+        return $this->hasMany(InventoryReservation::class, 'production_run_id');
     }
 
     public function materialRequests(): HasMany

@@ -717,6 +717,10 @@ test('purchase request visibility and downstream actions follow operating branch
     $fixture = procurementUiFixture();
     $sourcing = app(ProcurementSourcingService::class);
     $factoryRequest = $sourcing->submitRequisition(procurementManualRequisition($fixture, 10));
+    $factoryData = $this->getJson(route('admin.purchases.procurement.data', 'purchase_requisitions').'?draw=0&start=0&length=10')->assertOk();
+    expect($factoryData->json('data.0.actions'))->toContain('/approve');
+    $this->postJson(route('admin.purchases.purchase-requisitions.approve', $factoryRequest))->assertOk();
+    $factoryRequest = $factoryRequest->fresh();
 
     $warehouse = Branch::query()->create([
         ...app(DocumentNumberService::class)->next('branches', Branch::class),
@@ -744,13 +748,11 @@ test('purchase request visibility and downstream actions follow operating branch
     $adminData = $this->getJson(route('admin.purchases.procurement.data', 'purchase_requisitions').'?draw=2&start=0&length=10')->assertOk();
     expect($adminData->json('recordsFiltered'))->toBe(2);
     $factoryRow = collect($adminData->json('data'))->first(fn (array $row): bool => str_contains($row['doc_num'], $factoryRequest->doc_num));
-    expect($factoryRow['source'])->toContain($fixture['branch']->name)->toContain($fixture['store']->name)
-        ->and($factoryRow['actions'])->toContain('/approve');
+    expect($factoryRow['source'])->toContain($fixture['branch']->name)->toContain($fixture['store']->name);
 
     $this->get(route('admin.purchases.purchase-requisitions.show', $factoryRequest))->assertOk()
         ->assertSee($fixture['branch']->name)
         ->assertSee($fixture['store']->name);
-    $this->postJson(route('admin.purchases.purchase-requisitions.approve', $factoryRequest))->assertOk();
     $this->get(route('admin.purchases.supplier-quotation-entry.create-source', [SupplierQuotation::SourcePurchaseRequisition, $factoryRequest->doc_num]))
         ->assertOk()
         ->assertSee($factoryRequest->doc_num)

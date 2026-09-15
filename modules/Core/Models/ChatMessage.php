@@ -20,6 +20,7 @@ class ChatMessage extends Model
         'public_uuid',
         'conversation_id',
         'sender_id',
+        'client_message_id',
         'reply_to_message_id',
         'forwarded_from_message_id',
         'forwarded_from_user_id',

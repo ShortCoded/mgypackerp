@@ -30,6 +30,7 @@
   const loadOlderButton = root.querySelector('[data-chat-load-older]');
   const newConversationForm = document.querySelector('[data-chat-new-conversation-form]');
   const forwardForm = document.querySelector('[data-chat-forward-form]');
+  const mobileLayout = window.matchMedia('(max-width: 767.98px)');
 
   const state = {
     conversations: [],
@@ -48,7 +49,9 @@
     messageInFlight: false,
     failureCount: 0,
     conversationUnreadBaselineReady: false,
-    conversationUnreadCounts: new Map()
+    conversationUnreadCounts: new Map(),
+    pendingClientMessageId: null,
+    pendingClientMessageSignature: null
   };
   const attachmentRules = {
     maxFiles: 5,
@@ -143,10 +146,10 @@
     }
   }
 
-    function showToast(icon, title) {
-      if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
-          window.AppAlerts.toast(icon, title);
-      }
+  function showToast(icon, title) {
+    if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
+      window.AppAlerts.toast(icon, title);
+    }
   }
 
   function validationMessage(payload) {
@@ -198,7 +201,7 @@
       const statusClass = presence.status === 'online' ? 'status-online' : '';
       const mutedIcon = conversation.is_muted ? `<span class="fas fa-bell-slash text-400 ms-1" title="${escapeHtml(message('muteChat'))}"></span>` : '';
 
-      return `<div class="hover-actions-trigger chat-contact nav-item ${isActive ? 'active' : ''} ${unread > 0 ? 'unread-message' : ''}" role="tab" aria-selected="${isActive ? 'true' : 'false'}" data-chat-conversation="${escapeAttribute(conversation.id)}">
+      return `<div class="hover-actions-trigger chat-contact nav-item ${isActive ? 'active' : ''} ${unread > 0 ? 'unread-message' : ''}" role="tab" tabindex="0" aria-selected="${isActive ? 'true' : 'false'}" data-chat-conversation="${escapeAttribute(conversation.id)}">
         <div class="d-md-none d-lg-block">
           <div class="dropdown dropdown-active-trigger dropdown-chat">
             <button class="hover-actions btn btn-link btn-sm text-400 dropdown-caret-none dropdown-toggle end-0 fs-9 mt-4 me-1 z-1 pb-2 mb-n2" type="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -471,10 +474,6 @@
     messageList.insertAdjacentHTML('beforeend', messagesHtml(fresh, lastRenderedDateKey()));
     state.latestMessageId = fresh[fresh.length - 1].id;
     scrollToBottom();
-
-    if (!state.activeConversation?.is_muted && fresh.some(function (messageItem) { return !messageItem.is_own; })) {
-      playNotificationSound();
-    }
   }
 
   function updateReceipts(otherLastReadAt) {
@@ -503,15 +502,8 @@
     });
   }
 
-  function playNotificationSound() {
-    if (window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
-      window.AppNotificationSound.play();
-    }
-  }
-
   function notifyForUnreadIncreases(conversations) {
     const nextCounts = new Map();
-    let hasUnreadIncrease = false;
 
     conversations.forEach(function (conversation) {
       const id = String(conversation.id || '');
@@ -527,15 +519,6 @@
         updateReceipts(conversation.other_last_read_at);
       }
 
-      if (!state.conversationUnreadBaselineReady || id === state.activeConversationId) {
-        return;
-      }
-
-      const previous = Number(state.conversationUnreadCounts.get(id) || 0);
-
-      if (unread > previous && !conversation.is_muted) {
-        hasUnreadIncrease = true;
-      }
     });
 
     state.conversationUnreadCounts = nextCounts;
@@ -545,9 +528,6 @@
       return;
     }
 
-    if (hasUnreadIncrease) {
-      playNotificationSound();
-    }
   }
 
   function scrollToBottom() {
@@ -561,7 +541,10 @@
     panel?.classList.remove('d-none');
     composer?.classList.remove('d-none');
     root.classList.remove('contacts-list-show');
-    bodyInput?.focus();
+
+    if (!mobileLayout.matches) {
+      bodyInput?.focus();
+    }
   }
 
   function updateLocation(conversationId) {
@@ -723,6 +706,10 @@
       messageList.innerHTML = '';
     }
     renderConversations();
+
+    if (mobileLayout.matches) {
+      root.classList.add('contacts-list-show');
+    }
 
     if (window.history) {
       const url = new URL(window.location.href);
@@ -888,7 +875,10 @@
       return;
     }
 
-    request(route('read', state.activeConversationId), { method: 'POST' });
+    request(route('read', state.activeConversationId), { method: 'POST' })
+      .then(function () {
+        window.AppNotificationsClient?.refresh?.({ suppressSound: true });
+      });
   }
 
   function syncPreviewStack() {
@@ -1081,7 +1071,26 @@
     }
 
     const formData = new FormData();
+    const messageSignature = JSON.stringify([
+      state.activeConversationId,
+      body,
+      state.replyToMessage?.id || null,
+      state.selectedFiles.map(function (file) { return [file.name, file.size, file.lastModified]; })
+    ]);
+
+    if (!state.pendingClientMessageId || state.pendingClientMessageSignature !== messageSignature) {
+      state.pendingClientMessageId = window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (character) {
+          const random = Math.floor(Math.random() * 16);
+          const value = character === 'x' ? random : ((random & 0x3) | 0x8);
+          return value.toString(16);
+        });
+      state.pendingClientMessageSignature = messageSignature;
+    }
+
     formData.append('body', body);
+    formData.append('client_message_id', state.pendingClientMessageId);
     if (state.replyToMessage?.id) {
       formData.append('reply_to_message_id', state.replyToMessage.id);
     }
@@ -1107,6 +1116,8 @@
         });
       })
       .then(function (payload) {
+        state.pendingClientMessageId = null;
+        state.pendingClientMessageSignature = null;
         bodyInput.value = '';
         autoResizeComposer();
         clearReply();
@@ -1343,6 +1354,21 @@
     loadConversation(item.getAttribute('data-chat-conversation'));
   });
 
+  conversationList?.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    const item = event.target.closest('[data-chat-conversation]');
+
+    if (!item) {
+      return;
+    }
+
+    event.preventDefault();
+    loadConversation(item.getAttribute('data-chat-conversation'));
+  });
+
   searchInput?.addEventListener('input', renderConversations);
 
   root.querySelector('[data-chat-search-form]')?.addEventListener('submit', function (event) {
@@ -1354,7 +1380,7 @@
   loadOlderButton?.addEventListener('click', loadOlderMessages);
 
   bodyInput?.addEventListener('keydown', function (event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !mobileLayout.matches) {
       event.preventDefault();
       composer?.requestSubmit();
     }
@@ -1474,7 +1500,47 @@
     root.classList.add('contacts-list-show');
   });
 
+  function syncMobileLayout() {
+    if (!mobileLayout.matches) {
+      root.classList.remove('contacts-list-show');
+      return;
+    }
+
+    if (!state.activeConversationId) {
+      root.classList.add('contacts-list-show');
+    }
+  }
+
+  if (typeof mobileLayout.addEventListener === 'function') {
+    mobileLayout.addEventListener('change', syncMobileLayout);
+  } else if (typeof mobileLayout.addListener === 'function') {
+    mobileLayout.addListener(syncMobileLayout);
+  }
+
+  function localizeComposerPlaceholder() {
+    if (bodyInput && message('typeMessage')) {
+      bodyInput.setAttribute('placeholder', message('typeMessage'));
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', localizeComposerPlaceholder, { once: true });
+  } else {
+    localizeComposerPlaceholder();
+  }
+
   initSelect2();
   initEmojiPicker();
+  window.AppChatNotificationContext = {
+    isViewing: function (notification) {
+      return Boolean(
+        state.activeConversationId
+        && notification?.conversation_uuid
+        && String(notification.conversation_uuid) === String(state.activeConversationId)
+        && !document.hidden
+      );
+    }
+  };
+  syncMobileLayout();
   fetchConversations();
 })(window, document, window.jQuery);

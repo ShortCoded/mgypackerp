@@ -70,7 +70,21 @@ class ChatConversation extends Model
      */
     public function participants(): BelongsToMany
     {
+        return $this->allParticipants()
+            ->wherePivotNull('deleted_at')
+            ->whereNull('users.deleted_at')
+            ->where('users.status', 'active');
+    }
+
+    /**
+     * Includes former participants for the permission-protected audit report.
+     *
+     * @return BelongsToMany<User, $this>
+     */
+    public function allParticipants(): BelongsToMany
+    {
         return $this->belongsToMany(User::class, 'chat_conversation_user', 'conversation_id', 'user_id')
+            ->withTrashed()
             ->withPivot(['last_read_at', 'muted_at', 'archived_at', 'deleted_at'])
             ->withTimestamps();
     }

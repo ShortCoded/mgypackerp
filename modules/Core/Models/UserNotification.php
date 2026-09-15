@@ -15,15 +15,31 @@ class UserNotification extends Model
      */
     protected $fillable = [
         'public_uuid',
+        'event_uuid',
         'user_id',
         'type',
         'category',
+        'module',
+        'severity',
+        'requires_action',
+        'sound_key',
+        'suppress_in_app_alert',
         'title',
         'body',
+        'external_title',
+        'external_body',
         'url',
+        'required_permission',
+        'company_id',
+        'branch_id',
+        'conversation_id',
         'scheduled_for',
         'delivered_at',
         'read_at',
+        'push_status',
+        'push_attempts',
+        'push_last_attempt_at',
+        'push_error_code',
         'metadata',
         'dedupe_key',
     ];
@@ -46,6 +62,10 @@ class UserNotification extends Model
             'scheduled_for' => 'datetime',
             'delivered_at' => 'datetime',
             'read_at' => 'datetime',
+            'requires_action' => 'boolean',
+            'suppress_in_app_alert' => 'boolean',
+            'push_attempts' => 'integer',
+            'push_last_attempt_at' => 'datetime',
             'metadata' => 'array',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -63,6 +83,14 @@ class UserNotification extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * @return BelongsTo<Branch, $this>
+     */
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     /**

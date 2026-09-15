@@ -29,10 +29,17 @@ class InventoryAccountingPostingService
         }
 
         $event = $this->eventLabel($document);
+
+        if ($document->lines->contains(
+            fn ($line): bool => $line->unit_cost === null || $line->total_cost === null,
+        )) {
+            return null;
+        }
+
         $lines = $this->journalLines($document, $event);
 
         if ($lines === []) {
-            throw new DomainException(__('inventory_accounting.errors.zero_cost', ['event' => $event]));
+            return null;
         }
 
         $journal = $this->journals->createPostedFromSource(

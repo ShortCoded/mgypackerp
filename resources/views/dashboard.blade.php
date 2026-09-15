@@ -7,97 +7,8 @@
 @section('title', __('dashboard.plastics.title'))
 
 @push('styles')
-    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/employee-self-service.css') }}">
-    <style>
-        .plastics-dashboard {
-            --plastics-dashboard-section-gap: 1.5rem;
-        }
-
-        .plastics-dashboard-chart {
-            height: 15rem;
-            min-height: 0;
-        }
-
-        .plastics-dashboard-header {
-            border-bottom: 1px solid var(--falcon-border-color);
-            padding: .75rem 0 1rem;
-        }
-
-        .plastics-dashboard-section {
-            margin-bottom: var(--plastics-dashboard-section-gap);
-            padding: 0;
-        }
-
-        .plastics-dashboard-section-heading {
-            margin-bottom: .5rem;
-        }
-
-        .plastics-dashboard-section-heading h5 {
-            font-size: .95rem;
-        }
-
-        .plastics-dashboard-metric .card-body {
-            padding: .9rem 1rem;
-        }
-
-        .dashboard-kpi-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr);
-            gap: 1rem;
-        }
-
-        .dashboard-kpi-card {
-            min-height: 10.5rem;
-        }
-
-        .dashboard-kpi-category {
-            font-size: .7rem;
-            line-height: 1.2;
-        }
-
-        .plastics-dashboard-metric-value {
-            font-size: 1.55rem;
-            line-height: 1.15;
-        }
-
-        .plastics-dashboard-context span {
-            max-width: 22rem;
-        }
-
-        .plastics-dashboard-icon {
-            flex: 0 0 2rem;
-            line-height: 1;
-            text-align: center;
-        }
-
-        .plastics-dashboard-empty {
-            padding: .85rem 1rem;
-        }
-
-        @media (min-width: 768px) {
-            .dashboard-kpi-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-        }
-
-        @media (min-width: 992px) {
-            .dashboard-kpi-grid {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
-        }
-
-        @media (min-width: 1200px) {
-            .dashboard-kpi-grid {
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-            }
-        }
-
-        @media (max-width: 575.98px) {
-            .plastics-dashboard-chart {
-                height: 13rem;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/employee-self-service.css') }}">
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Core/dashboard.css') }}">
 @endpush
 
 @section('content')
@@ -121,6 +32,60 @@
                 </div>
             </div>
         </header>
+
+        <section class="plastics-dashboard-section" data-personal-dashboard>
+            <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2 mb-2">
+                <div>
+                    <h5 class="mb-1">{{ __('dashboard.personal.title') }}</h5>
+                    <p class="mb-0 text-600" data-personal-summary>{{ __('dashboard.personal.summary', ['required' => $personalDashboard['summary']['required_count'], 'overdue' => $personalDashboard['summary']['overdue_count'], 'approvals' => $personalDashboard['summary']['approval_count']]) }}</p>
+                </div>
+                <div class="small text-600" data-personal-health>{{ __('dashboard.personal.last_updated', ['time' => $personalDashboard['summary']['updated_at_label']]) }}</div>
+            </div>
+
+            @foreach ($personalDashboard['limitations'] as $limitation)
+                <div class="alert alert-info py-2" data-personal-limitation>{{ $limitation }}</div>
+            @endforeach
+
+            <div class="dashboard-kpi-grid mb-3" data-personal-cards>
+                @foreach ($personalDashboard['cards'] as $card)
+                    <a class="card h-100 text-decoration-none" href="{{ $card['url'] }}" data-personal-card="{{ $card['key'] }}">
+                        <div class="card-body py-3">
+                            <div class="d-flex align-items-start justify-content-between gap-3">
+                                <div><p class="small text-600 mb-1">{{ $card['title'] }}</p><div class="fs-5 fw-semibold text-900" data-personal-card-value>{{ $card['value'] }}</div><p class="small text-600 mb-0" data-personal-card-meta>{{ $card['meta'] }}</p></div>
+                                <span class="fas fa-{{ $card['icon'] }} text-{{ $card['color'] }} fa-lg mt-1" aria-hidden="true"></span>
+                            </div>
+                        </div>
+                    </a>
+                @endforeach
+            </div>
+
+            <div class="row g-3">
+                <div class="col-lg-7">
+                    <div class="card h-100">
+                        <div class="card-header py-2 border-bottom"><h6 class="mb-0">{{ __('dashboard.personal.required_work') }}</h6></div>
+                        <div class="list-group list-group-flush" data-personal-work-list>
+                            @forelse ($personalDashboard['work_items'] as $item)
+                                <a class="list-group-item list-group-item-action" href="{{ $item['url'] }}"><div class="d-flex justify-content-between gap-2"><div><div class="fw-semibold">{{ $item['title'] }}</div><div class="small text-700">{{ $item['body'] }}</div><div class="small text-600">{{ $item['meta'] }}</div></div><span class="badge badge-subtle-{{ $item['severity'] === 'urgent' ? 'danger' : 'warning' }} align-self-start">{{ __('dashboard.personal.work.open') }}</span></div></a>
+                            @empty
+                                <div class="p-4 text-center text-600" data-personal-empty>{{ __('dashboard.personal.empty_work') }}</div>
+                            @endforelse
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-5">
+                    <div class="card h-100">
+                        <div class="card-header py-2 border-bottom"><h6 class="mb-0">{{ __('dashboard.personal.recent_updates') }}</h6></div>
+                        <div class="list-group list-group-flush" data-personal-updates-list>
+                            @forelse ($personalDashboard['recent_updates'] as $item)
+                                <a class="list-group-item list-group-item-action" href="{{ $item['url'] }}"><div class="fw-semibold">{{ $item['title'] }}</div>@if ($item['body'])<div class="small text-700">{{ $item['body'] }}</div>@endif<div class="small text-600">{{ $item['time'] }}</div></a>
+                            @empty
+                                <div class="p-4 text-center text-600" data-personal-empty>{{ __('dashboard.personal.empty_updates') }}</div>
+                            @endforelse
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         @if ($employeeAttendance['linked'])
             <section class="card attendance-hero employee-self-service mb-3"
@@ -284,6 +249,22 @@
     @php
         $erpAsset = app(\Modules\Core\Services\AssetVersionService::class);
     @endphp
+    <script>
+        window.AppPersonalDashboard = {
+            url: @json(route('dashboard.data', [], false)),
+            intervalMs: 45000,
+            hiddenIntervalMs: 120000,
+            messages: {
+                summary: {{ Illuminate\Support\Js::from(__('dashboard.personal.summary', ['required' => ':required', 'overdue' => ':overdue', 'approvals' => ':approvals'])) }},
+                lastUpdated: {{ Illuminate\Support\Js::from(__('dashboard.personal.last_updated', ['time' => ':time'])) }},
+                stale: @json(__('dashboard.personal.stale')),
+                emptyWork: @json(__('dashboard.personal.empty_work')),
+                emptyUpdates: @json(__('dashboard.personal.empty_updates')),
+                open: @json(__('dashboard.personal.work.open'))
+            }
+        };
+    </script>
+    <script src="{{ $erpAsset->url('assets/js/modules/Core/personal-dashboard.js') }}"></script>
     @if ($charts !== [])
         <script src="{{ $erpAsset->url('vendors/echarts/echarts.min.js') }}"></script>
         <script src="{{ $erpAsset->url('assets/js/modules/Core/expanded-dashboard.js') }}"></script>

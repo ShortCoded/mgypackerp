@@ -14,7 +14,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
     public function __construct(
         private readonly Collection $rows,
         private readonly array $totals,
-        private readonly bool $includeFinancial,
     ) {}
 
     /** @return list<array<int, mixed>> */
@@ -45,10 +44,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
                 (float) $row->held_stock,
             ];
 
-            if ($this->includeFinancial) {
-                $data[] = (float) $row->inventory_value;
-            }
-
             return $data;
         })->all();
         $total = array_fill(0, 15, null);
@@ -61,10 +56,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
             (float) $this->totals['available'],
             (float) $this->totals['held_stock'],
         );
-
-        if ($this->includeFinancial) {
-            $total[] = (float) $this->totals['inventory_value'];
-        }
 
         $rows[] = $total;
 
@@ -96,10 +87,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
             __('stock_balance_inquiry.columns.available'),
             __('stock_balance_inquiry.columns.held'),
         ];
-
-        if ($this->includeFinancial) {
-            $headings[] = __('stock_balance_inquiry.columns.inventory_value');
-        }
 
         return $headings;
     }

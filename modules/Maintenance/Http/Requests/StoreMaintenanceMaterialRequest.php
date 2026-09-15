@@ -10,7 +10,11 @@ class StoreMaintenanceMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('maintenance.material_requests.create');
+        $permission = $this->isMethod('PUT') || $this->isMethod('PATCH')
+            ? 'maintenance.material_requests.edit'
+            : 'maintenance.material_requests.create';
+
+        return (bool) $this->user()?->can($permission);
     }
 
     public function rules(): array
@@ -33,7 +37,6 @@ class StoreMaintenanceMaterialRequest extends FormRequest
                 ->where('company_id', $context['company_id'])
                 ->where('status', 'active')
                 ->whereNull('deleted_at'))],
-            'lines.*.unit_id' => ['nullable', 'integer'],
             'lines.*.item_type' => ['required', Rule::in(['spare_part', 'oil', 'consumable'])],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.notes' => ['nullable', 'string', 'max:1000'],

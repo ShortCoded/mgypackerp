@@ -124,7 +124,7 @@ class ProcurementWorkflowController extends Controller
 
     public function rejectRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
-        $this->assertAdministrativeBranch();
+        $this->assertRequisitionApprovalBranch($purchaseRequisition);
 
         return $this->execute($request, fn () => $this->sourcing->rejectRequisition($purchaseRequisition, $request->validated('rejection_reason')), 'admin.purchases.purchase-requisitions.show');
     }
@@ -189,7 +189,7 @@ class ProcurementWorkflowController extends Controller
 
     public function approveRequisition(ProcurementWorkflowRequest $request, PurchaseRequisition $purchaseRequisition): JsonResponse|RedirectResponse
     {
-        $this->assertAdministrativeBranch();
+        $this->assertRequisitionApprovalBranch($purchaseRequisition);
 
         return $this->execute($request, fn () => $this->sourcing->approveRequisition($purchaseRequisition, $request->validated('approved_quantities', [])), 'admin.purchases.purchase-requisitions.show');
     }
@@ -1448,6 +1448,28 @@ class ProcurementWorkflowController extends Controller
     private function assertAdministrativeBranch(): void
     {
         abort_unless($this->isAdministrativeBranch(), 403, __('procurement.ui.administrative_context_required'));
+    }
+
+    private function assertRequisitionApprovalBranch(PurchaseRequisition $record): void
+    {
+        if ($this->isAdministrativeBranch()) {
+            $this->assertCurrent($record);
+
+            return;
+        }
+
+        $context = $this->context();
+        $isOriginFactory = (int) $record->company_id === $context['company_id']
+            && (int) $record->financial_period_id === $context['financial_period_id']
+            && (int) $record->branch_id === $context['branch_id']
+            && Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeFactory)
+                ->where('status', 'active')
+                ->exists();
+
+        abort_unless($isOriginFactory, 403, __('procurement.ui.administrative_context_required'));
     }
 
     private function assertInventoryBranch(): void

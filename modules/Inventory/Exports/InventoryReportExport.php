@@ -13,41 +13,20 @@ use Maatwebsite\Excel\Concerns\WithTitle;
 class InventoryReportExport implements WithMultipleSheets
 {
     /** @param array<string, mixed> $report */
-    public function __construct(
-        private readonly array $report,
-        private readonly bool $includeFinancial,
-    ) {}
+    public function __construct(private readonly array $report) {}
 
     /** @return list<InventoryReportSheet> */
     public function sheets(): array
     {
         $balanceHeadings = ['Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'On Hand'];
 
-        if ($this->includeFinancial) {
-            array_push($balanceHeadings, 'Inventory Value', 'Unvalued Receipt Quantity');
-        }
-
         $balanceRows = collect($this->report['balances'])->map(function ($row): array {
-            $data = [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->on_hand];
-
-            if ($this->includeFinancial) {
-                array_push($data, $row->inventory_value, $row->unvalued_receipt_quantity);
-            }
-
-            return $data;
+            return [$row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->on_hand];
         });
         $balanceTotal = [__('Total'), null, null, null, null, null, $this->report['reportTotals']['on_hand']];
 
-        if ($this->includeFinancial) {
-            array_push($balanceTotal, $this->report['reportTotals']['inventory_value'], $this->report['reportTotals']['unvalued_receipt_quantity']);
-        }
-
         $movementRows = collect($this->report['movements'])->map(fn ($row): array => $this->movementRow($row));
         $movementTotal = [__('Total'), null, null, null, null, null, null, null, $this->report['reportTotals']['quantity_in'], $this->report['reportTotals']['quantity_out']];
-
-        if ($this->includeFinancial) {
-            array_push($movementTotal, null, null);
-        }
 
         $movementTotal[] = null;
 
@@ -61,20 +40,11 @@ class InventoryReportExport implements WithMultipleSheets
             $this->sheet(__('Reorder'), $this->headings(['Product Code', 'Product', 'Store', 'On Hand', 'Reserved', 'Available', 'Reorder Point', 'Shortage', 'Production Demand']), collect($this->report['reorder'])->map(fn ($row): array => [$row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->on_hand, $row->reserved, $row->available, $row->reorder_point, $row->shortage, $row->production_demand])),
             $this->sheet(
                 __('Inventory Aging'),
-                $this->headings(array_values(array_filter(['Receipt Date', 'Age Days', 'Age Bucket', 'Receipt Source', 'Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'Remaining Quantity', $this->includeFinancial ? 'Remaining Value' : null]))),
-                collect($this->report['agingLayers'])->map(fn ($row): array => array_values(array_filter([$row->original_receipt_date?->toDateString(), $row->age_days, $row->age_bucket, $row->source_doc_num, $row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->remaining_quantity, $this->includeFinancial ? $row->remaining_value : null], fn ($value): bool => $value !== null))),
+                $this->headings(['Receipt Date', 'Age Days', 'Age Bucket', 'Receipt Source', 'Store', 'Location', 'Product Code', 'Product', 'Status', 'Batch', 'Remaining Quantity']),
+                collect($this->report['agingLayers'])->map(fn ($row): array => [$row->original_receipt_date?->toDateString(), $row->age_days, $row->age_bucket, $row->source_doc_num, $row->branchStore?->name, $row->warehouseLocation?->code, $row->product?->doc_num, $row->product?->name, $this->stockStatusLabel($row->stock_status), $row->batch_lot, $row->remaining_quantity]),
             ),
             $this->sheet(__('Inventory Expiry'), $this->headings(['Expiry State', 'Days to Expiry', 'Expiry Date', 'Manufacture Date', 'Batch', 'Product Code', 'Product', 'Store', 'Location', 'Status', 'Remaining Quantity']), collect($this->report['expiryLayers'])->map(fn ($row): array => [__(str($row->expiry_state)->replace('_', ' ')->title()->toString()), $row->days_to_expiry, $row->expiry_date?->toDateString(), $row->manufacture_date?->toDateString(), $row->batch_lot, $row->product?->doc_num, $row->product?->name, $row->branchStore?->name, $row->warehouseLocation?->code, $this->stockStatusLabel($row->stock_status), $row->remaining_quantity])),
         ];
-
-        if ($this->includeFinancial) {
-            $sheets[] = $this->report['glReconciliation'] === null
-                ? $this->sheet(__('GL Reconciliation'), $this->headings(['Status', 'Details']), collect([[
-                    __('Unavailable'),
-                    $this->report['glReconciliationUnavailableReason'],
-                ]]))
-                : $this->sheet(__('GL Reconciliation'), $this->headings(['Control', 'Subledger', 'General Ledger', 'Difference', 'Status']), collect($this->report['glReconciliation'])->map(fn (array $row): array => [$row['label'], $row['subledger'], $row['gl'], $row['difference'], __(str($row['status'])->replace('_', ' ')->title()->toString())]));
-        }
 
         return $sheets;
     }
@@ -90,10 +60,6 @@ class InventoryReportExport implements WithMultipleSheets
     {
         $headings = ['Date', 'Source', 'Type', 'Store', 'Location', 'Status', 'Product Code', 'Product', 'In', 'Out'];
 
-        if ($this->includeFinancial) {
-            array_push($headings, 'Unit Cost', 'Total Cost');
-        }
-
         $headings[] = 'Run';
 
         return $this->headings($headings);
@@ -103,10 +69,6 @@ class InventoryReportExport implements WithMultipleSheets
     private function movementRow($row): array
     {
         $data = [$row->transaction_date?->toDateString(), $row->source_doc_num, $this->movementTypeLabel($row->transaction_type), $row->branchStore?->name, $row->warehouseLocation?->code, $this->stockStatusLabel($row->stock_status), $row->product?->doc_num, $row->product?->name, $row->quantity_in, $row->quantity_out];
-
-        if ($this->includeFinancial) {
-            array_push($data, $row->unit_cost, $row->total_cost);
-        }
 
         $data[] = $row->productionRun?->run_number;
 

@@ -5,8 +5,8 @@ namespace Modules\Core\Services;
 use App\Models\User;
 use Carbon\CarbonInterface;
 use DomainException;
-use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\ArchiveFile;
@@ -77,7 +77,7 @@ class UserTaskService
 
     /**
      * @param  array<string, mixed>  $data
-     * @return array{record: UserTask, changed: bool, changed_fields: list<string>, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string|null, assignee_user_ids: list<int>, added_assignee_user_ids: list<int>}
+     * @return array{record: UserTask, changed: bool, changed_fields: list<string>, changes: array<string, array{old: mixed, new: mixed}>, old_doc_number: int|null, old_doc_num: string|null, assignee_user_ids: list<int>, added_assignee_user_ids: list<int>, removed_assignee_user_ids: list<int>}
      */
     public function update(UserTask $record, array $data, User $actor, array $attachmentFileDocNums = [], ?Request $request = null): array
     {
@@ -133,6 +133,7 @@ class UserTaskService
                         'old_doc_num' => $oldDocNum,
                         'assignee_user_ids' => $oldAssigneeUserIds,
                         'added_assignee_user_ids' => [],
+                        'removed_assignee_user_ids' => [],
                     ];
                 }
 
@@ -145,6 +146,7 @@ class UserTaskService
                     'old_doc_num' => $oldDocNum,
                     'assignee_user_ids' => $oldAssigneeUserIds,
                     'added_assignee_user_ids' => [],
+                    'removed_assignee_user_ids' => [],
                 ];
             }
 
@@ -171,6 +173,7 @@ class UserTaskService
                 'old_doc_num' => $oldDocNum,
                 'assignee_user_ids' => $assigneeUserIds,
                 'added_assignee_user_ids' => array_values(array_diff($assigneeUserIds, $oldAssigneeUserIds)),
+                'removed_assignee_user_ids' => array_values(array_diff($oldAssigneeUserIds, $assigneeUserIds)),
             ];
         });
     }

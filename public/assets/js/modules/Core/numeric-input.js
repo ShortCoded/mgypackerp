@@ -210,6 +210,50 @@
         return delta % stepUnits === BigInt(0);
     }
 
+    function decimalFromScaledInteger(value, scale) {
+        var negative = value < BigInt(0);
+        var digits = (negative ? -value : value).toString().padStart(scale + 1, '0');
+        var decimal = scale === 0
+            ? digits
+            : digits.slice(0, -scale) + '.' + digits.slice(-scale);
+
+        return (negative ? '-' : '') + decimal;
+    }
+
+    function incrementInput(input, direction) {
+        if (typeof BigInt !== 'function' || input.disabled || input.readOnly) {
+            return;
+        }
+
+        var current = normalize(input.value);
+        var increment = normalize(input.getAttribute('data-numeric-arrow-step') || input.getAttribute('step') || '1');
+
+        if (increment === null || increment === '' || compare(increment, '0') !== 1) {
+            increment = '1';
+        }
+        if (current === null || current === '') {
+            current = '0';
+        }
+
+        var scale = Math.max(decimalPlaces(current), decimalPlaces(increment));
+        var next = scaledInteger(current, scale) + (scaledInteger(increment, scale) * BigInt(direction));
+        var nextValue = normalize(decimalFromScaledInteger(next, scale));
+        var minimum = input.getAttribute('data-numeric-min');
+        var maximum = input.getAttribute('data-numeric-max');
+
+        if (minimum !== null && compare(nextValue, minimum) < 0) {
+            nextValue = normalize(minimum);
+        }
+        if (maximum !== null && compare(nextValue, maximum) > 0) {
+            nextValue = normalize(maximum);
+        }
+
+        input.value = nextValue;
+        validateInput(input);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     function same(left, right) {
         var leftParsed = parseDecimal(left);
         var rightParsed = parseDecimal(right);
@@ -359,6 +403,13 @@
         document.addEventListener('input', function (event) {
             if (event.target.matches && event.target.matches(selector)) {
                 validateInput(event.target);
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.target.matches && event.target.matches(selector) && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+                event.preventDefault();
+                incrementInput(event.target, event.key === 'ArrowUp' ? 1 : -1);
             }
         });
 

@@ -182,7 +182,7 @@ class ActivityLogger
             'status' => $status,
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
-            'url' => $request->fullUrl(),
+            'url' => $context['url'] ?? $request->fullUrl(),
             'method' => $request->method(),
         ];
 

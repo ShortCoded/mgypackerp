@@ -454,7 +454,14 @@ return [
         'title' => 'Inventory Movements',
         'create' => 'New Inventory Movement',
         'edit' => 'Edit Inventory Movement',
+        'clone' => 'Clone Inventory Movement',
         'edit_document' => 'Edit Inventory Movement :document',
+        'copy_of' => 'Copy of inventory movement :document',
+        'header_data' => 'Inventory Movement Data',
+        'line' => 'Inventory movement line',
+        'add_line_shortcut' => 'Add a new line (Alt + N)',
+        'duplicate_line_shortcut' => 'Duplicate line data (Alt + D)',
+        'delete_line_shortcut' => 'Delete line (Alt + Delete)',
         'posting_notice' => 'Drafts remain editable. Posting updates stock and accounting; posted documents are corrected by reversal.',
         'fields' => [
             'document' => 'Document',
@@ -531,6 +538,7 @@ return [
         ],
         'actions' => [
             'add_line' => 'Add Line',
+            'duplicate_line' => 'Duplicate Line',
             'remove_line' => 'Remove Line',
             'save_draft' => 'Save Draft',
             'edit' => 'Edit Draft',

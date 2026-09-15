@@ -1,6 +1,39 @@
 <?php
 
 return [
+    'personal' => [
+        'title' => 'لوحة عملي',
+        'summary' => 'لديك :required أعمال مفتوحة، منها :overdue متأخرة و:approvals تنتظر قرارك.',
+        'last_updated' => 'آخر تحديث: :time',
+        'stale' => 'تعذر التحديث؛ يتم عرض آخر بيانات ناجحة.',
+        'required_work' => 'المطلوب مني',
+        'recent_updates' => 'آخر المستجدات التي تخصني',
+        'empty_work' => 'لا توجد أعمال مفتوحة مسندة إليك الآن.',
+        'empty_updates' => 'لا توجد مستجدات حديثة.',
+        'source_unavailable' => 'مصدر «:source» غير متاح حاليًا ولم يُعرض كصفر وهمي.',
+        'cards' => [
+            'open_tasks' => 'مهامي المفتوحة', 'due_today' => 'مستحق اليوم', 'overdue' => 'متأخر',
+            'approvals' => 'بانتظار قراري', 'unread' => 'إشعارات جديدة',
+        ],
+        'meta' => [
+            'open_tasks' => 'من حالة المهام الحالية', 'due_today' => 'موعدها خلال اليوم',
+            'overdue' => 'لم تكتمل بعد موعدها', 'approvals' => 'لا توجد طلبات تنتظر قرارك',
+            'approvals_oldest' => 'أقدم طلب ينتظر منذ :time', 'unread' => 'قراءة الجرس لا تنهي العمل',
+        ],
+        'sources' => [
+            'purchase_requisitions' => 'طلبات شراء تحتاج اعتمادًا', 'purchase_orders' => 'أوامر شراء تحتاج اعتمادًا',
+            'material_requests' => 'طلبات خامات تحتاج اعتمادًا', 'quality' => 'فحوص تحتاج مراجعة',
+            'expenses' => 'طلبات مبلغ تحتاج اعتمادًا', 'expenses_payment' => 'طلبات مبلغ جاهزة للصرف',
+            'maintenance' => 'أوامر صيانة تحتاج اعتمادًا', 'sales_orders' => 'طلبات بيع تحتاج اعتمادًا',
+            'credit_holds' => 'طلبات بيع موقوفة ائتمانيًا', 'sales_returns' => 'مرتجعات تحتاج تصريحًا',
+            'return_receipts' => 'مرتجعات جاهزة للاستلام', 'return_inspections' => 'مرتجعات تحتاج فحصًا',
+            'hr_requests' => 'طلبات موارد بشرية تحتاج مراجعة',
+        ],
+        'work' => [
+            'document' => 'المستند :document', 'waiting_since' => 'ينتظر منذ :time', 'task' => 'مهمة مسندة إليك',
+            'due' => 'الاستحقاق: :time', 'no_due_date' => 'بدون موعد استحقاق', 'open' => 'فتح',
+        ],
+    ],
     'title' => 'لوحة التحكم',
     'create_something_beautiful' => 'أنشئ شيئًا جميلًا.',
     'getting_started' => 'ابدأ الآن',

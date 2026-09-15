@@ -15,7 +15,9 @@ test('production execution and maintenance foundation is migrated', function ():
         'company_id', 'code', 'name', 'description', 'output_type', 'standard_duration_value', 'standard_duration_unit', 'display_order', 'status', 'deleted_at',
     ]))->toBeTrue()
         ->and(Schema::hasColumns('product_production_stages', ['product_id', 'production_stage_id', 'sequence', 'deleted_at']))->toBeTrue()
+        ->and(Schema::hasColumns('product_components', ['production_stage_id']))->toBeTrue()
         ->and(Schema::hasColumns('production_order_stage_snapshots', ['production_order_line_id', 'stage_code', 'stage_name', 'sequence', 'status']))->toBeTrue()
+        ->and(Schema::hasColumns('production_order_lines', ['customer_invoice_line_id']))->toBeTrue()
         ->and(Schema::hasColumns('production_runs', ['production_order_stage_snapshot_id', 'fixed_asset_id', 'work_description', 'planned_labor_count', 'actual_labor_count', 'labor_details', 'deleted_at']))->toBeTrue()
         ->and(Schema::hasColumns('production_material_requests', ['production_run_id', 'branch_store_id', 'request_type', 'purchase_requisition_id', 'status', 'deleted_at']))->toBeTrue()
         ->and(Schema::hasColumns('production_expense_requests', ['production_run_id', 'payment_channel', 'cash_voucher_id', 'bank_account_id', 'status', 'deleted_at']))->toBeTrue()
@@ -33,10 +35,31 @@ test('canonical execution routes are registered', function (): void {
         ->and(Route::has('admin.production.product-stages.index'))->toBeTrue()
         ->and(Route::has('admin.production.work-orders.index'))->toBeTrue()
         ->and(Route::has('admin.production.runs.index'))->toBeTrue()
+        ->and(Route::has('admin.production.runs.select2.order-lines'))->toBeTrue()
+        ->and(Route::has('admin.production.runs.select2.stages'))->toBeTrue()
+        ->and(Route::has('admin.production.runs.select2.assets'))->toBeTrue()
+        ->and(Route::has('admin.production.runs.select2.workers'))->toBeTrue()
         ->and(Route::has('admin.production.runs.labor'))->toBeTrue()
         ->and(Route::has('admin.production.material-requests.index'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.create'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.edit'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.clone'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.destroy'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.restore'))->toBeTrue()
+        ->and(Route::has('admin.production.material-requests.print'))->toBeTrue()
         ->and(Route::has('admin.production.material-requests.allocate-shortage'))->toBeTrue()
         ->and(Route::has('admin.production.expenses.index'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.create'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.edit'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.clone'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.destroy'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.restore'))->toBeTrue()
+        ->and(Route::has('admin.production.expenses.print'))->toBeTrue()
+        ->and(Route::has('admin.production.reports.orders'))->toBeTrue()
+        ->and(Route::has('admin.production.reports.runs'))->toBeTrue()
+        ->and(Route::has('admin.production.reports.materials'))->toBeTrue()
+        ->and(Route::has('admin.production.reports.quality'))->toBeTrue()
+        ->and(Route::has('admin.production.reports.receipts'))->toBeTrue()
         ->and(Route::has('admin.production.quality.index'))->toBeTrue()
         ->and(Route::has('admin.production.quality.create'))->toBeTrue()
         ->and(Route::has('admin.production.quality.select2'))->toBeTrue()
@@ -104,23 +127,25 @@ test('manufacturing warehouse quality and maintenance UI shells are absent from 
     }
 });
 
-test('production screens do not expose customer or make to stock entry points', function (): void {
-    $paths = [
-        resource_path('views/modules/production/work-orders/index.blade.php'),
-        resource_path('views/modules/production/work-orders/show.blade.php'),
-        resource_path('views/modules/production/runs/index.blade.php'),
-        resource_path('views/modules/production/runs/show.blade.php'),
-        resource_path('views/modules/production/reports/index.blade.php'),
-        resource_path('views/reports/production/order.blade.php'),
-        resource_path('views/reports/production/run-sheet.blade.php'),
-        resource_path('views/reports/production/operations.blade.php'),
-    ];
+test('production orders expose optional sales sources and standalone entry points', function (): void {
+    expect(file_get_contents(resource_path('views/modules/production/work-orders/form.blade.php')))
+        ->toContain('make_to_stock')
+        ->toContain('sales_order')
+        ->toContain('customer_invoice')
+        ->toContain('source_line_reference')
+        ->toContain('data-extra-params')
+        ->toContain('data-duplicate-production-line')
+        ->toContain('modules.finance.partials.form-actions')
+        ->toContain('arrow-step="1"');
 
-    foreach ($paths as $path) {
-        expect(strtolower(file_get_contents($path)))->not->toContain('customer');
-    }
-
-    expect(Route::has('admin.production.work-orders.make-to-stock'))->toBeFalse();
+    expect(Route::has('admin.production.work-orders.create'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.store'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.edit'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.update'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.destroy'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.restore'))->toBeTrue()
+        ->and(Route::has('admin.production.work-orders.clone'))->toBeTrue()
+        ->and(Route::has('admin.production.quality.inspection.print'))->toBeTrue();
     expect(Route::has('admin.production.resources.machines.store'))->toBeFalse();
     expect(Route::has('admin.production.resources.index'))->toBeFalse()
         ->and(Route::has('admin.production.runs.inspect'))->toBeFalse();
@@ -144,7 +169,7 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain('production_execution.fields.sampled_at')
         ->and($css)
         ->toContain('@media screen and (max-width: 767.98px)')
-        ->toContain('min-block-size: 2.75rem')
+        ->not->toContain('min-block-size: 2.75rem')
         ->toContain('-webkit-overflow-scrolling: touch')
         ->and($javascript)
         ->toContain("file.type.startsWith('image/')")
@@ -174,7 +199,20 @@ test('production quality capture is mobile friendly', function (): void {
     expect($qualityView)
         ->toContain('quality-evidence-gallery')
         ->toContain('quality-review-actions')
-        ->toContain('quality-lifecycle');
+        ->toContain('quality-lifecycle')
+        ->toContain('$numbers->format($record->affected_base_quantity)')
+        ->toContain('arrow-step="1"')
+        ->not->toContain('name="affected_base_quantity" type="number"');
+
+    expect(file_get_contents(resource_path('views/modules/inventory/reports/index.blade.php')))
+        ->toContain('$numbers->format($row->on_hand)')
+        ->toContain('$numbers->format($reportTotals[\'quantity_in\'])')
+        ->not->toContain('One ledger-backed dataset powers this screen');
+
+    expect(file_get_contents(resource_path('views/modules/inventory/stock-counts/show.blade.php')))
+        ->toContain('$numbers->format($line->system_quantity)')
+        ->toContain('arrow-step="1"')
+        ->not->toContain('type="number" step="0.00000001"');
     expect(trans('roles.permission_labels.labor', [], 'ar'))->toBe('تسجيل العمالة والساعات')
         ->and(trans('roles.permission_labels.labor', [], 'en'))->toBe('Record labor and hours')
         ->and(trans('roles.permission_labels.account_materials', [], 'ar'))->toBe('تسوية الخامات')
@@ -234,8 +272,8 @@ test('inventory and production report exports localize headings and protect fina
         'expiryLayers' => $empty,
         'glReconciliation' => null,
         'glReconciliationUnavailableReason' => null,
-    ], false))->sheets();
-    $productionSheets = (new ProductionReportExport([
+    ]))->sheets();
+    $productionOrderSheets = (new ProductionReportExport([
         'runs' => $empty,
         'kpis' => ['planned_base_quantity' => 0, 'good_base_quantity' => 0, 'loss_base_quantity' => 0],
         'orders' => $empty,
@@ -243,12 +281,23 @@ test('inventory and production report exports localize headings and protect fina
         'materials' => $empty,
         'finishedGoodsReceipts' => $empty,
         'runCosts' => $empty,
-    ], false))->sheets();
+    ], 'orders'))->sheets();
+    $productionReceiptSheets = (new ProductionReportExport([
+        'runs' => $empty,
+        'kpis' => ['planned_base_quantity' => 0, 'good_base_quantity' => 0, 'loss_base_quantity' => 0],
+        'orders' => $empty,
+        'qualityInspections' => $empty,
+        'materials' => $empty,
+        'finishedGoodsReceipts' => $empty,
+        'runCosts' => $empty,
+    ], 'receipts'))->sheets();
 
     expect($inventorySheets[0]->title())->toBe('رصيد المخزون')
         ->and($inventorySheets[2]->title())->toBe('الحركات وكارت الصنف')
         ->and($inventorySheets[2]->headings())->not->toContain('تكلفة الوحدة', 'إجمالي التكلفة')
-        ->and($productionSheets[0]->title())->toBe('أوامر الإنتاج')
-        ->and($productionSheets[4]->title())->toBe('استلامات الإنتاج التام')
-        ->and($productionSheets[4]->headings())->not->toContain('القيمة', 'القيد');
+        ->and($productionOrderSheets)->toHaveCount(1)
+        ->and($productionOrderSheets[0]->title())->toBe('موقف أوامر الإنتاج')
+        ->and($productionReceiptSheets)->toHaveCount(1)
+        ->and($productionReceiptSheets[0]->title())->toBe('استلامات المنتج التام')
+        ->and($productionReceiptSheets[0]->headings())->not->toContain('القيمة', 'القيد');
 });

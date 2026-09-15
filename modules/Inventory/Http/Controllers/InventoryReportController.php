@@ -3,7 +3,6 @@
 namespace Modules\Inventory\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
@@ -24,13 +23,13 @@ use Modules\Core\Models\ItemSize;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Models\WarehouseLocation;
-use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryReportService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -39,60 +38,55 @@ class InventoryReportController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly InventoryReportService $reports,
-        private readonly InventoryGlReconciliationService $reconciliation,
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(Request $request): View
     {
-        [$context, $canViewFinancial, $report] = $this->report($request);
+        [, , $report] = $this->report($request);
         $balances = $report['balances'];
-
-        if (! $canViewFinancial) {
-            $balances->each->makeHidden(['inventory_value', 'unvalued_receipt_quantity']);
-        }
+        $balances->each->makeHidden(['inventory_value', 'unvalued_receipt_quantity']);
 
         return view('modules.inventory.reports.index', [
             ...$report,
             'balances' => $balances,
-            'canViewFinancial' => $canViewFinancial,
+            'canViewFinancial' => false,
             'agingSupported' => true,
             'expirySupported' => true,
+            'numbers' => $this->numbers,
         ]);
     }
 
     public function export(Request $request): BinaryFileResponse
     {
-        [, $canViewFinancial, $report] = $this->report($request);
+        [, , $report] = $this->report($request);
 
         return Excel::download(
-            new InventoryReportExport($report, $canViewFinancial),
+            new InventoryReportExport($report),
             'inventory-operations-'.now()->format('Ymd-His').'.xlsx',
         );
     }
 
     public function print(Request $request): Response
     {
-        [$context, $canViewFinancial, $report] = $this->report($request);
+        [$context, , $report] = $this->report($request);
         $company = Company::query()->findOrFail($context['company_id']);
 
         return $this->pdf->stream('reports.inventory.operations', [
             ...$report,
-            'canViewFinancial' => $canViewFinancial,
+            'canViewFinancial' => false,
             'title' => __('Inventory Operations Report'),
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+            'numbers' => $this->numbers,
         ], 'inventory-operations-report.pdf');
     }
 
     public function stockBalances(StockBalanceInquiryRequest $request): View
     {
         [$context, $filters, $options, $report] = $this->stockBalanceReport($request);
-        $canViewFinancial = (bool) $request->user()?->can('inventory.reports.financial');
-
-        if (! $canViewFinancial) {
-            $report['rows']->each->makeHidden(['inventory_value']);
-        }
+        $report['rows']->each->makeHidden(['inventory_value']);
 
         return view('modules.inventory.stock-balances.index', [
             'context' => $context,
@@ -101,7 +95,7 @@ class InventoryReportController extends Controller
             'rows' => $report['rows'],
             'totals' => $report['totals'],
             'reservationsAreHallScoped' => $report['reservations_are_hall_scoped'],
-            'canViewFinancial' => $canViewFinancial,
+            'canViewFinancial' => false,
             'filtersExpanded' => ! $request->boolean('run') || collect($request->except(['run', 'as_of']))->filter(fn ($value) => filled($value))->isNotEmpty(),
         ]);
     }
@@ -109,10 +103,9 @@ class InventoryReportController extends Controller
     public function stockBalancesExport(StockBalanceInquiryRequest $request): BinaryFileResponse
     {
         [, , , $report] = $this->stockBalanceReport($request);
-        $canViewFinancial = (bool) $request->user()?->can('inventory.reports.financial');
 
         return Excel::download(
-            new StockBalanceInquiryExport($report['rows'], $report['totals'], $canViewFinancial),
+            new StockBalanceInquiryExport($report['rows'], $report['totals']),
             'stock-balance-inquiry-'.now()->format('Ymd-His').'.xlsx',
         );
     }
@@ -121,7 +114,6 @@ class InventoryReportController extends Controller
     {
         [$context, $filters, $options, $report] = $this->stockBalanceReport($request);
         $company = Company::query()->findOrFail($context['company_id']);
-        $canViewFinancial = (bool) $request->user()?->can('inventory.reports.financial');
 
         return $this->pdf->stream('reports.inventory.stock-balance-inquiry', [
             'title' => __('stock_balance_inquiry.title'),
@@ -130,7 +122,7 @@ class InventoryReportController extends Controller
             'rows' => $report['rows'],
             'totals' => $report['totals'],
             'reservationsAreHallScoped' => $report['reservations_are_hall_scoped'],
-            'canViewFinancial' => $canViewFinancial,
+            'canViewFinancial' => false,
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
             'printIdentityPolicy' => 'report',
         ], 'stock-balance-inquiry.pdf', 'L');
@@ -295,7 +287,6 @@ class InventoryReportController extends Controller
     {
         $context = $this->context->snapshot($request);
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
-        $canViewFinancial = (bool) $request->user()?->can('inventory.reports.financial');
         $report = $this->reports->report(
             $context['company_id'],
             $context['financial_period_id'],
@@ -305,18 +296,6 @@ class InventoryReportController extends Controller
         $report['glReconciliation'] = null;
         $report['glReconciliationUnavailableReason'] = null;
 
-        if ($canViewFinancial) {
-            try {
-                $report['glReconciliation'] = $this->reconciliation->reconcile(
-                    $context['company_id'],
-                    $context['financial_period_id'],
-                    $context['branch_id'],
-                );
-            } catch (DomainException $exception) {
-                $report['glReconciliationUnavailableReason'] = $exception->getMessage();
-            }
-        }
-
-        return [$context, $canViewFinancial, $report];
+        return [$context, false, $report];
     }
 }

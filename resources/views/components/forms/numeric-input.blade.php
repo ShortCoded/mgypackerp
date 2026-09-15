@@ -1,5 +1,6 @@
 @props([
     'allowNegative' => null,
+    'arrowStep' => null,
     'id' => null,
     'max' => null,
     'min' => null,
@@ -29,4 +30,5 @@
     @if ($min !== null) min="{{ $min }}" data-numeric-min="{{ $min }}" @endif
     @if ($max !== null) max="{{ $max }}" data-numeric-max="{{ $max }}" @endif
     @if ($step !== null) step="{{ $step }}" @endif
+    @if ($arrowStep !== null) data-numeric-arrow-step="{{ $arrowStep }}" @endif
     @required($required)>

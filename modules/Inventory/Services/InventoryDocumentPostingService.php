@@ -11,6 +11,7 @@ use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
@@ -53,10 +54,15 @@ class InventoryDocumentPostingService
             app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $locked->document_date, (int) $locked->financial_period_id, lockForUpdate: true);
 
             $profile = $this->movementProfile($locked);
-            BranchStore::query()->lockForUpdate()->findOrFail($locked->branch_store_id);
+            $this->assertQualityHoldAuthority($locked, $profile['source_status'], $profile['destination_status']);
+            $sourceStore = BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($locked->branch_store_id);
+            $destinationStore = $profile['destination_store_id'] !== null
+                ? BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($profile['destination_store_id'])
+                : null;
 
-            if ($profile['destination_store_id'] !== null) {
-                BranchStore::query()->lockForUpdate()->findOrFail($profile['destination_store_id']);
+            if ((int) $sourceStore->branch?->company_id !== (int) $locked->company_id
+                || ($destinationStore && (int) $destinationStore->branch?->company_id !== (int) $locked->company_id)) {
+                throw new DomainException(__('Inventory transfer stores must belong to the document company.'));
             }
 
             foreach ($locked->lines as $line) {
@@ -68,7 +74,7 @@ class InventoryDocumentPostingService
                     continue;
                 }
 
-                $unitCost = bccomp((string) $line->unit_cost, '0', 8) > 0
+                $resolvedUnitCost = bccomp((string) $line->unit_cost, '0', 8) > 0
                     ? (string) $line->unit_cost
                     : $this->valuation->movingAverageUnitCost(
                         (int) $locked->company_id,
@@ -82,6 +88,7 @@ class InventoryDocumentPostingService
                             : null,
                         $locked->document_date,
                     );
+                $unitCost = bccomp($resolvedUnitCost, '0', 8) > 0 ? $resolvedUnitCost : null;
 
                 $sourceIssue = null;
                 if ($profile['outbound']) {
@@ -91,6 +98,7 @@ class InventoryDocumentPostingService
                         $line,
                         'out',
                         (int) $locked->branch_store_id,
+                        (int) $sourceStore->branch_id,
                         $line->warehouse_location_id ?? $locked->warehouse_location_id,
                         $profile['source_status'],
                         '0',
@@ -110,6 +118,7 @@ class InventoryDocumentPostingService
                         $line,
                         'in',
                         $profile['destination_store_id'] ?? (int) $locked->branch_store_id,
+                        (int) ($destinationStore?->branch_id ?? $sourceStore->branch_id),
                         $line->destination_warehouse_location_id
                             ?? $locked->destination_warehouse_location_id
                             ?? $line->warehouse_location_id
@@ -124,7 +133,7 @@ class InventoryDocumentPostingService
 
                 $line->update([
                     'unit_cost' => $unitCost,
-                    'total_cost' => bcmul($quantity, $unitCost, 8),
+                    'total_cost' => $unitCost === null ? null : bcmul($quantity, $unitCost, 8),
                 ]);
             }
 
@@ -155,6 +164,9 @@ class InventoryDocumentPostingService
 
             if ($locked->status !== InventoryDocument::StatusPosted) {
                 throw new DomainException(__('Only a posted inventory document can be reversed.'));
+            }
+            if ($locked->source_document_type === ProductionQualityInspection::class) {
+                throw new DomainException(__('production_execution.messages.quality_inventory_document_controlled'));
             }
 
             $salesOrder = null;
@@ -337,16 +349,25 @@ class InventoryDocumentPostingService
         }
     }
 
+    private function assertQualityHoldAuthority(InventoryDocument $document, string $sourceStatus, string $destinationStatus): void
+    {
+        if (($sourceStatus === InventoryTransaction::StatusQcHold || $destinationStatus === InventoryTransaction::StatusQcHold)
+            && $document->source_document_type !== ProductionQualityInspection::class) {
+            throw new DomainException(__('production_execution.messages.quality_hold_movement_controlled'));
+        }
+    }
+
     private function createTransaction(
         InventoryDocument $document,
         InventoryDocumentLine $line,
         string $direction,
         int $branchStoreId,
+        int $branchId,
         mixed $warehouseLocationId,
         string $stockStatus,
         string $quantityIn,
         string $quantityOut,
-        string $unitCost,
+        ?string $unitCost,
     ): InventoryTransaction {
         $postingKey = "inventory-document:{$document->id}:line:{$line->id}:{$direction}";
 
@@ -355,9 +376,9 @@ class InventoryDocumentPostingService
             [
                 'company_id' => $document->company_id,
                 'financial_period_id' => $document->financial_period_id,
-                'branch_id' => $document->branch_id,
+                'branch_id' => $branchId,
                 'branch_store_id' => $branchStoreId,
-                'branch_hall_id' => $document->branch_hall_id,
+                'branch_hall_id' => $branchId === (int) $document->branch_id ? $document->branch_hall_id : null,
                 'warehouse_location_id' => $warehouseLocationId,
                 'stock_status' => $stockStatus,
                 'batch_lot' => $line->batch_lot,
@@ -379,7 +400,9 @@ class InventoryDocumentPostingService
                 'production_run_id' => $line->production_run_id ?? $document->production_run_id,
                 'inventory_reservation_id' => $line->inventory_reservation_id ?? null,
                 'unit_cost' => $unitCost,
-                'total_cost' => bcmul(bcadd($quantityIn, $quantityOut, 8), $unitCost, 8),
+                'total_cost' => $unitCost === null
+                    ? null
+                    : bcmul(bcadd($quantityIn, $quantityOut, 8), $unitCost, 8),
                 'created_by' => auth()->id(),
             ],
         );

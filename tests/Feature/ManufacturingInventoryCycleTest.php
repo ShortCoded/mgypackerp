@@ -25,6 +25,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
@@ -38,6 +39,9 @@ use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Inventory\Services\StockCountService;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
+use Modules\Maintenance\Models\MaintenanceMeterReading;
+use Modules\Maintenance\Models\MaintenancePlan;
+use Modules\Maintenance\Models\MaintenancePlanDue;
 use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Production\Models\ProductionExpenseRequest;
@@ -47,6 +51,7 @@ use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\QualityInspectionType;
+use Modules\Production\Models\QualityStockHold;
 use Modules\Production\Services\ProductionCycleService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Modules\Production\Services\SalesProductionDemandService;
@@ -288,6 +293,9 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
         ]],
     ]);
     expect($failedInspection->production_run_id)->toBe($run->getKey())
+        ->and(data_get($failedInspection->inspection_plan_snapshot, 'type.code'))->toBe($inProcessInspectionType->code)
+        ->and(data_get($failedInspection->inspection_plan_snapshot, 'checkpoints.0.id'))->toBe($requiredCheckpointId)
+        ->and(data_get($failedInspection->inspection_plan_snapshot, 'revision'))->not->toBeNull()
         ->and($failedInspection->sampled_at->greaterThanOrEqualTo($inspectionTimeFloor))->toBeTrue()
         ->and($run->fresh()->status)->toBe(ProductionRun::StatusHeld)
         ->and(fn () => $cycle->completeRun($run->fresh()))->toThrow(DomainException::class);
@@ -468,7 +476,8 @@ test('production quality runs the controlled request receive inspect review clos
     $permissions = [
         'production.quality.view', 'production.quality.create', 'production.quality.receive',
         'production.quality.start', 'production.quality.report', 'production.quality.submit', 'production.quality.review',
-        'production.quality.close', 'production.quality.reinspect', 'production.runs.view', 'production.runs.qc', 'production.runs.labor',
+        'production.quality.release_normal', 'production.quality.close', 'production.quality.reinspect', 'production.runs.view', 'production.runs.qc', 'production.runs.labor',
+        'maintenance.requests.create',
     ];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
@@ -483,13 +492,35 @@ test('production quality runs the controlled request receive inspect review clos
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
     Storage::fake('public');
+    $operator = HrEmployee::query()->create([
+        'doc_number' => 98001,
+        'doc_num' => 'LABOR-98001',
+        'full_name' => 'Operator One',
+        'name' => 'Operator One',
+        'person_type' => 'regular_labor',
+        'status' => 'active',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'job_title' => 'Machine operator',
+    ]);
+    $qualityHelper = HrEmployee::query()->create([
+        'doc_number' => 98002,
+        'doc_num' => 'LABOR-98002',
+        'full_name' => 'Quality Helper',
+        'name' => 'Quality Helper',
+        'person_type' => 'casual_labor',
+        'status' => 'active',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'job_title' => 'Line helper',
+    ]);
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.runs.labor', $run), [
             'actual_labor_count' => 2,
             'labor_details' => [
-                ['name' => 'Operator One', 'role' => 'Machine operator', 'planned_hours' => '8', 'actual_hours' => '7.5'],
-                ['name' => 'Quality Helper', 'role' => 'Line helper', 'planned_hours' => '8', 'actual_hours' => '6.25'],
+                ['employee_id' => $operator->getKey(), 'planned_hours' => '8', 'actual_hours' => '7.5'],
+                ['employee_id' => $qualityHelper->getKey(), 'planned_hours' => '8', 'actual_hours' => '6.25'],
             ],
         ])
         ->assertOk()
@@ -521,7 +552,11 @@ test('production quality runs the controlled request receive inspect review clos
     $inspection = ProductionQualityInspection::query()->latest('id')->firstOrFail();
     expect($inspection->status)->toBe(ProductionQualityInspection::StatusDraft)
         ->and($inspection->requested_at)->not->toBeNull()
-        ->and($inspection->received_at)->toBeNull();
+        ->and($inspection->received_at)->toBeNull()
+        ->and(data_get($inspection->inspection_plan_snapshot, 'type.code'))->toBe('LINE-HOURLY')
+        ->and(data_get($inspection->inspection_plan_snapshot, 'checkpoints.0.name'))->toBe('Visual finish')
+        ->and(data_get($inspection->inspection_plan_snapshot, 'revision'))->not->toBeNull();
+    DB::table('quality_checkpoints')->where('id', $checkpointId)->update(['name' => 'Changed after inspection creation']);
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.quality.receive', $inspection->getKey()))
@@ -534,6 +569,11 @@ test('production quality runs the controlled request receive inspect review clos
         ->postJson(route('admin.production.quality.start', $inspection->getKey()))
         ->assertOk()
         ->assertJsonPath('status', ProductionQualityInspection::StatusInProgress);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.quality.show', $inspection->getKey()))
+        ->assertOk()
+        ->assertSee('الفحص الظاهري')
+        ->assertDontSee('Changed after inspection creation');
 
     foreach ([
         ['reported_at' => now()->subDay()->toDateTimeString(), 'result' => 'pending', 'observations' => 'First-day visual examination is still in progress.'],
@@ -574,6 +614,17 @@ test('production quality runs the controlled request receive inspect review clos
     Storage::disk('public')->assertExists($inspection->evidence[0]['path']);
 
     $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.production.quality.maintenance-request', $inspection->getKey()))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.production.quality.maintenance-request', $inspection->getKey()))
+        ->assertOk();
+    $qualityMaintenanceRequest = MaintenanceRequest::query()->sole();
+    expect($qualityMaintenanceRequest->quality_inspection_id)->toBe($inspection->getKey())
+        ->and($qualityMaintenanceRequest->production_run_id)->toBe($run->getKey())
+        ->and($qualityMaintenanceRequest->production_mold_id)->toBe($fixture['mold']->getKey());
+
+    $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.quality.reject', $inspection->getKey()), ['reason' => 'Rework and resample are required.'])
         ->assertOk()
         ->assertJsonPath('status', ProductionQualityInspection::StatusRejected);
@@ -612,14 +663,19 @@ test('production quality runs the controlled request receive inspect review clos
             ]],
         ])
         ->assertRedirect(route('admin.production.quality.show', $reinspection->getKey()));
+    $reinspection->refresh();
+    expect($reinspection->status)->toBe(ProductionQualityInspection::StatusApproved)
+        ->and($reinspection->released_at)->not->toBeNull();
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.quality.approve', $reinspection->getKey()))
-        ->assertOk()
-        ->assertJsonPath('status', ProductionQualityInspection::StatusApproved);
+        ->assertUnprocessable();
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.quality.close', $reinspection->getKey()))
         ->assertOk()
         ->assertJsonPath('status', ProductionQualityInspection::StatusClosed);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.production.quality.maintenance-request', $reinspection->getKey()))
+        ->assertUnprocessable();
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.runs.resume', $run))
         ->assertOk();
@@ -644,7 +700,7 @@ test('production quality runs the controlled request receive inspect review clos
 
 test('general quality can inspect warehouse stock across multiple days and be reinspected without a production run', function () {
     $fixture = manufacturingInventoryFixture();
-    $permissions = ['production.quality.view', 'production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report', 'production.quality.submit', 'production.quality.review', 'production.quality.close', 'production.quality.reinspect'];
+    $permissions = ['production.quality.view', 'production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report', 'production.quality.submit', 'production.quality.review', 'production.quality.close', 'production.quality.reinspect', 'production.quality.export', 'production.quality.print'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
@@ -668,7 +724,7 @@ test('general quality can inspect warehouse stock across multiple days and be re
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.store'), [
         'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
         'product_id' => $fixture['raw']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
-        'stock_status' => InventoryTransaction::StatusAvailable, 'batch_lot' => 'QC-LOT-001', 'affected_base_quantity' => 100,
+        'stock_status' => InventoryTransaction::StatusAvailable, 'affected_base_quantity' => 100,
     ])->assertRedirect();
     $inspection = ProductionQualityInspection::query()->sole();
     expect($inspection->production_run_id)->toBeNull()->and($inspection->product_id)->toBe($fixture['raw']->getKey());
@@ -685,11 +741,343 @@ test('general quality can inspect warehouse stock across multiple days and be re
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.quality.active'))->assertOk()->assertSee('data-server-table', false);
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.quality.reports.index'))->assertOk()->assertSee('data-server-table', false);
     $this->actingAs($fixture['user'])->withSession($session)->getJson(route('admin.production.quality.reports.data', ['draw' => 1, 'start' => 0, 'length' => 10]))->assertOk()->assertJsonPath('recordsFiltered', 3);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.quality.export', ['subject_type' => ProductionQualityInspection::SubjectInventoryStock, 'product_id' => $fixture['raw']->getKey()]))
+        ->assertOk()
+        ->assertHeader('Content-Disposition');
+    $qualityReportPdf = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.quality.print', ['subject_type' => ProductionQualityInspection::SubjectInventoryStock, 'product_id' => $fixture['raw']->getKey()]));
+    $qualityReportPdf->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    expect(str_starts_with($qualityReportPdf->getContent(), '%PDF-'))->toBeTrue();
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.submit', $inspection), ['result' => 'passed', 'disposition' => 'release'])->assertRedirect();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $inspection))->assertOk();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.close', $inspection))->assertOk();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection))->assertOk();
     expect(ProductionQualityInspection::query()->latest('id')->firstOrFail()->subject_type)->toBe(ProductionQualityInspection::SubjectInventoryStock);
+});
+
+test('warehouse quality hold moves one exact stock quantity once and releases it only after approved reinspection', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $permissions = [
+        'production.quality.view', 'production.quality.create', 'production.quality.receive',
+        'production.quality.start', 'production.quality.submit', 'production.quality.review',
+        'production.quality.close', 'production.quality.reinspect',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $balance = function (string $status) use ($fixture): string {
+        $value = InventoryTransaction::query()
+            ->where('company_id', $fixture['company']->getKey())
+            ->where('branch_store_id', $fixture['store']->getKey())
+            ->where('product_id', $fixture['raw']->getKey())
+            ->where('stock_status', $status)
+            ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as balance')
+            ->value('balance');
+
+        return bcadd((string) $value, '0', 8);
+    };
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.production.quality.store'), [
+            'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
+            'product_id' => $fixture['raw']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'stock_status' => InventoryTransaction::StatusAvailable,
+            'affected_base_quantity' => '12',
+        ])
+        ->assertRedirect();
+    $inspection = ProductionQualityInspection::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.receive', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.start', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.production.quality.submit', $inspection), [
+            'result' => 'failed',
+            'disposition' => 'hold',
+            'defect_code' => 'STORAGE-CHECK',
+            'affected_base_quantity' => '12',
+        ])
+        ->assertRedirect(route('admin.production.quality.show', $inspection));
+
+    $hold = QualityStockHold::query()->sole();
+    expect($hold->status)->toBe(QualityStockHold::StatusActive)
+        ->and($hold->holdInventoryDocument?->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('988.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('12.00000000');
+    expect(fn () => app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'destination_branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeTransfer,
+        'document_date' => now()->toDateString(),
+        'movement_reason' => 'Attempted manual QC release',
+        'source_stock_status' => InventoryTransaction::StatusQcHold,
+        'destination_stock_status' => InventoryTransaction::StatusAvailable,
+    ], [[
+        'product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '1',
+    ]]))->toThrow(DomainException::class, __('production_execution.messages.quality_hold_movement_controlled'));
+    expect(fn () => app(InventoryDocumentPostingService::class)->reverse($hold->holdInventoryDocument))
+        ->toThrow(DomainException::class, __('production_execution.messages.quality_inventory_document_controlled'));
+
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.close', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection))->assertOk();
+    $reinspection = ProductionQualityInspection::query()->whereKeyNot($inspection->getKey())->sole();
+    expect($reinspection->stock_status)->toBe(InventoryTransaction::StatusQcHold);
+
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.receive', $reinspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.start', $reinspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.production.quality.submit', $reinspection), ['result' => 'passed', 'disposition' => 'release'])
+        ->assertRedirect(route('admin.production.quality.show', $reinspection));
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $reinspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $reinspection))->assertUnprocessable();
+
+    expect($hold->refresh()->status)->toBe(QualityStockHold::StatusReleased)
+        ->and($hold->dispositionInventoryDocument?->status)->toBe(InventoryDocument::StatusPosted)
+        ->and(QualityStockHold::query()->count())->toBe(1)
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('1000.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('0.00000000');
+});
+
+test('warehouse quality draft crud keeps the stock hold synchronized', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $permissions = [
+        'production.quality.view', 'production.quality.create', 'production.quality.edit',
+        'production.quality.delete', 'production.quality.view_trashed', 'production.quality.restore',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $balance = function (string $status) use ($fixture): string {
+        $value = InventoryTransaction::query()
+            ->where('company_id', $fixture['company']->getKey())
+            ->where('branch_store_id', $fixture['store']->getKey())
+            ->where('product_id', $fixture['raw']->getKey())
+            ->where('stock_status', $status)
+            ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as balance')
+            ->value('balance');
+
+        return bcadd((string) $value, '0', 8);
+    };
+    $payload = [
+        'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
+        'product_id' => $fixture['raw']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'affected_base_quantity' => '12',
+        'notes' => 'Warehouse quality sample',
+    ];
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.production.quality.store'), $payload)
+        ->assertRedirect(route('admin.production.quality.index'));
+    $inspection = ProductionQualityInspection::query()->sole();
+    expect($inspection->stockHold?->status)->toBe(QualityStockHold::StatusActive)
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('988.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('12.00000000');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.production.quality.update', $inspection), [
+            ...$payload,
+            'affected_base_quantity' => '20',
+            'submit_action' => 'save_view',
+        ])
+        ->assertRedirect(route('admin.production.quality.show', $inspection));
+    expect($inspection->fresh()->stockHold?->base_quantity)->toBe('20.00000000')
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('980.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('20.00000000');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.production.quality.destroy', $inspection))
+        ->assertOk();
+    expect($inspection->fresh()->trashed())->toBeTrue()
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('1000.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('0.00000000');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->patchJson(route('admin.production.quality.restore', $inspection->getKey()))
+        ->assertOk();
+    expect($inspection->fresh()->trashed())->toBeFalse()
+        ->and($inspection->fresh()->stockHold?->status)->toBe(QualityStockHold::StatusActive)
+        ->and($balance(InventoryTransaction::StatusAvailable))->toBe('980.00000000')
+        ->and($balance(InventoryTransaction::StatusQcHold))->toBe('20.00000000');
+});
+
+test('maintenance draft documents can be edited soft deleted and restored in their branch context', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $asset = FixedAsset::query()->create([
+        'doc_number' => 9911,
+        'doc_num' => 'FA-MAINT-CRUD-9911',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'period_id' => $fixture['period']->getKey(),
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Maintenance CRUD Asset',
+        'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $permissions = [
+        'maintenance.requests.create', 'maintenance.requests.edit', 'maintenance.requests.delete', 'maintenance.requests.restore',
+        'maintenance.orders.create', 'maintenance.orders.edit', 'maintenance.orders.delete', 'maintenance.orders.restore',
+        'maintenance.material_requests.create', 'maintenance.material_requests.edit', 'maintenance.material_requests.delete', 'maintenance.material_requests.restore',
+        'maintenance.expenses.create', 'maintenance.expenses.edit', 'maintenance.expenses.delete', 'maintenance.expenses.restore',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'en',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+
+    $requestPayload = [
+        'maintainable_key' => 'asset:'.$asset->getKey(),
+        'request_type' => 'breakdown',
+        'discipline' => 'mechanical',
+        'priority' => 'normal',
+        'symptoms' => 'Original vibration report.',
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.requests.store'), $requestPayload)
+        ->assertRedirect(route('admin.maintenance.requests.index'));
+    $maintenanceRequest = MaintenanceRequest::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.maintenance.requests.update', $maintenanceRequest), [...$requestPayload, 'symptoms' => 'Updated vibration report.'])
+        ->assertRedirect(route('admin.maintenance.requests.index'));
+    expect($maintenanceRequest->refresh()->symptoms)->toBe('Updated vibration report.');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.maintenance.requests.destroy', $maintenanceRequest))
+        ->assertOk();
+    $this->assertSoftDeleted('maintenance_requests', ['id' => $maintenanceRequest->getKey()]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->patchJson(route('admin.maintenance.requests.restore', $maintenanceRequest->doc_num))
+        ->assertOk();
+    $this->assertDatabaseHas('maintenance_requests', ['id' => $maintenanceRequest->getKey(), 'deleted_at' => null]);
+
+    $orderPayload = [
+        'maintainable_key' => 'asset:'.$asset->getKey(),
+        'maintenance_type' => 'corrective',
+        'discipline' => 'mechanical',
+        'priority' => 'normal',
+        'service_mode' => 'internal',
+        'work_description' => 'Original corrective work.',
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.orders.store'), $orderPayload)
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    $order = MaintenanceWorkOrder::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.maintenance.orders.update', $order), [...$orderPayload, 'work_description' => 'Updated corrective work.'])
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    expect($order->refresh()->work_description)->toBe('Updated corrective work.');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.maintenance.orders.destroy', $order))
+        ->assertOk();
+    $this->assertSoftDeleted('maintenance_work_orders', ['id' => $order->getKey()]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->patchJson(route('admin.maintenance.orders.restore', $order->doc_num))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.material-requests.create'))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.expenses.create'))
+        ->assertOk();
+
+    $materialPayload = [
+        'maintenance_work_order_id' => $order->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'reason' => 'Original material reason.',
+        'lines' => [['product_id' => $fixture['raw']->getKey(), 'item_type' => 'spare_part', 'quantity' => '2']],
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.material-requests.store'), $materialPayload)
+        ->assertRedirect(route('admin.maintenance.material-requests.index'));
+    $materialRequest = MaintenanceMaterialRequest::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.maintenance.material-requests.update', $materialRequest), [...$materialPayload, 'reason' => 'Updated material reason.', 'lines' => [['product_id' => $fixture['raw']->getKey(), 'item_type' => 'oil', 'quantity' => '3']]])
+        ->assertRedirect(route('admin.maintenance.material-requests.index'));
+    expect($materialRequest->refresh()->reason)->toBe('Updated material reason.')
+        ->and($materialRequest->lines()->sole()->requested_quantity)->toBe('3.00000000')
+        ->and($materialRequest->lines()->sole()->unit_id)->toBe($fixture['raw']->item_unit_id);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.maintenance.material-requests.destroy', $materialRequest))
+        ->assertOk();
+    $this->assertSoftDeleted('maintenance_material_requests', ['id' => $materialRequest->getKey()]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->patchJson(route('admin.maintenance.material-requests.restore', $materialRequest->doc_num))
+        ->assertOk();
+
+    $currency = Currency::query()->where('company_id', $fixture['company']->getKey())->firstOrFail();
+    $cashAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeAsset)->firstOrFail();
+    $expenseAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeExpense)->firstOrFail();
+    $cashbox = Cashbox::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'account_id' => $cashAccount->getKey(),
+        'name' => 'Maintenance CRUD Cashbox',
+        'status' => 'active',
+    ]);
+    CashboxCurrency::query()->create(['cashbox_id' => $cashbox->getKey(), 'currency_id' => $currency->getKey(), 'is_default' => true, 'status' => 'active']);
+    $expensePayload = [
+        'maintenance_work_order_id' => $order->getKey(),
+        'amount' => '75',
+        'currency_id' => $currency->getKey(),
+        'payment_channel' => 'cashbox',
+        'cashbox_id' => $cashbox->getKey(),
+        'expense_account_id' => $expenseAccount->getKey(),
+        'reason' => 'Original expense reason.',
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.expenses.store'), $expensePayload)
+        ->assertRedirect(route('admin.maintenance.expenses.index'));
+    $expense = ProductionExpenseRequest::query()->whereNotNull('maintenance_work_order_id')->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->put(route('admin.maintenance.expenses.update', $expense), [...$expensePayload, 'amount' => '90', 'reason' => 'Updated expense reason.'])
+        ->assertRedirect(route('admin.maintenance.expenses.index'));
+    expect($expense->refresh()->amount)->toBe('90.0000')
+        ->and($expense->reason)->toBe('Updated expense reason.');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.maintenance.expenses.destroy', $expense))
+        ->assertOk();
+    $this->assertSoftDeleted('production_expense_requests', ['id' => $expense->getKey()]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->patchJson(route('admin.maintenance.expenses.restore', $expense->doc_num))
+        ->assertOk();
+
+    $this->assertDatabaseHas('maintenance_work_orders', ['id' => $order->getKey(), 'deleted_at' => null]);
+    $this->assertDatabaseHas('maintenance_material_requests', ['id' => $materialRequest->getKey(), 'deleted_at' => null]);
+    $this->assertDatabaseHas('production_expense_requests', ['id' => $expense->getKey(), 'deleted_at' => null]);
 });
 
 test('available material can be split between sales production orders and a shortage is reserved after replenishment', function () {
@@ -798,8 +1186,14 @@ test('available material can be split between sales production orders and a shor
         ->and($shortageRequest->purchaseRequisition)->not->toBeNull()
         ->and($shortageRequest->purchaseRequisition->lines->first()->requested_quantity)->toBe('50.00000000');
 
+    $olderRequestLine = $olderAllocation->lines->firstOrFail();
+    $olderIssue = $materialRequests->issue($olderAllocation->fresh(), [$olderRequestLine->getKey() => '20']);
+    expect($olderAllocation->fresh()->status)->toBe('partially_issued')
+        ->and($olderAllocation->fresh()->lines->firstOrFail()->issued_quantity)->toBe('20.00000000');
     $materialRequests->issue($olderAllocation->fresh());
     $materialRequests->issue($newerAllocation->fresh());
+    expect($olderIssue->production_material_request_id)->toBe($olderAllocation->getKey())
+        ->and($olderIssue->lines->firstOrFail()->production_material_request_line_id)->toBe($olderRequestLine->getKey());
     InventoryTransaction::query()->create([
         'posting_key' => 'replenish-production-shortage',
         'company_id' => $fixture['company']->getKey(),
@@ -832,6 +1226,57 @@ test('available material can be split between sales production orders and a shor
         ->and($newerRequirement->fresh()->issued_quantity)->toBe('50.00000000')
         ->and($lastIssue->journalEntry)->not->toBeNull()
         ->and((string) $lastIssue->journalEntry->lines()->sum('debit_amount'))->toBe((string) $lastIssue->journalEntry->lines()->sum('credit_amount'));
+});
+
+test('one sales line can be split across production orders without duplicating its demand', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $currency = Currency::query()->where('company_id', $fixture['company']->getKey())->firstOrFail();
+    $customer = Customer::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 18001,
+        'doc_num' => 'CUSTOMER-SPLIT-DEMAND',
+        'name' => 'Split Demand Customer',
+        'status' => 'active',
+    ]);
+    $salesOrder = SalesOrder::query()->create([
+        'doc_number' => 18001,
+        'doc_num' => 'SO-SPLIT-DEMAND',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'customer_id' => $customer->getKey(),
+        'currency_id' => $currency->getKey(),
+        'order_date' => now()->toDateString(),
+        'expected_delivery_date' => now()->addWeek()->toDateString(),
+        'status' => SalesOrder::StatusApproved,
+        'credit_status' => 'approved',
+        'subtotal_amount' => '100',
+        'total_amount' => '100',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $salesLine = $salesOrder->lines()->create([
+        'line_number' => 1,
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'description' => $fixture['finished']->name,
+        'quantity' => '100',
+        'unit_price' => '1',
+        'line_total' => '100',
+        'product_classification_snapshot' => Product::ClassificationFinishedProduct,
+        'conversion_factor' => '1',
+        'base_quantity' => '100',
+    ]);
+    $service = app(SalesProductionDemandService::class);
+
+    $first = $service->create($salesOrder->refresh(), [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '40']]);
+    $second = $service->create($salesOrder->refresh(), [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '60']]);
+
+    expect($first->getKey())->not->toBe($second->getKey())
+        ->and(ProductionOrder::query()->where('sales_order_id', $salesOrder->getKey())->count())->toBe(2)
+        ->and($salesLine->fresh()->production_requested_quantity)->toBe('100.00000000')
+        ->and(fn () => $service->create($salesOrder->refresh(), [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '1']]))
+        ->toThrow(DomainException::class);
 });
 
 test('inventory status transfers remain physically balanced and reject negative positions', function () {
@@ -977,6 +1422,7 @@ test('canonical inventory and production pages use real routes and keep html ope
             'document_date' => now()->toDateString(),
             'movement_reason' => 'HTML operator verification',
             'destination_stock_status' => InventoryTransaction::StatusAvailable,
+            'submit_action' => 'post_and_view',
             'lines' => [[
                 'product_id' => $fixture['raw']->getKey(),
                 'quantity' => '1',
@@ -1045,8 +1491,15 @@ test('canonical inventory and production pages use real routes and keep html ope
 
 test('manual inventory receipt issue return and transfer use the full posted movement cycle', function () {
     $fixture = manufacturingInventoryFixture();
+    $destinationBranch = Branch::query()->create([
+        ...app(DocumentNumberService::class)->next('branches', Branch::class),
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Receiving Factory',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
     $destinationStore = BranchStore::query()->create([
-        'branch_id' => $fixture['branch']->getKey(),
+        'branch_id' => $destinationBranch->getKey(),
         'name' => 'Receiving Store',
         'position' => 2,
     ]);
@@ -1088,13 +1541,14 @@ test('manual inventory receipt issue return and transfer use the full posted mov
         ->assertSee('emptyTable');
 
     $this->actingAs($fixture['user'])->withSession($session)
-        ->getJson(route('admin.inventory.documents.select2.stores', ['q' => 'Receiving']))
+        ->getJson(route('admin.inventory.documents.select2.stores', ['scope' => 'destination', 'q' => 'Receiving']))
         ->assertOk()
-        ->assertJsonPath('results.0.id', (string) $destinationStore->getKey());
+        ->assertJsonPath('results.0.id', (string) $destinationStore->public_uuid)
+        ->assertJsonPath('results.0.text', 'Receiving Factory — Receiving Store');
     $this->actingAs($fixture['user'])->withSession($session)
         ->getJson(route('admin.inventory.documents.select2.products', ['q' => 'Plastic Resin']))
         ->assertOk()
-        ->assertJsonPath('results.0.id', (string) $fixture['raw']->getKey());
+        ->assertJsonPath('results.0.id', (string) $fixture['raw']->doc_num);
 
     $post = function (string $type, array $overrides = []) use ($fixture, $session): InventoryDocument {
         $this->actingAs($fixture['user'])->withSession($session)
@@ -1105,6 +1559,7 @@ test('manual inventory receipt issue return and transfer use the full posted mov
                 'movement_reason' => 'Business cycle verification',
                 'source_stock_status' => InventoryTransaction::StatusAvailable,
                 'destination_stock_status' => InventoryTransaction::StatusAvailable,
+                'submit_action' => 'post_and_view',
                 'lines' => [[
                     'product_id' => $fixture['raw']->getKey(),
                     'quantity' => '1',
@@ -1135,6 +1590,7 @@ test('manual inventory receipt issue return and transfer use the full posted mov
         ->and($issue->journalEntry)->toBeInstanceOf(JournalEntry::class)
         ->and($return->journalEntry)->toBeInstanceOf(JournalEntry::class)
         ->and($transfer->transactions)->toHaveCount(2)
+        ->and($transfer->transactions->firstWhere('quantity_in', '3.00000000')?->branch_id)->toBe($destinationBranch->getKey())
         ->and(app(InventoryAvailabilityService::class)->forProduct(
             $fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey(),
         )['physical_on_hand'])->toBe('1004.00000000')
@@ -1183,7 +1639,7 @@ test('manual inventory movement supports draft edit datatable navigation and con
             'quantity' => '2',
             'unit_cost' => '3',
         ]],
-        'submit_action' => 'save_and_edit',
+        'submit_action' => 'save_edit',
     ];
 
     $this->actingAs($fixture['user'])->withSession($session)
@@ -1200,7 +1656,8 @@ test('manual inventory movement supports draft edit datatable navigation and con
         ->assertOk()
         ->assertSee('Edit Inventory Movement')
         ->assertSee('Draft movement lifecycle')
-        ->assertSee('window.inventoryMovementLines', false);
+        ->assertSee('data-inventory-movement-lines', false)
+        ->assertDontSee('window.inventoryMovementLines', false);
 
     $dataResponse = $this->actingAs($fixture['user'])->withSession($session)
         ->getJson(route('admin.inventory.documents.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
@@ -1235,7 +1692,7 @@ test('manual inventory movement supports draft edit datatable navigation and con
         ->assertSessionHasErrors('document');
 });
 
-test('the browser inventory movement contract posts and prints twenty five valued lines', function () {
+test('the browser inventory movement contract posts and prints twenty five quantity only lines', function () {
     $fixture = manufacturingInventoryFixture();
     $permissions = ['inventory.documents.view', 'inventory.documents.create', 'inventory.documents.adjust', 'inventory.documents.print'];
 
@@ -1261,10 +1718,8 @@ test('the browser inventory movement contract posts and prints twenty five value
         ->assertSee('inventory-line-template', false);
 
     $lines = collect(range(1, 25))->map(fn (int $line): array => [
-        'product_id' => $fixture['raw']->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
         'quantity' => '1',
-        'unit_cost' => '2',
-        'batch_lot' => sprintf('STRESS-%02d', $line),
         'notes' => "Stress line {$line}",
     ])->all();
 
@@ -1276,16 +1731,19 @@ test('the browser inventory movement contract posts and prints twenty five value
             'document_date' => now()->toDateString(),
             'movement_reason' => '25-line browser stress document',
             'destination_stock_status' => InventoryTransaction::StatusAvailable,
+            'submit_action' => 'post_and_view',
             'lines' => $lines,
         ]);
 
+    $response->assertSessionHasNoErrors();
     $document = InventoryDocument::query()->latest('id')->firstOrFail();
     $response->assertRedirect(route('admin.inventory.documents.show', $document));
 
     expect($document->lines()->count())->toBe(25)
         ->and($document->transactions()->count())->toBe(25)
-        ->and((float) $document->journalEntry?->lines()->sum('debit_amount'))->toBe(50.0)
-        ->and((float) $document->journalEntry?->lines()->sum('credit_amount'))->toBe(50.0);
+        ->and($document->lines()->whereNotNull('unit_cost')->count())->toBe(0)
+        ->and($document->transactions()->whereNotNull('unit_cost')->count())->toBe(0)
+        ->and($document->journalEntry)->toBeNull();
 
     $pdf = $this->actingAs($fixture['user'])
         ->withSession($session)
@@ -1824,8 +2282,8 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.index'))
         ->assertOk()
-        ->assertSee('<th>'.__('Value').'</th>', false)
-        ->assertSee(__('Inventory / Production to General Ledger Reconciliation'));
+        ->assertDontSee('<th>'.__('Value').'</th>', false)
+        ->assertDontSee(__('Inventory / Production to General Ledger Reconciliation'));
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.export'))
         ->assertOk()
@@ -1839,7 +2297,8 @@ test('capability permissions separate warehouse planning quality and cost access
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.production.reports.index'))
         ->assertOk()
-        ->assertSee(__('Production Cost and Work in Process'));
+        ->assertSee(__('production_execution.reports.title'))
+        ->assertDontSee(__('Production Cost and Work in Process'));
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.production.reports.export'))
         ->assertOk()
@@ -1848,14 +2307,14 @@ test('capability permissions separate warehouse planning quality and cost access
         ->get(route('admin.production.reports.print'))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf')
-        ->assertHeader('content-disposition', 'inline; filename="production-operations-report.pdf"');
+        ->assertHeader('content-disposition', 'inline; filename="production-overview-report.pdf"');
     expect(str_starts_with($productionPdf->getContent(), '%PDF-'))->toBeTrue();
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.documents.create'))
         ->assertForbidden();
 });
 
-test('financial inventory reports remain operational when a required account classification is missing', function () {
+test('operational inventory reports remain usable when a required account classification is missing', function () {
     $fixture = manufacturingInventoryFixture();
     $rawInventoryClassification = AccountClassification::query()->where('code', 'raw_material_inventory')->firstOrFail();
     Account::query()
@@ -1893,8 +2352,8 @@ test('financial inventory reports remain operational when a required account cla
         ->get(route('admin.inventory.reports.index'))
         ->assertOk()
         ->assertSee('Plastic Resin')
-        ->assertSee('<th>'.__('Value').'</th>', false)
-        ->assertSee($unavailableMessage)
+        ->assertDontSee('<th>'.__('Value').'</th>', false)
+        ->assertDontSee($unavailableMessage)
         ->assertDontSee(__('Reconciled'));
 
     $this->actingAs($financialUser)->withSession($session)
@@ -2053,6 +2512,8 @@ test('maintenance flows from a breakdown report through external work completion
         'maintenance.orders.create',
         'maintenance.orders.approve',
         'maintenance.orders.start',
+        'maintenance.orders.pause',
+        'maintenance.orders.external',
         'maintenance.orders.complete',
         'maintenance.orders.close',
         'maintenance.orders.print',
@@ -2165,6 +2626,42 @@ test('maintenance flows from a breakdown report through external work completion
         ->post(route('admin.maintenance.orders.start', $order))
         ->assertOk()
         ->assertJsonPath('status', MaintenanceWorkOrder::StatusInProgress);
+    expect($fixture['mold']->fresh()->status)->toBe(ProductionMold::StatusMaintenance);
+    $order->update(['actual_start_at' => now()->subHours(2)]);
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.events.store', [$order, 'pause']), [
+        'occurred_at' => now()->subMinutes(90)->toDateTimeString(),
+        'reason' => 'Waiting for the approved external workshop pickup.',
+    ])->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.events.store', [$order, 'pause']), [
+        'occurred_at' => now()->subMinutes(80)->toDateTimeString(),
+        'reason' => 'Duplicate pause must be rejected.',
+    ])->assertUnprocessable();
+    $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.maintenance.orders.complete', $order), [
+        'diagnosis' => 'Pending external diagnosis.', 'work_performed' => 'Work is paused.', 'test_result' => 'failed',
+    ])->assertSessionHasErrors('order');
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.events.store', [$order, 'resume']), [
+        'occurred_at' => now()->subMinutes(60)->toDateTimeString(),
+        'notes' => 'Workshop pickup arrived.',
+    ])->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.events.store', [$order, 'external-dispatch']), [
+        'occurred_at' => now()->subMinutes(50)->toDateTimeString(),
+        'recipient' => 'Certified Motor Workshop courier',
+        'item_condition' => 'Motor isolated and tagged; shaft does not rotate freely.',
+        'accessories' => 'Motor, coupling, and mounting bolts',
+    ])->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.maintenance.orders.complete', $order), [
+        'diagnosis' => 'External repair pending.', 'work_performed' => 'Motor dispatched.', 'test_result' => 'failed',
+    ])->assertSessionHasErrors('order');
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.events.store', [$order, 'external-receive']), [
+        'occurred_at' => now()->subMinutes(20)->toDateTimeString(),
+        'item_condition' => 'Motor returned with free shaft rotation and workshop test certificate.',
+        'accessories' => 'Motor, coupling, mounting bolts, and certificate',
+    ])->assertOk();
+    $order->refresh();
+    expect($order->events)->toHaveCount(4)
+        ->and($order->total_paused_minutes)->toBe(30)
+        ->and($order->paused_at)->toBeNull()
+        ->and($order->external_in_transit)->toBeFalse();
 
     $beforeMaintenanceIssue = app(InventoryAvailabilityService::class)->forProduct($fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey())['physical_on_hand'];
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.maintenance.material-requests.store'), [
@@ -2179,10 +2676,6 @@ test('maintenance flows from a breakdown report through external work completion
     $materialRequest->refresh();
     expect($materialRequest->issueDocument?->status)->toBe(InventoryDocument::StatusPosted)
         ->and(app(InventoryAvailabilityService::class)->forProduct($fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey())['physical_on_hand'])->toBe(bcsub($beforeMaintenanceIssue, '3', 8));
-    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.material-requests.return', $materialRequest))->assertOk();
-    expect($materialRequest->refresh()->returnDocument?->status)->toBe(InventoryDocument::StatusPosted)
-        ->and(app(InventoryAvailabilityService::class)->forProduct($fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey())['physical_on_hand'])->toBe($beforeMaintenanceIssue);
-
     $currency = Currency::query()->where('company_id', $fixture['company']->getKey())->firstOrFail();
     $cashAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeAsset)->firstOrFail();
     $expenseAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeExpense)->firstOrFail();
@@ -2197,6 +2690,27 @@ test('maintenance flows from a breakdown report through external work completion
         'payment_channel' => 'cashbox', 'cashbox_id' => $cashbox->getKey(), 'expense_account_id' => $expenseAccount->getKey(), 'reason' => 'External technician transport',
     ])->assertRedirect(route('admin.maintenance.expenses.index'));
     $expense = ProductionExpenseRequest::query()->where('maintenance_work_order_id', $order->getKey())->sole();
+    $ordinaryProductionExpense = ProductionExpenseRequest::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('production_expense_requests', ProductionExpenseRequest::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'request_date' => now()->toDateString(),
+        'amount' => '10',
+        'currency_id' => $currency->getKey(),
+        'payment_channel' => 'cashbox',
+        'cashbox_id' => $cashbox->getKey(),
+        'expense_account_id' => $expenseAccount->getKey(),
+        'reason' => 'Ordinary production-only expense',
+        'status' => ProductionExpenseRequest::StatusSubmitted,
+        'submitted_by' => $fixture['user']->getKey(),
+        'submitted_at' => now(),
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.expenses.approve', $ordinaryProductionExpense))
+        ->assertNotFound();
+    expect($ordinaryProductionExpense->fresh()->status)->toBe(ProductionExpenseRequest::StatusSubmitted);
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.expenses.approve', $expense))->assertOk();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.expenses.pay', $expense))->assertOk();
     $expense->refresh()->load(['cashVoucher', 'journalEntry.lines']);
@@ -2209,15 +2723,44 @@ test('maintenance flows from a breakdown report through external work completion
     expect($expense->status)->toBe(ProductionExpenseRequest::StatusReversed)
         ->and($expense->reversalJournalEntry)->not->toBeNull()
         ->and((string) $expense->reversalJournalEntry->lines->sum('debit_amount'))->toBe((string) $expense->reversalJournalEntry->lines->sum('credit_amount'));
+    $materialLine = $materialRequest->lines()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.orders.complete', $order), [
+            'diagnosis' => 'Bearing seizure caused overload.',
+            'root_cause' => 'Lubrication interval was exceeded.',
+            'work_performed' => 'Bearings replaced but the first load test failed.',
+            'test_result' => 'failed',
+            'material_usage' => [['line_id' => $materialLine->getKey(), 'consumed_quantity' => '2']],
+        ])
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    expect($order->refresh()->status)->toBe(MaintenanceWorkOrder::StatusInProgress)
+        ->and($order->test_result)->toBe('failed')
+        ->and($order->machine_released_at)->toBeNull()
+        ->and($fixture['mold']->fresh()->status)->toBe(ProductionMold::StatusMaintenance)
+        ->and($materialRequest->fresh()->inventory_return_document_id)->toBeNull();
+
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.maintenance.orders.complete', $order), [
             'diagnosis' => 'Bearing seizure caused overload.',
             'root_cause' => 'Lubrication interval was exceeded.',
             'work_performed' => 'Bearings replaced and motor load tested.',
             'completion_notes' => 'Machine returned to production.',
+            'test_result' => 'passed',
+            'repair_outcome' => 'permanent',
+            'material_usage' => [['line_id' => $materialLine->getKey(), 'consumed_quantity' => '2']],
+            'labor_details' => [['name' => 'Lead Maintenance Engineer', 'discipline' => 'electrical', 'actual_hours' => '2.5']],
             'next_due_date' => now()->addMonths(3)->toDateString(),
         ])
         ->assertRedirect(route('admin.maintenance.orders.index'));
+    $materialRequest->refresh();
+    expect($materialRequest->returnDocument?->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($materialLine->refresh()->consumed_quantity)->toBe('2.00000000')
+        ->and($materialLine->returned_quantity)->toBe('1.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct($fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey())['physical_on_hand'])->toBe(bcsub($beforeMaintenanceIssue, '2', 8))
+        ->and($fixture['mold']->fresh()->status)->toBe(ProductionMold::StatusAvailable);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.material-requests.return', $materialRequest))
+        ->assertUnprocessable();
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.maintenance.orders.close', $order))
         ->assertOk()
@@ -2226,6 +2769,9 @@ test('maintenance flows from a breakdown report through external work completion
     expect($order->refresh()->status)->toBe(MaintenanceWorkOrder::StatusClosed)
         ->and($order->actual_start_at)->not->toBeNull()
         ->and($order->actual_end_at)->not->toBeNull()
+        ->and($order->machine_released_at)->not->toBeNull()
+        ->and($order->cost_closed_at)->not->toBeNull()
+        ->and($order->labor_details)->toHaveCount(1)
         ->and($maintenanceRequest->refresh()->status)->toBe(MaintenanceRequest::StatusClosed);
 
     $this->actingAs($fixture['user'])->withSession($session)
@@ -2250,6 +2796,8 @@ test('maintenance flows from a breakdown report through external work completion
             'root_cause' => 'Scheduled maintenance.',
             'work_performed' => 'Inspected and lubricated internally.',
             'completion_notes' => 'Asset is ready.',
+            'test_result' => 'passed',
+            'repair_outcome' => 'permanent',
             'next_due_date' => now()->addMonths(2)->toDateString(),
         ])
         ->assertRedirect(route('admin.maintenance.orders.index'));
@@ -2273,7 +2821,7 @@ test('maintenance flows from a breakdown report through external work completion
         ->assertSee('Maintenance Operational Reports')
         ->assertSee($order->doc_num)
         ->assertSee($internalOrder->doc_num)
-        ->assertSee('Issued: 3 / Returned: 3');
+        ->assertSee('Issued: 3 / Consumed: 2 / Returned: 1');
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.maintenance.reports.export'))
         ->assertOk()
@@ -2288,6 +2836,132 @@ test('maintenance flows from a breakdown report through external work completion
         ->get(route('admin.maintenance.reports.index'))
         ->assertOk()
         ->assertDontSee('Expense Totals');
+});
+
+test('an approved maintenance plan generates idempotent calendar and meter dues without repeated order approval', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $asset = FixedAsset::query()->create([
+        'doc_number' => 9920,
+        'doc_num' => 'FA-PLAN-9920',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'period_id' => $fixture['period']->getKey(),
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Planned Maintenance Asset',
+        'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $permissions = [
+        'maintenance.plans.view', 'maintenance.plans.create', 'maintenance.plans.approve',
+        'maintenance.plans.generate', 'maintenance.plans.execute', 'maintenance.plans.readings',
+        'maintenance.orders.view', 'maintenance.orders.start', 'maintenance.orders.complete', 'maintenance.orders.close',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'en',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $firstDueAt = now()->subDay()->startOfMinute();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.plans.store'), [
+            'fixed_asset_id' => $asset->getKey(),
+            'name' => 'Monthly safety and lubrication round',
+            'maintenance_type' => 'preventive',
+            'discipline' => 'mechanical',
+            'service_mode' => 'internal',
+            'frequency_basis' => 'calendar',
+            'interval_value' => '30',
+            'schedule_anchor' => 'planned',
+            'next_due_at' => $firstDueAt->toDateTimeString(),
+            'task_template' => 'Inspect safety guards and lubricate the approved points.',
+            'expected_duration_minutes' => 90,
+            'estimated_cost' => 0,
+        ])
+        ->assertRedirect(route('admin.maintenance.plans.index'));
+    $plan = MaintenancePlan::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.generate', $plan))
+        ->assertUnprocessable();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.approve', $plan))
+        ->assertOk();
+    $plan->refresh();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.generate', $plan))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.generate', $plan))
+        ->assertUnprocessable();
+    $due = MaintenancePlanDue::query()->sole();
+    expect(MaintenancePlanDue::query()->count())->toBe(1)
+        ->and($plan->fresh()->next_due_at?->equalTo($firstDueAt->copy()->addDays(30)))->toBeTrue();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.dues.convert', $due))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.maintenance.plans.dues.convert', $due))
+        ->assertOk();
+    $order = MaintenanceWorkOrder::query()->sole();
+    expect($order->status)->toBe(MaintenanceWorkOrder::StatusApproved)
+        ->and($order->approved_by)->toBe($plan->approved_by)
+        ->and($order->maintenance_plan_due_id)->toBe($due->getKey())
+        ->and(MaintenanceWorkOrder::query()->count())->toBe(1);
+
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.start', $order))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.orders.complete', $order), [
+            'diagnosis' => 'Approved periodic work became due.',
+            'work_performed' => 'Safety guards inspected and approved points lubricated.',
+            'test_result' => 'passed',
+            'repair_outcome' => 'permanent',
+        ])
+        ->assertRedirect(route('admin.maintenance.orders.index'));
+    expect($due->fresh()->status)->toBe(MaintenancePlanDue::StatusCompleted)
+        ->and($plan->fresh()->last_completed_at)->not->toBeNull();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.orders.close', $order))->assertOk();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.maintenance.plans.store'), [
+            'fixed_asset_id' => $asset->getKey(),
+            'name' => 'Motor service by operating hours',
+            'maintenance_type' => 'preventive',
+            'service_mode' => 'internal',
+            'frequency_basis' => 'operating_hours',
+            'interval_value' => '50',
+            'schedule_anchor' => 'actual',
+            'next_meter_value' => '100',
+            'task_template' => 'Inspect motor after the approved operating-hours interval.',
+        ])
+        ->assertRedirect(route('admin.maintenance.plans.index'));
+    $meterPlan = MaintenancePlan::query()->whereKeyNot($plan->getKey())->sole();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.plans.approve', $meterPlan))->assertOk();
+    $idempotencyKey = (string) Str::uuid();
+    $readingData = [
+        'basis' => 'operating_hours', 'reading_value' => '120', 'reading_type' => 'reading',
+        'recorded_at' => now()->toDateTimeString(), 'idempotency_key' => $idempotencyKey,
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.maintenance.plans.readings.store', $meterPlan), $readingData)->assertRedirect();
+    $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.maintenance.plans.readings.store', $meterPlan), $readingData)->assertRedirect();
+    expect(MaintenanceMeterReading::query()->count())->toBe(1);
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.plans.generate', $meterPlan))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.maintenance.plans.generate', $meterPlan))->assertOk();
+    expect(MaintenancePlanDue::query()->where('maintenance_plan_id', $meterPlan->getKey())->count())->toBe(1);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.plans.index'))
+        ->assertOk()
+        ->assertSee('Monthly safety and lubrication round')
+        ->assertSee('Motor service by operating hours');
 });
 
 test('inventory and production screens translate labels without changing status values', function (string $locale): void {

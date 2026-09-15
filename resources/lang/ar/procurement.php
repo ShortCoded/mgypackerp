@@ -18,6 +18,11 @@ return [
         'load_lines' => 'تحميل البنود',
         'load_received_lines' => 'تحميل البنود المستلمة',
         'finalize_quality_inspection' => 'اعتماد فحص المشتريات',
+        'take_photo' => 'التقاط صورة',
+        'take_photos' => 'التقاط صور الفحص',
+        'uploading_photos' => 'جارٍ رفع صور الفحص…',
+        'photos_uploaded' => 'تم رفع صور الفحص وإضافتها إلى المرفقات.',
+        'photo_upload_failed' => 'تعذر رفع إحدى صور الفحص. حاول مرة أخرى.',
         'statuses' => [
             'draft' => 'مسودة',
             'pending_approval' => 'مرسل للاعتماد',

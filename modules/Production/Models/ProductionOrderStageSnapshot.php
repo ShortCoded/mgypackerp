@@ -50,6 +50,11 @@ class ProductionOrderStageSnapshot extends Model
         return $this->belongsTo(ProductionStage::class, 'production_stage_id')->withTrashed();
     }
 
+    public function productStage(): BelongsTo
+    {
+        return $this->belongsTo(ProductProductionStage::class, 'product_production_stage_id')->withTrashed();
+    }
+
     public function runs(): HasMany
     {
         return $this->hasMany(ProductionRun::class, 'production_order_stage_snapshot_id');

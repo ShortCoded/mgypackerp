@@ -3,142 +3,7 @@
 @section('title', __('chat.title'))
 
 @push('styles')
-    <style>
-        .erp-chat-page .card-chat {
-            height: calc(100vh - var(--falcon-top-nav-height) - 8.75rem);
-            max-height: calc(100vh - var(--falcon-top-nav-height) - 8.75rem);
-        }
-
-        .erp-chat-page .chat-content-scroll-area {
-            height: 100%;
-        }
-
-        .erp-chat-page .chat-editor-area textarea.emojiarea-editor {
-            max-height: 7.5rem;
-            resize: none;
-            background: transparent;
-            border: 0;
-            width: 100%;
-        }
-
-        .erp-chat-page .chat-editor-area {
-            position: relative;
-        }
-
-        .erp-chat-page .chat-attachment-preview {
-            pointer-events: auto;
-        }
-
-        .erp-chat-page .chat-composer-preview-stack {
-            pointer-events: auto;
-            z-index: 4;
-        }
-
-        .erp-chat-page .chat-reply-preview-card,
-        .erp-chat-page .chat-reply-block {
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            border-inline-start: .25rem solid var(--falcon-primary, #2c7be5);
-            background-color: var(--falcon-emphasis-bg, #fff);
-            color: var(--falcon-body-color, #344050);
-        }
-
-        .erp-chat-page .chat-reply-preview-title,
-        .erp-chat-page .chat-reply-block-title {
-            color: var(--falcon-emphasis-color, #0b1727);
-        }
-
-        .erp-chat-page .chat-reply-preview-snippet,
-        .erp-chat-page .chat-reply-block-snippet,
-        .erp-chat-page .chat-forwarded-meta {
-            color: var(--falcon-secondary-color, #5e6e82);
-        }
-
-        .erp-chat-page .chat-reply-preview-close {
-            color: var(--falcon-secondary-color, #5e6e82);
-        }
-
-        .erp-chat-page .chat-reply-preview-close:hover,
-        .erp-chat-page .chat-reply-preview-close:focus {
-            color: var(--falcon-danger, #e63757);
-        }
-
-        .erp-chat-page .chat-attachment-preview-card {
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            background-color: var(--falcon-emphasis-bg, #fff);
-            color: var(--falcon-body-color, #344050);
-        }
-
-        .erp-chat-page .chat-pending-attachment {
-            max-width: 100%;
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            background-color: var(--falcon-gray-100, #f9fafd);
-            color: var(--falcon-body-color, #344050);
-        }
-
-        .erp-chat-page .chat-pending-attachment-name {
-            max-width: 12rem;
-        }
-
-        .erp-chat-page .chat-message.bg-primary .chat-reply-block,
-        .erp-chat-page .chat-message.bg-primary .chat-forwarded-meta {
-            border-color: rgba(255, 255, 255, .32);
-            border-inline-start-color: rgba(255, 255, 255, .85);
-            background-color: rgba(255, 255, 255, .16);
-            color: #fff;
-        }
-
-        .erp-chat-page .chat-message.bg-primary .chat-reply-block-title,
-        .erp-chat-page .chat-message.bg-primary .chat-reply-block-snippet,
-        .erp-chat-page .chat-message.bg-primary .chat-forwarded-meta {
-            color: rgba(255, 255, 255, .92);
-        }
-
-        .erp-chat-page .chat-emoji-mart-panel {
-            position: absolute;
-            inset-inline-end: 0;
-            bottom: 2.25rem;
-            z-index: 1055;
-            max-width: calc(100vw - 2rem);
-        }
-
-        .erp-chat-page .chat-emoji-picker {
-            position: relative;
-        }
-
-        .erp-chat-page .chat-emoji-fallback-panel {
-            position: absolute;
-            inset-inline-end: 0;
-            bottom: 2.25rem;
-            z-index: 1055;
-            width: 20rem;
-            max-width: calc(100vw - 2rem);
-            max-height: 18rem;
-            overflow-y: auto;
-            border: 1px solid var(--falcon-border-color, #d8e2ef);
-            background-color: var(--falcon-emphasis-bg, #fff);
-        }
-
-        .erp-chat-page .chat-emoji-fallback-panel button {
-            width: 2rem;
-            height: 2rem;
-            line-height: 1;
-        }
-
-        .erp-chat-page .chat-empty-state {
-            min-height: 100%;
-        }
-
-        .erp-chat-page .chat-contact {
-            cursor: pointer;
-        }
-
-        @media (max-width: 575.98px) {
-            .erp-chat-page .card-chat {
-                height: calc(100vh - var(--falcon-top-nav-height) - 4.5rem);
-                max-height: calc(100vh - var(--falcon-top-nav-height) - 4.5rem);
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Core/chat.css') }}">
 @endpush
 
 @section('content')
@@ -341,6 +206,7 @@
                 'chatUnmuted' => __('chat.chat_unmuted'),
                 'messageForwarded' => __('chat.message_forwarded'),
                 'cancel' => __('common.actions.cancel'),
+                'typeMessage' => __('chat.type_message'),
                 'online' => __('chat.online'),
                 'offline' => __('chat.offline'),
             ],
@@ -349,7 +215,7 @@
     <script>
         window.AppChat = @json($chatConfig);
     </script>
-    <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('vendors/emoji-mart/browser.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Core/chat.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('vendors/emoji-mart/browser.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/chat.js') }}"></script>
 @endpush

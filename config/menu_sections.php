@@ -226,6 +226,7 @@ return [
         'task_boards' => 'work_management',
         'team_board' => 'work_management',
         'chat' => 'communication',
+        'chat_report' => 'communication',
         'pwa_settings' => 'application_tools',
         'core_tax_definitions' => 'general_accounting',
         'core_currency_rate_policies' => 'treasury_banks',

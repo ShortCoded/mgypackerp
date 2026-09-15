@@ -5,6 +5,7 @@ namespace Modules\Production\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Production\Models\ProductionOrderLine;
@@ -63,10 +64,11 @@ class ProductionRoutingService
 
     /**
      * @param  list<array{production_stage_id: int, standard_duration_value?: mixed, standard_duration_unit?: string|null, notes?: string|null}>  $rows
+     * @param  array<string, int|string|null>  $componentStageAssignments
      */
-    public function replaceProductRoute(Product $product, array $rows): void
+    public function replaceProductRoute(Product $product, array $rows, array $componentStageAssignments = []): void
     {
-        DB::transaction(function () use ($product, $rows): void {
+        DB::transaction(function () use ($product, $rows, $componentStageAssignments): void {
             $companyId = $this->companies->requireCompanyId();
             $lockedProduct = Product::query()->where('company_id', $companyId)->lockForUpdate()->findOrFail($product->getKey());
             $stageIds = collect($rows)->pluck('production_stage_id')->map(fn (mixed $id): int => (int) $id)->all();
@@ -105,10 +107,39 @@ class ProductionRoutingService
                     'created_by' => auth()->id(),
                 ]);
             }
+
+            if ($componentStageAssignments === []) {
+                return;
+            }
+
+            $components = ProductComponent::query()
+                ->forCompany($companyId)
+                ->where('product_id', $lockedProduct->getKey())
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('public_id');
+
+            if (array_diff(array_keys($componentStageAssignments), $components->keys()->all()) !== []) {
+                throw new DomainException(__('production_execution.messages.component_stage_invalid'));
+            }
+
+            foreach ($components as $component) {
+                $stageId = $componentStageAssignments[(string) $component->public_id] ?? null;
+                $stageId = filled($stageId) ? (int) $stageId : null;
+
+                if ($stageId !== null && ! in_array($stageId, $stageIds, true)) {
+                    throw new DomainException(__('production_execution.messages.component_stage_must_be_selected'));
+                }
+
+                if ((int) ($component->production_stage_id ?? 0) !== (int) ($stageId ?? 0)) {
+                    $this->audit->saveUpdate($component, ['production_stage_id' => $stageId]);
+                }
+            }
         });
     }
 
-    public function snapshotLine(ProductionOrderLine $line): void
+    /** @param null|list<string> $selectedStagePublicIds */
+    public function snapshotLine(ProductionOrderLine $line, ?array $selectedStagePublicIds = null): void
     {
         $line = ProductionOrderLine::query()->with('order')->lockForUpdate()->findOrFail($line->getKey());
 
@@ -124,6 +155,15 @@ class ProductionRoutingService
             ->orderBy('sequence')
             ->lockForUpdate()
             ->get();
+
+        if ($selectedStagePublicIds !== null) {
+            $selectedStagePublicIds = collect($selectedStagePublicIds)->filter()->unique()->values()->all();
+            $route = $route->whereIn('public_id', $selectedStagePublicIds)->values();
+
+            if ($route->count() !== count($selectedStagePublicIds)) {
+                throw new DomainException(__('production_execution.messages.order_stage_selection_invalid'));
+            }
+        }
 
         foreach ($route as $routeStage) {
             $stage = $routeStage->stage;

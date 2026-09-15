@@ -8,6 +8,7 @@
             <div class="row flex-between-center g-2">
                 <div class="col-auto"><h5 class="mb-0">{{ __('inventory.movements.title') }}</h5></div>
                 <div class="col-auto ms-auto">
+                    @can('inventory.documents.view_trashed')<div class="btn-group btn-group-sm me-2"><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index') }}">{{ __('production_execution.actions.active') }}</a><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index', ['trash_filter' => 'trashed']) }}">{{ __('production_execution.actions.deleted') }}</a><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index', ['trash_filter' => 'all']) }}">{{ __('production_execution.actions.all') }}</a></div>@endcan
                     @can('inventory.documents.create')
                         <x-buttons.add-record :href="route('admin.inventory.documents.create')" permission="inventory.documents.create" />
                     @endcan
@@ -20,7 +21,7 @@
                     <div class="erp-datatable-scroll">
                         <table id="inventory-movements-table" class="table table-sm table-hover mb-0 data-table erp-datatable align-middle"
                             data-server-table
-                            data-url="{{ route('admin.inventory.documents.data') }}"
+                            data-url="{{ route('admin.inventory.documents.data', array_filter(['trash_filter' => request('trash_filter')])) }}"
                             data-table-name="inventory_documents"
                             data-order-column="2"
                             data-order-direction="desc"

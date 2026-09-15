@@ -6,10 +6,13 @@ use App\Http\Requests\DestroyPushSubscriptionRequest;
 use App\Http\Requests\StorePushSubscriptionRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
+use Modules\Core\Services\SessionIdentityService;
 
 class PushSubscriptionController extends Controller
 {
-    public function store(StorePushSubscriptionRequest $request): JsonResponse
+    public const SessionEndpointKey = 'push_subscription_endpoint';
+
+    public function store(StorePushSubscriptionRequest $request, SessionIdentityService $sessions): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -21,6 +24,8 @@ class PushSubscriptionController extends Controller
             $validated['keys']['auth'],
             $validated['content_encoding'] ?? 'aes128gcm',
         );
+        $subscription->forceFill(['session_identity' => $sessions->for($request)])->save();
+        $request->session()->put(self::SessionEndpointKey, $validated['endpoint']);
 
         return response()->json([
             'success' => true,
@@ -36,6 +41,7 @@ class PushSubscriptionController extends Controller
         /** @var User $user */
         $user = $request->user();
         $user->deletePushSubscription($request->validated('endpoint'));
+        $request->session()->forget(self::SessionEndpointKey);
 
         return response()->json([
             'success' => true,

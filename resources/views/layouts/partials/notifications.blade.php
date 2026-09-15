@@ -23,6 +23,8 @@
                     </div>
                 </div>
                 <div class="px-3 pb-2 small text-600" role="status" aria-live="polite" data-push-notification-status></div>
+                <div class="px-3 pb-2 small text-600" role="status" aria-live="polite" data-notification-sound-status></div>
+                <div class="px-3 pb-2 small text-600" role="status" aria-live="polite" data-notifications-health></div>
             </div>
             <div class="scrollbar-overlay" style="max-height:19rem">
                 <div class="list-group list-group-flush fw-normal fs-10" data-notifications-list>
@@ -39,6 +41,9 @@
                         </div>
                     </div>
                 </div>
+            </div>
+            <div class="card-footer py-2 text-center border-top">
+                <a class="btn btn-link btn-sm" href="{{ route('admin.notifications.index') }}">{{ __('notifications.actions.view_all') }}</a>
             </div>
         </div>
     </div>

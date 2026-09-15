@@ -282,7 +282,7 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['quantity'] ?? 0) }}</div>
                                         @else
-                                            <x-forms.numeric-input class="text-center js-opening-stock-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
+                                            <x-forms.numeric-input class="text-center js-opening-stock-quantity" :name="'lines['.$index.'][quantity]'" :value="$line['quantity'] ?? ''" :scale="4" min="0.0001" step="0.0001" arrow-step="1" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.quantity"></div>
                                         @endif
                                     </td>
@@ -407,7 +407,7 @@
                     <div class="opening-stock-unit-display js-opening-stock-unit text-700" data-unit-display aria-readonly="true"></div>
                 </td>
                 <td class="text-center">
-                    <x-forms.numeric-input class="text-center js-opening-stock-quantity" name="lines[__INDEX__][quantity]" :scale="4" min="0.0001" step="0.0001" />
+                    <x-forms.numeric-input class="text-center js-opening-stock-quantity" name="lines[__INDEX__][quantity]" :scale="4" min="0.0001" step="0.0001" arrow-step="1" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.quantity"></div>
                 </td>
                 <td>

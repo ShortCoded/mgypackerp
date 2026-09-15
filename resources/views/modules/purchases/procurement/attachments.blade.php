@@ -16,9 +16,30 @@
                 @endif
             </div>
             @unless($attachmentsReadonly ?? false)
-                <button type="button" class="btn btn-falcon-default btn-sm js-procurement-attachment-picker" data-input-name="attachment_file_doc_nums[]" data-remove-label="{{ __('Remove attachment') }}" data-file-picker data-picker-accept="document" data-picker-max="20" data-picker-title="{{ __('Choose attachment') }}" data-picker-collection="{{ $attachmentCollection }}" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}">
-                    <span class="fas fa-paperclip me-1"></span>{{ __('Choose attachment') }}
-                </button>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    @can('file_manager.upload')
+                        <label class="btn btn-outline-primary btn-sm mb-0" for="procurement-document-camera">
+                            <span class="fas fa-camera me-1" aria-hidden="true"></span>{{ __('procurement.ui.take_photos') }}
+                        </label>
+                        <input
+                            class="visually-hidden js-procurement-camera-input"
+                            id="procurement-document-camera"
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            multiple
+                            data-upload-url="{{ route('admin.file-manager.picker.files.store') }}"
+                            data-input-name="attachment_file_doc_nums[]"
+                            data-remove-label="{{ __('Remove attachment') }}"
+                            data-uploading-label="{{ __('procurement.ui.uploading_photos') }}"
+                            data-uploaded-label="{{ __('procurement.ui.photos_uploaded') }}"
+                            data-upload-error-label="{{ __('procurement.ui.photo_upload_failed') }}"
+                        >
+                    @endcan
+                    <button type="button" class="btn btn-falcon-default btn-sm js-procurement-attachment-picker" data-input-name="attachment_file_doc_nums[]" data-remove-label="{{ __('Remove attachment') }}" data-file-picker data-picker-accept="document" data-picker-max="20" data-picker-title="{{ __('Choose attachment') }}" data-picker-collection="{{ $attachmentCollection }}" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}">
+                        <span class="fas fa-paperclip me-1"></span>{{ __('Choose attachment') }}
+                    </button>
+                </div>
                 <div class="js-procurement-attachment-inputs"></div>
             @endunless
         </div>
@@ -38,6 +59,7 @@
             </div>
         @endif
         @unless($attachmentsReadonly ?? false)
+            <div class="small text-600 mt-2 d-none js-procurement-camera-status" aria-live="polite"></div>
             <ul class="list-group list-group-flush mt-2 mb-0 js-procurement-selected-attachments d-none"></ul>
         @pushOnce('scripts', 'procurement-file-picker-modal')
             <x-file-picker-modal />

@@ -9,12 +9,15 @@ use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryReservationService;
 use Modules\Production\Models\ProductionMachine;
@@ -27,6 +30,8 @@ use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\QualityInspectionType;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Services\SalesUnitConversionService;
@@ -38,7 +43,10 @@ class ProductionCycleService
         private readonly SalesUnitConversionService $units,
         private readonly InventoryReservationService $reservations,
         private readonly InventoryMovementService $movements,
+        private readonly InventoryAvailabilityService $availability,
         private readonly ProductionCostService $costs,
+        private readonly QualityInspectionPlanSnapshotService $planSnapshots,
+        private readonly CrudAuditService $audit,
     ) {}
 
     /**
@@ -63,10 +71,14 @@ class ProductionCycleService
                 'company_id' => $header['company_id'],
                 'financial_period_id' => $header['financial_period_id'],
                 'branch_id' => $header['branch_id'],
-                'source_type' => 'make_to_stock',
+                'sales_order_id' => $header['sales_order_id'] ?? null,
+                'customer_id' => $header['customer_id'] ?? null,
+                'source_type' => $header['source_type'] ?? 'make_to_stock',
+                'source_id' => $header['source_id'] ?? null,
                 'production_order_date' => $header['production_order_date'] ?? now()->toDateString(),
                 'expected_start_date' => $header['expected_start_date'] ?? null,
                 'expected_finish_date' => $header['expected_finish_date'] ?? null,
+                'expected_delivery_date' => $header['expected_delivery_date'] ?? null,
                 'priority' => $header['priority'] ?? 'normal',
                 'overproduction_tolerance_percent' => $header['overproduction_tolerance_percent'] ?? 0,
                 'status' => ProductionOrder::StatusDraft,
@@ -74,37 +86,298 @@ class ProductionCycleService
                 'created_by' => auth()->id(),
             ]);
 
-            foreach (array_values($lines) as $index => $input) {
-                $product = Product::query()->lockForUpdate()->findOrFail($input['product_id']);
-
-                if ((int) $product->company_id !== (int) $order->company_id
-                    || $product->item_classification !== Product::ClassificationFinishedProduct) {
-                    throw new DomainException(__('Make-to-stock production lines must use a finished product from the operating company.'));
-                }
-
-                $snapshot = $this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']);
-
-                if (bccomp($snapshot['base_quantity'], '0', 8) <= 0) {
-                    throw new DomainException(__('Production quantity must be greater than zero.'));
-                }
-
-                $line = $order->lines()->create([
-                    'line_number' => $index + 1,
-                    'product_id' => $product->getKey(),
-                    'unit_id' => $snapshot['unit_id'],
-                    'description' => $input['description'] ?? $product->name,
-                    'quantity' => $input['quantity'],
-                    'conversion_factor' => $snapshot['conversion_factor'],
-                    'base_quantity' => $snapshot['base_quantity'],
-                    'specifications' => $input['specifications'] ?? null,
-                    'production_notes' => $input['production_notes'] ?? null,
-                    'mandatory_specs_resolved' => true,
-                ]);
-                app(ProductionRoutingService::class)->snapshotLine($line);
-            }
+            $this->createOrderLines($order, $lines);
 
             return $order->load('lines.product');
         });
+    }
+
+    /**
+     * @param  array<string, mixed>  $header
+     * @param  list<array<string, mixed>>  $lines
+     */
+    public function updateDraftOrder(ProductionOrder $order, array $header, array $lines): ProductionOrder
+    {
+        return DB::transaction(function () use ($order, $header, $lines): ProductionOrder {
+            $locked = ProductionOrder::query()->withCount('runs')->lockForUpdate()->findOrFail($order->getKey());
+
+            if ($locked->status !== ProductionOrder::StatusDraft || $locked->runs_count > 0) {
+                throw new DomainException(__('production_execution.messages.order_draft_only'));
+            }
+            if ($lines === []) {
+                throw new DomainException(__('A production order requires at least one finished-product line.'));
+            }
+
+            $locked->update([
+                'sales_order_id' => $header['sales_order_id'] ?? null,
+                'customer_id' => $header['customer_id'] ?? null,
+                'source_type' => $header['source_type'] ?? 'make_to_stock',
+                'source_id' => $header['source_id'] ?? null,
+                'production_order_date' => $header['production_order_date'],
+                'expected_start_date' => $header['expected_start_date'] ?? null,
+                'expected_finish_date' => $header['expected_finish_date'] ?? null,
+                'expected_delivery_date' => $header['expected_delivery_date'] ?? null,
+                'priority' => $header['priority'] ?? 'normal',
+                'overproduction_tolerance_percent' => $header['overproduction_tolerance_percent'] ?? 0,
+                'production_notes' => $header['production_notes'] ?? null,
+                'updated_by' => auth()->id(),
+            ]);
+            $this->adjustSalesDemand($locked, subtract: true);
+            $locked->lines()->forceDelete();
+            $this->createOrderLines($locked, $lines);
+
+            return $locked->refresh()->load('lines.product');
+        });
+    }
+
+    public function deleteDraftOrder(ProductionOrder $order): void
+    {
+        DB::transaction(function () use ($order): void {
+            $locked = ProductionOrder::query()->withCount('runs')->lockForUpdate()->findOrFail($order->getKey());
+
+            if ($locked->status !== ProductionOrder::StatusDraft || $locked->runs_count > 0) {
+                throw new DomainException(__('production_execution.messages.order_draft_delete_only'));
+            }
+
+            $locked->update(['deleted_by' => auth()->id()]);
+            $this->adjustSalesDemand($locked, subtract: true);
+            $locked->delete();
+        });
+    }
+
+    public function restoreDraftOrder(ProductionOrder $order): ProductionOrder
+    {
+        return DB::transaction(function () use ($order): ProductionOrder {
+            $locked = ProductionOrder::withTrashed()->lockForUpdate()->findOrFail($order->getKey());
+
+            if (! $locked->trashed()) {
+                throw new DomainException(__('production_execution.messages.order_not_deleted'));
+            }
+
+            $this->assertRestorableSourceDemand($locked);
+            $locked->restore();
+            $this->adjustSalesDemand($locked, subtract: false);
+            $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
+
+            return $locked->refresh();
+        });
+    }
+
+    /** @param list<array<string, mixed>> $lines */
+    private function createOrderLines(ProductionOrder $order, array $lines): void
+    {
+        $source = $this->lockProductionSource($order);
+
+        foreach (array_values($lines) as $index => $input) {
+            $product = Product::query()->lockForUpdate()->findOrFail($input['product_id']);
+
+            if ((int) $product->company_id !== (int) $order->company_id
+                || $product->item_classification !== Product::ClassificationFinishedProduct) {
+                throw new DomainException(__('production_execution.messages.production_line_product_invalid'));
+            }
+
+            $snapshot = $this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']);
+
+            if (bccomp($snapshot['base_quantity'], '0', 8) <= 0) {
+                throw new DomainException(__('Production quantity must be greater than zero.'));
+            }
+
+            [$salesLine, $invoiceLine] = $this->sourceLinesForInput($source, $product, $input);
+            $this->assertSourceDemand($order, $product, $snapshot['base_quantity'], $salesLine, $invoiceLine);
+
+            $line = $order->lines()->create([
+                'sales_order_line_id' => $salesLine?->getKey(),
+                'customer_invoice_line_id' => $invoiceLine?->getKey(),
+                'line_number' => $index + 1,
+                'product_id' => $product->getKey(),
+                'unit_id' => $snapshot['unit_id'],
+                'description' => $input['description'] ?? $product->name,
+                'quantity' => $input['quantity'],
+                'conversion_factor' => $snapshot['conversion_factor'],
+                'base_quantity' => $snapshot['base_quantity'],
+                'specifications' => $input['specifications'] ?? null,
+                'production_notes' => $input['production_notes'] ?? null,
+                'mandatory_specs_resolved' => true,
+            ]);
+            app(ProductionRoutingService::class)->snapshotLine($line, $input['stage_public_ids'] ?? null);
+
+            if ($line->sales_order_line_id !== null) {
+                $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
+                $salesLine->increment('production_requested_quantity', $line->quantity);
+                $salesLine->increment('production_requested_base_quantity', $line->base_quantity);
+            }
+        }
+    }
+
+    private function adjustSalesDemand(ProductionOrder $order, bool $subtract): void
+    {
+        $order->loadMissing('lines');
+
+        foreach ($order->lines->whereNotNull('sales_order_line_id') as $line) {
+            $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
+            $method = $subtract ? 'decrement' : 'increment';
+            $salesLine->{$method}('production_requested_quantity', $line->quantity);
+            $salesLine->{$method}('production_requested_base_quantity', $line->base_quantity);
+        }
+    }
+
+    private function lockProductionSource(ProductionOrder $order): SalesOrder|CustomerInvoice|null
+    {
+        if ($order->source_type === 'make_to_stock') {
+            if ($order->source_id !== null || $order->sales_order_id !== null) {
+                throw new DomainException(__('production_execution.messages.standalone_source_invalid'));
+            }
+
+            return null;
+        }
+
+        if ($order->source_type === 'sales_order') {
+            $source = SalesOrder::query()
+                ->where('company_id', $order->company_id)
+                ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled])
+                ->lockForUpdate()
+                ->find($order->source_id);
+
+            if (! $source || (int) $source->getKey() !== (int) $order->sales_order_id) {
+                throw new DomainException(__('production_execution.messages.production_source_invalid'));
+            }
+
+            return $source;
+        }
+
+        if ($order->source_type === 'customer_invoice') {
+            $source = CustomerInvoice::query()
+                ->where('company_id', $order->company_id)
+                ->where('document_type', CustomerInvoice::TypeInvoice)
+                ->where('status', CustomerInvoice::StatusPosted)
+                ->lockForUpdate()
+                ->find($order->source_id);
+
+            if (! $source) {
+                throw new DomainException(__('production_execution.messages.production_source_invalid'));
+            }
+
+            return $source;
+        }
+
+        throw new DomainException(__('production_execution.messages.production_source_invalid'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array{0: ?SalesOrderLine, 1: ?CustomerInvoiceLine}
+     */
+    private function sourceLinesForInput(
+        SalesOrder|CustomerInvoice|null $source,
+        Product $product,
+        array $input,
+    ): array {
+        if ($source === null) {
+            if (! empty($input['sales_order_line_id']) || ! empty($input['customer_invoice_line_id'])) {
+                throw new DomainException(__('production_execution.messages.invalid_source_line'));
+            }
+
+            return [null, null];
+        }
+
+        if ($source instanceof SalesOrder) {
+            $salesLine = SalesOrderLine::query()
+                ->where('sales_order_id', $source->getKey())
+                ->where('product_id', $product->getKey())
+                ->lockForUpdate()
+                ->find($input['sales_order_line_id'] ?? null);
+
+            if (! $salesLine
+                || $salesLine->isService()
+                || $salesLine->product_classification_snapshot !== Product::ClassificationFinishedProduct
+                || ! empty($input['customer_invoice_line_id'])) {
+                throw new DomainException(__('production_execution.messages.invalid_source_line'));
+            }
+
+            return [$salesLine, null];
+        }
+
+        $invoiceLine = CustomerInvoiceLine::query()
+            ->where('customer_invoice_id', $source->getKey())
+            ->where('product_id', $product->getKey())
+            ->where('is_service', false)
+            ->lockForUpdate()
+            ->find($input['customer_invoice_line_id'] ?? null);
+
+        if (! $invoiceLine) {
+            throw new DomainException(__('production_execution.messages.invalid_source_line'));
+        }
+
+        $salesLine = $invoiceLine->sales_order_line_id === null
+            ? null
+            : SalesOrderLine::query()->where('product_id', $product->getKey())->lockForUpdate()->find($invoiceLine->sales_order_line_id);
+
+        if (($input['sales_order_line_id'] ?? null) !== $salesLine?->getKey()) {
+            throw new DomainException(__('production_execution.messages.invalid_source_line'));
+        }
+
+        return [$salesLine, $invoiceLine];
+    }
+
+    private function assertSourceDemand(
+        ProductionOrder $order,
+        Product $product,
+        string $requestedBaseQuantity,
+        ?SalesOrderLine $salesLine,
+        ?CustomerInvoiceLine $invoiceLine,
+    ): void {
+        if ($salesLine !== null) {
+            $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($salesLine->sales_order_id);
+
+            if (! $salesOrder->isApprovedForFulfillment() || $salesOrder->branch_store_id === null) {
+                throw new DomainException(__('production_execution.messages.production_source_invalid'));
+            }
+
+            $availableBase = $this->availability->forProduct(
+                (int) $order->company_id,
+                (int) $salesOrder->branch_store_id,
+                (int) $product->getKey(),
+                (int) $salesLine->getKey(),
+            )['available'];
+            $deliveryRemainingBase = bcmul($salesLine->remainingDeliveryQuantity(), (string) $salesLine->conversion_factor, 8);
+            $plannedRemainingBase = bcsub((string) $salesLine->production_requested_base_quantity, (string) $salesLine->produced_base_quantity, 8);
+            $remainingBase = $this->nonnegative(bcsub(bcsub($deliveryRemainingBase, $availableBase, 8), $plannedRemainingBase, 8));
+
+            if (bccomp($requestedBaseQuantity, $remainingBase, 8) > 0) {
+                throw new DomainException(__('production_execution.messages.production_demand_exceeds_remaining'));
+            }
+        }
+
+        if ($invoiceLine !== null) {
+            $alreadyPlannedBase = (string) ProductionOrderLine::query()
+                ->where('customer_invoice_line_id', $invoiceLine->getKey())
+                ->whereHas('order')
+                ->sum('base_quantity');
+            $remainingInvoiceBase = $this->nonnegative(bcsub((string) $invoiceLine->base_quantity, $alreadyPlannedBase, 8));
+
+            if (bccomp($requestedBaseQuantity, $remainingInvoiceBase, 8) > 0) {
+                throw new DomainException(__('production_execution.messages.production_demand_exceeds_remaining'));
+            }
+        }
+    }
+
+    private function assertRestorableSourceDemand(ProductionOrder $order): void
+    {
+        $source = $this->lockProductionSource($order);
+        $order->loadMissing('lines.product');
+
+        foreach ($order->lines as $line) {
+            [$salesLine, $invoiceLine] = $this->sourceLinesForInput($source, $line->product, [
+                'sales_order_line_id' => $line->sales_order_line_id,
+                'customer_invoice_line_id' => $line->customer_invoice_line_id,
+            ]);
+            $this->assertSourceDemand($order, $line->product, (string) $line->base_quantity, $salesLine, $invoiceLine);
+        }
+    }
+
+    private function nonnegative(string $quantity): string
+    {
+        return bccomp($quantity, '0', 8) < 0 ? '0.00000000' : $quantity;
     }
 
     public function releaseOrder(ProductionOrder $order): ProductionOrder
@@ -154,6 +427,7 @@ class ProductionCycleService
                         'product_name' => $componentProduct->name,
                         'source_unit_id' => $component->unit_id,
                         'base_unit_id' => $unitSnapshot['base_unit_id'],
+                        'production_stage_id' => $component->production_stage_id,
                         'calculation_method' => $component->calculation_method,
                         'quantity' => (string) $component->quantity,
                         'base_quantity_per_output' => $unitSnapshot['base_quantity'],
@@ -187,8 +461,9 @@ class ProductionCycleService
     public function createRun(ProductionOrderLine $orderLine, array $data): ProductionRun
     {
         return DB::transaction(function () use ($orderLine, $data): ProductionRun {
-            $line = ProductionOrderLine::query()->with('order')->lockForUpdate()->findOrFail($orderLine->getKey());
-            $order = $line->order;
+            $line = ProductionOrderLine::query()->lockForUpdate()->findOrFail($orderLine->getKey());
+            $order = ProductionOrder::query()->lockForUpdate()->findOrFail($line->production_order_id);
+            $line->setRelation('order', $order);
 
             if (! in_array($order->status, [
                 ProductionOrder::StatusReleased,
@@ -217,16 +492,7 @@ class ProductionCycleService
                 throw new DomainException(__('production_execution.messages.run_stage_required'));
             }
 
-            $alreadyPlanned = (string) ProductionRun::query()
-                ->where('production_order_line_id', $line->getKey())
-                ->when(
-                    $stageSnapshotId !== null,
-                    fn ($query) => $query->where('production_order_stage_snapshot_id', $stageSnapshotId),
-                    fn ($query) => $query->whereNull('production_order_stage_snapshot_id'),
-                )
-                ->where('status', '<>', ProductionRun::StatusCancelled)
-                ->sum('planned_base_quantity');
-            $remaining = bcsub((string) $line->base_quantity, $alreadyPlanned, 8);
+            $remaining = bcsub((string) $line->base_quantity, $this->committedRunQuantity($line, $stageSnapshotId), 8);
 
             if (bccomp($plannedBaseQuantity, '0', 8) <= 0 || bccomp($plannedBaseQuantity, $remaining, 8) > 0) {
                 throw new DomainException(__('Run quantity must be positive and cannot exceed the unplanned production quantity.'));
@@ -244,10 +510,8 @@ class ProductionCycleService
             $fixedAssetId = isset($data['fixed_asset_id']) ? (int) $data['fixed_asset_id'] : null;
             $this->assertFixedAsset($order, $fixedAssetId, $startsAt, $endsAt);
             $this->assertResources($order, (int) $line->product_id, $machineId, $moldId, $startsAt, $endsAt);
-            $runSequence = ProductionRun::query()
+            $runSequence = ProductionRun::withTrashed()
                 ->where('production_order_id', $order->getKey())
-                ->lockForUpdate()
-                ->get(['id'])
                 ->count() + 1;
             $run = ProductionRun::query()->create([
                 'run_number' => sprintf('%s-R%03d', $order->doc_num, $runSequence),
@@ -272,36 +536,153 @@ class ProductionCycleService
                 'batch_lot' => $data['batch_lot'] ?? null,
                 'work_description' => $data['work_description'] ?? null,
                 'planned_labor_count' => $data['planned_labor_count'] ?? null,
-                'labor_details' => $data['labor_details'] ?? null,
+                'labor_details' => $this->laborDetails($order, $data['labor_details'] ?? [], false),
                 'status' => ProductionRun::StatusPlanned,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => auth()->id(),
             ]);
+            $this->audit->clearCreationUpdateAudit($run);
 
-            foreach (array_values($line->bom_snapshot['components']) as $index => $component) {
-                $plannedMaterial = bcmul((string) $component['base_quantity_per_output'], $plannedBaseQuantity, 8);
-                $run->requirements()->create([
-                    'production_order_id' => $order->getKey(),
-                    'production_order_line_id' => $line->getKey(),
-                    'line_number' => $index + 1,
-                    'product_component_id' => $component['product_component_id'],
-                    'product_id' => $component['product_id'],
-                    'unit_id' => $component['base_unit_id'],
-                    'calculation_method' => $component['calculation_method'],
-                    'component_quantity_snapshot' => $component['base_quantity_per_output'],
-                    'planned_quantity' => $plannedMaterial,
-                    'component_snapshot' => $component,
-                ]);
-            }
+            $this->replaceRunRequirements($run, $line, $stageSnapshot, $plannedBaseQuantity);
 
             return $run->load(['requirements.product', 'order', 'orderLine']);
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function updatePlannedRun(ProductionRun $run, array $data): ProductionRun
+    {
+        return DB::transaction(function () use ($run, $data): ProductionRun {
+            $locked = ProductionRun::query()->lockForUpdate()->findOrFail($run->getKey());
+            $this->assertRunPlanCanBeChanged($locked);
+
+            $line = ProductionOrderLine::query()->lockForUpdate()->findOrFail($locked->production_order_line_id);
+            $order = ProductionOrder::query()->lockForUpdate()->findOrFail($line->production_order_id);
+            $line->setRelation('order', $order);
+            if ((int) ($data['production_order_line_id'] ?? $line->getKey()) !== (int) $line->getKey()) {
+                throw new DomainException(__('production_execution.messages.run_order_line_locked'));
+            }
+            if (! in_array($order->status, [
+                ProductionOrder::StatusReleased,
+                ProductionOrder::StatusInProgress,
+                ProductionOrder::StatusPartiallyCompleted,
+            ], true)) {
+                throw new DomainException(__('production_execution.messages.run_requires_released_order'));
+            }
+            if (! is_array($line->bom_snapshot) || empty($line->bom_snapshot['components'])) {
+                throw new DomainException(__('production_execution.messages.run_requires_bom_snapshot'));
+            }
+
+            $stageSnapshotId = isset($data['production_order_stage_snapshot_id'])
+                ? (int) $data['production_order_stage_snapshot_id']
+                : null;
+            $hasConfiguredRoute = $line->stageSnapshots()->exists();
+            $stageSnapshot = $stageSnapshotId === null ? null : ProductionOrderStageSnapshot::query()
+                ->where('production_order_line_id', $line->getKey())
+                ->lockForUpdate()
+                ->find($stageSnapshotId);
+            if ($hasConfiguredRoute && ! $stageSnapshot instanceof ProductionOrderStageSnapshot) {
+                throw new DomainException(__('production_execution.messages.run_stage_required'));
+            }
+
+            $plannedQuantity = (string) $data['planned_quantity'];
+            $plannedBaseQuantity = bcmul($plannedQuantity, (string) $line->conversion_factor, 8);
+            $remaining = bcsub(
+                (string) $line->base_quantity,
+                $this->committedRunQuantity($line, $stageSnapshotId, (int) $locked->getKey()),
+                8,
+            );
+            if (bccomp($plannedBaseQuantity, '0', 8) <= 0 || bccomp($plannedBaseQuantity, $remaining, 8) > 0) {
+                throw new DomainException(__('production_execution.messages.run_quantity_exceeds_remaining'));
+            }
+
+            $startsAt = CarbonImmutable::parse($data['planned_start_at']);
+            $endsAt = CarbonImmutable::parse($data['planned_end_at']);
+            if ($endsAt->lessThanOrEqualTo($startsAt)) {
+                throw new DomainException(__('production_execution.messages.run_end_after_start'));
+            }
+
+            $machineId = $locked->production_machine_id === null ? null : (int) $locked->production_machine_id;
+            $moldId = $locked->production_mold_id === null ? null : (int) $locked->production_mold_id;
+            $fixedAssetId = isset($data['fixed_asset_id']) ? (int) $data['fixed_asset_id'] : null;
+            $this->assertFixedAsset($order, $fixedAssetId, $startsAt, $endsAt, (int) $locked->getKey());
+            $this->assertResources($order, (int) $line->product_id, $machineId, $moldId, $startsAt, $endsAt, (int) $locked->getKey());
+
+            $this->audit->saveUpdate($locked, [
+                'production_order_stage_snapshot_id' => $stageSnapshotId,
+                'planned_quantity' => $plannedQuantity,
+                'planned_base_quantity' => $plannedBaseQuantity,
+                'planned_start_at' => $startsAt,
+                'planned_end_at' => $endsAt,
+                'production_shift_id' => $data['production_shift_id'] ?? null,
+                'fixed_asset_id' => $fixedAssetId,
+                'cost_center_id' => $this->runCostCenterId($data, $machineId, (int) $order->company_id),
+                'batch_lot' => $data['batch_lot'] ?? null,
+                'work_description' => $data['work_description'] ?? null,
+                'planned_labor_count' => $data['planned_labor_count'] ?? null,
+                'labor_details' => $this->laborDetails($order, $data['labor_details'] ?? [], false),
+                'notes' => $data['notes'] ?? null,
+            ]);
+
+            $this->replaceRunRequirements($locked, $line, $stageSnapshot, $plannedBaseQuantity);
+
+            return $locked->refresh()->load(['requirements.product', 'order', 'orderLine']);
+        });
+    }
+
+    public function deletePlannedRun(ProductionRun $run): void
+    {
+        DB::transaction(function () use ($run): void {
+            $locked = ProductionRun::query()->lockForUpdate()->findOrFail($run->getKey());
+            $this->assertRunPlanCanBeChanged($locked);
+            $this->audit->softDelete($locked);
+        });
+    }
+
+    public function restorePlannedRun(ProductionRun $run): ProductionRun
+    {
+        return DB::transaction(function () use ($run): ProductionRun {
+            $locked = ProductionRun::withTrashed()->lockForUpdate()->findOrFail($run->getKey());
+            if (! $locked->trashed()) {
+                throw new DomainException(__('production_execution.messages.run_not_deleted'));
+            }
+            if ($locked->status !== ProductionRun::StatusPlanned) {
+                throw new DomainException(__('production_execution.messages.run_plan_only'));
+            }
+
+            $line = ProductionOrderLine::query()->lockForUpdate()->findOrFail($locked->production_order_line_id);
+            $order = ProductionOrder::query()->lockForUpdate()->findOrFail($line->production_order_id);
+            $line->setRelation('order', $order);
+            if (! in_array($order->status, [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted], true)) {
+                throw new DomainException(__('production_execution.messages.run_requires_released_order'));
+            }
+            $remaining = bcsub(
+                (string) $line->base_quantity,
+                $this->committedRunQuantity($line, $locked->production_order_stage_snapshot_id),
+                8,
+            );
+            if (bccomp((string) $locked->planned_base_quantity, $remaining, 8) > 0) {
+                throw new DomainException(__('production_execution.messages.run_quantity_exceeds_remaining'));
+            }
+
+            $startsAt = CarbonImmutable::parse($locked->planned_start_at);
+            $endsAt = CarbonImmutable::parse($locked->planned_end_at);
+            $this->assertFixedAsset($order, $locked->fixed_asset_id, $startsAt, $endsAt, (int) $locked->getKey());
+            $this->assertResources($order, (int) $line->product_id, $locked->production_machine_id, $locked->production_mold_id, $startsAt, $endsAt, (int) $locked->getKey());
+
+            $this->audit->restore($locked);
+
+            return $locked->refresh();
         });
     }
 
     public function reserveRun(ProductionRun $run, int $branchStoreId, ?int $warehouseLocationId = null): ProductionRun
     {
         return DB::transaction(function () use ($run, $branchStoreId, $warehouseLocationId): ProductionRun {
-            $locked = ProductionRun::query()->with('requirements')->lockForUpdate()->findOrFail($run->getKey());
+            $locked = ProductionRun::query()
+                ->with(['requirements', 'stageSnapshot', 'orderLine'])
+                ->lockForUpdate()
+                ->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [ProductionRun::StatusPlanned, ProductionRun::StatusSetup, ProductionRun::StatusReady], true)) {
                 throw new DomainException(__('Materials can only be reserved before the run starts.'));
@@ -508,6 +889,8 @@ class ProductionCycleService
                 throw new DomainException(__('Every material requirement must have an issue before the run starts.'));
             }
 
+            $this->assertPreviousStageOutputAvailable($locked);
+
             $locked->update([
                 'status' => ProductionRun::StatusRunning,
                 'actual_start_at' => now(),
@@ -633,19 +1016,7 @@ class ProductionCycleService
                 throw new DomainException(__('production_execution.messages.labor_running_only'));
             }
 
-            $laborDetails = collect($data['labor_details'] ?? [])
-                ->map(fn (array $labor): array => [
-                    'employee_id' => filled($labor['employee_id'] ?? null) ? (int) $labor['employee_id'] : null,
-                    'name' => trim((string) $labor['name']),
-                    'role' => filled($labor['role'] ?? null) ? trim((string) $labor['role']) : null,
-                    'planned_hours' => filled($labor['planned_hours'] ?? null) ? (string) $labor['planned_hours'] : null,
-                    'actual_hours' => (string) $labor['actual_hours'],
-                    'notes' => filled($labor['notes'] ?? null) ? trim((string) $labor['notes']) : null,
-                    'recorded_by' => auth()->id(),
-                    'recorded_at' => now()->toIso8601String(),
-                ])
-                ->values()
-                ->all();
+            $laborDetails = $this->laborDetails($locked, $data['labor_details'] ?? [], true);
 
             $locked->update([
                 'actual_labor_count' => (int) $data['actual_labor_count'],
@@ -655,6 +1026,46 @@ class ProductionCycleService
 
             return $locked->refresh();
         });
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $details
+     * @return list<array<string, mixed>>
+     */
+    private function laborDetails(ProductionOrder|ProductionRun $context, array $details, bool $actual): array
+    {
+        if ($details === []) {
+            return [];
+        }
+
+        $employees = HrEmployee::query()
+            ->where('company_id', $context->company_id)
+            ->where('branch_id', $context->branch_id)
+            ->whereIn('person_type', ['regular_labor', 'casual_labor'])
+            ->where('status', 'active')
+            ->whereIn('id', collect($details)->pluck('employee_id'))
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        if ($employees->count() !== count($details)) {
+            throw new DomainException(__('production_execution.messages.run_labor_invalid'));
+        }
+
+        return collect($details)->map(function (array $labor) use ($employees, $actual): array {
+            $employee = $employees->get((int) $labor['employee_id']);
+
+            return [
+                'employee_id' => $employee->getKey(),
+                'employee_doc_num' => $employee->doc_num,
+                'name' => $employee->full_name ?: $employee->name,
+                'role' => filled($labor['role'] ?? null) ? trim((string) $labor['role']) : $employee->job_title,
+                'planned_hours' => filled($labor['planned_hours'] ?? null) ? (string) $labor['planned_hours'] : null,
+                'actual_hours' => $actual ? (string) $labor['actual_hours'] : null,
+                'notes' => filled($labor['notes'] ?? null) ? trim((string) $labor['notes']) : null,
+                ...($actual ? ['recorded_by' => auth()->id(), 'recorded_at' => now()->toIso8601String()] : []),
+            ];
+        })->values()->all();
     }
 
     /** @param array<string, mixed> $data */
@@ -743,7 +1154,9 @@ class ProductionCycleService
                 'production_order_id' => $locked->production_order_id,
                 'production_run_id' => $locked->getKey(),
                 'production_order_stage_id' => $locked->production_order_stage_snapshot_id,
+                'subject_type' => ProductionQualityInspection::SubjectProductionRun,
                 'quality_inspection_type_id' => $inspectionTypeId,
+                'inspection_plan_snapshot' => $this->planSnapshots->capture((int) $locked->company_id, $inspectionTypeId),
                 'version' => 1,
                 'reinspection_number' => 0,
                 'inspection_date' => now()->toDateString(),
@@ -778,6 +1191,21 @@ class ProductionCycleService
                     'notes' => $result['notes'] ?? null,
                     'recorded_by' => auth()->id(),
                     'recorded_at' => now(),
+                ]);
+            }
+
+            if ($inspection->result === 'passed'
+                && $inspection->disposition === 'release'
+                && auth()->user()?->can('production.quality.release_normal')) {
+                $inspection->update([
+                    'status' => ProductionQualityInspection::StatusApproved,
+                    'approved_by' => auth()->id(),
+                    'approved_at' => now(),
+                    'reviewed_by' => auth()->id(),
+                    'reviewed_at' => now(),
+                    'released_by' => auth()->id(),
+                    'released_at' => now(),
+                    'updated_by' => auth()->id(),
                 ]);
             }
 
@@ -954,9 +1382,6 @@ class ProductionCycleService
                     throw new DomainException(__('production_execution.messages.finished_goods_final_stage_only'));
                 }
 
-                if ($stageSnapshots->where('sequence', '<', $currentStage->sequence)->contains(fn (ProductionOrderStageSnapshot $stage): bool => $stage->status !== ProductionOrderStageSnapshot::StatusCompleted)) {
-                    throw new DomainException(__('production_execution.messages.previous_stages_incomplete'));
-                }
             }
 
             $remainingGood = bcsub((string) $locked->good_base_quantity, (string) $locked->received_base_quantity, 8);
@@ -1001,12 +1426,7 @@ class ProductionCycleService
             }
 
             $receiptCost = $this->costs->receiptCost($locked, $baseQuantity);
-
-            if (bccomp($receiptCost, '0', 8) <= 0) {
-                throw new DomainException(__('Finished goods cannot be received without a positive reconciled WIP material value.'));
-            }
-
-            $unitCost = bcdiv($receiptCost, $baseQuantity, 8);
+            $unitCost = bccomp($receiptCost, '0', 8) > 0 ? bcdiv($receiptCost, $baseQuantity, 8) : null;
             $manufactureDate = ($locked->actual_end_at ?? now())->toDateString();
             $expiryDate = null;
             if ($locked->product?->tracks_expiry) {
@@ -1073,7 +1493,10 @@ class ProductionCycleService
     public function completeRun(ProductionRun $run): ProductionRun
     {
         return DB::transaction(function () use ($run): ProductionRun {
-            $locked = ProductionRun::query()->with(['requirements', 'inspections', 'order.lines'])->lockForUpdate()->findOrFail($run->getKey());
+            $locked = ProductionRun::query()
+                ->with(['requirements', 'inspections', 'order.lines', 'orderLine.stageSnapshots'])
+                ->lockForUpdate()
+                ->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [ProductionRun::StatusRunning, ProductionRun::StatusHeld], true)) {
                 throw new DomainException(__('Only an active production run can be completed.'));
@@ -1092,9 +1515,16 @@ class ProductionCycleService
                 }
             }
 
-            if (bccomp((string) $locked->good_base_quantity, '0', 8) <= 0
-                || bccomp((string) $locked->received_base_quantity, (string) $locked->good_base_quantity, 8) !== 0) {
-                throw new DomainException(__('All recorded good output must be received into finished-goods stock before completion.'));
+            $stages = $locked->orderLine->stageSnapshots->where('is_required', true)->sortBy('sequence');
+            $currentStage = $stages->firstWhere('id', $locked->production_order_stage_snapshot_id);
+            $isFinalStage = $stages->isEmpty()
+                || ($currentStage && (int) $currentStage->sequence === (int) $stages->max('sequence'));
+
+            if (bccomp((string) $locked->good_base_quantity, '0', 8) <= 0) {
+                throw new DomainException(__('production_execution.messages.run_good_output_required'));
+            }
+            if ($isFinalStage && bccomp((string) $locked->received_base_quantity, (string) $locked->good_base_quantity, 8) !== 0) {
+                throw new DomainException(__('production_execution.messages.final_run_receipt_required'));
             }
 
             $latestInspection = $locked->inspections()->reorder()->latest('sampled_at')->latest('id')->first();
@@ -1117,7 +1547,7 @@ class ProductionCycleService
                 $completedQuantity = (string) ProductionRun::query()
                     ->where('production_order_stage_snapshot_id', $stage->getKey())
                     ->where('status', ProductionRun::StatusCompleted)
-                    ->sum('planned_base_quantity');
+                    ->sum('good_base_quantity');
 
                 if (bccomp($completedQuantity, (string) $locked->orderLine->base_quantity, 8) >= 0) {
                     $stage->update([
@@ -1182,6 +1612,7 @@ class ProductionCycleService
         ?int $moldId,
         CarbonImmutable $startsAt,
         CarbonImmutable $endsAt,
+        ?int $excludeRunId = null,
     ): void {
         if ($machineId !== null) {
             $machine = ProductionMachine::query()->lockForUpdate()->findOrFail($machineId);
@@ -1209,6 +1640,7 @@ class ProductionCycleService
         }
 
         $conflictQuery = ProductionRun::query()
+            ->when($excludeRunId !== null, fn ($query) => $query->whereKeyNot($excludeRunId))
             ->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])
             ->where('planned_start_at', '<', $endsAt)
             ->where('planned_end_at', '>', $startsAt)
@@ -1228,6 +1660,7 @@ class ProductionCycleService
         ?int $fixedAssetId,
         CarbonImmutable $startsAt,
         CarbonImmutable $endsAt,
+        ?int $excludeRunId = null,
     ): void {
         if ($fixedAssetId === null) {
             return;
@@ -1241,6 +1674,7 @@ class ProductionCycleService
         }
 
         $conflict = ProductionRun::query()
+            ->when($excludeRunId !== null, fn ($query) => $query->whereKeyNot($excludeRunId))
             ->where('fixed_asset_id', $fixedAssetId)
             ->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])
             ->where('planned_start_at', '<', $endsAt)
@@ -1250,6 +1684,31 @@ class ProductionCycleService
 
         if ($conflict) {
             throw new DomainException(__('production_execution.messages.fixed_asset_schedule_conflict'));
+        }
+    }
+
+    private function assertRunPlanCanBeChanged(ProductionRun $run): void
+    {
+        $hasMaterialActivity = $run->requirements()
+            ->where(function ($query): void {
+                $query->where('reserved_quantity', '>', 0)
+                    ->orWhere('issued_quantity', '>', 0)
+                    ->orWhere('additional_issued_quantity', '>', 0)
+                    ->orWhere('returned_quantity', '>', 0)
+                    ->orWhere('consumed_quantity', '>', 0)
+                    ->orWhere('waste_quantity', '>', 0);
+            })
+            ->exists();
+        $hasLinkedActivity = InventoryReservation::query()->where('production_run_id', $run->getKey())->exists()
+            || InventoryTransaction::query()->where('production_run_id', $run->getKey())->exists()
+            || $run->progressEntries()->exists()
+            || $run->inspections()->exists()
+            || $run->inventoryDocuments()->exists()
+            || $run->materialRequests()->exists()
+            || $run->expenseRequests()->exists();
+
+        if ($run->status !== ProductionRun::StatusPlanned || $hasMaterialActivity || $hasLinkedActivity) {
+            throw new DomainException(__('production_execution.messages.run_plan_only'));
         }
     }
 
@@ -1331,5 +1790,120 @@ class ProductionCycleService
                 : ($hasReceipt ? ProductionOrder::StatusPartiallyCompleted : ProductionOrder::StatusInProgress),
             'updated_by' => auth()->id(),
         ]);
+    }
+
+    private function committedRunQuantity(
+        ProductionOrderLine $line,
+        ?int $stageSnapshotId,
+        ?int $excludeRunId = null,
+    ): string {
+        return ProductionRun::query()
+            ->where('production_order_line_id', $line->getKey())
+            ->when($excludeRunId !== null, fn ($query) => $query->whereKeyNot($excludeRunId))
+            ->when(
+                $stageSnapshotId !== null,
+                fn ($query) => $query->where('production_order_stage_snapshot_id', $stageSnapshotId),
+                fn ($query) => $query->whereNull('production_order_stage_snapshot_id'),
+            )
+            ->where('status', '<>', ProductionRun::StatusCancelled)
+            ->lockForUpdate()
+            ->get(['status', 'planned_base_quantity', 'good_base_quantity'])
+            ->reduce(
+                fn (string $total, ProductionRun $run): string => bcadd(
+                    $total,
+                    $run->status === ProductionRun::StatusCompleted
+                        ? (string) $run->good_base_quantity
+                        : (string) $run->planned_base_quantity,
+                    8,
+                ),
+                '0.00000000',
+            );
+    }
+
+    private function replaceRunRequirements(
+        ProductionRun $run,
+        ProductionOrderLine $line,
+        ?ProductionOrderStageSnapshot $stage,
+        string $plannedBaseQuantity,
+    ): void {
+        $run->requirements()->delete();
+        $components = collect($line->bom_snapshot['components'] ?? []);
+
+        if ($stage instanceof ProductionOrderStageSnapshot) {
+            $firstStageId = $line->stageSnapshots()
+                ->where('is_required', true)
+                ->orderBy('sequence')
+                ->value('production_stage_id');
+            $components = $components->filter(function (array $component) use ($stage, $firstStageId): bool {
+                $assignedStageId = isset($component['production_stage_id'])
+                    ? (int) $component['production_stage_id']
+                    : null;
+
+                return $assignedStageId !== null
+                    ? $assignedStageId === (int) $stage->production_stage_id
+                    : (int) $stage->production_stage_id === (int) $firstStageId;
+            });
+        }
+
+        foreach ($components->values() as $index => $component) {
+            $plannedMaterial = bcmul((string) $component['base_quantity_per_output'], $plannedBaseQuantity, 8);
+            $run->requirements()->create([
+                'production_order_id' => $line->production_order_id,
+                'production_order_line_id' => $line->getKey(),
+                'line_number' => $index + 1,
+                'product_component_id' => $component['product_component_id'],
+                'product_id' => $component['product_id'],
+                'unit_id' => $component['base_unit_id'],
+                'calculation_method' => $component['calculation_method'],
+                'component_quantity_snapshot' => $component['base_quantity_per_output'],
+                'planned_quantity' => $plannedMaterial,
+                'component_snapshot' => $component,
+            ]);
+        }
+    }
+
+    private function assertPreviousStageOutputAvailable(ProductionRun $run): void
+    {
+        if (! $run->stageSnapshot instanceof ProductionOrderStageSnapshot) {
+            return;
+        }
+
+        ProductionOrderLine::query()->whereKey($run->production_order_line_id)->lockForUpdate()->firstOrFail();
+        $previousStage = ProductionOrderStageSnapshot::query()
+            ->where('production_order_line_id', $run->production_order_line_id)
+            ->where('is_required', true)
+            ->where('sequence', '<', $run->stageSnapshot->sequence)
+            ->orderByDesc('sequence')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $previousStage instanceof ProductionOrderStageSnapshot) {
+            return;
+        }
+
+        $availableOutput = (string) ProductionRun::query()
+            ->where('production_order_stage_snapshot_id', $previousStage->getKey())
+            ->where('status', ProductionRun::StatusCompleted)
+            ->sum('good_base_quantity');
+        $claimedOutput = ProductionRun::query()
+            ->where('production_order_stage_snapshot_id', $run->production_order_stage_snapshot_id)
+            ->whereKeyNot($run->getKey())
+            ->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld, ProductionRun::StatusCompleted])
+            ->lockForUpdate()
+            ->get(['status', 'planned_base_quantity', 'good_base_quantity'])
+            ->reduce(
+                fn (string $total, ProductionRun $claimedRun): string => bcadd(
+                    $total,
+                    $claimedRun->status === ProductionRun::StatusCompleted
+                        ? (string) $claimedRun->good_base_quantity
+                        : (string) $claimedRun->planned_base_quantity,
+                    8,
+                ),
+                '0.00000000',
+            );
+
+        if (bccomp(bcadd($claimedOutput, (string) $run->planned_base_quantity, 8), $availableOutput, 8) > 0) {
+            throw new DomainException(__('production_execution.messages.previous_stage_output_insufficient'));
+        }
     }
 }

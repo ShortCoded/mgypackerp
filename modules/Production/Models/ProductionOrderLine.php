@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrderLine;
 
 class ProductionOrderLine extends Model
@@ -32,6 +33,11 @@ class ProductionOrderLine extends Model
     public function salesOrderLine(): BelongsTo
     {
         return $this->belongsTo(SalesOrderLine::class);
+    }
+
+    public function customerInvoiceLine(): BelongsTo
+    {
+        return $this->belongsTo(CustomerInvoiceLine::class);
     }
 
     public function product(): BelongsTo

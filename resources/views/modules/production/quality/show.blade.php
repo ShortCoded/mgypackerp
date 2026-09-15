@@ -30,6 +30,16 @@
             </div>
 
             <div class="d-flex flex-wrap gap-2 mobile-action-row quality-review-actions" aria-label="{{ __('production_execution.quality.workflow_actions') }}">
+                @can('production.quality.print')<a class="btn btn-falcon-default" href="{{ route('admin.production.quality.inspection.print', $record->getKey()) }}"><span class="fas fa-print me-1"></span>{{ __('common.actions.print') }}</a>@endcan
+                @can('maintenance.requests.create')
+                    @if($record->maintenanceRequest?->workOrder)
+                        <a class="btn btn-falcon-default" href="{{ route('admin.maintenance.orders.show', $record->maintenanceRequest->workOrder) }}"><span class="fas fa-tools me-1"></span>{{ __('production_execution.actions.open_maintenance_order') }}</a>
+                    @elseif($record->maintenanceRequest)
+                        <a class="btn btn-falcon-default" href="{{ route('admin.maintenance.orders.create', ['request' => $record->maintenanceRequest->doc_num]) }}"><span class="fas fa-tools me-1"></span>{{ __('production_execution.actions.continue_maintenance_request') }}</a>
+                    @elseif($record->run && ($record->result === 'failed' || in_array($record->disposition, ['hold', 'rework', 'scrap', 'return'], true) || $record->reports->contains(fn($report) => $report->result === 'failed' || in_array($report->disposition, ['hold', 'rework', 'scrap', 'return'], true))))
+                        <button class="btn btn-outline-warning" type="button" data-action="post" data-url="{{ route('admin.production.quality.maintenance-request', $record->getKey()) }}"><span class="fas fa-tools me-1"></span>{{ __('production_execution.actions.create_maintenance_request') }}</button>
+                    @endif
+                @endcan
                 @if ($record->status === \Modules\Production\Models\ProductionQualityInspection::StatusDraft)
                     @can('production.quality.receive')
                         <button class="btn btn-primary" type="button" data-action="post" data-url="{{ route('admin.production.quality.receive', $record->getKey()) }}"><span class="fas fa-inbox me-1"></span>{{ __('production_execution.actions.receive_inspection') }}</button>
@@ -79,8 +89,15 @@
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.stock_status') }}</span><strong>{{ $record->stock_status ? __('production_execution.stock_statuses.'.$record->stock_status) : '—' }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.batch_lot') }}</span><strong>{{ $record->batch_lot ?: '—' }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.stage') }}</span><strong>{{ $record->stageSnapshot?->stage_name ?? '—' }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('production_execution.fields.inspection_type') }}</span><strong>{{ $record->qualityType?->name ?? __('production_execution.quality.general_stage_inspection') }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('production_execution.fields.affected_quantity') }}</span><strong>{{ $record->affected_base_quantity ?? '—' }}</strong></div>
+            @php
+                $snapshotType = data_get($record->inspection_plan_snapshot, 'type');
+                $snapshotTypeName = app()->getLocale() === 'ar' && filled(data_get($snapshotType, 'name_ar')) ? data_get($snapshotType, 'name_ar') : data_get($snapshotType, 'name');
+            @endphp
+            <div class="quality-summary-item"><span>{{ __('production_execution.fields.inspection_type') }}</span><strong>{{ $snapshotTypeName ?? $record->qualityType?->name ?? __('production_execution.quality.general_stage_inspection') }}</strong>@if(data_get($record->inspection_plan_snapshot, 'revision'))<small class="d-block text-600">{{ __('production_execution.fields.plan_revision') }}: {{ substr(data_get($record->inspection_plan_snapshot, 'revision'), 0, 10) }}</small>@endif</div>
+            <div class="quality-summary-item"><span>{{ __('production_execution.fields.affected_quantity') }}</span><strong>{{ $record->affected_base_quantity !== null ? $numbers->format($record->affected_base_quantity) : '—' }}</strong></div>
+            @if($record->stockHold)
+                <div class="quality-summary-item"><span>{{ __('production_execution.fields.inventory_hold') }}</span><strong>{{ __('production_execution.quality_hold_statuses.'.$record->stockHold->status) }} — {{ $numbers->format($record->stockHold->base_quantity) }}</strong></div>
+            @endif
         </div>
 
         @if ($record->status === \Modules\Production\Models\ProductionQualityInspection::StatusInProgress)
@@ -89,12 +106,12 @@
                     @csrf
                     <div class="card-header"><h5 class="mb-0">{{ __('production_execution.quality.add_daily_report') }}</h5><p class="small text-600 mb-0">{{ __('production_execution.quality.add_daily_report_help') }}</p></div>
                     <div class="card-body"><div class="row g-3">
-                        <div class="col-12 col-md-4"><label class="form-label" for="quality-report-at">{{ __('production_execution.fields.reported_at') }}</label><x-forms.date-input id="quality-report-at" name="reported_at" enable-time :value="old('reported_at', now()->format('Y-m-d H:i'))" required /></div>
-                        <div class="col-12 col-md-4"><label class="form-label" for="quality-report-result">{{ __('production_execution.fields.result') }}</label><x-forms.select id="quality-report-result" name="result" required>@foreach(['pending', 'passed', 'failed', 'conditional'] as $result)<option value="{{ $result }}" @selected(old('result', 'pending') === $result)>{{ __('production_execution.quality_results.'.$result) }}</option>@endforeach</x-forms.select></div>
+                        <div class="col-12 col-md-4"><x-forms.label for="quality-report-at" :label="__('production_execution.fields.reported_at')" required /><x-forms.date-input id="quality-report-at" name="reported_at" enable-time :value="old('reported_at', now()->format('Y-m-d H:i'))" required /></div>
+                        <div class="col-12 col-md-4"><x-forms.label for="quality-report-result" :label="__('production_execution.fields.result')" required /><x-forms.select id="quality-report-result" name="result" required>@foreach(['pending', 'passed', 'failed', 'conditional'] as $result)<option value="{{ $result }}" @selected(old('result', 'pending') === $result)>{{ __('production_execution.quality_results.'.$result) }}</option>@endforeach</x-forms.select></div>
                         <div class="col-12 col-md-4"><label class="form-label" for="quality-report-disposition">{{ __('production_execution.fields.disposition') }}</label><x-forms.select id="quality-report-disposition" name="disposition"><option value="">—</option>@foreach(['release', 'hold', 'rework', 'scrap', 'return'] as $disposition)<option value="{{ $disposition }}" @selected(old('disposition') === $disposition)>{{ __('production_execution.quality_dispositions.'.$disposition) }}</option>@endforeach</x-forms.select></div>
                         <div class="col-12 col-md-4"><label class="form-label" for="quality-report-defect">{{ __('production_execution.fields.defect_code') }}</label><x-forms.input id="quality-report-defect" name="defect_code" :value="old('defect_code')" /></div>
-                        <div class="col-12 col-md-4"><label class="form-label" for="quality-report-quantity">{{ __('production_execution.fields.affected_quantity') }}</label><x-forms.input id="quality-report-quantity" name="affected_base_quantity" type="number" min="0" step="0.00000001" inputmode="decimal" :value="old('affected_base_quantity')" /></div>
-                        <div class="col-12"><label class="form-label" for="quality-report-observations">{{ __('production_execution.fields.observations') }}</label><x-forms.textarea id="quality-report-observations" name="observations" rows="3" required>{{ old('observations') }}</x-forms.textarea></div>
+                        <div class="col-12 col-md-4"><label class="form-label" for="quality-report-quantity">{{ __('production_execution.fields.affected_quantity') }}</label><x-forms.numeric-input id="quality-report-quantity" name="affected_base_quantity" :scale="8" min="0" step="0.00000001" arrow-step="1" :value="old('affected_base_quantity')" /></div>
+                        <div class="col-12"><x-forms.label for="quality-report-observations" :label="__('production_execution.fields.observations')" required /><x-forms.textarea id="quality-report-observations" name="observations" rows="3" required>{{ old('observations') }}</x-forms.textarea></div>
                         <div class="col-12"><label class="form-label" for="quality-report-corrective-action">{{ __('production_execution.fields.corrective_action') }}</label><x-forms.textarea id="quality-report-corrective-action" name="corrective_action" rows="3">{{ old('corrective_action') }}</x-forms.textarea></div>
                         <div class="col-12">
                             <label class="form-label">{{ __('production_execution.fields.attachments') }}</label>
@@ -120,7 +137,7 @@
                                         <x-forms.input type="hidden" name="results[{{ $index }}][quality_checkpoint_id]" :value="$checkpoint->id" />
                                         <div class="row g-2">
                                             <div class="col-12 col-md-4">
-                                                <label class="form-label" for="checkpoint-result-{{ $checkpoint->id }}">{{ __('production_execution.fields.result') }}</label>
+                                                <x-forms.label for="checkpoint-result-{{ $checkpoint->id }}" :label="__('production_execution.fields.result')" :required="$checkpoint->is_required" />
                                                 <x-forms.select id="checkpoint-result-{{ $checkpoint->id }}" name="results[{{ $index }}][result]" :required="$checkpoint->is_required">
                                                     @if($checkpoint->is_required)<option value="">{{ __('common.actions.select') }}</option>@endif
                                                     @foreach(['passed', 'failed', 'conditional', 'pending'] as $result)
@@ -130,7 +147,7 @@
                                             </div>
                                             @if($checkpoint->response_type === 'numeric')
                                                 <div class="col-12 col-md-4">
-                                                    <label class="form-label" for="checkpoint-value-{{ $checkpoint->id }}">{{ __('production_execution.fields.measured_value') }} @if($checkpoint->measurement_unit)({{ $checkpoint->measurement_unit }})@endif</label>
+                                                    <x-forms.label for="checkpoint-value-{{ $checkpoint->id }}" :label="__('production_execution.fields.measured_value').($checkpoint->measurement_unit ? ' ('.$checkpoint->measurement_unit.')' : '')" :required="$checkpoint->is_required" />
                                                     <x-forms.input id="checkpoint-value-{{ $checkpoint->id }}" name="results[{{ $index }}][measured_value]" :value='old("results.$index.measured_value")' :required="$checkpoint->is_required" inputmode="decimal" />
                                                 </div>
                                             @endif
@@ -146,13 +163,13 @@
 
                         <div class="row g-3">
                             <div class="col-12 col-md-6">
-                                <label class="form-label" for="quality-overall-result">{{ __('production_execution.quality.overall_result') }}</label>
+                                <x-forms.label for="quality-overall-result" :label="__('production_execution.quality.overall_result')" required />
                                 <x-forms.select id="quality-overall-result" name="result" required data-quality-overall-result>
                                     @foreach(['passed', 'failed', 'conditional'] as $result)<option value="{{ $result }}" @selected(old('result') === $result)>{{ __('production_execution.quality_results.'.$result) }}</option>@endforeach
                                 </x-forms.select>
                             </div>
                             <div class="col-12 col-md-6">
-                                <label class="form-label" for="quality-disposition">{{ __('production_execution.fields.disposition') }}</label>
+                                <x-forms.label for="quality-disposition" :label="__('production_execution.fields.disposition')" required />
                                 <x-forms.select id="quality-disposition" name="disposition" required data-quality-disposition>
                                     @foreach(['release', 'hold', 'rework', 'scrap', 'return'] as $disposition)<option value="{{ $disposition }}" @selected(old('disposition', 'release') === $disposition)>{{ __('production_execution.quality_dispositions.'.$disposition) }}</option>@endforeach
                                 </x-forms.select>
@@ -163,7 +180,7 @@
                             </div>
                             <div class="col-12 col-md-6">
                                 <label class="form-label" for="quality-affected-base-quantity">{{ __('production_execution.fields.affected_quantity') }}</label>
-                                <x-forms.input id="quality-affected-base-quantity" name="affected_base_quantity" type="number" min="0" step="0.00000001" inputmode="decimal" :value="old('affected_base_quantity', $record->affected_base_quantity)" />
+                                <x-forms.numeric-input id="quality-affected-base-quantity" name="affected_base_quantity" :scale="8" min="0" step="0.00000001" arrow-step="1" :value="old('affected_base_quantity', $record->affected_base_quantity)" />
                             </div>
                             <div class="col-12" data-quality-exception-details>
                                 <div class="row g-3">

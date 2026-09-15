@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
+use Modules\Production\Models\ProductionStage;
 
 class ProductComponent extends Model
 {
@@ -35,6 +36,7 @@ class ProductComponent extends Model
         'product_id',
         'component_product_id',
         'unit_id',
+        'production_stage_id',
         'calculation_method',
         'quantity',
         'percentage',
@@ -134,6 +136,11 @@ class ProductComponent extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class, 'unit_id');
+    }
+
+    public function productionStage(): BelongsTo
+    {
+        return $this->belongsTo(ProductionStage::class, 'production_stage_id')->withTrashed();
     }
 
     /**

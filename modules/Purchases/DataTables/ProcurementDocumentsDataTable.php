@@ -116,6 +116,12 @@ class ProcurementDocumentsDataTable
             ->where('company_id', $context['company_id'])
             ->where('type', Branch::TypeAdministrative)
             ->exists();
+        $isFactoryBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->where('status', 'active')
+            ->exists();
         $query = $this->query($request, $screen)->withCount('lines');
         $relations = match ($screen) {
             'purchase_requisitions' => ['requesterEmployee', 'branch', 'branchStore'],
@@ -186,6 +192,7 @@ class ProcurementDocumentsDataTable
                 'screen' => $screen,
                 'definition' => $definition,
                 'isAdministrativeBranch' => $isAdministrativeBranch,
+                'isFactoryBranch' => $isFactoryBranch,
                 'activeBranchId' => (int) $context['branch_id'],
             ])->render())
             ->addColumn('view_url', fn ($record): string => route('admin.purchases.'.$definition['route'].'.show', $record->doc_num))

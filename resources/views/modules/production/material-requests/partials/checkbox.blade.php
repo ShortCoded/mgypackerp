@@ -1,0 +1,4 @@
+@php($disabled = $record->trashed() || ! $canChange || ! auth()->user()?->can('production.material_requests.delete'))
+<div class="form-check mb-0 d-flex justify-content-center">
+    <input class="form-check-input js-record-select" type="checkbox" value="{{ $record->doc_num }}" data-doc-num="{{ $record->doc_num }}" @disabled($disabled)>
+</div>

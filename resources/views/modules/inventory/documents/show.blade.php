@@ -3,6 +3,7 @@
 @section('title', $record->doc_num)
 
 @section('content')
+    @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
 @php
     $productionOrder = $record->productionOrder ?? $record->productionRun?->order;
     $salesOrder = $productionOrder?->salesOrder ?? $record->salesOrder;
@@ -10,15 +11,13 @@
         ['label' => __('Production Run'), 'number' => $record->productionRun?->run_number, 'url' => $record->productionRun ? route('admin.production.runs.show', $record->productionRun) : null, 'permission' => 'production.runs.view'],
         ['label' => __('Production Order'), 'number' => $productionOrder?->doc_num, 'url' => $productionOrder ? route('admin.production.work-orders.show', $productionOrder) : null, 'permission' => 'production.orders.view'],
         ['label' => __('Sales Requirement / Order'), 'number' => $salesOrder?->doc_num, 'url' => $salesOrder ? route('admin.sales.sales-orders.show', $salesOrder) : null, 'permission' => 'sales_orders.view'],
-        ['label' => __('Journal Entry'), 'number' => $record->journalEntry?->doc_num, 'url' => $record->journalEntry ? route('admin.accounting.journal-entries.show', $record->journalEntry) : null, 'permission' => 'journal_entries.view'],
-        ['label' => __('Reversal Journal'), 'number' => $record->reversalJournalEntry?->doc_num, 'url' => $record->reversalJournalEntry ? route('admin.accounting.journal-entries.show', $record->reversalJournalEntry) : null, 'permission' => 'journal_entries.view'],
     ]);
 @endphp
-<div class="production-mobile-workflow">
+<div>
 <div class="card mb-3">
     <div class="card-header d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2"><div><a class="small" href="{{ route('admin.inventory.documents.index') }}">{{ __('inventory.movements.title') }}</a><h5 class="mb-1">{{ $record->doc_num }}</h5><span class="badge rounded-pill badge-subtle-secondary">{{ __('inventory.movements.statuses.'.$record->status) }}</span></div><div class="d-flex flex-wrap gap-2">@if($record->status === \Modules\Inventory\Models\InventoryDocument::StatusDraft)@can('inventory.documents.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.inventory.documents.edit', $record) }}">{{ __('inventory.movements.actions.edit') }}</a>@endcan @can('inventory.documents.post')<button class="btn btn-primary btn-sm" type="button" data-action="post" data-url="{{ route('admin.inventory.documents.post', $record) }}">{{ __('inventory.movements.actions.post') }}</button>@endcan @else @can('inventory.documents.print')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.inventory.documents.print', $record) }}">{{ __('common.actions.print') }}</a>@endcan @endif @if($record->status === \Modules\Inventory\Models\InventoryDocument::StatusPosted)@can('inventory.documents.reverse')<form method="POST" action="{{ route('admin.inventory.documents.reverse', $record) }}">@csrf<button class="btn btn-outline-danger btn-sm" type="submit">{{ __('inventory.movements.actions.reverse') }}</button></form>@endcan @endif</div></div>
     <div class="card-body"><div class="row g-3"><div class="col-md-3"><strong>{{ __('inventory.movements.fields.type') }}:</strong> {{ __('inventory.movements.types.'.$record->document_type) }}</div><div class="col-md-3"><strong>{{ __('inventory.movements.fields.date') }}:</strong> {{ $record->document_date?->toDateString() }}</div><div class="col-md-3"><strong>{{ __('inventory.movements.fields.source_store') }}:</strong> {{ $record->branchStore?->name ?: '—' }}</div><div class="col-md-3"><strong>{{ __('inventory.movements.fields.destination_store') }}:</strong> {{ $record->destinationBranchStore?->name ?: '—' }}</div><div class="col-md-3"><strong>{{ __('inventory.movements.fields.source_status') }}:</strong> {{ __('inventory.movements.stock_statuses.'.($record->source_stock_status ?: 'available')) }}</div><div class="col-md-3"><strong>{{ __('inventory.movements.fields.destination_status') }}:</strong> {{ __('inventory.movements.stock_statuses.'.($record->destination_stock_status ?: 'available')) }}</div><div class="col-md-6"><strong>{{ __('inventory.movements.fields.reason') }}:</strong> {{ $record->movement_reason ?: $record->purpose ?: '—' }}</div>@if($record->productionOrder)<div class="col-md-3"><strong>{{ __('Production order') }}:</strong> <a href="{{ route('admin.production.work-orders.show', $record->productionOrder) }}">{{ $record->productionOrder->doc_num }}</a></div>@endif @if($record->productionRun)<div class="col-md-3"><strong>{{ __('Production run') }}:</strong> <a href="{{ route('admin.production.runs.show', $record->productionRun) }}">{{ $record->productionRun->run_number }}</a></div>@endif</div></div>
-    <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Quantity') }}</th>@if($canViewFinancial)<th>{{ __('Unit cost') }}</th><th>{{ __('Total') }}</th>@endif</tr></thead><tbody>@foreach($record->lines as $line)<tr><td>{{ $line->line_number }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->quantity }}</td>@if($canViewFinancial)<td>{{ $line->unit_cost }}</td><td>{{ $line->total_cost }}</td>@endif</tr>@endforeach</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Batch / lot') }}</th></tr></thead><tbody>@foreach($record->lines as $line)<tr><td>{{ $line->line_number }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->unit?->name ?: '—' }}</td><td>{{ $numbers->format($line->quantity) }}</td><td>{{ $line->batch_lot ?: '—' }}</td></tr>@endforeach</tbody></table></div>
 </div>
 <x-related-documents :documents="$relatedDocuments" />
 @if($record->lines->contains(fn ($line) => $line->reservation))
@@ -27,5 +26,4 @@
 </div>
 @endsection
 
-@push('styles')<link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Production/execution.css') }}">@endpush
 @push('scripts')<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Production/execution.js') }}"></script>@endpush

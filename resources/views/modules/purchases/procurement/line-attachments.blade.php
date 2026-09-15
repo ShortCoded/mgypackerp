@@ -36,21 +36,43 @@
         @endif
 
         @unless ($lineAttachmentsReadonly)
-            <button
-                type="button"
-                class="btn btn-link btn-sm p-0 js-procurement-attachment-picker"
-                data-input-name="{{ $lineAttachmentInputName }}"
-                data-remove-label="{{ __('Remove attachment') }}"
-                data-file-picker
-                data-picker-accept="document"
-                data-picker-max="10"
-                data-picker-title="{{ __('Choose line attachment') }}"
-                data-picker-collection="{{ \Modules\Purchases\Services\ProcurementAttachmentService::LineCollection }}"
-                data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
-            >
-                <span class="fas fa-paperclip me-1" aria-hidden="true"></span>{{ __('Attach') }}
-            </button>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <button
+                    type="button"
+                    class="btn btn-link btn-sm p-0 js-procurement-attachment-picker"
+                    data-input-name="{{ $lineAttachmentInputName }}"
+                    data-remove-label="{{ __('Remove attachment') }}"
+                    data-file-picker
+                    data-picker-accept="document"
+                    data-picker-max="10"
+                    data-picker-title="{{ __('Choose line attachment') }}"
+                    data-picker-collection="{{ \Modules\Purchases\Services\ProcurementAttachmentService::LineCollection }}"
+                    data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}"
+                >
+                    <span class="fas fa-paperclip me-1" aria-hidden="true"></span>{{ __('Attach') }}
+                </button>
+                @can('file_manager.upload')
+                    <label class="btn btn-link btn-sm p-0 text-primary mb-0" for="procurement-line-camera-{{ $index }}">
+                        <span class="fas fa-camera me-1" aria-hidden="true"></span>{{ __('procurement.ui.take_photo') }}
+                    </label>
+                    <input
+                        class="visually-hidden js-procurement-camera-input"
+                        id="procurement-line-camera-{{ $index }}"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        multiple
+                        data-upload-url="{{ route('admin.file-manager.picker.files.store') }}"
+                        data-input-name="{{ $lineAttachmentInputName }}"
+                        data-remove-label="{{ __('Remove attachment') }}"
+                        data-uploading-label="{{ __('procurement.ui.uploading_photos') }}"
+                        data-uploaded-label="{{ __('procurement.ui.photos_uploaded') }}"
+                        data-upload-error-label="{{ __('procurement.ui.photo_upload_failed') }}"
+                    >
+                @endcan
+            </div>
             <div class="js-procurement-attachment-inputs"></div>
+            <div class="small text-600 mt-1 d-none js-procurement-camera-status" aria-live="polite"></div>
             <ul class="list-group list-group-flush mt-1 js-procurement-selected-attachments d-none"></ul>
         @endunless
     </div>

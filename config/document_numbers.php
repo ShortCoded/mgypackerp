@@ -669,4 +669,11 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'maintenance_plans' => [
+        'prefix' => 'MP-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
 ];

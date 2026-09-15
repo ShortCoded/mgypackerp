@@ -4,24 +4,30 @@ namespace Modules\Core\Services;
 
 use App\Jobs\DeliverWebPushNotification;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\CalendarEvent;
+use Modules\Core\Models\ChatConversation;
 use Modules\Core\Models\UserNotification;
 use Modules\Core\Models\UserTask;
+use Ramsey\Uuid\Uuid;
 use stdClass;
 
 class NotificationService
 {
     public function __construct(
         private readonly DateFormatService $dates,
+        private readonly NotificationAccessService $access,
     ) {}
 
     /**
      * @param  array<string, mixed>  $metadata
+     * @param  array<string, mixed>  $delivery
      */
     public function createImmediate(
         User $recipient,
@@ -31,14 +37,27 @@ class NotificationService
         ?string $url = null,
         array $metadata = [],
         ?string $dedupeKey = null,
+        array $delivery = [],
     ): UserNotification {
         $notification = $this->persist([
+            'event_uuid' => $delivery['event_uuid'] ?? (string) Str::uuid(),
             'user_id' => $recipient->getKey(),
             'type' => $type,
             'category' => Str::before($type, '.'),
+            'module' => $delivery['module'] ?? Str::before($type, '.'),
+            'severity' => $delivery['severity'] ?? 'information',
+            'requires_action' => (bool) ($delivery['requires_action'] ?? false),
+            'sound_key' => $delivery['sound_key'] ?? null,
+            'suppress_in_app_alert' => (bool) ($delivery['suppress_in_app_alert'] ?? false),
             'title' => $title,
             'body' => $body,
+            'external_title' => $delivery['external_title'] ?? $title,
+            'external_body' => $delivery['external_body'] ?? $body,
             'url' => $url,
+            'required_permission' => $delivery['required_permission'] ?? null,
+            'company_id' => $delivery['company_id'] ?? null,
+            'branch_id' => $delivery['branch_id'] ?? null,
+            'conversation_id' => $delivery['conversation_id'] ?? null,
             'metadata' => $metadata,
             'scheduled_for' => null,
             'delivered_at' => now(),
@@ -46,7 +65,8 @@ class NotificationService
         ]);
 
         if ($notification->wasRecentlyCreated && $this->pushConfigured()) {
-            DeliverWebPushNotification::dispatch((int) $notification->getKey());
+            $notification->forceFill(['push_status' => 'queued'])->save();
+            DeliverWebPushNotification::dispatch((int) $notification->getKey())->afterCommit();
         }
 
         return $notification;
@@ -54,6 +74,8 @@ class NotificationService
 
     public function notifyTaskAssigned(UserTask $task, iterable $recipients, User $actor): void
     {
+        $eventUuid = (string) Str::uuid();
+
         foreach ($this->recipientUsers($recipients) as $recipient) {
             if ((int) $recipient->getKey() === (int) $actor->getKey()) {
                 continue;
@@ -66,19 +88,30 @@ class NotificationService
                 __('notifications.messages.task_assigned', ['title' => $task->title]),
                 route('admin.my-board.index', [], false),
                 $this->taskMetadata($task, $actor),
-                "task.assigned:{$task->getKey()}:{$recipient->getKey()}",
+                "task.assigned:{$task->getKey()}:{$eventUuid}:{$recipient->getKey()}",
+                [
+                    'event_uuid' => $eventUuid,
+                    'severity' => 'action',
+                    'requires_action' => true,
+                    'sound_key' => 'action',
+                ],
             );
         }
     }
 
     public function notifyTaskUpdated(UserTask $task, iterable $recipients, User $actor): void
     {
-        foreach ($this->recipientUsers($recipients) as $recipient) {
+        $eventUuid = (string) Str::uuid();
+        $recipients = $this->recipientUsers($recipients);
+
+        if ($task->createdBy instanceof User) {
+            $recipients->push($task->createdBy);
+        }
+
+        foreach ($recipients->unique(fn (User $user): int => (int) $user->getKey()) as $recipient) {
             if ((int) $recipient->getKey() === (int) $actor->getKey()) {
                 continue;
             }
-
-            $timestamp = $task->updated_at?->format('YmdHis') ?: now()->format('YmdHis');
 
             $this->createImmediate(
                 $recipient,
@@ -87,7 +120,35 @@ class NotificationService
                 __('notifications.messages.task_updated', ['title' => $task->title]),
                 route('admin.my-board.index', [], false),
                 $this->taskMetadata($task, $actor),
-                "task.updated:{$task->getKey()}:{$recipient->getKey()}:{$timestamp}",
+                "task.updated:{$task->getKey()}:{$eventUuid}:{$recipient->getKey()}",
+                [
+                    'event_uuid' => $eventUuid,
+                    'severity' => 'action',
+                    'requires_action' => true,
+                    'sound_key' => 'action',
+                ],
+            );
+        }
+    }
+
+    public function notifyTaskUnassigned(UserTask $task, iterable $recipients, User $actor): void
+    {
+        $eventUuid = (string) Str::uuid();
+
+        foreach ($this->recipientUsers($recipients) as $recipient) {
+            if ((int) $recipient->getKey() === (int) $actor->getKey()) {
+                continue;
+            }
+
+            $this->createImmediate(
+                $recipient,
+                'task.unassigned',
+                __('notifications.types.task_unassigned'),
+                __('notifications.messages.task_unassigned', ['title' => $task->title]),
+                route('admin.my-board.index', [], false),
+                $this->taskMetadata($task, $actor),
+                "task.unassigned:{$task->getKey()}:{$eventUuid}:{$recipient->getKey()}",
+                ['event_uuid' => $eventUuid, 'severity' => 'information'],
             );
         }
     }
@@ -104,6 +165,11 @@ class NotificationService
             'user_id' => $event->user_id,
             'type' => 'calendar.event_reminder',
             'category' => 'calendar',
+            'module' => 'calendar',
+            'event_uuid' => $event->public_uuid,
+            'severity' => 'action',
+            'requires_action' => true,
+            'sound_key' => 'action',
             'title' => __('notifications.types.calendar_reminder'),
             'body' => __('notifications.messages.calendar_reminder', [
                 'title' => $event->title,
@@ -136,6 +202,8 @@ class NotificationService
         return DB::transaction(function () use ($limit): int {
             $dispatched = $this->deliverScheduled($limit);
             $dispatched += $this->dispatchTaskDueSoon($limit);
+            $dispatched += $this->dispatchTaskDue($limit);
+            $dispatched += $this->dispatchTaskOverdue($limit);
 
             return $dispatched;
         });
@@ -143,8 +211,7 @@ class NotificationService
 
     public function unreadCount(User $user): int
     {
-        return UserNotification::query()
-            ->forUser($user)
+        return $this->access->queryFor($user)
             ->delivered()
             ->whereNull('read_at')
             ->count();
@@ -158,19 +225,24 @@ class NotificationService
      */
     public function pollData(User $user, int $limit = 10): array
     {
-        $unreadCount = UserNotification::query()
-            ->forUser($user)
+        $unreadCount = $this->access->queryFor($user)
             ->delivered()
             ->whereNull('read_at')
             ->selectRaw('COUNT(*)');
 
-        $notifications = UserNotification::query()
-            ->forUser($user)
+        $notifications = $this->access->queryFor($user)
             ->delivered()
             ->select([
+                'id',
                 'public_uuid',
+                'event_uuid',
                 'type',
                 'category',
+                'module',
+                'severity',
+                'requires_action',
+                'sound_key',
+                'suppress_in_app_alert',
                 'title',
                 'body',
                 'url',
@@ -178,6 +250,12 @@ class NotificationService
                 'delivered_at',
                 'created_at',
             ])
+            ->selectSub(
+                ChatConversation::query()
+                    ->select('public_uuid')
+                    ->whereColumn('chat_conversations.id', 'user_notifications.conversation_id'),
+                'conversation_uuid',
+            )
             ->selectSub($unreadCount, 'unread_count')
             ->orderByRaw('CASE WHEN read_at IS NULL THEN 0 ELSE 1 END')
             ->latest('delivered_at')
@@ -197,8 +275,7 @@ class NotificationService
      */
     public function latestFor(User $user, int $limit = 10): EloquentCollection
     {
-        return UserNotification::query()
-            ->forUser($user)
+        return $this->access->queryFor($user)
             ->delivered()
             ->orderByRaw('CASE WHEN read_at IS NULL THEN 0 ELSE 1 END')
             ->latest('delivered_at')
@@ -222,10 +299,13 @@ class NotificationService
                 );
             }
 
-            $existing = UserNotification::query()->where('dedupe_key', $dedupeKey)->first();
-
-            if ($existing instanceof UserNotification) {
-                return $existing;
+            try {
+                return UserNotification::query()->firstOrCreate(
+                    ['dedupe_key' => $dedupeKey],
+                    $values,
+                );
+            } catch (UniqueConstraintViolationException) {
+                return UserNotification::query()->where('dedupe_key', $dedupeKey)->firstOrFail();
             }
         }
 
@@ -247,7 +327,8 @@ class NotificationService
         foreach ($notifications as $notification) {
             $notification->forceFill(['delivered_at' => $now])->save();
             if ($this->pushConfigured()) {
-                DeliverWebPushNotification::dispatch((int) $notification->getKey());
+                $notification->forceFill(['push_status' => 'queued'])->save();
+                DeliverWebPushNotification::dispatch((int) $notification->getKey())->afterCommit();
             }
         }
 
@@ -258,36 +339,114 @@ class NotificationService
     {
         $now = now();
         $soon = $now->copy()->addMinutes(30);
-        $created = 0;
 
-        UserTask::query()
+        return $this->dispatchTaskReminderQuery(
+            UserTask::query()->whereBetween('due_at', [$now, $soon]),
+            'task.due_soon',
+            __('notifications.types.task_due_soon'),
+            fn (UserTask $task): string => __('notifications.messages.task_due_soon', [
+                'title' => $task->title,
+                'time' => $this->dates->formatDateTime($task->due_at, ''),
+            ]),
+            fn (UserTask $task, User $recipient): string => "task.due_soon:{$task->getKey()}:{$recipient->getKey()}:{$task->due_at?->format('YmdHis')}",
+            $limit,
+        );
+    }
+
+    private function dispatchTaskDue(int $limit): int
+    {
+        $now = now();
+
+        return $this->dispatchTaskReminderQuery(
+            UserTask::query()
+                ->where('due_at', '<=', $now),
+            'task.due',
+            __('notifications.types.task_due'),
+            fn (UserTask $task): string => __('notifications.messages.task_due', ['title' => $task->title]),
+            fn (UserTask $task, User $recipient): string => "task.due:{$task->getKey()}:{$recipient->getKey()}:{$task->due_at?->format('YmdHis')}",
+            $limit,
+        );
+    }
+
+    private function dispatchTaskOverdue(int $limit): int
+    {
+        $today = now()->toDateString();
+
+        return $this->dispatchTaskReminderQuery(
+            UserTask::query()->where('due_at', '<=', now()->subMinutes(10)),
+            'task.overdue',
+            __('notifications.types.task_overdue'),
+            fn (UserTask $task): string => __('notifications.messages.task_overdue', ['title' => $task->title]),
+            fn (UserTask $task, User $recipient): string => "task.overdue:{$task->getKey()}:{$recipient->getKey()}:{$task->due_at?->format('YmdHis')}:{$today}",
+            $limit,
+            'urgent',
+        );
+    }
+
+    /**
+     * @param  Builder<UserTask>  $query
+     * @param  callable(UserTask): string  $body
+     * @param  callable(UserTask, User): string  $dedupeKey
+     */
+    private function dispatchTaskReminderQuery(
+        Builder $query,
+        string $type,
+        string $title,
+        callable $body,
+        callable $dedupeKey,
+        int $limit,
+        string $severity = 'action',
+    ): int {
+        if ($limit < 1) {
+            return 0;
+        }
+
+        $created = 0;
+        $chunkSize = min(max($limit, 50), 200);
+
+        $query
             ->with(['assignees:id,name,doc_num,email', 'assignedTo:id,name,doc_num,email', 'createdBy:id,name,doc_num'])
             ->where('type', UserTask::TypeTask)
             ->where('status', '!=', UserTask::StatusDone)
             ->whereNotNull('due_at')
-            ->whereBetween('due_at', [$now, $soon])
             ->orderBy('due_at')
-            ->limit($limit)
-            ->get()
-            ->each(function (UserTask $task) use (&$created): void {
-                foreach ($this->taskRecipients($task) as $recipient) {
-                    $notification = $this->createImmediate(
-                        $recipient,
-                        'task.due_soon',
-                        __('notifications.types.task_due_soon'),
-                        __('notifications.messages.task_due_soon', [
-                            'title' => $task->title,
-                            'time' => $this->dates->formatDateTime($task->due_at, ''),
-                        ]),
-                        route('admin.my-board.index', [], false),
-                        $this->taskMetadata($task, $task->createdBy),
-                        "task.due_soon:{$task->getKey()}:{$recipient->getKey()}",
-                    );
+            ->orderBy('id')
+            ->chunk($chunkSize, function (EloquentCollection $tasks) use (&$created, $body, $dedupeKey, $limit, $severity, $title, $type): bool {
+                foreach ($tasks as $task) {
+                    if ($created >= $limit) {
+                        return false;
+                    }
 
-                    if ($notification->wasRecentlyCreated) {
-                        $created++;
+                    $eventUuid = $this->stableEventUuid("{$type}:{$task->getKey()}:{$task->due_at?->format('YmdHis')}:".($type === 'task.overdue' ? now()->toDateString() : 'once'));
+
+                    foreach ($this->taskRecipients($task) as $recipient) {
+                        if ($created >= $limit) {
+                            return false;
+                        }
+
+                        $notification = $this->createImmediate(
+                            $recipient,
+                            $type,
+                            $title,
+                            $body($task),
+                            route('admin.my-board.index', [], false),
+                            $this->taskMetadata($task, $task->createdBy),
+                            $dedupeKey($task, $recipient),
+                            [
+                                'event_uuid' => $eventUuid,
+                                'severity' => $severity,
+                                'requires_action' => true,
+                                'sound_key' => $severity === 'urgent' ? 'urgent' : 'action',
+                            ],
+                        );
+
+                        if ($notification->wasRecentlyCreated) {
+                            $created++;
+                        }
                     }
                 }
+
+                return true;
             });
 
         return $created;
@@ -338,5 +497,10 @@ class NotificationService
         return filled(config('webpush.vapid.subject'))
             && filled(config('webpush.vapid.public_key'))
             && filled(config('webpush.vapid.private_key'));
+    }
+
+    private function stableEventUuid(string $key): string
+    {
+        return Uuid::uuid5(Uuid::NAMESPACE_URL, 'mgy-pack-erp:'.$key)->toString();
     }
 }

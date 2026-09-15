@@ -56,6 +56,7 @@ test('authenticated user can subscribe update and unsubscribe the current browse
 
     expect($user->ownsPushSubscription($subscription))->toBeTrue()
         ->and($subscription->endpoint)->toBe($payload['endpoint'])
+        ->and($subscription->session_identity)->toBeString()->toHaveLength(64)
         ->and($subscription->public_key)->toBe($payload['keys']['p256dh'])
         ->and($subscription->auth_token)->toBe($payload['keys']['auth']);
 
@@ -70,6 +71,20 @@ test('authenticated user can subscribe update and unsubscribe the current browse
     $this->deleteJson(route('admin.notifications.push-subscriptions.destroy'), [
         'endpoint' => $payload['endpoint'],
     ])->assertOk();
+
+    expect(PushSubscription::query()->count())->toBe(0);
+});
+
+test('logout removes only the current authenticated session push subscription', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->postJson(route('admin.notifications.push-subscriptions.store'), webPushSubscriptionPayload())
+        ->assertOk();
+
+    expect(PushSubscription::query()->count())->toBe(1);
+
+    $this->post(route('logout'))->assertRedirect(route('login'));
 
     expect(PushSubscription::query()->count())->toBe(0);
 });
@@ -114,7 +129,8 @@ test('durable notification queues one after commit push delivery per deduplicate
         ->and(UserNotification::query()->count())->toBe(1);
 
     Queue::assertPushed(DeliverWebPushNotification::class, 1);
-    Queue::assertPushed(fn (DeliverWebPushNotification $job): bool => $job->notificationId === $first->getKey());
+    Queue::assertPushed(fn (DeliverWebPushNotification $job): bool => $job->notificationId === $first->getKey()
+        && $job->afterCommit === true);
 });
 
 test('push delivery complements the existing database notification', function () {
@@ -152,7 +168,7 @@ test('push delivery complements the existing database notification', function ()
             return $payload['title'] === 'Calendar reminder'
                 && $payload['body'] === 'Production review starts soon.'
                 && $payload['tag'] !== ''
-                && $payload['data']['url'] === '/admin/calendar'
+                && $payload['data']['url'] === route('admin.notifications.open', $push->userNotification, false)
                 && filled($payload['data']['occurred_at']);
         },
     );

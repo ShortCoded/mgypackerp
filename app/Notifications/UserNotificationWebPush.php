@@ -31,21 +31,25 @@ class UserNotificationWebPush extends Notification
     public function toWebPush(object $notifiable): WebPushMessage
     {
         $message = (new WebPushMessage)
-            ->title($this->userNotification->title)
+            ->title($this->userNotification->external_title ?: $this->userNotification->title)
             ->tag($this->userNotification->dedupe_key ?: $this->userNotification->public_uuid)
             ->lang(app()->getLocale())
             ->data([
                 'id' => $this->userNotification->public_uuid,
-                'url' => $this->userNotification->url ?: route('dashboard', [], false),
+                'event_id' => $this->userNotification->event_uuid,
+                'severity' => $this->userNotification->severity,
+                'url' => route('admin.notifications.open', $this->userNotification, false),
                 'occurred_at' => ($this->userNotification->delivered_at ?: $this->userNotification->created_at)?->toIso8601String(),
             ])
             ->options([
                 'TTL' => 3600,
-                'urgency' => 'normal',
+                'urgency' => $this->userNotification->severity === 'urgent' ? 'high' : 'normal',
             ]);
 
-        if (filled($this->userNotification->body)) {
-            $message->body((string) $this->userNotification->body);
+        $externalBody = $this->userNotification->external_body ?: $this->userNotification->body;
+
+        if (filled($externalBody)) {
+            $message->body((string) $externalBody);
         }
 
         if (filled($this->icon)) {

@@ -13,6 +13,7 @@ use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\BranchStore;
@@ -20,9 +21,13 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
+use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Maintenance\Services\MaintenanceWorkflowService;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Exports\ProductionQualityReportExport;
 use Modules\Production\Http\Requests\CloseProductionQualityInspectionRequest;
@@ -47,6 +52,7 @@ class ProductionQualityController extends Controller
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
         private readonly ProductionQualityWorkflowService $workflow,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function index(): View
@@ -59,9 +65,30 @@ class ProductionQualityController extends Controller
         return view('modules.production.quality.index', ['scope' => 'active']);
     }
 
-    public function reportsIndex(): View
+    public function reportsIndex(Request $request): View
     {
-        return view('modules.production.quality.reports');
+        [$context, $inspections] = $this->qualityReport($request);
+        $selectedProductId = $request->integer('product_id');
+        $selectedStoreId = $request->integer('branch_store_id');
+
+        return view('modules.production.quality.reports', [
+            'summary' => [
+                'total' => $inspections->count(),
+                'passed' => $inspections->where('result', 'passed')->count(),
+                'failed' => $inspections->where('result', 'failed')->count(),
+                'open' => $inspections->whereIn('status', [ProductionQualityInspection::StatusDraft, ProductionQualityInspection::StatusReceived, ProductionQualityInspection::StatusInProgress, ProductionQualityInspection::StatusSubmitted])->count(),
+                'affected_quantity' => $inspections->sum(fn (ProductionQualityInspection $inspection): float => (float) $inspection->affected_base_quantity),
+            ],
+            'products' => Product::query()
+                ->where('company_id', $context['company_id'])
+                ->whereKey($selectedProductId ?: -1)
+                ->get(),
+            'stores' => BranchStore::query()
+                ->where('branch_id', $context['branch_id'])
+                ->whereKey($selectedStoreId ?: -1)
+                ->get(),
+            'numbers' => $this->numbers,
+        ]);
     }
 
     public function data(Request $request, ProductionExecutionDataTable $dataTable): JsonResponse
@@ -76,16 +103,121 @@ class ProductionQualityController extends Controller
 
     public function create(Request $request): View
     {
+        return $this->form($request);
+    }
+
+    public function edit(Request $request, int $inspection): View
+    {
+        $record = $this->scopedInspection($request, $inspection)->loadCount(['reports', 'results']);
+        abort_unless($record->status === ProductionQualityInspection::StatusDraft && $record->reports_count === 0 && $record->results_count === 0, 422, __('production_execution.messages.quality_not_editable'));
+
+        return $this->form($request, $record, 'edit');
+    }
+
+    public function update(StoreProductionQualityInspectionRequest $request, int $inspection): RedirectResponse
+    {
+        try {
+            $record = $this->scopedInspection($request, $inspection);
+            $run = $request->input('subject_type') === ProductionQualityInspection::SubjectProductionRun
+                ? $this->scopedRun($request, $request->integer('production_run_id'))
+                : null;
+            $record = $this->workflow->updateDraft($record, $run, $request->validated());
+
+            return $this->redirectAfterSave($request, $record, __('production_execution.messages.quality_updated'));
+        } catch (DomainException $exception) {
+            return back()->withInput()->withErrors(['quality' => $exception->getMessage()]);
+        }
+    }
+
+    public function destroy(Request $request, int $inspection): JsonResponse
+    {
+        try {
+            $this->workflow->deleteDraft($this->scopedInspection($request, $inspection));
+
+            return response()->json(['success' => true, 'message' => __('production_execution.messages.quality_deleted')]);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function restore(Request $request, int $inspection): JsonResponse
+    {
+        try {
+            $record = $this->scopedTrashedInspection($request, $inspection);
+            $this->workflow->restoreDraft($record);
+
+            return response()->json(['success' => true, 'message' => __('production_execution.messages.quality_restored')]);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        $ids = $request->validate(['ids' => ['required', 'array', 'max:100'], 'ids.*' => ['required', 'integer', 'distinct']])['ids'];
         $context = $this->requiredContext($request);
-        $selectedRunId = $request->integer('run') ?: (int) $request->session()->getOldInput('production_run_id');
-        $selectedProductId = (int) $request->session()->getOldInput('product_id');
-        $selectedStoreId = (int) $request->session()->getOldInput('branch_store_id');
-        $selectedInspectionTypeId = (int) $request->session()->getOldInput('quality_inspection_type_id');
+        $records = ProductionQualityInspection::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereIn('id', $ids)
+            ->withCount(['reports', 'results'])
+            ->get();
+        $deleted = 0;
+        foreach ($records as $record) {
+            if ($record->status !== ProductionQualityInspection::StatusDraft || $record->reports_count > 0 || $record->results_count > 0) {
+                continue;
+            }
+            $this->workflow->deleteDraft($record);
+            $deleted++;
+        }
+
+        return response()->json(['success' => true, 'message' => __('production_execution.messages.quality_bulk_deleted', ['count' => $deleted])]);
+    }
+
+    public function stockBalance(Request $request, InventoryAvailabilityService $availability): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', Rule::exists('products', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->whereNull('deleted_at'))],
+            'branch_store_id' => ['required', 'integer', Rule::exists('branch_stores', 'id')->where(fn ($query) => $query->where('branch_id', $context['branch_id'])->whereNull('deleted_at'))],
+            'stock_status' => ['required', Rule::in([InventoryTransaction::StatusAvailable, InventoryTransaction::StatusQuarantine, InventoryTransaction::StatusRework, InventoryTransaction::StatusDamaged, InventoryTransaction::StatusScrap])],
+            'batch_lot' => ['nullable', 'string', 'max:120'],
+        ]);
+        $batchLot = filled($data['batch_lot'] ?? null) ? (string) $data['batch_lot'] : null;
+        $balance = $availability->forProduct($context['company_id'], (int) $data['branch_store_id'], (int) $data['product_id'], null, null, $data['stock_status'], $batchLot);
+        $maximumPosition = '0.00000000';
+        $positions = InventoryTransaction::query()
+            ->where('company_id', $context['company_id'])
+            ->where('branch_store_id', $data['branch_store_id'])
+            ->where('product_id', $data['product_id'])
+            ->where('stock_status', $data['stock_status'])
+            ->when($batchLot !== null, fn ($query) => $query->where('batch_lot', $batchLot))
+            ->groupBy(['warehouse_location_id', 'batch_lot'])
+            ->get(['warehouse_location_id', 'batch_lot']);
+        foreach ($positions as $position) {
+            $positionBalance = $availability->forProduct($context['company_id'], (int) $data['branch_store_id'], (int) $data['product_id'], null, $position->warehouse_location_id ? (int) $position->warehouse_location_id : null, $data['stock_status'], $position->batch_lot, true);
+            if (bccomp($positionBalance['available'], $maximumPosition, 8) > 0) {
+                $maximumPosition = $positionBalance['available'];
+            }
+        }
+
+        return response()->json(['success' => true, ...$balance, 'inspectable_available' => $maximumPosition]);
+    }
+
+    private function form(Request $request, ?ProductionQualityInspection $record = null, string $mode = 'create'): View
+    {
+        $context = $this->requiredContext($request);
+        $record?->load(['run.product', 'run.stageSnapshot', 'product', 'branchStore', 'qualityType', 'stockHold']);
+        $selectedRunId = (int) old('production_run_id', $record?->production_run_id ?? $request->integer('run'));
+        $selectedProductId = (int) old('product_id', $record?->product_id);
+        $selectedStoreId = (int) old('branch_store_id', $record?->branch_store_id);
+        $selectedInspectionTypeId = (int) old('quality_inspection_type_id', $record?->quality_inspection_type_id);
         $runs = ProductionRun::query()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
             ->where('branch_id', $context['branch_id'])
-            ->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])
+            ->where(fn ($query) => $query->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])->orWhere('id', $selectedRunId))
             ->whereKey($selectedRunId ?: -1)
             ->with(['product', 'stageSnapshot'])
             ->get();
@@ -106,7 +238,7 @@ class ProductionQualityController extends Controller
             ->whereKey($selectedStoreId ?: -1)
             ->get();
 
-        return view('modules.production.quality.form', compact('runs', 'inspectionTypes', 'products', 'stores'));
+        return view('modules.production.quality.form', compact('record', 'mode', 'runs', 'inspectionTypes', 'products', 'stores'));
     }
 
     public function select2(
@@ -175,8 +307,7 @@ class ProductionQualityController extends Controller
                 : null;
             $inspection = $this->workflow->create($run, $request->validated());
 
-            return redirect()->route('admin.production.quality.show', $inspection->getKey())
-                ->with('success', __('production_execution.messages.quality_created'));
+            return $this->redirectAfterSave($request, $inspection, __('production_execution.messages.quality_created'));
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['quality' => $exception->getMessage()]);
         }
@@ -195,17 +326,24 @@ class ProductionQualityController extends Controller
             'parentInspection',
             'reinspections',
             'reports.submittedBy',
+            'stockHold.holdInventoryDocument',
+            'stockHold.dispositionInventoryDocument',
+            'maintenanceRequest.workOrder',
         ]);
 
-        $checkpoints = DB::table('quality_checkpoints')
-            ->when($record->quality_inspection_type_id !== null, fn ($query) => $query
-                ->where('company_id', $record->company_id)
-                ->where('quality_inspection_type_id', $record->quality_inspection_type_id), fn ($query) => $query->whereRaw('1 = 0'))
-            ->where('is_active', true)
-            ->whereNull('deleted_at')
-            ->orderBy('sequence')
-            ->get(['id', 'code', 'name', 'name_ar', 'acceptance_criteria', 'measurement_unit', 'response_type', 'is_required'])
+        $snapshotCheckpoints = data_get($record->inspection_plan_snapshot, 'checkpoints');
+        $checkpoints = (is_array($snapshotCheckpoints)
+            ? collect($snapshotCheckpoints)->map(fn (array $checkpoint): object => (object) $checkpoint)
+            : DB::table('quality_checkpoints')
+                ->when($record->quality_inspection_type_id !== null, fn ($query) => $query
+                    ->where('company_id', $record->company_id)
+                    ->where('quality_inspection_type_id', $record->quality_inspection_type_id), fn ($query) => $query->whereRaw('1 = 0'))
+                ->where('is_active', true)
+                ->whereNull('deleted_at')
+                ->orderBy('sequence')
+                ->get(['id', 'code', 'name', 'name_ar', 'acceptance_criteria', 'measurement_unit', 'response_type', 'is_required']))
             ->map(function (object $checkpoint) use ($record): object {
+                $checkpoint->id = (int) $checkpoint->id;
                 $checkpoint->is_required = (bool) $checkpoint->is_required;
                 $checkpoint->existing_result = $record->results->firstWhere('quality_checkpoint_id', $checkpoint->id);
 
@@ -241,7 +379,10 @@ class ProductionQualityController extends Controller
             ];
         });
 
-        return view('modules.production.quality.show', compact('record', 'checkpoints', 'checkpointNames', 'evidence', 'inspectionChain'));
+        return view('modules.production.quality.show', [
+            ...compact('record', 'checkpoints', 'checkpointNames', 'evidence', 'inspectionChain'),
+            'numbers' => $this->numbers,
+        ]);
     }
 
     public function addReport(StoreProductionQualityInspectionReportRequest $request, int $inspection): RedirectResponse
@@ -317,13 +458,77 @@ class ProductionQualityController extends Controller
         return $this->pdf->stream('reports.production.quality', [
             'title' => __('production_execution.quality.report_title'),
             'inspections' => $inspections,
+            'numbers' => $this->numbers,
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
         ], 'production-quality-report.pdf');
+    }
+
+    public function printInspection(Request $request, int $inspection): Response
+    {
+        $record = $this->scopedInspection($request, $inspection)->load([
+            'run.order', 'run.product', 'product', 'branchStore', 'stageSnapshot',
+            'qualityType', 'results', 'reports.submittedBy',
+        ]);
+        $company = Company::query()->findOrFail($record->company_id);
+        $snapshotCheckpoints = data_get($record->inspection_plan_snapshot, 'checkpoints');
+        $checkpointNames = is_array($snapshotCheckpoints)
+            ? collect($snapshotCheckpoints)->map(fn (array $checkpoint): object => (object) $checkpoint)->keyBy('id')
+            : DB::table('quality_checkpoints')
+                ->whereIn('id', $record->results->pluck('quality_checkpoint_id'))
+                ->get(['id', 'code', 'name', 'name_ar'])
+                ->keyBy('id');
+
+        return $this->pdf->stream('reports.production.quality-inspection', [
+            'title' => __('production_execution.fields.inspection').' — '.$record->doc_num,
+            'record' => $record,
+            'checkpointNames' => $checkpointNames,
+            'numbers' => $this->numbers,
+            'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+        ], str('quality-inspection-'.$record->doc_num)->slug().'.pdf');
     }
 
     public function receive(Request $request, int $inspection): JsonResponse
     {
         return $this->workflowAction($request, $inspection, fn (ProductionQualityInspection $record) => $this->workflow->receive($record));
+    }
+
+    public function createMaintenanceRequest(
+        Request $request,
+        int $inspection,
+        MaintenanceWorkflowService $maintenance,
+    ): JsonResponse {
+        try {
+            $record = $this->scopedInspection($request, $inspection)->load(['run', 'reports']);
+            $hasRecordedProblem = $record->result === 'failed'
+                || in_array($record->disposition, ['hold', 'rework', 'scrap', 'return'], true)
+                || $record->reports->contains(fn (ProductionQualityInspectionReport $report): bool => $report->result === 'failed'
+                    || in_array($report->disposition, ['hold', 'rework', 'scrap', 'return'], true));
+            if (! $record->run || ! $hasRecordedProblem) {
+                throw new DomainException(__('production_execution.messages.quality_maintenance_requires_problem'));
+            }
+            $maintenanceRequest = $maintenance->reportBreakdown([
+                'quality_inspection_id' => $record->getKey(),
+                'production_run_id' => $record->production_run_id,
+                'fixed_asset_id' => $record->run?->fixed_asset_id,
+                'production_mold_id' => $record->run?->production_mold_id,
+                'request_type' => 'inspection',
+                'priority' => $record->result === 'failed' ? 'high' : 'normal',
+                'is_machine_stopped' => $record->run?->status === ProductionRun::StatusHeld,
+                'symptoms' => collect([
+                    $record->defect_code,
+                    $record->notes,
+                    __('production_execution.quality.maintenance_source', ['number' => $record->doc_num]),
+                ])->filter()->implode(' — '),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => __('production_execution.messages.quality_maintenance_request_created'),
+                'redirect_url' => route('admin.maintenance.orders.create', ['request' => $maintenanceRequest->doc_num]),
+            ]);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
     }
 
     public function start(Request $request, int $inspection): JsonResponse
@@ -430,6 +635,30 @@ class ProductionQualityController extends Controller
             ->findOrFail($inspection);
     }
 
+    private function scopedTrashedInspection(Request $request, int $inspection): ProductionQualityInspection
+    {
+        $context = $this->requiredContext($request);
+
+        return ProductionQualityInspection::onlyTrashed()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->findOrFail($inspection);
+    }
+
+    private function redirectAfterSave(Request $request, ProductionQualityInspection $record, string $message): RedirectResponse
+    {
+        $action = $request->string('submit_action')->trim()->toString();
+        $route = match ($action) {
+            'save', 'save_view' => 'admin.production.quality.show',
+            'save_edit' => 'admin.production.quality.edit',
+            default => 'admin.production.quality.index',
+        };
+        $parameters = in_array($action, ['save', 'save_view', 'save_edit'], true) ? [$record->getKey()] : [];
+
+        return redirect()->route($route, $parameters)->with('success', $message);
+    }
+
     private function scopedRun(Request $request, int $run): ProductionRun
     {
         $context = $this->requiredContext($request);
@@ -455,12 +684,45 @@ class ProductionQualityController extends Controller
     {
         $context = $this->context->snapshot($request);
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, __('production_execution.messages.operating_context_required'));
+        $filters = $request->validate([
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'production_run_id' => ['nullable', 'integer'],
+            'subject_type' => ['nullable', Rule::in([
+                ProductionQualityInspection::SubjectProductionRun,
+                ProductionQualityInspection::SubjectProduct,
+                ProductionQualityInspection::SubjectInventoryStock,
+            ])],
+            'status' => ['nullable', Rule::in([
+                ProductionQualityInspection::StatusDraft,
+                ProductionQualityInspection::StatusReceived,
+                ProductionQualityInspection::StatusInProgress,
+                ProductionQualityInspection::StatusSubmitted,
+                ProductionQualityInspection::StatusApproved,
+                ProductionQualityInspection::StatusRejected,
+                ProductionQualityInspection::StatusClosed,
+            ])],
+            'result' => ['nullable', Rule::in(['pending', 'passed', 'failed', 'conditional'])],
+            'disposition' => ['nullable', Rule::in(['release', 'hold', 'rework', 'scrap', 'return'])],
+            'product_id' => ['nullable', 'integer', Rule::exists('products', 'id')->where(fn ($query) => $query
+                ->where('company_id', $context['company_id'])
+                ->whereNull('deleted_at'))],
+            'branch_store_id' => ['nullable', 'integer', Rule::exists('branch_stores', 'id')->where(fn ($query) => $query
+                ->where('branch_id', $context['branch_id'])
+                ->whereNull('deleted_at'))],
+        ]);
         $inspections = $this->reports->qualityInspections((int) $context['company_id'], [
             'financial_period_id' => (int) $context['financial_period_id'],
             'branch_id' => (int) $context['branch_id'],
-            'from' => $request->date('from')?->toDateString(),
-            'to' => $request->date('to')?->toDateString(),
-            'production_run_id' => $request->integer('production_run_id') ?: null,
+            'from' => isset($filters['from']) ? CarbonImmutable::parse($filters['from'])->toDateString() : null,
+            'to' => isset($filters['to']) ? CarbonImmutable::parse($filters['to'])->toDateString() : null,
+            'production_run_id' => $filters['production_run_id'] ?? null,
+            'subject_type' => $filters['subject_type'] ?? null,
+            'quality_status' => $filters['status'] ?? null,
+            'result' => $filters['result'] ?? null,
+            'disposition' => $filters['disposition'] ?? null,
+            'product_id' => $filters['product_id'] ?? null,
+            'branch_store_id' => $filters['branch_store_id'] ?? null,
         ]);
 
         return [$context, $inspections];

@@ -1,23 +1,50 @@
 @extends('layouts.app')
 
+@php
+    $columns = [
+        ['data' => 'checkbox', 'name' => 'checkbox', 'orderable' => false, 'searchable' => false, 'className' => 'dt-select no-colvis all align-middle text-center', 'responsivePriority' => 1],
+        ['data' => 'doc_num', 'name' => 'production_material_requests.doc_num', 'className' => 'dt-code no-colvis all align-middle white-space-nowrap fw-semi-bold dtr-control', 'responsivePriority' => 2],
+        ['data' => 'request_date', 'name' => 'production_material_requests.request_date', 'className' => 'dt-date align-middle white-space-nowrap', 'responsivePriority' => 12],
+        ['data' => 'run_number', 'name' => 'run_number', 'className' => 'dt-code align-middle white-space-nowrap', 'responsivePriority' => 8],
+        ['data' => 'store_name', 'name' => 'store_name', 'className' => 'dt-text align-middle', 'responsivePriority' => 12],
+        ['data' => 'request_type', 'name' => 'production_material_requests.request_type', 'className' => 'align-middle white-space-nowrap', 'responsivePriority' => 20],
+        ['data' => 'lines_count', 'name' => 'lines_count', 'searchable' => false, 'className' => 'dt-number align-middle text-end', 'responsivePriority' => 20],
+        ['data' => 'purchase_requisition_number', 'name' => 'purchase_requisition_number', 'defaultContent' => '—', 'className' => 'dt-code align-middle white-space-nowrap', 'responsivePriority' => 25],
+        ['data' => 'status', 'name' => 'production_material_requests.status', 'className' => 'align-middle white-space-nowrap', 'responsivePriority' => 10],
+        ['data' => 'created_by', 'name' => 'created_by', 'className' => 'dt-text align-middle white-space-nowrap', 'responsivePriority' => 35],
+        ['data' => 'created_at', 'name' => 'production_material_requests.created_at', 'className' => 'dt-date align-middle white-space-nowrap', 'responsivePriority' => 35],
+        ['data' => 'updated_by', 'name' => 'updated_by', 'className' => 'dt-text align-middle white-space-nowrap', 'responsivePriority' => 40],
+        ['data' => 'updated_at', 'name' => 'production_material_requests.updated_at', 'className' => 'dt-date align-middle white-space-nowrap', 'responsivePriority' => 40],
+        ['data' => 'actions', 'name' => 'actions', 'orderable' => false, 'searchable' => false, 'className' => 'dt-actions no-colvis all align-middle white-space-nowrap', 'responsivePriority' => 3],
+    ];
+@endphp
+
 @section('title', __('production_execution.material_requests.title'))
 
 @section('content')
     <div class="production-mobile-workflow">
-    @can('production.material_requests.create')
-        <div class="card mb-3"><div class="card-header"><h5 class="mb-0">{{ __('production_execution.material_requests.create') }}</h5></div><div class="card-body"><form method="POST" action="{{ route('admin.production.material-requests.store') }}" class="row g-3 align-items-end">@csrf
-            <div class="col-md-5"><label class="form-label">{{ __('production_execution.fields.run') }}</label><x-forms.select class="form-select" name="production_run_id" required data-material-run-select data-url="{{ route('admin.production.material-requests.index') }}"><option value="">{{ __('common.placeholders.select') }}</option>@foreach($runs as $run)<option value="{{ $run->id }}" @selected(old('production_run_id', $selectedRun?->id) == $run->id)>{{ $run->run_number }} — {{ $run->requirements->pluck('product.name')->join(' / ') }}</option>@endforeach</x-forms.select></div>
-            <div class="col-md-3"><label class="form-label">{{ __('production_execution.fields.store') }}</label><x-forms.select class="form-select" name="branch_store_id" required>@foreach($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select></div>
-            <div class="col-md-2"><label class="form-label">{{ __('production_execution.fields.required_by') }}</label><x-forms.date-input name="required_by_date" /></div>
-            <div class="col-md-2"><div class="form-check"><x-forms.input class="form-check-input" type="checkbox" name="additional" value="1" id="additional-material" data-additional-material :checked="request()->boolean('additional') || old('additional')" /><label class="form-check-label" for="additional-material">{{ __('production_execution.material_requests.additional') }}</label></div></div>
-            <div class="col-md-4"><label class="form-label">{{ __('production_execution.fields.reason') }}</label><x-forms.input class="form-control" name="reason" value="{{ old('reason') }}" data-additional-reason /></div>
-            @if($selectedRun)
-                <div class="col-12"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('production_execution.fields.product') }}</th><th>{{ __('production_execution.material_requests.planned_issued') }}</th><th>{{ __('production_execution.fields.quantity') }}</th></tr></thead><tbody>@foreach($selectedRun->requirements as $index => $requirement)@php($remaining = bcsub((string) $requirement->planned_quantity, (string) $requirement->issued_quantity, 8))<tr><td>{{ $requirement->product?->doc_num }} — {{ $requirement->product?->name }}</td><td>{{ $requirement->planned_quantity }} / {{ $requirement->issued_quantity }}</td><td><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $requirement->id }}" /><x-forms.input class="form-control form-control-sm" type="number" min="0.00000001" step="0.00000001" name="lines[{{ $index }}][quantity]" data-planned-remaining="{{ bccomp($remaining, '0', 8) > 0 ? $remaining : '' }}" value="{{ old('lines.'.$index.'.quantity', !request()->boolean('additional') && bccomp($remaining, '0', 8) > 0 ? $remaining : '') }}" /></td></tr>@endforeach</tbody></table></div></div>
-            @endif
-            <div class="col-md-2"><button class="btn btn-primary w-100">{{ __('production_execution.actions.request_bom') }}</button></div>
-        </form><div class="form-text mt-2">{{ __('production_execution.material_requests.bom_help') }}</div></div></div>
-    @endcan
-    <div class="card erp-datatable-card"><div class="card-header"><h5 class="mb-0">{{ __('production_execution.material_requests.title') }}</h5></div><div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 data-table erp-datatable" data-server-table data-url="{{ route('admin.production.material-requests.index') }}" data-order-column="1" data-order-direction="desc" data-columns='[{"data":"doc_num","name":"production_material_requests.doc_num"},{"data":"request_date","name":"request_date"},{"data":"run_number","name":"run_number"},{"data":"store_name","name":"store_name"},{"data":"request_type","name":"request_type"},{"data":"lines_count","name":"lines_count"},{"data":"purchase_requisition_number","name":"purchase_requisition_number","defaultContent":"—"},{"data":"status","name":"status"},{"data":"actions","name":"actions","orderable":false,"searchable":false}]'><thead><tr><th>{{ __('production_execution.fields.document') }}</th><th>{{ __('production_execution.fields.date') }}</th><th>{{ __('production_execution.fields.run') }}</th><th>{{ __('production_execution.fields.store') }}</th><th>{{ __('production_execution.fields.request_type') }}</th><th>{{ __('production_execution.fields.lines_count') }}</th><th>{{ __('production_execution.fields.purchase_request') }}</th><th>{{ __('production_execution.fields.status') }}</th><th></th></tr></thead></table></div></div>
+        <div class="card erp-datatable-card">
+            <x-admin.crud-index-toolbar
+                :title="__('production_execution.material_requests.title')"
+                :add-route="route('admin.production.material-requests.create')"
+                add-permission="production.material_requests.create"
+                :add-label="__('production_execution.material_requests.create')"
+                :show-trash-filter="auth()->user()?->can('production.material_requests.view_trashed')"
+                :show-bulk-actions="auth()->user()?->can('production.material_requests.delete')"
+                trash-filter-id="production_material_requests_trash_filter"
+                bulk-actions-class="production-material-requests-bulk-actions-bar"
+                :bulk-action-label="__('common.bulk_action')"
+                toolbar-actions-class="production-material-requests-toolbar-actions"
+            />
+            <div class="card-body p-0"><div class="falcon-data-table"><div class="erp-datatable-wrapper"><div class="erp-datatable-scroll">
+                <table class="table table-sm table-hover mb-0 data-table erp-datatable align-middle" id="production-material-requests-table" data-server-table data-record-selection data-url="{{ route('admin.production.material-requests.index') }}" data-bulk-delete-url="{{ route('admin.production.material-requests.bulk-delete') }}" data-no-selection-message="{{ __('production_execution.messages.no_material_requests_selected') }}" data-bulk-confirm-message="{{ __('production_execution.messages.material_requests_bulk_delete_confirm') }}" data-bulk-success-message="{{ __('production_execution.messages.material_requests_bulk_deleted') }}" data-trash-filter="#production_material_requests_trash_filter" data-initial-trash-filter="{{ request('trash_filter', 'active') }}" data-order-column="1" data-order-direction="desc" data-columns='@json($columns)'>
+                    <thead class="bg-100 text-900"><tr>
+                        <th class="dt-select no-colvis all"><div class="form-check mb-0 d-flex justify-content-center"><x-forms.input class="form-check-input js-record-select-all" type="checkbox" id="production_material_requests_select_all" aria-label="{{ __('common.select_all') }}" /></div></th>
+                        <th>{{ __('production_execution.fields.document') }}</th><th>{{ __('production_execution.fields.date') }}</th><th>{{ __('production_execution.fields.run') }}</th><th>{{ __('production_execution.fields.store') }}</th><th>{{ __('production_execution.fields.request_type') }}</th><th>{{ __('production_execution.fields.lines_count') }}</th><th>{{ __('production_execution.fields.purchase_request') }}</th><th>{{ __('production_execution.fields.status') }}</th><th>{{ __('common.fields.created_by') }}</th><th>{{ __('common.fields.created_at') }}</th><th>{{ __('common.fields.updated_by') }}</th><th>{{ __('common.fields.updated_at') }}</th><th class="data-table-row-action"></th>
+                    </tr></thead>
+                </table>
+            </div></div></div></div>
+        </div>
     </div>
 @endsection
 

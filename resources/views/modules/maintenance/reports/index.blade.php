@@ -21,9 +21,12 @@
         <div class="row g-3 align-items-end">
             <div class="col-6 col-lg-2"><label class="form-label">{{ __('maintenance.reports.filters.from') }}</label><x-forms.date-input name="from" :value="$filters['from'] ?? null" /></div>
             <div class="col-6 col-lg-2"><label class="form-label">{{ __('maintenance.reports.filters.to') }}</label><x-forms.date-input name="to" :value="$filters['to'] ?? null" /></div>
-            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.maintenance_type') }}</label><x-forms.select variant="local" name="maintenance_type"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['preventive', 'corrective', 'emergency', 'external'] as $value)<option value="{{ $value }}" @selected(($filters['maintenance_type'] ?? null) === $value)>{{ __('maintenance.maintenance_types.'.$value) }}</option>@endforeach</x-forms.select></div>
-            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.service_mode') }}</label><x-forms.select variant="local" name="service_mode"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['internal', 'external'] as $value)<option value="{{ $value }}" @selected(($filters['service_mode'] ?? null) === $value)>{{ __('maintenance.service_modes.'.$value) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.maintenance_type') }}</label><x-forms.select variant="local" name="maintenance_type"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['preventive', 'corrective', 'emergency', 'condition_based', 'external'] as $value)<option value="{{ $value }}" @selected(($filters['maintenance_type'] ?? null) === $value)>{{ __('maintenance.maintenance_types.'.$value) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.service_mode') }}</label><x-forms.select variant="local" name="service_mode"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['internal', 'external', 'mixed'] as $value)<option value="{{ $value }}" @selected(($filters['service_mode'] ?? null) === $value)>{{ __('maintenance.service_modes.'.$value) }}</option>@endforeach</x-forms.select></div>
             <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.status') }}</label><x-forms.select variant="local" name="status"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['draft', 'approved', 'in_progress', 'completed', 'closed', 'cancelled'] as $value)<option value="{{ $value }}" @selected(($filters['status'] ?? null) === $value)>{{ __('maintenance.statuses.'.$value) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.priority') }}</label><x-forms.select variant="local" name="priority"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['low', 'normal', 'high', 'urgent'] as $value)<option value="{{ $value }}" @selected(($filters['priority'] ?? null) === $value)>{{ __('maintenance.priorities.'.$value) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.discipline') }}</label><x-forms.select variant="local" name="discipline"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['electrical', 'mechanical', 'molds', 'other'] as $value)<option value="{{ $value }}" @selected(($filters['discipline'] ?? null) === $value)>{{ __('maintenance.disciplines.'.$value) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-12 col-md-4 col-lg-2"><label class="form-label">{{ __('maintenance.fields.test_result') }}</label><x-forms.select variant="local" name="test_result"><option value="">{{ __('maintenance.reports.filters.all') }}</option>@foreach(['passed', 'failed'] as $value)<option value="{{ $value }}" @selected(($filters['test_result'] ?? null) === $value)>{{ __('maintenance.test_results.'.$value) }}</option>@endforeach</x-forms.select></div>
             <div class="col-12 col-lg-2"><button class="btn btn-primary w-100" type="submit">{{ __('maintenance.reports.filters.apply') }}</button></div>
         </div>
     </form>
@@ -40,7 +43,7 @@
         <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.orders_table') }}</h5></div>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0">
-                <thead><tr><th>{{ __('maintenance.fields.document') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.maintenance_type') }}</th><th>{{ __('maintenance.fields.service_mode') }}</th><th>{{ __('maintenance.fields.provider') }}</th><th>{{ __('maintenance.fields.actual_start') }}</th><th>{{ __('maintenance.fields.actual_end') }}</th><th>{{ __('maintenance.reports.materials') }}</th>@if($canViewFinancial)<th>{{ __('maintenance.reports.expenses') }}</th>@endif<th>{{ __('maintenance.fields.status') }}</th></tr></thead>
+                <thead><tr><th>{{ __('maintenance.fields.document') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.maintenance_type') }}</th><th>{{ __('maintenance.fields.service_mode') }}</th><th>{{ __('maintenance.fields.provider') }}</th><th>{{ __('maintenance.fields.actual_start') }}</th><th>{{ __('maintenance.fields.actual_end') }}</th><th>{{ __('maintenance.fields.total_paused_minutes') }}</th><th>{{ __('maintenance.reports.materials') }}</th>@if($canViewFinancial)<th>{{ __('maintenance.reports.expenses') }}</th>@endif<th>{{ __('maintenance.fields.status') }}</th></tr></thead>
                 <tbody>
                     @forelse($orders as $order)
                         @php
@@ -49,18 +52,19 @@
                         @endphp
                         <tr>
                             <td><a href="{{ route('admin.maintenance.orders.show', $order) }}">{{ $order->doc_num }}</a></td>
-                            <td>{{ $order->asset?->asset_code }} — {{ $order->asset?->asset_name }}</td>
+                            <td>{{ $order->asset ? $order->asset->doc_num.' — '.$order->asset->asset_name : ($order->mold ? $order->mold->code.' — '.$order->mold->name : '—') }}</td>
                             <td>{{ __('maintenance.maintenance_types.'.$order->maintenance_type) }}</td>
                             <td>{{ __('maintenance.service_modes.'.$order->service_mode) }}</td>
                             <td>{{ $order->supplier?->name ?: $order->external_provider_name ?: __('maintenance.internal') }}</td>
                             <td>{{ $order->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</td>
                             <td>{{ $order->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</td>
-                            <td>{{ __('maintenance.reports.material_summary', ['issued' => $materialLines->sum('issued_quantity'), 'returned' => $materialLines->sum('returned_quantity')]) }}</td>
+                            <td>{{ $order->total_paused_minutes + ($order->paused_at ? (int) $order->paused_at->diffInMinutes(now()) : 0) }}</td>
+                            <td>{{ __('maintenance.reports.material_summary', ['issued' => $materialLines->sum('issued_quantity'), 'consumed' => $materialLines->sum('consumed_quantity'), 'returned' => $materialLines->sum('returned_quantity')]) }}</td>
                             @if($canViewFinancial)<td>{{ $expenseSummary ?: '—' }}</td>@endif
                             <td><span class="badge rounded-pill badge-subtle-secondary">{{ __('maintenance.statuses.'.$order->status) }}</span></td>
                         </tr>
                     @empty
-                        <tr><td colspan="{{ $canViewFinancial ? 10 : 9 }}" class="text-center text-muted py-4">{{ __('maintenance.reports.no_orders') }}</td></tr>
+                        <tr><td colspan="{{ $canViewFinancial ? 11 : 10 }}" class="text-center text-muted py-4">{{ __('maintenance.reports.no_orders') }}</td></tr>
                     @endforelse
                 </tbody>
             </table>
