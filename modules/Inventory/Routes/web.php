@@ -51,11 +51,22 @@ Route::middleware('auth')
             ->name('stock-balances.print');
         Route::prefix('stock-counts')->name('stock-counts.')->controller(StockCountController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:inventory.stock_counts.view')->name('index');
-            Route::post('/', 'store')->middleware('can:inventory.stock_counts.create')->name('store');
+            Route::get('/data', 'data')->middleware('can:inventory.stock_counts.view')->name('data');
+            Route::get('/create', 'create')->middleware('can:inventory.stock_counts.create')->name('create');
+            Route::get('/select2/products', 'products')->name('select2.products');
+            Route::get('/products/{product}/details', 'productDetails')->name('products.details');
+            Route::get('/balance', 'balance')->name('balance');
+            Route::post('/', 'store')->name('store');
+            Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:inventory.stock_counts.document_number_settings.update')->name('document-number-settings.update');
             Route::get('/{stockCount}/print', 'print')->middleware('can:inventory.stock_counts.print')->name('print');
-            Route::post('/{stockCount}/record', 'record')->middleware('can:inventory.stock_counts.record')->name('record');
+            Route::get('/{stockCount}/export.xlsx', 'export')->middleware('can:inventory.stock_counts.export')->name('export');
             Route::post('/{stockCount}/approve', 'approve')->middleware('can:inventory.stock_counts.approve')->name('approve');
-            Route::get('/{stockCount}', 'show')->middleware('can:inventory.stock_counts.view')->name('show');
+            Route::patch('/{stockCount}/restore', 'restore')->withTrashed()->middleware('can:inventory.stock_counts.restore')->name('restore');
+            Route::get('/{stockCount}/clone', 'clone')->middleware('can:inventory.stock_counts.clone')->name('clone');
+            Route::get('/{stockCount}', 'show')->withTrashed()->middleware('can:inventory.stock_counts.view')->name('show');
+            Route::get('/{stockCount}/edit', 'edit')->middleware('can:inventory.stock_counts.edit')->name('edit');
+            Route::put('/{stockCount}', 'update')->middleware('can:inventory.stock_counts.edit')->name('update');
+            Route::delete('/{stockCount}', 'destroy')->middleware('can:inventory.stock_counts.delete')->name('destroy');
         });
 
         Route::get('/select2/opening-stock-products', [OpeningStockController::class, 'products'])

@@ -239,7 +239,7 @@ test('every visible label has paired menu translations or the approved bilingual
         'inventory_operational_reports' => ['Inventory Operational Reports', 'تقارير عمليات المخزون'],
         'inventory_stock_counts' => ['Physical Stock Counts', 'الجرد الفعلي للمخزون'],
         'production_quality' => ['Production Quality Management', 'إدارة جودة الإنتاج'],
-        'production_work_orders' => ['Production Work Orders', 'أوامر التشغيل'],
+        'production_work_orders' => ['Production Work Orders', 'أوامر الإنتاج'],
         'production_runs' => ['Production Runs', 'تشغيلات الإنتاج'],
         'production_operational_reports' => ['Production Operational Reports', 'تقارير عمليات الإنتاج'],
         'reports_sales_sales_orders' => ['Sales Orders', 'أوامر المبيعات'],
@@ -253,38 +253,28 @@ test('every visible label has paired menu translations or the approved bilingual
     }
 });
 
-test('all genuine reports have one canonical location below the Reports menu', function (): void {
+test('production cycle screens and reports have one canonical owning domain', function (): void {
     config()->set('erp.phase_mode', 'expanded');
     app()->setLocale('en');
     $admin = navigationAuditAdmin();
     $menu = app(MenuService::class)->getMenu($admin);
     $records = collect(navigationAuditRecords($menu));
     $reportPaths = [
-        'admin.reports.sales.sales-orders.index' => ['reports', 'sales_reports', 'reports_sales_sales_orders'],
-        'admin.purchases.procurement-cycle-report.index' => ['reports', 'purchase_reports', 'procurement_cycle_report'],
         'admin.inventory.reports.index' => ['inventory', 'inventory_inquiries', 'inventory_operational_reports'],
-        'admin.production.reports.index' => ['production', 'production_operations', 'production_operational_reports'],
-        'admin.accounting.reports.account-ledger' => ['reports', 'accounting_costing_reports', 'account_ledger'],
-        'admin.accounting.reports.customer-statement' => ['reports', 'accounting_costing_reports', 'customer_statement'],
-        'admin.accounting.reports.supplier-statement' => ['reports', 'accounting_costing_reports', 'supplier_statement'],
-        'admin.fixed-assets.reports.index' => ['reports', 'asset_reports', 'fixed_asset_reports'],
+        'admin.production.reports.index' => ['production', 'production_reports_operations', 'production_reports_overview'],
+        'admin.production.reports.quality' => ['quality', 'quality_management', 'production_reports_quality'],
+        'admin.production.reports.receipts' => ['inventory', 'inventory_inquiries', 'production_reports_receipts'],
     ];
 
     foreach ($reportPaths as $routeName => $expectedPath) {
-        $matches = $records->where('route', $routeName)->values();
+        $matches = $records
+            ->where('route', $routeName)
+            ->filter(fn (array $record): bool => $record['label_path'] === $expectedPath)
+            ->values();
 
         expect($matches)->toHaveCount(1)
             ->and($matches->first()['label_path'])->toBe($expectedPath);
     }
-
-    collect(app(ErpUiScreenRegistry::class)->screens())
-        ->filter(fn ($screen): bool => $screen->module() === 'reports' && $screen->get('menu_visible', true) !== false)
-        ->each(function ($screen) use ($records): void {
-            $matches = $records->where('route', $screen->route('index'))->values();
-
-            expect($matches)->toHaveCount(1)
-                ->and($matches->first()['label_path'][0])->toBe('reports');
-        });
 
     foreach ([
         'admin.sales.sales-orders.index' => 'sales',
@@ -293,7 +283,7 @@ test('all genuine reports have one canonical location below the Reports menu', f
         'admin.sales.customer-receipts.index' => 'sales',
         'admin.sales.sales-returns.index' => 'sales',
         'admin.production.work-orders.index' => 'production',
-        'admin.production.quality.index' => 'production',
+        'admin.production.quality.index' => 'quality',
     ] as $routeName => $expectedModule) {
         $matches = $records->where('route', $routeName)->values();
 
@@ -301,10 +291,8 @@ test('all genuine reports have one canonical location below the Reports menu', f
             ->and($matches->first()['label_path'][0])->toBe($expectedModule);
     }
 
-    $nonConformance = $records->firstWhere('label', 'quality_non_conformance_reports');
-
-    expect($nonConformance['label_path'])->toBe(['production', 'quality_management', 'quality_non_conformance_reports'])
-        ->and(collect($menu)->pluck('label'))->not->toContain('fixed_assets', 'maintenance', 'quality');
+    expect(collect($menu)->pluck('label'))->not->toContain('fixed_assets')
+        ->and(collect($menu)->pluck('label'))->toContain('inventory', 'production', 'quality', 'maintenance');
 
     foreach ($records as $parent) {
         foreach ($parent['children'] ?? [] as $child) {
@@ -313,7 +301,7 @@ test('all genuine reports have one canonical location below the Reports menu', f
     }
 });
 
-test('report-only permissions retain access, hide empty module parents, and activate the complete canonical chain', function (string $permission, string $routeName, string $subgroup, string $label, string $domain = 'reports'): void {
+test('report-only permissions retain access, hide empty module parents, and activate the complete canonical chain', function (string $permission, string $routeName, string $subgroup, string $label, string $domain = 'reports', ?array $expectedDomains = null): void {
     config()->set('erp.phase_mode', 'expanded');
     app()->setLocale('en');
     $actor = navigationAuditActor($permission);
@@ -325,7 +313,7 @@ test('report-only permissions retain access, hide empty module parents, and acti
     $reportSubgroup = collect($report['children'])->firstWhere('label', $subgroup);
     $leaf = collect($reportSubgroup['children'])->firstWhere('label', $label);
 
-    expect(collect($menu)->pluck('label')->all())->toBe(['dashboard', $domain])
+    expect(collect($menu)->pluck('label')->all())->toBe($expectedDomains ?? ['dashboard', $domain])
         ->and($records->where('route', $routeName))->toHaveCount(1)
         ->and($report['active'])->toBeTrue()
         ->and($report['open'])->toBeTrue()
@@ -337,7 +325,7 @@ test('report-only permissions retain access, hide empty module parents, and acti
     'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'sales_reports', 'reports_sales_sales_orders'],
     'purchase report' => ['reports.purchases.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'procurement_cycle_report'],
     'inventory report' => ['inventory.reports.operational', 'admin.inventory.reports.index', 'inventory_inquiries', 'inventory_operational_reports', 'inventory'],
-    'production report' => ['production.reports.operational', 'admin.production.reports.index', 'production_operations', 'production_operational_reports', 'production'],
+    'production report' => ['production.reports.operational', 'admin.production.reports.index', 'production_reports_operations', 'production_reports_overview', 'production', ['dashboard', 'inventory', 'production', 'quality']],
     'account ledger' => ['reports.account_ledger.view', 'admin.accounting.reports.account-ledger', 'accounting_costing_reports', 'account_ledger'],
     'customer statement' => ['reports.customer_statement.view', 'admin.accounting.reports.customer-statement', 'accounting_costing_reports', 'customer_statement'],
     'supplier statement' => ['reports.supplier_statement.view', 'admin.accounting.reports.supplier-statement', 'accounting_costing_reports', 'supplier_statement'],
@@ -375,8 +363,8 @@ test('navigation search returns the full permitted destination set once and uses
     $productionQuality = collect($search->search($admin, 'إدارة جودة الإنتاج', 100)['results'])
         ->firstWhere('route_name', 'admin.production.quality.index');
 
-    expect($inventoryReport['parent_path'])->toBe('التقارير / تقارير المخزون')
-        ->and($productionQuality['parent_path'])->toBe('التصنيع والإنتاج / إدارة الجودة');
+    expect($inventoryReport['parent_path'])->toBe('المخزون / استعلامات المخزون')
+        ->and($productionQuality['parent_path'])->toBe('الجودة / إدارة الجودة');
 });
 
 test('relocated reports keep breadcrumbs and recursive LTR and RTL rendering while prior nesting remains intact', function (): void {

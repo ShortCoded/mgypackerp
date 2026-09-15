@@ -57,6 +57,7 @@ class MenuConfigFileOrder
             'purchases' => 40,
             'inventory' => 45,
             'production' => 47,
+            'quality' => 48,
             'hr' => 50,
             'tools' => 60,
             'auth' => 70,

@@ -87,7 +87,9 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         'purchases',
         'inventory',
         'production',
+        'quality',
         'accounting_costing',
+        'maintenance',
         'human_resources',
         'reports',
         'tools',
@@ -107,58 +109,41 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         );
 });
 
-test('top navigation moves complete fixed assets and maintenance nodes under their related parents', function (): void {
+test('top navigation keeps quality maintenance inventory and production as separate business domains', function (): void {
     app()->setLocale('en');
 
     $admin = mvpAdminActor();
     $menuService = app(MenuService::class);
     $sourceMenu = $menuService->structure();
     $menu = $menuService->getMenu($admin);
-    $sourceLabels = collect($sourceMenu)->pluck('label')->all();
     $topLevelLabels = collect($menu)->pluck('label')->all();
     $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
     $production = collect($menu)->firstWhere('label', 'production');
+    $inventory = collect($menu)->firstWhere('label', 'inventory');
+    $quality = collect($menu)->firstWhere('label', 'quality');
+    $maintenance = collect($menu)->firstWhere('label', 'maintenance');
     $sourceAccounting = collect($sourceMenu)->firstWhere('label', 'accounting_costing');
-    $sourceProduction = collect($sourceMenu)->firstWhere('label', 'production');
     $sourceFixedAssets = collect($sourceMenu)->firstWhere('label', 'fixed_assets');
-    $sourceMaintenance = collect($sourceMenu)->firstWhere('label', 'maintenance');
     $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
-    $maintenance = collect($production['children'])->firstWhere('label', 'maintenance');
-    $sourceQuality = collect($sourceMenu)->firstWhere('label', 'quality');
     $expectedAccountingChildren = [
         ...collect($sourceAccounting['children'])->pluck('label')->all(),
         'fixed_assets',
     ];
-    $expectedProductionChildren = [
-        ...collect($sourceProduction['children'])->pluck('label')->all(),
-        'maintenance',
-        ...($sourceQuality === null ? [] : ['quality']),
-    ];
-    $movedSourceDestinations = mvpMenuDestinations(array_values(array_filter([
-        $sourceFixedAssets,
-        $sourceMaintenance,
-        $sourceQuality,
-    ])));
-    $movedMenuDestinations = mvpMenuDestinations(array_values(array_filter([
-        $fixedAssets,
-        $maintenance,
-        mvpFindMenuItem($menu, 'quality'),
-    ])));
     $menuDestinations = mvpMenuDestinations($menu);
 
-    expect($topLevelLabels)->not->toContain('fixed_assets', 'maintenance', 'quality')
+    expect($topLevelLabels)->not->toContain('fixed_assets')
+        ->and($topLevelLabels)->toContain('inventory', 'production', 'quality', 'maintenance')
         ->and($fixedAssets)->toBe($sourceFixedAssets)
-        ->and($maintenance)->toBe($sourceMaintenance)
         ->and(collect($accounting['children'])->pluck('label')->all())->toBe($expectedAccountingChildren)
-        ->and(collect($production['children'])->pluck('label')->all())->toBe($expectedProductionChildren)
-        ->and($sourceLabels)->not->toContain('quality')
-        ->and(mvpFindMenuItem($menu, 'quality'))->toBeNull()
-        ->and($movedMenuDestinations)->toBe($movedSourceDestinations)
+        ->and(collect($production['children'])->pluck('label'))->toContain('production_operations', 'production_reports_operations')
+        ->and(collect($quality['children'])->pluck('label'))->toContain('quality_management')
+        ->and(mvpFindMenuItem($quality['children'], 'production_quality'))->not->toBeNull()
+        ->and(mvpFindMenuItem($quality['children'], 'production_reports_quality'))->not->toBeNull()
+        ->and(mvpFindMenuItem($inventory['children'], 'production_reports_receipts'))->not->toBeNull()
+        ->and(mvpFindMenuItem($production['children'], 'production_quality'))->toBeNull()
+        ->and(mvpFindMenuItem($production['children'], 'production_reports_receipts'))->toBeNull()
+        ->and(mvpFindMenuItem($production['children'], 'maintenance'))->toBeNull()
         ->and(array_unique($menuDestinations))->toHaveCount(count($menuDestinations));
-
-    collect($movedSourceDestinations)->each(
-        fn (string $destination) => expect(collect($menuDestinations)->filter(fn (string $candidate): bool => $candidate === $destination))->toHaveCount(1),
-    );
 
     $englishTopHtml = view('layouts.partials.menu.top-items', [
         'items' => $menu,
@@ -172,9 +157,9 @@ test('top navigation moves complete fixed assets and maintenance nodes under the
     app()->setLocale('ar');
     $arabicMenu = $menuService->getMenu($admin);
     $arabicAccounting = collect($arabicMenu)->firstWhere('label', 'accounting_costing');
-    $arabicProduction = collect($arabicMenu)->firstWhere('label', 'production');
     $arabicFixedAssets = collect($arabicAccounting['children'])->firstWhere('label', 'fixed_assets');
-    $arabicMaintenance = collect($arabicProduction['children'])->firstWhere('label', 'maintenance');
+    $arabicQuality = collect($arabicMenu)->firstWhere('label', 'quality');
+    $arabicMaintenance = collect($arabicMenu)->firstWhere('label', 'maintenance');
     $arabicTopHtml = view('layouts.partials.menu.top-items', [
         'items' => $arabicMenu,
         'menuPath' => [],
@@ -185,13 +170,15 @@ test('top navigation moves complete fixed assets and maintenance nodes under the
     ])->render();
 
     expect($fixedAssets['text'])->toBe('Fixed Assets')
+        ->and($quality['text'])->toBe('Quality')
         ->and($maintenance['text'])->toBe('Maintenance')
-        ->and($englishTopHtml)->toContain('data-menu-depth="2"', 'Fixed Assets', 'Maintenance')
-        ->and($englishVerticalHtml)->toContain('Fixed Assets', 'Maintenance')
+        ->and($englishTopHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Quality', 'Maintenance')
+        ->and($englishVerticalHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Quality', 'Maintenance')
         ->and($arabicFixedAssets['text'])->toBe('الأصول الثابتة')
+        ->and($arabicQuality['text'])->toBe('الجودة')
         ->and($arabicMaintenance['text'])->toBe('الصيانة')
-        ->and($arabicTopHtml)->toContain('data-menu-depth="2"', 'الأصول الثابتة', 'الصيانة')
-        ->and($arabicVerticalHtml)->toContain('الأصول الثابتة', 'الصيانة');
+        ->and($arabicTopHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'الجودة', 'الصيانة')
+        ->and($arabicVerticalHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'الجودة', 'الصيانة');
 
     app()->setLocale('en');
 });

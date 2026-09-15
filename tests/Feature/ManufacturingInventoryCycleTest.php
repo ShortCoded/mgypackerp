@@ -31,6 +31,7 @@ use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\StockCount;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
@@ -1368,6 +1369,80 @@ test('inventory status transfers remain physically balanced and reject negative 
         ->toThrow(DomainException::class, __('Inventory movements cannot be reversed in a closed or unrelated financial period.'));
     expect(InventoryDocument::query()->count())->toBe($documentCount)
         ->and(InventoryTransaction::query()->count())->toBe($transactionCount);
+});
+
+test('stock count web workflow saves master detail lines and approves the count', function () {
+    $fixture = manufacturingInventoryFixture();
+    $permissions = [
+        'inventory.stock_counts.view',
+        'inventory.stock_counts.create',
+        'inventory.stock_counts.edit',
+        'inventory.stock_counts.approve',
+    ];
+
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'en',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+
+    $this->actingAs($fixture['user'])
+        ->withSession($session)
+        ->get(route('admin.inventory.stock-counts.index'))
+        ->assertOk()
+        ->assertSee('js-stock-counts-table', false)
+        ->assertSee(route('admin.inventory.stock-counts.create'), false);
+
+    $this->actingAs($fixture['user'])
+        ->withSession($session)
+        ->postJson(route('admin.inventory.stock-counts.store'), [
+            'branch_store_id' => $fixture['store']->getKey(),
+            'count_date' => now()->toDateString(),
+            'submit_action' => 'save_view',
+            'lines' => [
+                [
+                    'product_doc_num' => $fixture['raw']->doc_num,
+                    'stock_status' => InventoryTransaction::StatusAvailable,
+                    'physical_quantity' => '1000',
+                ],
+                [
+                    'product_doc_num' => $fixture['finished']->doc_num,
+                    'stock_status' => InventoryTransaction::StatusAvailable,
+                    'physical_quantity' => '0',
+                ],
+            ],
+        ])
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $count = StockCount::query()->with('lines')->sole();
+    expect($count->status)->toBe(StockCount::StatusCounted)
+        ->and($count->lines)->toHaveCount(2)
+        ->and($count->lines->pluck('system_quantity')->all())->toBe(['1000.00000000', '0.00000000']);
+
+    $this->actingAs($fixture['user'])
+        ->withSession($session)
+        ->get(route('admin.inventory.stock-counts.show', $count))
+        ->assertOk()
+        ->assertSee('js-stock-count-form', false)
+        ->assertSee('Approve Variances');
+
+    $this->actingAs($fixture['user'])
+        ->withSession($session)
+        ->postJson(route('admin.inventory.stock-counts.approve', $count))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $approvedCount = $count->fresh();
+    expect($approvedCount->status)->toBe(StockCount::StatusApproved)
+        ->and($approvedCount->approved_by)->toBe($fixture['user']->getKey());
 });
 
 test('canonical inventory and production pages use real routes and keep html operators in the workflow', function () {
