@@ -4,22 +4,29 @@ namespace Modules\Accounting\Services;
 
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\OverheadAllocationRun;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\FundTransfer;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\FixedAssets\Models\FixedAsset;
+use Modules\FixedAssets\Services\FixedAssetBookValueService;
+use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
+use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 use Modules\Sales\Models\CustomerInvoice;
@@ -32,6 +39,8 @@ final class PeriodClosePreflightService
         private readonly InventoryGlReconciliationService $inventoryReconciliation,
         private readonly ProcurementCycleReport $procurementReport,
         private readonly CostAccountingReportService $costAccountingReport,
+        private readonly FixedAssetDepreciationService $fixedAssetDepreciation,
+        private readonly FixedAssetBookValueService $fixedAssetBookValues,
     ) {}
 
     /**
@@ -46,6 +55,7 @@ final class PeriodClosePreflightService
     public function checks(FinancialPeriod $period): array
     {
         return [
+            $this->overheadAllocationSchemaCheck(),
             $this->financialDocumentsCheck($period),
             $this->unpricedReceiptsCheck($period),
             $this->unvaluedMovementsCheck($period),
@@ -130,7 +140,32 @@ final class PeriodClosePreflightService
                 CashVoucher::query()
                     ->where('company_id', $companyId)
                     ->whereBetween('voucher_date', [$from, $to])
-                    ->where('status', CashVoucher::StatusDraft)
+                    ->where(function (Builder $query): void {
+                        $query->where('status', CashVoucher::StatusDraft)
+                            ->orWhere(function (Builder $approved): void {
+                                $approved->where('status', CashVoucher::StatusApproved)
+                                    ->whereNotExists(function (QueryBuilder $linked): void {
+                                        $linked->selectRaw('1')
+                                            ->from('customer_receipts')
+                                            ->whereColumn('customer_receipts.cash_voucher_id', 'cash_vouchers.id')
+                                            ->whereNotNull('customer_receipts.journal_entry_id')
+                                            ->whereNull('customer_receipts.deleted_at');
+                                    })
+                                    ->whereNotExists(function (QueryBuilder $linked): void {
+                                        $linked->selectRaw('1')
+                                            ->from('supplier_payment_contexts')
+                                            ->whereColumn('supplier_payment_contexts.cash_voucher_id', 'cash_vouchers.id')
+                                            ->whereNotNull('supplier_payment_contexts.journal_entry_id');
+                                    })
+                                    ->whereNotExists(function (QueryBuilder $linked): void {
+                                        $linked->selectRaw('1')
+                                            ->from('production_expense_requests')
+                                            ->whereColumn('production_expense_requests.cash_voucher_id', 'cash_vouchers.id')
+                                            ->whereNotNull('production_expense_requests.journal_entry_id')
+                                            ->whereNull('production_expense_requests.deleted_at');
+                                    });
+                            });
+                    })
                     ->count(),
                 'admin.finance.cash-payment-vouchers.index',
                 'cash_payment_vouchers.view',
@@ -140,7 +175,7 @@ final class PeriodClosePreflightService
                 FundTransfer::query()
                     ->where('company_id', $companyId)
                     ->whereBetween('transfer_date', [$from, $to])
-                    ->where('status', FundTransfer::StatusDraft)
+                    ->whereIn('status', [FundTransfer::StatusDraft, FundTransfer::StatusApproved])
                     ->count(),
                 'admin.finance.fund-transfers.index',
                 'fund_transfers.view',
@@ -206,13 +241,58 @@ final class PeriodClosePreflightService
             ),
             $this->detail(
                 __('financial_periods.closing.document_types.overhead_allocation_runs'),
-                OverheadAllocationRun::query()
-                    ->where('company_id', $companyId)
-                    ->where('financial_period_id', $periodId)
-                    ->where('status', OverheadAllocationRun::StatusDraft)
-                    ->count(),
+                Schema::hasTable('cost_overhead_allocation_runs')
+                    ? OverheadAllocationRun::query()
+                        ->where('company_id', $companyId)
+                        ->where('financial_period_id', $periodId)
+                        ->where('status', OverheadAllocationRun::StatusDraft)
+                        ->count()
+                    : 0,
                 'admin.costing.overhead-allocation-run.index',
                 'costing.overhead_allocation_run.view',
+            ),
+            $this->detail(
+                __('financial_periods.closing.document_types.production_expenses'),
+                ProductionExpenseRequest::query()
+                    ->where('company_id', $companyId)
+                    ->where('financial_period_id', $periodId)
+                    ->whereIn('status', [
+                        ProductionExpenseRequest::StatusDraft,
+                        ProductionExpenseRequest::StatusSubmitted,
+                        ProductionExpenseRequest::StatusApproved,
+                    ])
+                    ->whereNull('journal_entry_id')
+                    ->count(),
+                'admin.production.expenses.index',
+                'production.expenses.view',
+            ),
+            $this->detail(
+                __('financial_periods.closing.document_types.purchase_returns'),
+                PurchaseReturn::query()
+                    ->where('company_id', $companyId)
+                    ->where('financial_period_id', $periodId)
+                    ->where('status', PurchaseReturn::StatusDraft)
+                    ->count(),
+                'admin.purchases.purchase-returns.index',
+                'purchases.purchase_returns.view',
+            ),
+            $this->detail(
+                __('financial_periods.closing.document_types.payroll_runs'),
+                DB::table('hr_payroll_runs as payroll_run')
+                    ->join('hr_payroll_periods as payroll_period', 'payroll_period.id', '=', 'payroll_run.payroll_period_id')
+                    ->where('payroll_period.company_id', $companyId)
+                    ->whereDate('payroll_period.period_end', '>=', $from)
+                    ->whereDate('payroll_period.period_start', '<=', $to)
+                    ->whereNotIn('payroll_run.status', ['posted', 'cancelled', 'rejected'])
+                    ->count(),
+                null,
+                'hr.employees.view',
+            ),
+            $this->detail(
+                __('financial_periods.closing.document_types.fixed_asset_depreciation'),
+                $this->dueDepreciationCount($period),
+                'admin.fixed-assets.depreciation.index',
+                'fixed_assets.depreciation.preview',
             ),
         ];
 
@@ -227,6 +307,20 @@ final class PeriodClosePreflightService
                 : __('financial_periods.closing.checks.no_unposted_financial_documents'),
             'count' => $count,
             'details' => $details,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function overheadAllocationSchemaCheck(): array
+    {
+        $available = Schema::hasTable('cost_overhead_allocation_runs');
+
+        return [
+            'key' => 'overhead_allocation_schema',
+            'status' => $available ? 'pass' : 'blocker',
+            'message' => $available
+                ? __('financial_periods.closing.checks.overhead_allocation_schema_ready')
+                : __('financial_periods.closing.checks.overhead_allocation_schema_missing'),
         ];
     }
 
@@ -480,5 +574,22 @@ final class PeriodClosePreflightService
     private function pass(string $key, string $message): array
     {
         return ['key' => $key, 'status' => 'pass', 'message' => $message];
+    }
+
+    private function dueDepreciationCount(FinancialPeriod $period): int
+    {
+        return FixedAsset::query()
+            ->forCompany((int) $period->company_id)
+            ->depreciationEligible()
+            ->with(['postedDepreciations', 'costMovements.journalEntry', 'disposals'])
+            ->get()
+            ->filter(function (FixedAsset $asset) use ($period): bool {
+                $next = $this->fixedAssetDepreciation->nextUnpostedDate($asset, $period->to_date);
+
+                return $next !== null
+                    && $next->lte($period->to_date)
+                    && bccomp($this->fixedAssetBookValues->position($asset, $next)['remaining_depreciable_amount'], '0', 4) > 0;
+            })
+            ->count();
     }
 }

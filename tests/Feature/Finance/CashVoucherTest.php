@@ -330,6 +330,30 @@ test('CashVoucher payment draft distribution approval lock and cancellation rule
     expect($voucher->refresh()->status)->toBe(CashVoucher::StatusCancelled);
 });
 
+test('CashVoucher approval cannot race a closed financial period', function (): void {
+    ['company' => $company, 'branch' => $branch, 'period' => $period, 'currency' => $egp] = cashVoucherSeedFoundation();
+    $actor = cashVoucherActor([
+        'cash_payment_vouchers.create',
+        'cash_payment_vouchers.approve',
+        'accounts.view',
+    ]);
+    $cashbox = cashVoucherCashbox($company, $branch, [$egp], 'Period Lock Cashbox');
+    $lineAccount = cashVoucherPostableAccount($company, '521');
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.cash-payment-vouchers.store'), cashVoucherPayload($cashbox, $egp, $lineAccount))
+        ->assertOk()
+        ->json('data.doc_num');
+
+    $period->forceFill(['is_closed' => true])->save();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.finance.cash-payment-vouchers.approve', $docNum))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document']);
+
+    expect(CashVoucher::query()->where('doc_num', $docNum)->firstOrFail()->status)->toBe(CashVoucher::StatusDraft);
+});
+
 test('CashVoucher receipt and payment prints use localized company authorization identity', function (): void {
     Storage::fake('public');
 

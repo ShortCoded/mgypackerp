@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
@@ -19,6 +20,7 @@ class FundTransferService
         private readonly CrudAuditService $audit,
         private readonly OperatingCompanyContextService $companies,
         private readonly FinanceAmountService $amounts,
+        private readonly FinancialPeriodService $financialPeriods,
     ) {}
 
     public function create(array $data): array
@@ -153,6 +155,12 @@ class FundTransferService
             if (! $locked->isDraft()) {
                 throw new DomainException(__('fund_transfers.messages.document_not_approvable'));
             }
+
+            $this->financialPeriods->resolveOpenForPostingDate(
+                $companyId,
+                $locked->transfer_date,
+                lockForUpdate: true,
+            );
 
             $locked->forceFill([
                 'status' => FundTransfer::StatusApproved,

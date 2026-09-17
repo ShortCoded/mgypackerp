@@ -76,13 +76,14 @@ final class CostingReportController extends Controller
         $legacyPrefix = 'reports.costing.'.str_replace('_', '-', $type);
         $screenPrefix = 'reports.costing.'.str_replace('_', '_', $type);
 
-        abort_unless(
-            (bool) $request->user()?->can('reports.costing.view')
-            || (bool) $request->user()?->can("{$screenPrefix}.{$action}")
-            || (bool) $request->user()?->can("{$screenPrefix}.view")
+        $authorized = (bool) $request->user()?->can("{$screenPrefix}.{$action}")
             || (bool) $request->user()?->can("{$prefix}.{$action}")
-            || (bool) $request->user()?->can("{$legacyPrefix}.{$action}"),
-            403,
-        );
+            || (bool) $request->user()?->can("{$legacyPrefix}.{$action}");
+
+        if ($action === 'view') {
+            $authorized = $authorized || (bool) $request->user()?->can('reports.costing.view');
+        }
+
+        abort_unless($authorized, 403);
     }
 }

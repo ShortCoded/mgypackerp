@@ -26,6 +26,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodDocumentNumberSettingsService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\SettingService;
 use Throwable;
 
@@ -36,6 +37,7 @@ class FinancialPeriodController extends Controller
         private readonly ActivityLogger $activityLogger,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly OperatingCompanyContextService $companyContext,
+        private readonly OperatingScopeAccessService $scopeAccess,
     ) {}
 
     public function index(Request $request, FinancialPeriodDocumentNumberSettingsService $documentNumberSettings): View
@@ -49,8 +51,8 @@ class FinancialPeriodController extends Controller
     public function closing(Request $request, FinancialPeriodClosingService $closing): View
     {
         $companyId = $this->companyContext->requireCompanyId($request);
-        $periods = FinancialPeriod::query()
-            ->forCompany($companyId)
+        $periods = $this->scopeAccess->allowedFinancialPeriodQuery($request->user())
+            ->where('financial_periods.company_id', $companyId)
             ->orderByDesc('from_date')
             ->get();
         $selectedDocNum = trim((string) $request->query('period', ''));
@@ -249,7 +251,7 @@ class FinancialPeriodController extends Controller
             ]);
         }
 
-        $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
+        $financialPeriod = $this->closingPeriodByDocNum($request, $financialPeriod);
 
         try {
             $result = $closing->close($financialPeriod);
@@ -293,7 +295,7 @@ class FinancialPeriodController extends Controller
             'operation_note' => ['nullable', 'string', 'max:1000'],
         ]);
         $returnToClosing = ($operation['return_to'] ?? null) === 'closing';
-        $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
+        $financialPeriod = $this->closingPeriodByDocNum($request, $financialPeriod);
 
         try {
             $result = $closing->reopen($financialPeriod);
@@ -738,6 +740,14 @@ class FinancialPeriodController extends Controller
         return $query
             ->forCompany($this->companyContext->requireCompanyId($request))
             ->where('doc_num', $docNum)
+            ->firstOrFail();
+    }
+
+    private function closingPeriodByDocNum(Request $request, string $docNum): FinancialPeriod
+    {
+        return $this->scopeAccess->allowedFinancialPeriodQuery($request->user())
+            ->where('financial_periods.company_id', $this->companyContext->requireCompanyId($request))
+            ->where('financial_periods.doc_num', $docNum)
             ->firstOrFail();
     }
 

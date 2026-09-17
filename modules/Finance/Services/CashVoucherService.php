@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\Cashbox;
@@ -27,6 +28,7 @@ class CashVoucherService
         private readonly OperatingCompanyContextService $companies,
         private readonly NumericFormatService $numbers,
         private readonly SupplierPaymentPostingService $supplierPaymentPostings,
+        private readonly FinancialPeriodService $financialPeriods,
     ) {}
 
     public function create(string $voucherType, array $data, ?int $companyId = null): array
@@ -173,6 +175,11 @@ class CashVoucherService
             $this->assertOwnedByCurrentScreen($locked, $voucherType, $companyId);
             $this->assertApprovable($locked);
             $this->assertNotLinkedToClosedPurchaseInvoice($locked);
+            $this->financialPeriods->resolveOpenForPostingDate(
+                $companyId,
+                $locked->voucher_date,
+                lockForUpdate: true,
+            );
 
             $locked->forceFill([
                 'status' => CashVoucher::StatusApproved,

@@ -22,13 +22,13 @@
 
     @if ($isView && $record)
         @if (! $isTrashed && ! $record->is_closed && auth()->user()?->can('financial_periods.close'))
-            <button type="submit" form="financial-period-close-form" class="btn btn-warning btn-sm" onclick='return confirm(@js(__('financial_periods.messages.close_confirm_text')))'>
+            <a href="{{ route('admin.financial-periods.closing', ['period' => $record->doc_num]) }}" class="btn btn-warning btn-sm">
                 <span class="fas fa-lock me-1"></span>{{ __('financial_periods.actions.close') }}
-            </button>
+            </a>
         @elseif (! $isTrashed && $record->is_closed && auth()->user()?->can('financial_periods.reopen'))
-            <button type="submit" form="financial-period-reopen-form" class="btn btn-falcon-warning btn-sm" onclick='return confirm(@js(__('financial_periods.messages.reopen_confirm_text')))'>
+            <a href="{{ route('admin.financial-periods.closing', ['period' => $record->doc_num]) }}" class="btn btn-falcon-warning btn-sm">
                 <span class="fas fa-lock-open me-1"></span>{{ __('financial_periods.actions.reopen') }}
-            </button>
+            </a>
         @endif
 
         @if (! $isTrashed && $canEdit)

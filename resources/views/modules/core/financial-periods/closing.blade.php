@@ -139,7 +139,7 @@
         </div>
 
         <div class="card mb-3">
-            <div class="card-header"><h6 class="mb-0">{{ __('financial_periods.closing.preview_title') }}</h6></div>
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h6 class="mb-0">{{ __('financial_periods.closing.preview_title') }}</h6><div class="d-flex flex-wrap gap-2">@can('reports.trial_balance.view')<a class="btn btn-sm btn-falcon-default" href="{{ route('admin.accounting.reports.trial-balance', ['run' => 1, 'from_date' => $selectedPeriod->from_date->toDateString(), 'to_date' => $selectedPeriod->to_date->toDateString()]) }}">{{ __('financial_periods.closing.open_trial_balance') }}</a>@endcan @can('reports.financial_statements.view')<a class="btn btn-sm btn-falcon-default" href="{{ route('admin.accounting.reports.financial-statements', ['run' => 1, 'from_date' => $selectedPeriod->from_date->toDateString(), 'to_date' => $selectedPeriod->to_date->toDateString()]) }}">{{ __('financial_periods.closing.open_financial_statements') }}</a>@endcan</div></div>
             <div class="card-body">
                 <div class="row g-3 mb-3">
                     <div class="col-md-3"><strong>{{ __('financial_periods.closing.trial_debit') }}:</strong> {{ $numbers->format($preview['trial_balance']['debit']) }}</div>

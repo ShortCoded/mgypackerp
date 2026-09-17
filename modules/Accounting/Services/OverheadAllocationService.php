@@ -35,6 +35,7 @@ final class OverheadAllocationService
     {
         return DB::transaction(function () use ($data, $companyId, $branchId): OverheadAllocationRule {
             $sourceCostCenter = CostCenter::query()->forCompany($companyId)->active()
+                ->where('is_group', false)
                 ->whereKey((int) $data['source_cost_center_id'])->firstOrFail();
             $sourceAccountIds = $this->validatedAccountIds($companyId, $data['source_account_ids'] ?? []);
             $linkedSourceAccountCount = $sourceCostCenter->accounts()->whereIn('accounts.id', $sourceAccountIds)->count();
@@ -104,6 +105,14 @@ final class OverheadAllocationService
             if ($existing instanceof OverheadAllocationRun) {
                 return $existing->load(['rule.sourceCostCenter', 'sources.journalEntryLine.journalEntry', 'lines.productionRun.product', 'lines.productionRun.order']);
             }
+
+            OverheadAllocationRun::query()
+                ->forContext((int) $lockedRule->company_id, (int) $period->getKey(), $branchId)
+                ->where('rule_id', $lockedRule->getKey())
+                ->whereDate('from_date', $fromDate)
+                ->whereDate('to_date', $toDate)
+                ->where('status', OverheadAllocationRun::StatusDraft)
+                ->update(['status' => OverheadAllocationRun::StatusSuperseded]);
 
             $revision = OverheadAllocationRun::query()
                 ->forContext((int) $lockedRule->company_id, (int) $period->getKey(), $branchId)
@@ -178,7 +187,16 @@ final class OverheadAllocationService
                 throw new DomainException(__('overhead_allocations.messages.draft_only'));
             }
 
+            $targetIds = $locked->lines->pluck('production_run_id')->map(fn (mixed $id): int => (int) $id);
+            $this->assertTargetsRemainUnreceived($targetIds, lockForUpdate: true);
             $period = FinancialPeriod::query()->forCompany((int) $locked->company_id)->findOrFail($locked->financial_period_id);
+            $this->assertRuleContext(
+                $locked->rule,
+                $period,
+                (int) $locked->branch_id,
+                $locked->from_date->toDateString(),
+                $locked->to_date->toDateString(),
+            );
             $snapshot = $this->snapshot(
                 $locked->rule,
                 $period,
@@ -191,36 +209,30 @@ final class OverheadAllocationService
                 throw new DomainException(__('overhead_allocations.messages.stale_preview'));
             }
 
-            $this->financialPeriods->resolveOpenForPostingDate(
-                (int) $locked->company_id,
-                $locked->to_date,
-                expectedPeriodId: (int) $locked->financial_period_id,
-                lockForUpdate: true,
-            );
-            $this->assertTargetsRemainUnreceived($locked->lines->pluck('production_run_id')->map(fn (mixed $id): int => (int) $id));
-
-            $journal = $this->journals->createPostedFromSource([
-                'entry_date' => $locked->to_date,
-                'company_id' => (int) $locked->company_id,
-                'financial_period_id' => (int) $locked->financial_period_id,
-                'branch_id' => (int) $locked->branch_id,
-                'currency_id' => Currency::query()->forCompany((int) $locked->company_id)->active()->where('is_main', true)->firstOrFail()->getKey(),
-                'exchange_rate' => 1,
-                'description' => __('overhead_allocations.journal.description', ['document' => $locked->doc_num]),
-                'source_type' => 'overhead_allocation',
-                'source_id' => $locked->getKey(),
-                'source_doc_num' => $locked->doc_num,
-            ], $this->journalLines($locked));
+            $journal = bccomp((string) $locked->allocated_cost, '0', 4) > 0
+                ? $this->journals->createPostedFromSource([
+                    'entry_date' => $locked->to_date,
+                    'company_id' => (int) $locked->company_id,
+                    'financial_period_id' => (int) $locked->financial_period_id,
+                    'branch_id' => (int) $locked->branch_id,
+                    'currency_id' => Currency::query()->forCompany((int) $locked->company_id)->active()->where('is_main', true)->firstOrFail()->getKey(),
+                    'exchange_rate' => 1,
+                    'description' => __('overhead_allocations.journal.description', ['document' => $locked->doc_num]),
+                    'source_type' => 'overhead_allocation',
+                    'source_id' => $locked->getKey(),
+                    'source_doc_num' => $locked->doc_num,
+                ], $this->journalLines($locked))
+                : null;
 
             $locked->forceFill([
                 'status' => OverheadAllocationRun::StatusPosted,
-                'journal_entry_id' => $journal->getKey(),
+                'journal_entry_id' => $journal?->getKey(),
                 'posted_at' => now(),
                 'posted_by' => auth()->id(),
             ])->save();
 
             return $locked->refresh()->load(['rule.sourceCostCenter', 'journalEntry.lines', 'lines.productionRun.product', 'lines.productionRun.order']);
-        });
+        }, 3);
     }
 
     public function reverse(OverheadAllocationRun $run, string $reason): OverheadAllocationRun
@@ -235,35 +247,40 @@ final class OverheadAllocationService
                 return $locked;
             }
 
-            if ($locked->status !== OverheadAllocationRun::StatusPosted || $locked->journalEntry === null) {
+            if ($locked->status !== OverheadAllocationRun::StatusPosted) {
                 throw new DomainException(__('overhead_allocations.messages.posted_only'));
             }
 
-            $this->assertTargetsRemainUnreceived($locked->lines->pluck('production_run_id')->map(fn (mixed $id): int => (int) $id));
-            $reversal = $this->journals->createPostedReversalFromSource($locked->journalEntry, [
-                'entry_date' => $locked->to_date,
-                'company_id' => (int) $locked->company_id,
-                'financial_period_id' => (int) $locked->financial_period_id,
-                'branch_id' => (int) $locked->branch_id,
-                'currency_id' => $locked->journalEntry->currency_id,
-                'exchange_rate' => 1,
-                'description' => __('overhead_allocations.journal.reversal', ['document' => $locked->doc_num]),
-                'notes' => $reason,
-                'source_type' => 'overhead_allocation_reversal',
-                'source_id' => $locked->getKey(),
-                'source_doc_num' => $locked->doc_num,
-            ]);
+            $this->assertTargetsRemainUnreceived(
+                $locked->lines->pluck('production_run_id')->map(fn (mixed $id): int => (int) $id),
+                lockForUpdate: true,
+            );
+            $reversal = $locked->journalEntry
+                ? $this->journals->createPostedReversalFromSource($locked->journalEntry, [
+                    'entry_date' => $locked->to_date,
+                    'company_id' => (int) $locked->company_id,
+                    'financial_period_id' => (int) $locked->financial_period_id,
+                    'branch_id' => (int) $locked->branch_id,
+                    'currency_id' => $locked->journalEntry->currency_id,
+                    'exchange_rate' => 1,
+                    'description' => __('overhead_allocations.journal.reversal', ['document' => $locked->doc_num]),
+                    'notes' => $reason,
+                    'source_type' => 'overhead_allocation_reversal',
+                    'source_id' => $locked->getKey(),
+                    'source_doc_num' => $locked->doc_num,
+                ])
+                : null;
 
             $locked->forceFill([
                 'status' => OverheadAllocationRun::StatusReversed,
-                'reversal_journal_entry_id' => $reversal->getKey(),
+                'reversal_journal_entry_id' => $reversal?->getKey(),
                 'reversed_at' => now(),
                 'reversed_by' => auth()->id(),
                 'reversal_reason' => trim($reason),
             ])->save();
 
             return $locked->refresh();
-        });
+        }, 3);
     }
 
     /**
@@ -299,7 +316,7 @@ final class OverheadAllocationService
 
         [$basisUsed, $fallbackReason] = $this->basisFor($rule, $targetMetrics);
         $basisTotal = $this->sum($targetMetrics, $basisUsed, 8);
-        if (bccomp($basisTotal, '0', 8) <= 0) {
+        if (bccomp($basisTotal, '0', 8) <= 0 && $rule->cost_behavior !== OverheadAllocationRule::BehaviorFixed) {
             throw new DomainException(__('overhead_allocations.messages.zero_basis'));
         }
 
@@ -322,7 +339,9 @@ final class OverheadAllocationService
             $utilizationPercent = $this->round(bcmul($capacityRatio, '100', 8), 4);
         }
 
-        $allocations = $this->allocate($allocatableCost, $targetMetrics, $basisUsed, $basisTotal);
+        $allocations = bccomp($allocatableCost, '0', 4) === 0
+            ? array_fill(0, $targetMetrics->count(), '0.0000')
+            : $this->allocate($allocatableCost, $targetMetrics, $basisUsed, $basisTotal);
         $targets = $targetMetrics->values()->map(function (array $target, int $index) use ($allocations, $basisUsed, $basisTotal): array {
             $basisValue = (string) $target[$basisUsed];
 
@@ -333,12 +352,20 @@ final class OverheadAllocationService
                 'labor_hours' => $target['labor_hours'],
                 'direct_material_cost' => $target['direct_material_cost'],
                 'basis_value' => $basisValue,
-                'allocation_percent' => $this->round(bcmul(bcdiv($basisValue, $basisTotal, 12), '100', 12), 8),
+                'allocation_percent' => bccomp($basisTotal, '0', 8) === 0
+                    ? '0.00000000'
+                    : $this->round(bcmul(bcdiv($basisValue, $basisTotal, 12), '100', 12), 8),
                 'allocated_amount' => $allocations[$index],
             ];
         })->all();
         $allocatedCost = $this->sum(collect($targets), 'allocated_amount', 4);
         $unallocatedCost = bcsub($eligibleCost, $allocatedCost, 4);
+        $unusedCapacityCost = $rule->cost_behavior === OverheadAllocationRule::BehaviorFixed
+            ? $unallocatedCost
+            : '0.0000';
+        $unusedCapacityReason = bccomp($unusedCapacityCost, '0', 4) > 0
+            ? 'below_normal_capacity'
+            : null;
         $policy = [
             'rule_id' => (int) $rule->getKey(),
             'rule_updated_at' => $rule->updated_at?->toISOString(),
@@ -350,6 +377,8 @@ final class OverheadAllocationService
             'basis_used' => $basisUsed,
             'cost_behavior' => $rule->cost_behavior,
             'normal_capacity_hours' => $rule->normal_capacity_hours,
+            'unused_capacity_cost' => $unusedCapacityCost,
+            'unused_capacity_reason' => $unusedCapacityReason,
             'rounding_scale' => 4,
             'from_date' => $fromDate,
             'to_date' => $toDate,
@@ -397,7 +426,10 @@ final class OverheadAllocationService
             })
             ->where(function (Builder $query): void {
                 $query->whereNull('entry.source_type')
-                    ->orWhereNotIn('entry.source_type', ['overhead_allocation', 'overhead_allocation_reversal', 'period_closing', 'period_closing_reversal']);
+                    ->orWhere(function (Builder $source): void {
+                        $source->where('entry.source_type', 'not like', 'overhead_allocation%')
+                            ->where('entry.source_type', 'not like', 'period_closing%');
+                    });
             })
             ->whereNotExists(function (Builder $query): void {
                 $query->selectRaw('1')
@@ -424,46 +456,66 @@ final class OverheadAllocationService
     private function targetMetrics(OverheadAllocationRule $rule, FinancialPeriod $period, int $branchId, string $fromDate, string $toDate): Collection
     {
         $runs = ProductionRun::query()
-            ->with(['product', 'order'])
+            ->with(['product', 'order', 'progressEntries'])
             ->where('company_id', $rule->company_id)
             ->where('financial_period_id', $period->getKey())
             ->where('branch_id', $branchId)
-            ->where('status', ProductionRun::StatusCompleted)
+            ->where('status', ProductionRun::StatusRunning)
             ->where('good_base_quantity', '>', 0)
             ->where('received_base_quantity', '<=', 0)
-            ->whereDate('actual_end_at', '>=', $fromDate)
-            ->whereDate('actual_end_at', '<=', $toDate)
             ->when($rule->target_cost_center_ids !== null, fn ($query) => $query->whereIn('cost_center_id', array_map('intval', $rule->target_cost_center_ids)))
             ->orderBy('id')
             ->get();
+        $from = Carbon::parse($fromDate)->startOfDay();
+        $to = Carbon::parse($toDate)->endOfDay();
+        $costPositions = $this->productionCosts->positions($runs);
 
-        return $runs->map(function (ProductionRun $run): array {
-            $machineHours = $run->actual_start_at !== null && $run->actual_end_at !== null
-                ? $this->round((string) max(0, $run->actual_start_at->diffInSeconds($run->actual_end_at, false) / 3600), 8)
-                : null;
+        return $runs->map(function (ProductionRun $run) use ($costPositions, $from, $to): ?array {
+            $endAt = $run->actual_end_at ?? $run->progressEntries->last()?->recorded_at;
+            if ($endAt === null || $endAt->lt($from) || $endAt->gt($to)) {
+                return null;
+            }
+
+            $machineHours = null;
+            if ($run->actual_start_at !== null) {
+                $seconds = (string) $run->actual_start_at->diffInSeconds($endAt, false);
+                $machineHours = bccomp($seconds, '0', 8) > 0
+                    ? $this->round(bcdiv($seconds, '3600', 12), 8)
+                    : '0.00000000';
+            }
             $laborDetails = collect($run->labor_details ?? []);
             $laborHours = $laborDetails->isNotEmpty() && $laborDetails->every(fn (mixed $line): bool => is_array($line) && array_key_exists('actual_hours', $line))
                 ? $this->sum($laborDetails, 'actual_hours', 8)
                 : null;
+            $cost = $costPositions->get($run->getKey());
 
             return [
                 'production_run_id' => (int) $run->getKey(),
                 'cost_center_id' => $run->cost_center_id === null ? null : (int) $run->cost_center_id,
                 'machine_hours' => $machineHours,
                 'labor_hours' => $laborHours,
-                'direct_material_cost' => $this->round($this->productionCosts->directMaterialCost($run), 4),
+                'direct_material_cost' => $this->round((string) $cost['direct_material_cost'], 4),
+                'material_valuation_complete' => (bool) $cost['material_valuation_complete'],
             ];
-        });
+        })->filter()->values();
     }
 
     /** @return array{string, string|null} */
     private function basisFor(OverheadAllocationRule $rule, Collection $targets): array
     {
         $basis = (string) $rule->basis;
+        if ($basis === OverheadAllocationRule::BasisDirectMaterialCost
+            && $targets->contains(fn (array $target): bool => ! $target['material_valuation_complete'])) {
+            throw new DomainException(__('overhead_allocations.messages.incomplete_material_valuation'));
+        }
         $hasMissing = $targets->contains(fn (array $target): bool => $target[$basis] === null);
         $total = $hasMissing ? '0' : $this->sum($targets, $basis, 8);
 
         if (! $hasMissing && bccomp($total, '0', 8) > 0) {
+            return [$basis, null];
+        }
+
+        if ($rule->cost_behavior === OverheadAllocationRule::BehaviorFixed && ! $hasMissing) {
             return [$basis, null];
         }
 
@@ -475,6 +527,10 @@ final class OverheadAllocationService
             throw new DomainException($hasMissing
                 ? __('overhead_allocations.messages.incomplete_basis')
                 : __('overhead_allocations.messages.zero_basis'));
+        }
+
+        if ($targets->contains(fn (array $target): bool => ! $target['material_valuation_complete'])) {
+            throw new DomainException(__('overhead_allocations.messages.incomplete_material_valuation'));
         }
 
         return [
@@ -553,6 +609,8 @@ final class OverheadAllocationService
             throw new DomainException(__('overhead_allocations.messages.rule_outside_context'));
         }
 
+        $this->assertRuleConfiguration($rule);
+
         $from = Carbon::parse($fromDate)->startOfDay();
         $to = Carbon::parse($toDate)->startOfDay();
         if ($from->greaterThan($to)
@@ -572,20 +630,45 @@ final class OverheadAllocationService
     }
 
     /** @param Collection<int, int> $runIds */
-    private function assertTargetsRemainUnreceived(Collection $runIds): void
+    private function assertTargetsRemainUnreceived(Collection $runIds, bool $lockForUpdate = false): void
     {
-        $received = ProductionRun::query()
+        $query = ProductionRun::query()
             ->whereIn('id', $runIds->all())
-            ->where(function ($query): void {
-                $query->where('received_base_quantity', '>', 0)
-                    ->orWhereHas('inventoryDocuments', fn ($documents) => $documents
-                        ->where('document_type', InventoryDocument::TypeProductionReceipt)
-                        ->where('status', InventoryDocument::StatusPosted));
-            })->exists();
+            ->orderBy('id');
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $targets = $query->get();
+        $received = $targets->contains(fn (ProductionRun $target): bool => bccomp((string) $target->received_base_quantity, '0', 8) > 0)
+            || InventoryDocument::query()
+                ->whereIn('production_run_id', $runIds->all())
+                ->where('document_type', InventoryDocument::TypeProductionReceipt)
+                ->where('status', InventoryDocument::StatusPosted)
+                ->exists();
 
         if ($received) {
             throw new DomainException(__('overhead_allocations.messages.received_run_locked'));
         }
+    }
+
+    private function assertRuleConfiguration(OverheadAllocationRule $rule): void
+    {
+        $sourceCostCenter = CostCenter::query()
+            ->forCompany((int) $rule->company_id)
+            ->active()
+            ->where('is_group', false)
+            ->find($rule->source_cost_center_id);
+        if (! $sourceCostCenter instanceof CostCenter) {
+            throw new DomainException(__('overhead_allocations.messages.rule_configuration_changed'));
+        }
+
+        $sourceAccountIds = $this->validatedAccountIds((int) $rule->company_id, $rule->source_account_ids ?? []);
+        if ($sourceCostCenter->accounts()->whereIn('accounts.id', $sourceAccountIds)->count() !== count($sourceAccountIds)) {
+            throw new DomainException(__('overhead_allocations.messages.rule_configuration_changed'));
+        }
+
+        $this->validatedCostCenterIds((int) $rule->company_id, $rule->target_cost_center_ids ?? []);
     }
 
     /** @return list<int> */
@@ -609,7 +692,7 @@ final class OverheadAllocationService
             return [];
         }
 
-        $found = CostCenter::query()->forCompany($companyId)->active()->whereIn('id', $ids)->pluck('id')->map(fn (mixed $id): int => (int) $id);
+        $found = CostCenter::query()->forCompany($companyId)->active()->where('is_group', false)->whereIn('id', $ids)->pluck('id')->map(fn (mixed $id): int => (int) $id);
         if ($found->count() !== $ids->count()) {
             throw new DomainException(__('overhead_allocations.messages.invalid_target_centers'));
         }
@@ -628,11 +711,17 @@ final class OverheadAllocationService
 
     private function decimal(mixed $value, int $scale): string
     {
-        return number_format((float) $value, $scale, '.', '');
+        return $this->round((string) $value, $scale);
     }
 
     private function round(string $value, int $scale): string
     {
-        return number_format(round((float) $value, $scale), $scale, '.', '');
+        $precision = $scale + 1;
+        $half = $scale === 0 ? '0.5' : '0.'.str_repeat('0', $scale).'5';
+        $adjusted = bccomp($value, '0', $precision) < 0
+            ? bcsub($value, $half, $precision)
+            : bcadd($value, $half, $precision);
+
+        return bcadd($adjusted, '0', $scale);
     }
 }

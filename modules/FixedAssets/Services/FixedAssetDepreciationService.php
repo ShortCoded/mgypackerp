@@ -539,8 +539,16 @@ class FixedAssetDepreciationService
         if (bccomp($this->bookValues->position($asset, $cursor)['remaining_depreciable_amount'], '0', 4) > 0) {
             return $cursor;
         }
-        $additionDate = $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)->where('status', 'posted')
-            ->whereDate('movement_date', '>', $cursor)->when($through, fn ($query) => $query->whereDate('movement_date', '<=', $through))->min('movement_date');
+        $additionDate = $asset->relationLoaded('costMovements')
+            ? $asset->costMovements
+                ->filter(fn (FixedAssetMovement $movement): bool => $movement->movement_type === FixedAssetMovement::TypeAddition
+                    && $movement->status === FixedAssetMovement::StatusPosted
+                    && $movement->movement_date->gt($cursor)
+                    && ($through === null || $movement->movement_date->lte($through)))
+                ->sortBy('movement_date')
+                ->first()?->movement_date
+            : $asset->costMovements()->where('movement_type', FixedAssetMovement::TypeAddition)->where('status', 'posted')
+                ->whereDate('movement_date', '>', $cursor)->when($through, fn ($query) => $query->whereDate('movement_date', '<=', $through))->min('movement_date');
 
         return $additionDate ? Carbon::parse($additionDate)->startOfDay() : $cursor;
     }

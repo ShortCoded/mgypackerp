@@ -12,6 +12,7 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
+use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
 use Spatie\Permission\Models\Permission;
@@ -116,7 +117,7 @@ function overheadProductionRun(array $fixture, CostCenter $costCenter, int $sequ
     ]);
     $end = $fixture['period']->from_date->copy()->addDays(10 + $sequence)->endOfDay();
 
-    return ProductionRun::query()->create([
+    $run = ProductionRun::query()->create([
         'run_number' => 'RUN-OH-'.$sequence,
         'company_id' => $fixture['company']->id,
         'financial_period_id' => $fixture['period']->id,
@@ -133,13 +134,23 @@ function overheadProductionRun(array $fixture, CostCenter $costCenter, int $sequ
         'planned_start_at' => $end->copy()->subHours($machineHours ?? 1),
         'planned_end_at' => $end,
         'actual_start_at' => $machineHours === null ? null : $end->copy()->subHours($machineHours),
-        'actual_end_at' => $end,
+        'actual_end_at' => null,
         'labor_details' => collect($laborHours)->map(fn (int|float $hours, int $index): array => [
             'employee_id' => $index + 1,
             'actual_hours' => (string) $hours,
         ])->values()->all(),
-        'status' => ProductionRun::StatusCompleted,
+        'status' => ProductionRun::StatusRunning,
     ]);
+    ProductionProgressEntry::query()->create([
+        'production_run_id' => $run->id,
+        'recorded_at' => $end,
+        'good_base_quantity' => 100,
+        'rejected_base_quantity' => 0,
+        'rework_base_quantity' => 0,
+        'scrap_base_quantity' => 0,
+    ]);
+
+    return $run;
 }
 
 function overheadMaterialCost(array $fixture, ProductionRun $run, string $amount, int $sequence): void
@@ -225,7 +236,8 @@ test('variable overhead allocates 30000 by recorded 60 40 machine hours and post
         ->and(number_format((float) $journal->lines->sum('debit_amount'), 4, '.', ''))->toBe('30000.0000')
         ->and(number_format((float) $journal->lines->sum('credit_amount'), 4, '.', ''))->toBe('30000.0000')
         ->and(app(ProductionCostService::class)->runPosition($runA)['allocated_overhead'])->toBe('18000.00000000')
-        ->and(app(ProductionCostService::class)->runPosition($runB)['allocated_overhead'])->toBe('12000.00000000');
+        ->and(app(ProductionCostService::class)->runPosition($runB)['allocated_overhead'])->toBe('12000.00000000')
+        ->and(app(ProductionCostService::class)->receiptCost($runA, '100.00000000'))->toBe('18000.00000000');
 });
 
 test('an incomplete hours group falls back as a whole to net direct material cost', function (): void {
@@ -277,11 +289,47 @@ test('fixed overhead leaves idle capacity as period cost instead of inflating pr
         ->and((string) $preview->allocatable_cost)->toBe('15000.0000')
         ->and((string) $preview->allocated_cost)->toBe('15000.0000')
         ->and((string) $preview->unallocated_cost)->toBe('15000.0000')
+        ->and($preview->unusedCapacityCost())->toBe('15000.0000')
+        ->and($preview->unusedCapacityReason())->toBe('below_normal_capacity')
         ->and((string) $lines[$runA->id]->allocated_amount)->toBe('9000.0000')
         ->and((string) $lines[$runB->id]->allocated_amount)->toBe('6000.0000');
 });
 
-test('approval rejects a stale preview when recorded production hours change', function (): void {
+test('fixed overhead with zero actual capacity remains fully unused and is safely reversible', function (): void {
+    $fixture = overheadAllocationFixture();
+    overheadSourceJournal($fixture, '30000');
+    $runA = overheadProductionRun($fixture, $fixture['targetCenterA'], 1, 0);
+    $runB = overheadProductionRun($fixture, $fixture['targetCenterB'], 2, 0);
+    $rule = overheadRule($fixture, [
+        'cost_behavior' => OverheadAllocationRule::BehaviorFixed,
+        'normal_capacity_hours' => 200,
+        'fallback_basis' => null,
+    ]);
+    $service = app(OverheadAllocationService::class);
+    $preview = $service->preview(
+        $rule,
+        $fixture['period'],
+        $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(),
+        $fixture['period']->to_date->toDateString(),
+    );
+    $posted = $service->approve($preview);
+    $reversed = $service->reverse($posted, 'Reopen zero-capacity allocation');
+
+    expect((string) $preview->actual_capacity)->toBe('0.00000000')
+        ->and((string) $preview->allocated_cost)->toBe('0.0000')
+        ->and($preview->unusedCapacityCost())->toBe('30000.0000')
+        ->and($preview->lines->every(fn ($line): bool => (string) $line->allocation_percent === '0.00000000'))->toBeTrue()
+        ->and($preview->lines->every(fn ($line): bool => (string) $line->allocated_amount === '0.0000'))->toBeTrue()
+        ->and($posted->journal_entry_id)->toBeNull()
+        ->and(JournalEntry::query()->where('source_type', 'overhead_allocation')->exists())->toBeFalse()
+        ->and(app(ProductionCostService::class)->runPosition($runA)['allocated_overhead'])->toBe('0.00000000')
+        ->and(app(ProductionCostService::class)->runPosition($runB)['allocated_overhead'])->toBe('0.00000000')
+        ->and($reversed->status)->toBe(OverheadAllocationRun::StatusReversed)
+        ->and($reversed->reversal_journal_entry_id)->toBeNull();
+});
+
+test('approval rejects a stale preview and recalculation supersedes only the obsolete draft', function (): void {
     $fixture = overheadAllocationFixture();
     overheadSourceJournal($fixture, '30000');
     $runA = overheadProductionRun($fixture, $fixture['targetCenterA'], 1, 60);
@@ -301,6 +349,42 @@ test('approval rejects a stale preview when recorded production hours change', f
         ->toThrow(DomainException::class, __('overhead_allocations.messages.stale_preview'))
         ->and($preview->refresh()->status)->toBe(OverheadAllocationRun::StatusDraft)
         ->and(JournalEntry::query()->where('source_type', 'overhead_allocation')->exists())->toBeFalse();
+
+    $replacement = $service->preview(
+        $rule,
+        $fixture['period'],
+        $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(),
+        $fixture['period']->to_date->toDateString(),
+    );
+    $detail = collect(collect(app(PeriodClosePreflightService::class)->checks($fixture['period']))
+        ->firstWhere('key', 'unposted_financial_documents')['details'])
+        ->firstWhere('permission', 'costing.overhead_allocation_run.view');
+
+    expect($preview->refresh()->status)->toBe(OverheadAllocationRun::StatusSuperseded)
+        ->and($replacement->status)->toBe(OverheadAllocationRun::StatusDraft)
+        ->and($detail['count'])->toBe(1);
+});
+
+test('direct material fallback blocks when any posted material movement is unvalued', function (): void {
+    $fixture = overheadAllocationFixture();
+    overheadSourceJournal($fixture, '30000');
+    $runA = overheadProductionRun($fixture, $fixture['targetCenterA'], 1, null);
+    $runB = overheadProductionRun($fixture, $fixture['targetCenterB'], 2, 40);
+    overheadMaterialCost($fixture, $runA, '120000', 1);
+    overheadMaterialCost($fixture, $runB, '60000', 2);
+    InventoryDocumentLine::query()->where('production_run_id', $runA->id)->update([
+        'unit_cost' => null,
+        'total_cost' => null,
+    ]);
+
+    expect(fn () => app(OverheadAllocationService::class)->preview(
+        overheadRule($fixture),
+        $fixture['period'],
+        $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(),
+        $fixture['period']->to_date->toDateString(),
+    ))->toThrow(DomainException::class, __('overhead_allocations.messages.incomplete_material_valuation'));
 });
 
 test('period close preflight exposes draft allocation previews as a remediable blocker', function (): void {
