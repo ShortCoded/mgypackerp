@@ -208,6 +208,7 @@ function notificationPayload(unreadCount, sessionIdentity = 'shared-notification
                 category: 'task',
                 id: String(index + 1),
                 is_read: false,
+                sequence: index + 1,
                 time: 'now',
                 title: `Notification ${index + 1}`,
                 url: '#',
@@ -422,7 +423,18 @@ function notificationsTabsHarness({ broadcastChannel = true, storage = true } = 
                     return csrfMeta;
                 }
 
+                if (selector === '[data-notifications-center]') {
+                    return null;
+                }
+
                 throw new Error(`Unexpected document selector: ${selector}`);
+            },
+            querySelectorAll(selector) {
+                if (selector === '[data-notifications-read-all]' || selector === '[data-notifications-health]') {
+                    return [];
+                }
+
+                throw new Error(`Unexpected notifications document selector: ${selector}`);
             },
         };
         const tab = {
@@ -470,6 +482,7 @@ function notificationsTabsHarness({ broadcastChannel = true, storage = true } = 
             crypto: {
                 randomUUID: () => `notifications-${name}-${nextTabId}`,
             },
+            dispatchEvent() {},
             fetch(url, options) {
                 const pollNumber = fetchCalls.filter((call) => call.url === '/admin/notifications/poll').length;
                 fetchCalls.push({ name, options, url });
@@ -500,6 +513,12 @@ function notificationsTabsHarness({ broadcastChannel = true, storage = true } = 
         tabs.push(tab);
 
         runBrowserScript('public/assets/js/modules/Core/notifications.js', {
+            CustomEvent: class {
+                constructor(type, init) {
+                    this.detail = init?.detail;
+                    this.type = type;
+                }
+            },
             Date: FakeDate,
             document,
             encodeURIComponent,
@@ -625,6 +644,7 @@ function pushNotificationsHarness() {
             classList: { toggle() {} },
             textContent: '',
         };
+        const control = { hidden: false, hasAttribute: () => false };
         const toggle = {
             disabled: false,
             addEventListener: (type, callback) => toggleEvents.add(type, callback),
@@ -661,6 +681,10 @@ function pushNotificationsHarness() {
 
                 if (selector === '[data-push-notification-status]') {
                     return [status];
+                }
+
+                if (selector === '[data-push-notification-control]') {
+                    return [control];
                 }
 
                 throw new Error(`Unexpected push document selector: ${selector}`);
@@ -706,6 +730,7 @@ function pushNotificationsHarness() {
                 storeUrl: '/admin/notifications/push-subscriptions',
             },
             Notification: {
+                permission: 'default',
                 requestPermission: async () => 'granted',
             },
             PushManager: {

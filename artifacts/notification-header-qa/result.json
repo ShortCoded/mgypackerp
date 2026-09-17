@@ -1,0 +1,688 @@
+{
+  "account": {
+    "hasLock": true,
+    "hasLogout": true,
+    "hasProfile": true,
+    "inside": true
+  },
+  "artifacts": [
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-browser-ar-320.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-browser-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-browser-ar-1024.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-browser-ar-1366.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-mobile-landscape-browser-ar-844x390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/menu-mobile-browser-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/account-mobile-browser-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/profile-password-before-submit-ar-1366.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/notifications-mobile-browser-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/pwa-standalone-simulated-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/pwa-standalone-simulated-ar-1366.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/connectivity-offline-simulated-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/header-mobile-browser-en-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/notifications-desktop-dark-ar-1366.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/sweetalert-notification-dark-ar-1366.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-header-qa/sweetalert-notification-light-ar-1366.png"
+  ],
+  "audits": [
+    {
+      "bodyOverflow": 0,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 179.203125,
+          "right": 256,
+          "top": 14,
+          "width": 76.796875
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 24,
+          "right": 296,
+          "top": 80,
+          "width": 272
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 260,
+          "right": 304,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 320
+    },
+    {
+      "bodyOverflow": 0,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 209.609375,
+          "right": 296,
+          "top": 14,
+          "width": 86.390625
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 24,
+          "right": 336,
+          "top": 80,
+          "width": 312
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 300,
+          "right": 344,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 360
+    },
+    {
+      "bodyOverflow": 0,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 232.40625,
+          "right": 326,
+          "top": 14,
+          "width": 93.59375
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 24,
+          "right": 366,
+          "top": 80,
+          "width": 342
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 330,
+          "right": 374,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 390
+    },
+    {
+      "bodyOverflow": 0,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 270,
+          "right": 366,
+          "top": 14,
+          "width": 96
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 24,
+          "right": 406,
+          "top": 80,
+          "width": 382
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 370,
+          "right": 414,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 430
+    },
+    {
+      "bodyOverflow": -15,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 593,
+          "right": 689,
+          "top": 14,
+          "width": 96
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 28,
+          "right": 725,
+          "top": 80,
+          "width": 697
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 693,
+          "right": 737,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 768
+    },
+    {
+      "bodyOverflow": -15,
+      "compactExpected": true,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 60,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 12,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 58,
+          "height": 44,
+          "left": 849,
+          "right": 945,
+          "top": 14,
+          "width": 96
+        },
+        "context": {
+          "bottom": 124,
+          "height": 44,
+          "left": 28,
+          "right": 981,
+          "top": 80,
+          "width": 953
+        },
+        "menu": {
+          "bottom": 58,
+          "height": 44,
+          "left": 949,
+          "right": 993,
+          "top": 14,
+          "width": 44
+        },
+        "notifications": {
+          "bottom": 60.5,
+          "height": 49,
+          "left": 62,
+          "right": 106,
+          "top": 11.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": null
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 1024
+    },
+    {
+      "bodyOverflow": -15,
+      "compactExpected": false,
+      "direction": "rtl",
+      "inside": {
+        "account": true,
+        "brand": true,
+        "context": true,
+        "menu": true,
+        "notifications": true,
+        "pwa": true,
+        "search": true
+      },
+      "items": {
+        "account": {
+          "bottom": 59,
+          "height": 48,
+          "left": 16,
+          "right": 60,
+          "top": 11,
+          "width": 44
+        },
+        "brand": {
+          "bottom": 59,
+          "height": 48,
+          "left": 1223,
+          "right": 1335,
+          "top": 11,
+          "width": 112
+        },
+        "context": null,
+        "menu": null,
+        "notifications": {
+          "bottom": 59.5,
+          "height": 49,
+          "left": 64,
+          "right": 108,
+          "top": 10.5,
+          "width": 44
+        },
+        "pwa": null,
+        "search": {
+          "bottom": 54.59375,
+          "height": 39.1875,
+          "left": 831,
+          "right": 1199,
+          "top": 15.40625,
+          "width": 368
+        }
+      },
+      "overlaps": [],
+      "pwaExpected": false,
+      "width": 1366
+    }
+  ],
+  "browserErrors": [],
+  "connectivity": {
+    "offlineShown": true,
+    "retryConfirmed": true
+  },
+  "drawer": {
+    "bounds": {
+      "bottom": 844,
+      "left": 31.203125,
+      "right": 390,
+      "top": 0
+    },
+    "currentLinks": 1,
+    "hasLastItem": true,
+    "minimumTarget": 44,
+    "overflowScrollable": "auto"
+  },
+  "drawerClosures": {
+    "backdrop": true,
+    "closeButton": true,
+    "escape": true,
+    "resize": true
+  },
+  "guard": {
+    "dirty": true,
+    "path": "/profile/edit",
+    "prompted": 1
+  },
+  "keyboardSimulation": {
+    "innerHeight": 844,
+    "toolbarDisplay": "flex",
+    "viewportHeight": 844,
+    "virtualKeyboardClass": false
+  },
+  "locale": {
+    "ar": true,
+    "en": true
+  },
+  "landscape": {
+    "bodyOverflow": -15,
+    "compactExpected": true,
+    "direction": "rtl",
+    "inside": {
+      "account": true,
+      "brand": true,
+      "context": true,
+      "menu": true,
+      "notifications": true,
+      "pwa": true,
+      "search": true
+    },
+    "items": {
+      "account": {
+        "bottom": 60,
+        "height": 48,
+        "left": 16,
+        "right": 60,
+        "top": 12,
+        "width": 44
+      },
+      "brand": {
+        "bottom": 58,
+        "height": 44,
+        "left": 669,
+        "right": 765,
+        "top": 14,
+        "width": 96
+      },
+      "context": {
+        "bottom": 124,
+        "height": 44,
+        "left": 28,
+        "right": 801,
+        "top": 80,
+        "width": 773
+      },
+      "menu": {
+        "bottom": 58,
+        "height": 44,
+        "left": 769,
+        "right": 813,
+        "top": 14,
+        "width": 44
+      },
+      "notifications": {
+        "bottom": 60.5,
+        "height": 49,
+        "left": 62,
+        "right": 106,
+        "top": 11.5,
+        "width": 44
+      },
+      "pwa": null,
+      "search": null
+    },
+    "overlaps": [],
+    "pwaExpected": false,
+    "width": 844
+  },
+  "lockLogout": {
+    "lockBlockedProtectedRoute": true,
+    "lockedPage": {
+      "hasHeader": false,
+      "hasPassword": true,
+      "path": "/lock-screen"
+    },
+    "logoutEndedSession": true
+  },
+  "notificationsInsideViewport": true,
+  "notificationCaret": {
+    "caretCenter": 84,
+    "difference": 0,
+    "extraneousStatusNodes": 0,
+    "pushControlHidden": true,
+    "technicalUnavailableHint": false,
+    "triggerCenter": 84
+  },
+  "notificationThemes": {
+    "dark": {
+      "background": "rgb(18, 30, 45)",
+      "color": "rgb(157, 169, 187)",
+      "theme": "dark",
+      "visible": true
+    },
+    "light": {
+      "background": "rgb(255, 255, 255)",
+      "color": "rgb(94, 110, 130)",
+      "theme": "light",
+      "visible": true
+    }
+  },
+  "operatingContext": {
+    "branch": "Alexandria Export Office - Runtime Demo / Branch-00012 / Alexandria Plastics Export - Runtime Demo / إداري",
+    "company": "Alexandria Plastics Export - Runtime Demo / Company-00004",
+    "period": "FY 2027 - Runtime Demo / Period-00003 / مفتوحة",
+    "selected": true
+  },
+  "pwa": {
+    "bottomAligned": true,
+    "buttonHeights": [
+      44,
+      44,
+      44
+    ],
+    "labels": [
+      "رجوع",
+      "للأمام",
+      "إعادة تحميل"
+    ],
+    "toolbarCount": 1
+  },
+  "pwaDesktop": {
+    "bodyOverflow": -15,
+    "compactExpected": false,
+    "direction": "rtl",
+    "inside": {
+      "account": true,
+      "brand": true,
+      "context": true,
+      "menu": true,
+      "notifications": true,
+      "pwa": true,
+      "search": true
+    },
+    "items": {
+      "account": {
+        "bottom": 59,
+        "height": 48,
+        "left": 16,
+        "right": 60,
+        "top": 11,
+        "width": 44
+      },
+      "brand": {
+        "bottom": 59,
+        "height": 48,
+        "left": 1223,
+        "right": 1335,
+        "top": 11,
+        "width": 112
+      },
+      "context": null,
+      "menu": null,
+      "notifications": {
+        "bottom": 59.5,
+        "height": 49,
+        "left": 64,
+        "right": 108,
+        "top": 10.5,
+        "width": 44
+      },
+      "pwa": {
+        "bottom": 195,
+        "height": 56,
+        "left": 16,
+        "right": 1335,
+        "top": 139,
+        "width": 1319
+      },
+      "search": {
+        "bottom": 54.59375,
+        "height": 39.1875,
+        "left": 831,
+        "right": 1199,
+        "top": 15.40625,
+        "width": 368
+      }
+    },
+    "overlaps": [],
+    "pwaExpected": true,
+    "width": 1366
+  },
+  "profileValidation": {
+    "fields": [
+      {
+        "id": "profile-current-password",
+        "invalid": false
+      },
+      {
+        "id": "profile-new-password",
+        "invalid": false
+      },
+      {
+        "id": "profile-password-confirmation",
+        "invalid": false
+      }
+    ],
+    "noValidate": true
+  },
+  "responseErrors": [],
+  "testedDisplayMode": "standalone (Chrome DevTools display-mode with navigator.standalone fallback emulation)",
+  "viewports": [
+    320,
+    360,
+    390,
+    430,
+    768,
+    1024,
+    1366
+  ]
+}

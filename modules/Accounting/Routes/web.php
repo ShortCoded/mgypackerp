@@ -5,6 +5,7 @@ use Modules\Accounting\Http\Controllers\AccountController;
 use Modules\Accounting\Http\Controllers\CostCenterController;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Http\Controllers\LedgerReportController;
+use Modules\Accounting\Http\Controllers\TrialBalanceReportController;
 
 Route::middleware('auth')
     ->prefix('admin/accounting')
@@ -70,6 +71,17 @@ Route::middleware('auth')
                 Route::get('/customer-statement', 'customerStatement')->middleware('can:reports.customer_statement.view')->name('customer-statement');
                 Route::get('/supplier-statement', 'supplierStatement')->middleware('can:reports.supplier_statement.view')->name('supplier-statement');
             });
+
+        foreach (['excel', 'csv', 'pdf'] as $format) {
+            Route::get("/reports/trial-balance/export/{$format}", [TrialBalanceReportController::class, 'export'])
+                ->defaults('trial_balance_export_format', $format)
+                ->middleware('can:reports.trial_balance.export')
+                ->name("reports.trial-balance.export.{$format}");
+        }
+
+        Route::get('/reports/trial-balance', [TrialBalanceReportController::class, 'index'])
+            ->middleware('can:reports.trial_balance.view')
+            ->name('reports.trial-balance');
 
         Route::prefix('accounts')
             ->name('accounts.')

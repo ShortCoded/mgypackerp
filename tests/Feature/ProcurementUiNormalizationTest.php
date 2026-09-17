@@ -5,13 +5,16 @@ use Illuminate\Support\Facades\Storage;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\MenuService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
+use Modules\Finance\Models\CashVoucher;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Services\ProcurementAttachmentService;
@@ -391,6 +394,136 @@ test('supplier invoice schedule uses one date and an explicit cashbox or bank so
     expect($schedule->due_date->toDateString())->toBe($dueDate)
         ->and($schedule->payment_date?->toDateString())->toBe($dueDate)
         ->and($schedule->payment_source_type)->toBe(PurchaseInvoice::SourceCashbox);
+});
+
+test('editing preserves a historical invoice item and legacy scheduled payment without creating a voucher', function (): void {
+    $fixture = procurementUiFixture();
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+
+    $invoice = app(PurchaseInvoiceService::class)->create([
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 2,
+            'unit_price' => 120000,
+        ]],
+    ])['record'];
+    $line = $invoice->lines()->sole();
+    $dueDate = now()->addDays(13)->toDateString();
+    $schedule = $invoice->paymentSchedules()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'line_number' => 1,
+        'due_date' => $dueDate,
+        'amount' => 240000,
+        'payment_source_type' => PurchaseInvoice::SourceScheduled,
+        'status' => PurchaseInvoicePaymentSchedule::StatusScheduled,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $fixture['raw']->delete();
+
+    $html = $this->get(route('admin.purchases.purchase-invoices.edit', $invoice))
+        ->assertOk()
+        ->assertSee($fixture['raw']->doc_num)
+        ->assertSee($fixture['raw']->name)
+        ->getContent();
+    $dom = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $dateInput = $dom->querySelector('[name="payment_schedules[0][due_date]"]');
+    $sourceSelect = $dom->querySelector('[name="payment_schedules[0][payment_source_type]"]');
+
+    expect($dateInput)->not->toBeNull()
+        ->and($dateInput->getAttribute('value'))->toBe($dueDate)
+        ->and($dateInput->hasAttribute('required'))->toBeTrue()
+        ->and($sourceSelect?->querySelector('option[selected]')?->getAttribute('value'))->toBe(PurchaseInvoice::SourceScheduled);
+
+    $payload = [
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'lines' => [[
+            'public_id' => $line->public_id,
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 2,
+            'unit_price' => '120,000',
+        ]],
+        'payment_schedules' => [[
+            'public_id' => $schedule->public_id,
+            'due_date' => app(DateFormatService::class)->formatDate($dueDate),
+            'amount' => '240,000',
+            'payment_source_type' => PurchaseInvoice::SourceScheduled,
+        ]],
+    ];
+    $voucherCount = CashVoucher::query()->count();
+
+    $this->putJson(route('admin.purchases.purchase-invoices.update', $invoice), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $preservedLine = $invoice->fresh()->lines()->sole();
+    $preservedSchedule = $invoice->fresh()->paymentSchedules()->sole();
+    expect($preservedLine->getKey())->toBe($line->getKey())
+        ->and($preservedLine->product_id)->toBe($fixture['raw']->getKey())
+        ->and($preservedLine->product?->trashed())->toBeTrue()
+        ->and($preservedSchedule->getKey())->toBe($schedule->getKey())
+        ->and($preservedSchedule->due_date->toDateString())->toBe($dueDate)
+        ->and($preservedSchedule->amount)->toBe('240000.0000')
+        ->and($preservedSchedule->payment_source_type)->toBe(PurchaseInvoice::SourceScheduled)
+        ->and($preservedSchedule->cash_voucher_id)->toBeNull()
+        ->and(CashVoucher::query()->count())->toBe($voucherCount);
+
+    $invalidSchedulePayload = $payload;
+    $invalidSchedulePayload['payment_schedules'][0]['due_date'] = '';
+    $invalidSchedulePayload['payment_schedules'][0]['amount'] = '';
+    $invalidSchedulePayload['payment_schedules'][0]['payment_source_type'] = PurchaseInvoice::SourceCashbox;
+    $invalidScheduleResponse = $this->putJson(
+        route('admin.purchases.purchase-invoices.update', $invoice),
+        $invalidSchedulePayload,
+    )->assertUnprocessable()
+        ->assertJsonValidationErrors([
+            'payment_schedules.0.due_date',
+            'payment_schedules.0.amount',
+            'payment_schedules.0.cashbox_doc_num',
+        ]);
+    $scheduleErrors = $invalidScheduleResponse->json('errors');
+    expect($scheduleErrors['payment_schedules.0.due_date'][0])
+        ->toBe(__('purchase_invoices.messages.schedule_due_date_required', ['position' => 1]))
+        ->and($scheduleErrors['payment_schedules.0.amount'][0])
+        ->toBe(__('purchase_invoices.messages.schedule_amount_required', ['position' => 1]))
+        ->and($scheduleErrors['payment_schedules.0.cashbox_doc_num'][0])
+        ->toBe(__('purchase_invoices.messages.schedule_cashbox_required', ['position' => 1]));
+
+    $newInvoicePayload = $payload;
+    unset($newInvoicePayload['lines'][0]['public_id'], $newInvoicePayload['payment_schedules']);
+    $invalidProductResponse = $this->postJson(route('admin.purchases.purchase-invoices.store'), $newInvoicePayload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('lines.0.product_doc_num');
+    expect($invalidProductResponse->json('errors')['lines.0.product_doc_num'][0])
+        ->toBe(__('purchase_invoices.messages.line_product_invalid', ['position' => 1]));
+
+    $script = file_get_contents(public_path('assets/js/modules/Purchases/purchase-invoices.js'));
+    $scheduleDuplicateHandler = substr(
+        $script,
+        strpos($script, '$form.on(\'click\', \'.js-purchase-invoice-duplicate-schedule\''),
+        900,
+    );
+    expect($script)
+        ->toContain("removeAttr('data-date-picker-initialized')")
+        ->toContain("find('.erp-date-picker-display').remove()")
+        ->toContain('if ($clone.find(\'.js-purchase-invoice-schedule-source\').val() === \'scheduled\')');
+    expect($scheduleDuplicateHandler)
+        ->toContain('$clone.find(\'[name$="[public_id]"]\').val(\'\')')
+        ->not->toContain('$clone.find(\'input[type="hidden"]\').val(\'\')');
 });
 
 test('request datatable exposes state actions and draft restore without resurrecting removed lines', function (): void {

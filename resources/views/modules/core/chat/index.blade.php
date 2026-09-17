@@ -159,6 +159,7 @@
     @php
         $chatConfig = [
             'initialConversation' => filled(request()->query('conversation')) && is_string(request()->query('conversation')) ? request()->query('conversation') : null,
+            'unreadOnly' => request()->query('filter') === 'unread',
             'routes' => [
                 'conversations' => route('admin.chat.conversations'),
                 'conversation' => route('admin.chat.conversations.show', '__CONVERSATION__'),

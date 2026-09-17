@@ -30,14 +30,67 @@
     return window.navigator.standalone === true || Boolean(displayModeQuery && displayModeQuery.matches);
   }
 
-  function updateNavigationButtonAvailability() {
+  function safeInternalUrl(value) {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      var url = new URL(value, window.location.href);
+      var blockedPaths = config.navigationBlockedPaths || [];
+
+      if (url.origin !== window.location.origin || blockedPaths.indexOf(url.pathname) !== -1) {
+        return null;
+      }
+
+      return url.href;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function fallbackBackUrl() {
+    var currentUrl = new URL(window.location.href);
+    var referrerUrl = safeInternalUrl(document.referrer);
+
+    if (referrerUrl && referrerUrl !== currentUrl.href) {
+      return referrerUrl;
+    }
+
+    var configuredFallback = safeInternalUrl(config.navigationFallbackUrl);
+
+    return configuredFallback && configuredFallback !== currentUrl.href
+      ? configuredFallback
+      : null;
+  }
+
+  function knownNavigationEntry(offset) {
     var navigationApi = window.navigation;
-    var canGoBack = navigationApi && typeof navigationApi.canGoBack === 'boolean'
-      ? navigationApi.canGoBack
-      : true;
-    var canGoForward = navigationApi && typeof navigationApi.canGoForward === 'boolean'
-      ? navigationApi.canGoForward
-      : true;
+
+    if (!navigationApi || typeof navigationApi.entries !== 'function' || !navigationApi.currentEntry) {
+      return null;
+    }
+
+    var entries = navigationApi.entries();
+    var currentIndex = entries.indexOf(navigationApi.currentEntry);
+    var targetEntry = entries[currentIndex + offset];
+
+    return targetEntry && safeInternalUrl(targetEntry.url) ? targetEntry : null;
+  }
+
+  function runProtected(action) {
+    if (window.AppNavigationGuard && typeof window.AppNavigationGuard.run === 'function') {
+      return window.AppNavigationGuard.run(action);
+    }
+
+    action();
+
+    return true;
+  }
+
+  function updateNavigationButtonAvailability() {
+    var canGoBack = Boolean(knownNavigationEntry(-1) || fallbackBackUrl());
+    var canGoForward = Boolean(knownNavigationEntry(1));
 
     if (backButton) {
       backButton.disabled = !canGoBack;
@@ -67,19 +120,51 @@
 
     if (backButton) {
       backButton.addEventListener('click', function () {
-        window.history.back();
+        runProtected(function () {
+          var navigationApi = window.navigation;
+
+          if (navigationApi && navigationApi.canGoBack && knownNavigationEntry(-1)) {
+            if (typeof navigationApi.back === 'function') {
+              navigationApi.back();
+            } else {
+              window.history.back();
+            }
+
+            return;
+          }
+
+          var fallbackUrl = fallbackBackUrl();
+
+          if (fallbackUrl) {
+            window.location.assign(fallbackUrl);
+          }
+        });
       });
     }
 
     if (forwardButton) {
       forwardButton.addEventListener('click', function () {
-        window.history.forward();
+        runProtected(function () {
+          var navigationApi = window.navigation;
+
+          if (!navigationApi || !navigationApi.canGoForward || !knownNavigationEntry(1)) {
+            return;
+          }
+
+          if (typeof navigationApi.forward === 'function') {
+            navigationApi.forward();
+          } else {
+            window.history.forward();
+          }
+        });
       });
     }
 
     if (pageReloadButton) {
       pageReloadButton.addEventListener('click', function () {
-        window.location.reload();
+        runProtected(function () {
+          window.location.reload();
+        });
       });
     }
 
@@ -261,9 +346,11 @@
         return;
       }
 
-      reloadRequested = true;
-      reloadButton.disabled = true;
-      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      runProtected(function () {
+        reloadRequested = true;
+        reloadButton.disabled = true;
+        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      });
     });
   }
 

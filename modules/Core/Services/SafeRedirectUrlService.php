@@ -2,7 +2,9 @@
 
 namespace Modules\Core\Services;
 
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Routing\ImplicitRouteBinding;
 use Illuminate\Routing\Route as MatchedRoute;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
@@ -77,6 +79,31 @@ class SafeRedirectUrlService
         $url = $this->sanitize($url);
 
         if ($url === null || ! $this->isSafeIntendedUrl($url)) {
+            return null;
+        }
+
+        return $url;
+    }
+
+    public function sanitizeIntendedForUser(?string $url, User $user): ?string
+    {
+        $url = $this->sanitizeIntended($url);
+
+        if ($url === null) {
+            return null;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        $route = is_string($path) ? $this->matchGetRoute('/'.ltrim($path, '/')) : null;
+
+        if (! $route instanceof MatchedRoute || ! $this->userCanAccessRoute($route, $user)) {
+            return null;
+        }
+
+        try {
+            app('router')->substituteBindings($route);
+            ImplicitRouteBinding::resolveForRoute(app(), $route);
+        } catch (Throwable) {
             return null;
         }
 
@@ -234,5 +261,22 @@ class SafeRedirectUrlService
         } catch (Throwable) {
             return null;
         }
+    }
+
+    private function userCanAccessRoute(MatchedRoute $route, User $user): bool
+    {
+        foreach ($route->gatherMiddleware() as $middleware) {
+            if (! is_string($middleware) || ! Str::startsWith($middleware, 'can:')) {
+                continue;
+            }
+
+            $ability = Str::before(Str::after($middleware, 'can:'), ',');
+
+            if ($ability === '' || ! $user->can($ability)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

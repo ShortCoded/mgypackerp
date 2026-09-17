@@ -148,9 +148,6 @@ Route::middleware('auth')
             ->name('notifications.poll');
         Route::get('/notifications', [NotificationController::class, 'index'])
             ->name('notifications.index');
-        Route::get('/notifications/diagnostics', [NotificationController::class, 'diagnostics'])
-            ->middleware('can:settings.pwa.view')
-            ->name('notifications.diagnostics');
         Route::get('/notifications/{notification:public_uuid}/open', [NotificationController::class, 'open'])
             ->name('notifications.open');
         Route::post('/notifications/{notification:public_uuid}/read', [NotificationController::class, 'read'])
@@ -1052,6 +1049,12 @@ Route::middleware('auth')
         Route::patch('/financial-periods/{financialPeriod:doc_num}/restore', [FinancialPeriodController::class, 'restore'])
             ->middleware('can:financial_periods.restore')
             ->name('financial-periods.restore');
+        Route::post('/financial-periods/{financialPeriod:doc_num}/close', [FinancialPeriodController::class, 'close'])
+            ->middleware('can:financial_periods.close')
+            ->name('financial-periods.close');
+        Route::post('/financial-periods/{financialPeriod:doc_num}/reopen', [FinancialPeriodController::class, 'reopen'])
+            ->middleware('can:financial_periods.reopen')
+            ->name('financial-periods.reopen');
         Route::get('/financial-periods/{financialPeriod:doc_num}/clone', [FinancialPeriodController::class, 'clone'])
             ->middleware('can:financial_periods.clone')
             ->name('financial-periods.clone');

@@ -78,12 +78,14 @@ return [
     'connectivity' => [
         'offline' => 'You are offline. Changes will not be submitted until the connection returns.',
         'online' => 'Connection restored.',
+        'retry' => 'Try again',
     ],
     'navigation' => [
         'label' => 'App navigation',
         'back' => 'Back',
         'forward' => 'Forward',
         'reload' => 'Reload',
+        'unsaved_changes' => 'You have unsaved changes. Leave this page?',
     ],
     'update' => [
         'available' => 'A new version is available.',

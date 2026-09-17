@@ -302,7 +302,9 @@
         });
     });
 
-    $(document).off('input.profileForm change.profileForm', '.js-profile-form .is-invalid, .js-profile-default-context-form .is-invalid').on('input.profileForm change.profileForm', '.js-profile-form .is-invalid, .js-profile-default-context-form .is-invalid', function () {
+    const invalidProfileFieldSelector = '.js-profile-form .is-invalid, .js-profile-default-context-form .is-invalid, .js-profile-password-form .is-invalid';
+
+    $(document).off('input.profileForm change.profileForm', invalidProfileFieldSelector).on('input.profileForm change.profileForm', invalidProfileFieldSelector, function () {
         const $input = $(this);
         const field = $input.attr('name') || '';
 

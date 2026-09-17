@@ -43,6 +43,27 @@ class ChatService
             ->get();
     }
 
+    public function unreadConversationCount(User $user): int
+    {
+        return DB::table('chat_conversation_user as participant')
+            ->join('chat_conversations as conversation', 'conversation.id', '=', 'participant.conversation_id')
+            ->where('participant.user_id', $user->getKey())
+            ->whereNull('participant.deleted_at')
+            ->whereNull('conversation.deleted_at')
+            ->whereExists(function ($messages) use ($user): void {
+                $messages->selectRaw('1')
+                    ->from('chat_messages as message')
+                    ->whereColumn('message.conversation_id', 'conversation.id')
+                    ->where('message.sender_id', '!=', $user->getKey())
+                    ->whereNull('message.deleted_at')
+                    ->where(function ($unread): void {
+                        $unread->whereNull('participant.last_read_at')
+                            ->orWhereColumn('message.sent_at', '>', 'participant.last_read_at');
+                    });
+            })
+            ->count();
+    }
+
     public function createDirectConversation(User $creator, string $targetDocNum): ChatConversation
     {
         $target = User::query()

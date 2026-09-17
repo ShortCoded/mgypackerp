@@ -1,8 +1,7 @@
 @if (isset($topbarClass))
-    <ul class="navbar-nav navbar-nav-icons {{ $topbarClass }} flex-row align-items-center">
-        @include('layouts.partials.operating-context-indicator')
-        @include('layouts.partials.pwa-navigation')
-        <li class="nav-item ps-2 pe-0 erp-theme-switch-item">
+    <ul class="navbar-nav navbar-nav-icons erp-header-actions {{ $topbarClass }} flex-row align-items-center">
+        @include('layouts.partials.operating-context-indicator', ['class' => 'erp-desktop-header-control'])
+        <li class="nav-item ps-2 pe-0 erp-theme-switch-item erp-desktop-header-control">
             <div class="dropdown theme-control-dropdown">
                 <a class="nav-link d-flex align-items-center dropdown-toggle fa-icon-wait fs-9 pe-1 py-0" href="#" role="button" id="themeSwitchDropdownInline" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                     <span class="fas fa-sun fs-7" data-fa-transform="shrink-2" data-theme-dropdown-toggle-icon="light"></span>
@@ -22,18 +21,17 @@
         @include('layouts.partials.user-menu')
     </ul>
 @else
-    <nav class="navbar navbar-light navbar-glass navbar-top navbar-expand">
-        <button class="btn navbar-toggler-humburger-icon navbar-toggler me-1 me-sm-3" type="button" data-bs-toggle="collapse" data-bs-target="#navbarVerticalCollapse" aria-controls="navbarVerticalCollapse" aria-expanded="false" aria-label="{{ __('layout.toggle_navigation') }}">
+    <nav class="navbar navbar-light navbar-glass navbar-top navbar-expand erp-primary-header">
+        <button class="btn navbar-toggler-humburger-icon navbar-toggler me-1 me-sm-3" type="button" data-bs-toggle="offcanvas" data-bs-target="#erpMobileNavigation" aria-controls="erpMobileNavigation" aria-expanded="false" aria-label="{{ __('layout.toggle_navigation') }}" data-erp-mobile-navigation-toggle>
             <span class="navbar-toggle-icon"><span class="toggle-line"></span></span>
         </button>
         @include('layouts.partials.brand', ['class' => 'me-1 me-sm-3'])
 
         @include('layouts.partials.search')
 
-        <ul class="navbar-nav navbar-nav-icons ms-auto flex-row align-items-center">
-            @include('layouts.partials.operating-context-indicator')
-            @include('layouts.partials.pwa-navigation')
-            <li class="nav-item ps-2 pe-0 erp-theme-switch-item">
+        <ul class="navbar-nav navbar-nav-icons erp-header-actions ms-auto flex-row align-items-center">
+            @include('layouts.partials.operating-context-indicator', ['class' => 'erp-desktop-header-control'])
+            <li class="nav-item ps-2 pe-0 erp-theme-switch-item erp-desktop-header-control">
                 <div class="dropdown theme-control-dropdown">
                     <a class="nav-link d-flex align-items-center dropdown-toggle fa-icon-wait fs-9 pe-1 py-0" href="#" role="button" id="themeSwitchDropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                         <span class="fas fa-sun fs-7" data-fa-transform="shrink-2" data-theme-dropdown-toggle-icon="light"></span>

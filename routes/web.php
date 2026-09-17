@@ -49,3 +49,4 @@ Route::redirect('/', '/dashboard')->middleware(['auth']);
 
 Route::get('/dashboard', DashboardController::class)->middleware(['auth'])->name('dashboard');
 Route::get('/dashboard/data', [DashboardController::class, 'data'])->middleware(['auth'])->name('dashboard.data');
+Route::get('/dashboard/pending-decisions', [DashboardController::class, 'pendingDecisions'])->middleware(['auth'])->name('dashboard.pending-decisions');

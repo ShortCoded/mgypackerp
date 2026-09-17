@@ -133,12 +133,12 @@
                 'paid_amount' => $numbers->format($schedule->paid_amount),
                 'credited_amount' => $numbers->format($schedule->credited_amount),
                 'outstanding_amount' => $numbers->format($schedule->outstanding_amount),
-                'payment_source_type' => in_array($schedule->payment_source_type, PurchaseInvoice::scheduleSourceTypes(), true)
+                'payment_source_type' => in_array($schedule->payment_source_type, [...PurchaseInvoice::scheduleSourceTypes(), PurchaseInvoice::SourceScheduled], true)
                     ? $schedule->payment_source_type
                     : null,
-                'cashbox_doc_num' => $schedule->cashbox?->doc_num,
+                'cashbox_doc_num' => $schedule->payment_source_type === PurchaseInvoice::SourceScheduled ? null : $schedule->cashbox?->doc_num,
                 'cashbox_label' => $cashboxLabel,
-                'bank_account_doc_num' => $schedule->bankAccount?->doc_num,
+                'bank_account_doc_num' => $schedule->payment_source_type === PurchaseInvoice::SourceScheduled ? null : $schedule->bankAccount?->doc_num,
                 'bank_account_label' => $bankLabel,
                 'notes' => $schedule->notes,
             ];
@@ -938,14 +938,14 @@
                         <table class="table table-sm table-hover align-middle mb-0 purchase-invoice-schedules js-purchase-invoice-schedules">
                             <thead class="bg-200">
                                 <tr>
-                                    <th>{{ __('purchase_invoices.attributes.due_date') }}</th>
-                                    <th>{{ __('purchase_invoices.attributes.payment_amount') }}</th>
+                                    <th>{{ __('purchase_invoices.attributes.due_date') }} @unless($isReadonly)<span class="text-danger" aria-hidden="true">*</span>@endunless</th>
+                                    <th>{{ __('purchase_invoices.attributes.payment_amount') }} @unless($isReadonly)<span class="text-danger" aria-hidden="true">*</span>@endunless</th>
                                     @if($isReadonly)
                                         <th>{{ __('purchase_invoices.totals.paid') }}</th>
                                         <th>{{ __('purchase_invoices.totals.credited') }}</th>
                                         <th>{{ __('purchase_invoices.totals.remaining') }}</th>
                                     @endif
-                                    <th>{{ __('purchase_invoices.attributes.payment_source_type') }}</th>
+                                    <th>{{ __('purchase_invoices.attributes.payment_source_type') }} @unless($isReadonly)<span class="text-danger" aria-hidden="true">*</span>@endunless</th>
                                     <th>{{ __('purchase_invoices.attributes.cashbox') }}</th>
                                     <th>{{ __('purchase_invoices.attributes.bank_account') }}</th>
                                     <th class="purchase-invoice-notes-cell">{{ __('purchase_invoices.attributes.notes') }}</th>
@@ -962,7 +962,7 @@
                                                 <div class="form-control-plaintext text-center date-value" dir="ltr">{{ $schedule['due_date'] ?? null }}</div>
                                             @else
                                                 <x-forms.input type="hidden" name="payment_schedules[{{ $index }}][public_id]" value="{{ $schedule['public_id'] ?? '' }}" />
-                                                <x-forms.date-input class="form-control form-control-sm text-center js-date-picker" name="payment_schedules[{{ $index }}][due_date]" type="text" value="{{ $schedule['due_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
+                                                <x-forms.date-input class="form-control form-control-sm text-center js-date-picker" name="payment_schedules[{{ $index }}][due_date]" type="text" value="{{ $schedule['due_date'] ?? '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.due_date"></div>
                                             @endif
                                         </td>
@@ -970,7 +970,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($schedule['amount'] ?? 0) }}</div>
                                             @else
-                                                <x-forms.numeric-input class="form-control-sm text-end js-purchase-invoice-schedule-amount" :name="'payment_schedules['.$index.'][amount]'" :value="$schedule['amount'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
+                                                <x-forms.numeric-input class="form-control-sm text-end js-purchase-invoice-schedule-amount" :name="'payment_schedules['.$index.'][amount]'" :value="$schedule['amount'] ?? ''" :scale="4" min="0.0001" step="0.0001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="payment_schedules.{{ $index }}.amount"></div>
                                             @endif
                                         </td>
@@ -983,7 +983,10 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ filled($schedule['payment_source_type'] ?? null) ? __('purchase_invoices.source_types.'.$schedule['payment_source_type']) : __('common.empty_value') }}</div>
                                             @else
-                                                <x-forms.select class="form-select form-select-sm js-purchase-invoice-schedule-source" name="payment_schedules[{{ $index }}][payment_source_type]">
+                                                <x-forms.select class="form-select form-select-sm js-purchase-invoice-schedule-source" name="payment_schedules[{{ $index }}][payment_source_type]" required>
+                                                    @if(($schedule['payment_source_type'] ?? null) === PurchaseInvoice::SourceScheduled)
+                                                        <option value="{{ PurchaseInvoice::SourceScheduled }}" selected>{{ __('purchase_invoices.source_types.'.PurchaseInvoice::SourceScheduled) }}</option>
+                                                    @endif
                                                     @foreach(PurchaseInvoice::scheduleSourceTypes() as $source)
                                                         <option value="{{ $source }}" @selected(($schedule['payment_source_type'] ?? PurchaseInvoice::SourceCashbox) === $source)>{{ __('purchase_invoices.source_types.'.$source) }}</option>
                                                     @endforeach
@@ -995,7 +998,8 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $schedule['cashbox_label'] ?? null }}</div>
                                             @else
-                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-cashbox" name="payment_schedules[{{ $index }}][cashbox_doc_num]" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true">
+                                                <span class="text-danger js-purchase-invoice-schedule-cashbox-required" aria-hidden="true">*</span>
+                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-cashbox" name="payment_schedules[{{ $index }}][cashbox_doc_num]" data-url="{{ route('admin.purchases.select2.cashboxes') }}" data-placeholder="{{ __('purchase_invoices.placeholders.cashbox') }}" data-allow-clear="true" :required="($schedule['payment_source_type'] ?? PurchaseInvoice::SourceCashbox) === PurchaseInvoice::SourceCashbox">
                                                     @if(! empty($schedule['cashbox_doc_num']))
                                                         <option value="{{ $schedule['cashbox_doc_num'] }}" selected>{{ $schedule['cashbox_label'] ?? $schedule['cashbox_doc_num'] }}</option>
                                                     @endif
@@ -1007,7 +1011,8 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $schedule['bank_account_label'] ?? null }}</div>
                                             @else
-                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-bank" name="payment_schedules[{{ $index }}][bank_account_doc_num]" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true">
+                                                <span class="text-danger js-purchase-invoice-schedule-bank-required" aria-hidden="true">*</span>
+                                                <x-forms.select class="form-select form-select-sm js-select2-ajax js-purchase-invoice-schedule-bank" name="payment_schedules[{{ $index }}][bank_account_doc_num]" data-url="{{ route('admin.purchases.select2.bank-accounts') }}" data-placeholder="{{ __('purchase_invoices.placeholders.bank_account') }}" data-allow-clear="true" :required="($schedule['payment_source_type'] ?? PurchaseInvoice::SourceCashbox) === PurchaseInvoice::SourceBank">
                                                     @if(! empty($schedule['bank_account_doc_num']))
                                                         <option value="{{ $schedule['bank_account_doc_num'] }}" selected>{{ $schedule['bank_account_label'] ?? $schedule['bank_account_doc_num'] }}</option>
                                                     @endif

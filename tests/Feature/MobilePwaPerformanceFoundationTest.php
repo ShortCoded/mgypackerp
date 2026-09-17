@@ -27,6 +27,7 @@ test('authenticated layout uses one directional theme and one user stylesheet', 
         ->assertSee('data-erp-pwa-back', false)
         ->assertSee('data-erp-pwa-forward', false)
         ->assertSee('data-erp-pwa-page-reload', false)
+        ->assertSee('vendors/sweetalert2/sweetalert2.all.min.js', false)
         ->assertSee('aria-label="App navigation"', false);
 
     expect(substr_count($response->getContent(), 'assets/css/user.css'))->toBe(1);
@@ -60,11 +61,13 @@ test('authentication layout uses the same mobile viewport and deduplicated style
 test('mobile and pwa assets expose the shared interaction contracts', function () {
     $css = file_get_contents(public_path('assets/css/user.css'));
     $connectivity = file_get_contents(public_path('assets/js/modules/Core/connectivity.js'));
+    $navigationGuard = file_get_contents(public_path('assets/js/modules/Core/navigation-guard.js'));
     $navbarPreference = file_get_contents(public_path('assets/js/modules/Core/navbar-preference.js'));
     $pwaRuntime = file_get_contents(public_path('assets/js/modules/Core/pwa-runtime.js'));
     $notificationSound = file_get_contents(public_path('assets/js/modules/Core/notification-sound.js'));
     $notifications = file_get_contents(public_path('assets/js/modules/Core/notifications.js'));
     $pushNotifications = file_get_contents(public_path('assets/js/modules/Core/push-notifications.js'));
+    $alerts = file_get_contents(public_path('assets/js/modules/Core/alerts.js'));
     $salesIndex = file_get_contents(resource_path('views/modules/sales/cycle/index.blade.php'));
 
     expect($css)
@@ -78,8 +81,16 @@ test('mobile and pwa assets expose the shared interaction contracts', function (
         ->toContain('env(safe-area-inset-bottom)')
         ->and($connectivity)
         ->toContain("window.addEventListener('offline'")
+        ->toContain("window.addEventListener('online', verifyServer)")
+        ->toContain("method: 'HEAD'")
+        ->toContain(".on('ajaxError.erpConnectivity'")
+        ->toContain("retryButton.addEventListener('click', verifyServer)")
+        ->not->toContain("document.addEventListener('submit'")
+        ->and($navigationGuard)
         ->toContain("document.addEventListener('submit'")
-        ->toContain('event.preventDefault()')
+        ->toContain("window.addEventListener('beforeunload'")
+        ->toContain('window.confirm(')
+        ->toContain('event.isTrusted')
         ->and($navbarPreference)
         ->toContain("cookieName = 'erp_navbar_position'")
         ->toContain('SameSite=Lax')
@@ -92,20 +103,28 @@ test('mobile and pwa assets expose the shared interaction contracts', function (
         ->toContain('window.history.back()')
         ->toContain('window.history.forward()')
         ->toContain('window.location.reload()')
+        ->toContain('navigationApi.entries()')
+        ->toContain('navigationFallbackUrl')
+        ->not->toContain('history.length')
         ->toContain('reloadRequested')
         ->and($notificationSound)
-        ->toContain("return storedValue(enabledStorageKey) === '1'")
+        ->toContain("return storedValue(enabledStorageKey) !== '0'")
         ->toContain('if (!isEnabled() || (!unlocked && !force))')
         ->toContain('now - lastPlayedAt < throttleMs')
         ->toContain("['pointerdown', 'keydown', 'touchstart']")
         ->toContain("icon.setAttribute('class'")
         ->and($notifications)
         ->toContain('baselineReady')
-        ->toContain('AppNotificationSound.play(soundNotification.sound_key)')
+        ->toContain("AppNotificationSound.play(soundNotification?.sound_key || 'action')")
         ->toContain('hiddenIntervalMs')
         ->and($pushNotifications)
+        ->toContain('setControlsAvailable(baseSupported())')
+        ->not->toContain('messages?.unavailable')
         ->toContain("icon.setAttribute('class'")
         ->not->toContain('icon.className =')
+        ->and($alerts)
+        ->toContain("setAttribute('data-swal2-theme', currentTheme())")
+        ->toContain("attributeFilter: ['data-bs-theme']")
         ->and($salesIndex)
         ->toContain('id="sales-cycle-table"')
         ->not->toContain('data-datatables');

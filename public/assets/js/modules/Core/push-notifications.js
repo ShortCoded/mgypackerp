@@ -3,6 +3,7 @@
 
   const config = window.AppPushNotifications || {};
   const toggles = Array.from(document.querySelectorAll('[data-push-notification-toggle]'));
+  const controls = Array.from(document.querySelectorAll('[data-push-notification-control]'));
   const statusElements = Array.from(document.querySelectorAll('[data-push-notification-status]'));
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   const handledPushIds = new Set();
@@ -17,6 +18,7 @@
   let subscription = null;
   let busy = false;
   let coordinationStorage = null;
+  let browserSupported = true;
 
   if (!toggles.length) {
     return;
@@ -153,14 +155,37 @@
     return ageMilliseconds >= 0 && ageMilliseconds < coordinationTtlMilliseconds;
   }
 
-  function supported() {
+  function baseSupported() {
     return Boolean(
       config.enabled
       && config.publicKey
       && 'serviceWorker' in window.navigator
-      && 'PushManager' in window
       && 'Notification' in window
+      && typeof window.Notification.requestPermission === 'function'
     );
+  }
+
+  function supported() {
+    return baseSupported() && browserSupported;
+  }
+
+  function setControlsAvailable(available) {
+    controls.forEach(function (control) {
+      const compact = typeof control.hasAttribute === 'function'
+        && control.hasAttribute('data-push-notification-compact');
+
+      control.hidden = !available && compact;
+    });
+
+    if (!available) {
+      setStatus(config.messages?.unavailable, false);
+    }
+  }
+
+  function notificationPermission() {
+    const permission = String(window.Notification?.permission || 'default');
+
+    return ['default', 'granted', 'denied'].includes(permission) ? permission : 'default';
   }
 
   function setStatus(message, isError) {
@@ -168,24 +193,6 @@
       element.textContent = message || '';
       element.classList.toggle('text-danger', Boolean(isError));
     });
-  }
-
-  function permissionStatus() {
-    if (!('Notification' in window)) {
-      return config.messages?.unavailable || '';
-    }
-
-    if (window.Notification.permission === 'denied') {
-      return config.messages?.denied || '';
-    }
-
-    if (window.Notification.permission === 'granted') {
-      return subscription
-        ? (config.messages?.subscriptionActive || config.messages?.enabled || '')
-        : (config.messages?.subscriptionInactive || '');
-    }
-
-    return config.messages?.permissionDefault || '';
   }
 
   function updateToggles() {
@@ -196,7 +203,9 @@
       const label = toggle.querySelector('[data-push-notification-label]');
       const labelText = subscribed ? config.messages?.disable : config.messages?.enable;
 
-      toggle.disabled = busy || !supported();
+      const permissionDenied = notificationPermission() === 'denied' && !subscribed;
+
+      toggle.disabled = busy || !supported() || permissionDenied;
       toggle.setAttribute('aria-pressed', subscribed ? 'true' : 'false');
 
       if (label) {
@@ -243,7 +252,9 @@
   }
 
   function contentEncoding() {
-    if (Array.isArray(window.PushManager.supportedContentEncodings) && window.PushManager.supportedContentEncodings.length) {
+    if (window.PushManager
+      && Array.isArray(window.PushManager.supportedContentEncodings)
+      && window.PushManager.supportedContentEncodings.length) {
       return window.PushManager.supportedContentEncodings[0];
     }
 
@@ -279,9 +290,20 @@
   }
 
   async function enable() {
-    const permission = await window.Notification.requestPermission();
+    if (notificationPermission() === 'denied') {
+      setStatus(config.messages?.denied, true);
+      return;
+    }
+
+    const permission = notificationPermission() === 'granted'
+      ? 'granted'
+      : await window.Notification.requestPermission();
 
     if (permission !== 'granted') {
+      if (notificationPermission() === 'denied') {
+        setControlsAvailable(false);
+      }
+
       setStatus(config.messages?.denied, true);
       return;
     }
@@ -346,8 +368,8 @@
     busy = true;
     updateToggles();
 
-    if (!supported()) {
-      setStatus(config.messages?.unavailable, true);
+    if (!baseSupported()) {
+      setControlsAvailable(false);
       busy = false;
       updateToggles();
       return;
@@ -355,14 +377,30 @@
 
     try {
       const registration = await window.navigator.serviceWorker.ready;
+
+      if (!registration.pushManager || typeof registration.pushManager.getSubscription !== 'function') {
+        browserSupported = false;
+        setControlsAvailable(false);
+        return;
+      }
+
+      setControlsAvailable(true);
       subscription = await registration.pushManager.getSubscription();
+
+      if (notificationPermission() === 'denied') {
+        clearSyncState();
+        setControlsAvailable(false);
+        setStatus(config.messages?.denied, true);
+        return;
+      }
 
       if (subscription) {
         await persistSubscription(subscription, false);
+        setStatus(config.messages?.enabled || config.messages?.subscriptionActive, false);
       } else {
         clearSyncState();
+        setStatus(config.messages?.subscriptionInactive || config.messages?.permissionDefault, false);
       }
-      setStatus(permissionStatus(), window.Notification.permission === 'denied');
     } catch (error) {
       setStatus(config.messages?.failed, true);
     } finally {
@@ -402,5 +440,11 @@
   }
 
   updateToggles();
+  setControlsAvailable(baseSupported() && notificationPermission() !== 'denied');
+
+  if (baseSupported() && notificationPermission() === 'denied') {
+    setStatus(config.messages?.denied, true);
+  }
+
   window.addEventListener('load', initialize, { once: true });
 })(window, document);

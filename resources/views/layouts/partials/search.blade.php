@@ -1,4 +1,4 @@
-<ul class="navbar-nav align-items-center d-none d-md-block">
+<ul class="navbar-nav align-items-center erp-navigation-search">
     <li class="nav-item">
         <div class="search-box" data-navigation-search>
             <form class="position-relative" data-bs-toggle="search" data-bs-display="static">

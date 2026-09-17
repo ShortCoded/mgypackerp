@@ -15,7 +15,7 @@
     };
     $fieldValue = fn (string $field, mixed $default = '') => old($field, $record?->{$field} ?? $default);
     $documentNumberValue = old('doc_number', ! $isCreate ? $record?->doc_number : '');
-    $statusValue = old('is_closed', $record?->is_closed ? '1' : '0');
+    $statusValue = old('is_closed', $isCreate ? '0' : ($record?->is_closed ? '1' : '0'));
     $showsDocumentNumberColumn = $canControlDocumentNumber || (($isEdit || $isView) && ! $canControlDocumentNumber);
 @endphp
 
@@ -37,6 +37,9 @@
 
             <div class="card-body">
                 <div data-form-alert></div>
+                @error('period_close')
+                    <div class="alert alert-danger">{{ $message }}</div>
+                @enderror
 
                 <div class="row g-3 align-items-start">
                     @if ($canControlDocumentNumber)
@@ -74,18 +77,13 @@
 
                     <div class="{{ $showsDocumentNumberColumn ? 'col-md-3' : 'col-md-4' }}">
                         <x-forms.label for="is_closed" :label="__('financial_periods.attributes.is_closed')" required />
-                        @if ($isView)
-                            <x-forms.view-field
-                                for="is_closed"
-                                :value="$record?->is_closed ? __('financial_periods.statuses.closed') : __('financial_periods.statuses.open')"
-                            />
-                        @else
-                            <x-forms.select class="form-select" id="is_closed" name="is_closed" required>
-                                <option value="0" @selected((string) $statusValue === '0')>{{ __('financial_periods.statuses.open') }}</option>
-                                <option value="1" @selected((string) $statusValue === '1')>{{ __('financial_periods.statuses.closed') }}</option>
-                            </x-forms.select>
-                        @endif
+                        @unless($isView)<x-forms.input type="hidden" name="is_closed" :value="$statusValue" />@endunless
+                        <x-forms.view-field
+                            for="is_closed"
+                            :value="(string) $statusValue === '1' ? __('financial_periods.statuses.closed') : __('financial_periods.statuses.open')"
+                        />
                         <div class="invalid-feedback" data-error-for="is_closed"></div>
+                        <div class="form-text">{{ __('financial_periods.messages.status_workflow_help') }}</div>
                     </div>
 
                     <div class="col-md-6">
@@ -131,6 +129,14 @@
             @include('modules.core.financial-periods.partials.form-footer')
         </div>
     </form>
+
+    @if($isView && $record && ! $record->trashed())
+        @if(! $record->is_closed && auth()->user()?->can('financial_periods.close'))
+            <form id="financial-period-close-form" method="POST" action="{{ route('admin.financial-periods.close', $record->doc_num) }}">@csrf</form>
+        @elseif($record->is_closed && auth()->user()?->can('financial_periods.reopen'))
+            <form id="financial-period-reopen-form" method="POST" action="{{ route('admin.financial-periods.reopen', $record->doc_num) }}">@csrf</form>
+        @endif
+    @endif
 @endsection
 
 @push('scripts')

@@ -2,6 +2,7 @@
 
 return [
     'admin' => 'الإدارة',
+    'account_menu' => 'قائمة الحساب',
     'all_rights_reserved' => 'جميع الحقوق محفوظة.',
     'auth_logs' => 'سجلات الدخول',
     'auto' => 'تلقائي',
@@ -36,6 +37,7 @@ return [
     'rtl_mode_help' => 'بدّل اتجاه اللغة.',
     'language' => 'اللغة',
     'language_help' => 'اختر لغة الواجهة واتجاهها.',
+    'main_navigation' => 'القائمة الرئيسية',
     'search' => 'بحث...',
     'search_placeholder' => 'البحث جاهز لسجلات ERP المستقبلية.',
     'settings' => 'الإعدادات',
@@ -50,4 +52,5 @@ return [
     'vertical_navbar_style_help' => 'بدّل بين أنماط القائمة الرأسية.',
     'version' => 'الإصدار :version',
     'vibrant' => 'حيوي',
+    'work_context' => 'سياق العمل',
 ];

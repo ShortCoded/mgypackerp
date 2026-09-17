@@ -20,6 +20,7 @@ test('service worker implements foreground push deduplication and safe notificat
         ->toContain("client.visibilityState === 'visible'")
         ->toContain('self.registration.showNotification')
         ->toContain('tag: payload.tag')
+        ->toContain('silent: false')
         ->toContain('event.notification.close()')
         ->toContain("self.clients.matchAll({ type: 'window', includeUncontrolled: true })")
         ->toContain('existingClient.navigate(targetUrl)')
@@ -55,6 +56,7 @@ test('authenticated layout exposes only public push configuration and explicit a
         ->assertOk()
         ->assertSee('data-push-notification-toggle', false)
         ->assertSee('assets/js/modules/Core/push-notifications.js', false)
+        ->assertSee('vendors/sweetalert2/sweetalert2.all.min.js', false)
         ->assertSee('visible-public-vapid-key', false)
         ->assertDontSee('never-visible-private-vapid-key', false);
 

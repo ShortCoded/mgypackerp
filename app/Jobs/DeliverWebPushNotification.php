@@ -84,7 +84,6 @@ class DeliverWebPushNotification implements ShouldQueue
             $notification->user->notify(new UserNotificationWebPush(
                 $notification,
                 $settings['icon_192_url'],
-                $settings['icon_192_url'],
             ));
 
             $notification->forceFill(['push_status' => 'accepted'])->save();

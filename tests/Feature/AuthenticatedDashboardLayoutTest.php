@@ -79,7 +79,9 @@ test('dashboard renders falcon authenticated layout', function () {
         ->assertDontSee('Mia Khalifa');
 
     expect($response->getContent())
-        ->toContain('navbar-nav navbar-nav-icons ms-auto flex-row align-items-center')
+        ->toContain('navbar-nav navbar-nav-icons erp-header-actions ms-auto flex-row align-items-center')
+        ->toContain('data-erp-mobile-navigation')
+        ->toContain('erp-mobile-header-tools')
         ->toContain('theme-control-dropdown')
         ->toContain('navbarDropdownNotification')
         ->toContain('navbarDropdownUser')
@@ -219,9 +221,9 @@ test('dashboard navigation renders from menu config and filters permissions', fu
         ->assertSee(__('menu.basic_data'))
         ->assertSee(__('menu.users'))
         ->assertDontSee(__('menu.administration'))
-        ->assertSee(route('admin.users.index'), false)
-        ->assertDontSee(route('admin.roles.index'), false)
-        ->assertDontSee(route('admin.auth-logs.index'), false)
+        ->assertSee(route('admin.users.index', [], false), false)
+        ->assertDontSee(route('admin.roles.index', [], false), false)
+        ->assertDontSee(route('admin.auth-logs.index', [], false), false)
         ->assertDontSee('href="#!"', false);
 });
 
@@ -231,12 +233,15 @@ test('menu service marks active items and hides empty parents', function () {
     $this->actingAs($user)->get('/dashboard')->assertOk();
 
     $menu = app(MenuService::class)->getMenu($user);
+    $humanResources = collect($menu)->firstWhere('label', 'human_resources');
 
     expect($menu)
-        ->toHaveCount(1)
+        ->toHaveCount(2)
         ->and($menu[0]['label'])->toBe('dashboard')
         ->and($menu[0]['active'])->toBeTrue()
-        ->and($menu[0]['open'])->toBeFalse();
+        ->and($menu[0]['open'])->toBeFalse()
+        ->and($humanResources)->not->toBeNull()
+        ->and(collect(dashboardMenuLeaves($humanResources['children']))->pluck('label')->all())->toBe(['employee_self_service']);
 });
 
 test('menu service opens basic data when a moved administration child route is active', function () {
@@ -303,7 +308,7 @@ test('main navigation keeps business order and nests utility pages under tools',
         ->not->toContain('temperature'.'_logs');
 
     expect($humanResources)->not->toBeNull()
-        ->and(collect(dashboardMenuLeaves($humanResources['children']))->pluck('label')->all())->toBe(['hr_employees']);
+        ->and(collect(dashboardMenuLeaves($humanResources['children']))->pluck('label')->all())->toBe(['hr_employees', 'employee_self_service']);
 
     expect(Route::has('admin.tools.'.'temperature'.'-logs.index'))->toBeFalse();
 

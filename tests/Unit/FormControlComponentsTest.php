@@ -79,6 +79,10 @@ test('shared form controls preserve attributes and localized picker contracts', 
             <option value="SUP-1" selected>المورد الأول</option>
         </x-forms.select>
         <x-forms.textarea id="notes" name="notes" rows="4">ملاحظة</x-forms.textarea>
+        <x-forms.input class="form-control-sm custom-input" id="compact-reference" name="compact_reference" />
+        <x-forms.date-input class="form-control form-control-sm custom-date" id="compact-date" name="compact_date" />
+        <x-forms.select class="form-select form-select-sm custom-select" id="compact-select" name="compact_select" variant="local"></x-forms.select>
+        <x-forms.input class="custom-range" id="volume" type="range" />
     BLADE);
 
     expect($html)
@@ -99,7 +103,11 @@ test('shared form controls preserve attributes and localized picker contracts', 
         ->toContain('data-depends-on="#company"')
         ->toContain('<option value="SUP-1" selected>المورد الأول</option>')
         ->toContain('rows="4"')
-        ->toContain('ملاحظة');
+        ->toContain('ملاحظة')
+        ->toContain('class="form-control form-control-sm custom-input"')
+        ->toContain('class="js-date-picker form-control form-control-sm custom-date"')
+        ->toContain('class="js-select2-local form-select form-select-sm custom-select"')
+        ->toMatch('/class="(?=[^"]*form-range)(?=[^"]*custom-range)[^"]*"/');
 });
 
 test('blade screens cannot bypass the shared date input component', function (): void {

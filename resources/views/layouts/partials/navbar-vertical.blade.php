@@ -7,7 +7,7 @@
     </script>
     <div class="d-flex align-items-center">
         <div class="toggle-icon-wrapper">
-            <button class="btn navbar-toggler-humburger-icon navbar-vertical-toggle" data-bs-toggle="tooltip" data-bs-placement="left" title="{{ __('layout.toggle_navigation') }}" type="button">
+            <button class="btn navbar-toggler-humburger-icon navbar-vertical-toggle" data-bs-toggle="tooltip" data-bs-placement="left" title="{{ __('layout.toggle_navigation') }}" type="button" aria-label="{{ __('layout.toggle_navigation') }}">
                 <span class="navbar-toggle-icon"><span class="toggle-line"></span></span>
             </button>
         </div>

@@ -4,7 +4,7 @@
         $hasChildren = count($item['children']) > 0;
         $menuDepth = count($menuPath ?? []);
         $itemPath = [...($menuPath ?? []), $item['key']];
-        $menuId = 'vertical-menu-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
+        $menuId = ($menuIdPrefix ?? 'vertical-menu').'-'.substr(hash('sha256', implode('|', $itemPath)), 0, 16);
     @endphp
 
     <li class="nav-item vertical-menu-level-{{ $menuDepth }}" data-menu-depth="{{ $menuDepth }}">
@@ -16,7 +16,7 @@
                 </div>
             </a>
             <ul class="nav collapse {{ $item['open'] ? 'show' : '' }}" id="{{ $menuId }}">
-                @include('layouts.partials.menu.vertical-items', ['items' => $item['children'], 'menuPath' => $itemPath])
+                @include('layouts.partials.menu.vertical-items', ['items' => $item['children'], 'menuPath' => $itemPath, 'menuIdPrefix' => $menuIdPrefix ?? 'vertical-menu'])
             </ul>
         @else
             <a class="nav-link {{ $item['active'] ? 'active' : '' }}" href="{{ $item['url'] }}">

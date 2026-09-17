@@ -3,6 +3,7 @@
 
   const root = document.querySelector('[data-notifications-root]');
   const config = window.AppNotifications || {};
+  const center = document.querySelector('[data-notifications-center]');
 
   if (!root || !config.pollUrl) {
     return;
@@ -432,8 +433,14 @@
     }
 
     const numericCount = Number(count || 0);
+    const indicatorElement = typeof countElement.closest === 'function'
+      ? countElement.closest('.notification-indicator')
+      : null;
+
     countElement.textContent = numericCount > 99 ? '99+' : String(numericCount);
     countElement.classList.toggle('d-none', numericCount < 1);
+    indicatorElement?.classList.toggle('has-unread', numericCount > 0);
+    indicatorElement?.classList.toggle('notification-indicator-primary', numericCount > 0);
   }
 
   function renderNotifications(notifications) {
@@ -456,7 +463,7 @@
     }
 
     listElement.innerHTML = notifications.map(function (notification) {
-      const unreadClass = notification.is_read ? '' : ' bg-light';
+      const unreadClass = notification.is_read ? '' : ' notification-unread';
       const url = notification.url || '#';
 
       return `<button class="list-group-item list-group-item-action border-0${unreadClass}" type="button" data-notification-id="${escapeHtml(notification.id)}" data-notification-url="${escapeHtml(url)}">
@@ -548,8 +555,8 @@
       return notification.sound_key === 'chat';
     });
 
-    if (soundNotification && window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
-      window.AppNotificationSound.play(soundNotification.sound_key);
+    if (window.AppNotificationSound && typeof window.AppNotificationSound.play === 'function') {
+      window.AppNotificationSound.play(soundNotification?.sound_key || 'action');
     }
 
     if (!window.AppAlerts || typeof window.AppAlerts.toast !== 'function') {
@@ -813,6 +820,12 @@
     readAllButton.addEventListener('click', function (event) {
       event.preventDefault();
 
+      if (readAllButton.disabled) {
+        return;
+      }
+
+      readAllButton.disabled = true;
+
       request(config.readAllUrl, { method: 'POST' })
         .then(function (response) {
           if (!response.ok) {
@@ -823,7 +836,20 @@
         })
         .then(function (payload) {
           renderCount(payload?.data?.unread_count || 0);
+
+          if (center) {
+            window.location.href = window.location.href;
+            return;
+          }
+
           fetchNotifications({ suppressSound: true });
+        })
+        .catch(function () {
+          readAllButton.disabled = false;
+
+          if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
+            window.AppAlerts.toast('error', config.messages?.actionFailed || config.messages?.updateFailed || '');
+          }
         });
     });
   });

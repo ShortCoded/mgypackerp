@@ -150,8 +150,6 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'lines.*.product_doc_num' => [
                 'required',
                 'string',
-                Rule::exists('products', 'doc_num')
-                    ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.purchase_order_line_public_id' => ['nullable', 'uuid', 'exists:purchase_order_lines,public_id'],
@@ -177,11 +175,25 @@ class StorePurchaseInvoiceRequest extends FormRequest
             'payment_schedules.*.public_id' => ['nullable', 'string'],
             'payment_schedules.*.due_date' => ['required', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
-                    $fail(__('purchase_invoices.messages.due_date_invalid'));
+                    $fail(__('purchase_invoices.messages.schedule_due_date_invalid', [
+                        'position' => $this->nestedRowPosition($attribute),
+                    ]));
                 }
             }],
             'payment_schedules.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
-            'payment_schedules.*.payment_source_type' => ['required', Rule::in(PurchaseInvoice::scheduleSourceTypes())],
+            'payment_schedules.*.payment_source_type' => ['required', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (in_array($value, PurchaseInvoice::scheduleSourceTypes(), true)) {
+                    return;
+                }
+
+                $position = $this->nestedRowPosition($attribute);
+                $row = $this->input('payment_schedules.'.($position - 1), []);
+                if ($value === PurchaseInvoice::SourceScheduled && is_array($row) && $this->isExistingScheduledSource($row)) {
+                    return;
+                }
+
+                $fail(__('purchase_invoices.messages.schedule_source_invalid', ['position' => $position]));
+            }],
             'payment_schedules.*.cashbox_doc_num' => [
                 'nullable',
                 'string',
@@ -205,9 +217,13 @@ class StorePurchaseInvoiceRequest extends FormRequest
         return [
             'lines.required' => __('purchase_invoices.messages.lines_required'),
             'lines.min' => __('purchase_invoices.messages.lines_required'),
+            'lines.*.product_doc_num.required' => __('purchase_invoices.messages.line_product_required'),
             'lines.*.quantity.gt' => __('purchase_invoices.messages.quantity_gt_zero'),
             'lines.*.unit_price.min' => __('purchase_invoices.messages.unit_price_positive'),
+            'payment_schedules.*.due_date.required' => __('purchase_invoices.messages.schedule_due_date_required'),
+            'payment_schedules.*.amount.required' => __('purchase_invoices.messages.schedule_amount_required'),
             'payment_schedules.*.amount.gt' => __('purchase_invoices.messages.payment_amount_positive'),
+            'payment_schedules.*.payment_source_type.required' => __('purchase_invoices.messages.schedule_source_required'),
         ];
     }
 
@@ -282,7 +298,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
     {
         $companyId = (int) $this->input('company_id');
         $units = app(ProductComponentUnitOptionsService::class);
-        $current?->loadMissing('lines.product');
+        $current?->loadMissing(['lines.product', 'lines.unit']);
 
         foreach ($this->input('lines', []) as $index => $line) {
             if (! is_array($line)) {
@@ -302,6 +318,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.line_discount_exceeds_subtotal'));
             }
 
+            $publicId = trim((string) ($line['public_id'] ?? ''));
+            $existingLine = $current instanceof PurchaseInvoice && $publicId !== ''
+                ? $current->lines->firstWhere('public_id', $publicId)
+                : null;
             $product = Product::query()
                 ->with(['unit', 'equivalentUnit'])
                 ->active()
@@ -309,11 +329,30 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 ->where('doc_num', $line['product_doc_num'] ?? null)
                 ->first();
 
-            if ($product instanceof Product
-                && ! $product->isPurchasable()
+            if (! $product instanceof Product
+                && $existingLine !== null
+                && (int) $existingLine->company_id === $companyId
+                && $existingLine->product?->doc_num === ($line['product_doc_num'] ?? null)) {
+                $product = $existingLine->product;
+                $product->loadMissing(['unit', 'equivalentUnit']);
+            }
+
+            if (! $product instanceof Product) {
+                $validator->errors()->add(
+                    "lines.{$index}.product_doc_num",
+                    __('purchase_invoices.messages.line_product_invalid', ['position' => $index + 1]),
+                );
+
+                continue;
+            }
+
+            if (! $product->isPurchasable()
                 && ! $this->isSourcedOrExistingHistoricalLine($current, $line, $product)) {
                 $validator->errors()->add("lines.{$index}.product_doc_num", __('purchase_invoices.messages.purchase_product_type_invalid'));
-            } elseif ($product instanceof Product && ! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)) {
+            } elseif (! $units->unitIsValidForProduct($product, $line['unit_doc_num'] ?? null, $companyId)
+                && ! ($existingLine !== null
+                    && (int) $existingLine->product_id === (int) $product->getKey()
+                    && $existingLine->unit?->doc_num === ($line['unit_doc_num'] ?? null))) {
                 $validator->errors()->add("lines.{$index}.unit_doc_num", __('purchase_invoices.messages.invalid_unit'));
             }
 
@@ -425,13 +464,34 @@ class StorePurchaseInvoiceRequest extends FormRequest
             }
 
             if ($sourceType === PurchaseInvoice::SourceCashbox && empty($row['cashbox_doc_num'])) {
-                $validator->errors()->add("payment_schedules.{$index}.cashbox_doc_num", __('purchase_invoices.messages.cashbox_required_for_paid_row'));
+                $validator->errors()->add("payment_schedules.{$index}.cashbox_doc_num", __('purchase_invoices.messages.schedule_cashbox_required', ['position' => $index + 1]));
             }
 
             if ($sourceType === PurchaseInvoice::SourceBank && empty($row['bank_account_doc_num'])) {
-                $validator->errors()->add("payment_schedules.{$index}.bank_account_doc_num", __('purchase_invoices.messages.bank_account_required'));
+                $validator->errors()->add("payment_schedules.{$index}.bank_account_doc_num", __('purchase_invoices.messages.schedule_bank_required', ['position' => $index + 1]));
             }
         }
+    }
+
+    /** @param array<string, mixed> $row */
+    private function isExistingScheduledSource(array $row): bool
+    {
+        $current = $this->currentRecord();
+        $publicId = trim((string) ($row['public_id'] ?? ''));
+
+        return $current instanceof PurchaseInvoice
+            && $publicId !== ''
+            && $current->paymentSchedules()
+                ->where('public_id', $publicId)
+                ->where('payment_source_type', PurchaseInvoice::SourceScheduled)
+                ->exists();
+    }
+
+    private function nestedRowPosition(string $attribute): int
+    {
+        return preg_match('/\.(\d+)\./', $attribute, $matches) === 1
+            ? ((int) $matches[1]) + 1
+            : 1;
     }
 
     private function uniqueDocumentNumberRule(): mixed
@@ -514,12 +574,14 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'public_id' => trim((string) ($row['public_id'] ?? '')) ?: null,
                 'due_date' => trim((string) ($row['due_date'] ?? '')) ?: null,
                 'amount' => $this->decimalValue($row['amount'] ?? null),
-                'payment_source_type' => trim((string) ($row['payment_source_type'] ?? '')) ?: PurchaseInvoice::SourceCashbox,
+                'payment_source_type' => trim((string) ($row['payment_source_type'] ?? '')) ?: null,
                 'cashbox_doc_num' => trim((string) ($row['cashbox_doc_num'] ?? '')) ?: null,
                 'bank_account_doc_num' => trim((string) ($row['bank_account_doc_num'] ?? '')) ?: null,
                 'notes' => trim((string) ($row['notes'] ?? '')) ?: null,
             ])
-            ->reject(fn (array $row): bool => $row['due_date'] === null && $row['amount'] === null)
+            ->reject(fn (array $row): bool => $row['public_id'] === null
+                && $row['due_date'] === null
+                && $row['amount'] === null)
             ->values()
             ->all();
     }

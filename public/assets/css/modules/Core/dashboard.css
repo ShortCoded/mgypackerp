@@ -9,7 +9,7 @@
 
 .plastics-dashboard-header {
     border-bottom: 1px solid var(--falcon-border-color);
-    padding: .75rem 0 1rem;
+    padding: .35rem 0 .75rem;
 }
 
 .plastics-dashboard-section {
@@ -47,10 +47,6 @@
 .plastics-dashboard-metric-value {
     font-size: 1.55rem;
     line-height: 1.15;
-}
-
-.plastics-dashboard-context span {
-    max-width: 22rem;
 }
 
 .plastics-dashboard-icon {

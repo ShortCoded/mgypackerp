@@ -45,6 +45,7 @@ return [
         'cost_centers' => 'مراكز التكلفة',
         'journal_entries' => 'القيود اليومية',
         'account_ledger' => 'الأستاذ المساعد',
+        'trial_balance' => 'ميزان المراجعة',
         'customer_statement' => 'كشف حساب عميل',
         'supplier_statement' => 'كشف حساب مورد',
         'estimated_cost_sheets' => 'شيتات التكلفة التقديرية',

@@ -5,6 +5,22 @@
   const initializedAttribute = 'data-date-picker-initialized';
   const defaults = window.AppDatePicker || {};
 
+  function displayInputClass(input) {
+    const classes = String(input.className || '')
+      .split(/\s+/)
+      .filter(function (className) {
+        return className
+          && className !== 'js-date-picker'
+          && className !== 'flatpickr-input'
+          && className !== 'active'
+          && className !== 'erp-date-picker-display';
+      });
+
+    classes.push('erp-date-picker-display');
+
+    return Array.from(new Set(classes)).join(' ');
+  }
+
   function optionsFor(input) {
     const locale = input.getAttribute('data-locale') || defaults.locale || document.documentElement.getAttribute('lang') || 'en';
     const direction = defaults.direction || document.documentElement.getAttribute('dir') || 'ltr';
@@ -49,7 +65,7 @@
     if (storageFormat) {
       options.altFormat = displayFormat;
       options.altInput = true;
-      options.altInputClass = input.className + ' erp-date-picker-display';
+      options.altInputClass = displayInputClass(input);
     }
 
     const minDate = input.getAttribute('data-min-date') || input.getAttribute('min');
@@ -71,7 +87,11 @@
   }
 
   function initInput(input) {
-    if (!window.flatpickr || input.getAttribute(initializedAttribute) === 'true' || input.disabled || input.readOnly) {
+    if (!window.flatpickr
+      || input.classList.contains('erp-date-picker-display')
+      || input.getAttribute(initializedAttribute) === 'true'
+      || input.disabled
+      || input.readOnly) {
       return;
     }
 

@@ -39,6 +39,7 @@
     latestMessageId: null,
     oldestMessageId: null,
     initialConversationId: config.initialConversation || null,
+    unreadOnly: config.unreadOnly === true,
     initialConversationResolved: false,
     replyToMessage: null,
     selectedFiles: [],
@@ -183,7 +184,10 @@
 
     const term = String(searchInput?.value || '').trim().toLowerCase();
     const conversations = state.conversations.filter(function (conversation) {
-      return !term || String(conversation.title || '').toLowerCase().includes(term);
+      const matchesUnread = !state.unreadOnly || Number(conversation.unread_count || 0) > 0;
+      const matchesTerm = !term || String(conversation.title || '').toLowerCase().includes(term);
+
+      return matchesUnread && matchesTerm;
     });
 
     if (!conversations.length) {

@@ -33,11 +33,20 @@
                 @include('layouts.partials.navbar-vertical')
             @endif
 
+            @if (in_array($appNavbarPosition, ['double-top', 'top'], true))
+                @include('layouts.partials.mobile-header-tools')
+                @include('layouts.partials.pwa-navigation')
+            @endif
+
             <div class="content">
                 @if ($appNavbarPosition === 'vertical')
                     @include('layouts.partials.topbar')
+                    @include('layouts.partials.mobile-header-tools')
+                    @include('layouts.partials.pwa-navigation')
                 @elseif ($appNavbarPosition === 'combo')
                     @include('layouts.partials.navbar-combo')
+                    @include('layouts.partials.mobile-header-tools')
+                    @include('layouts.partials.pwa-navigation')
                 @endif
 
                 @include('layouts.partials.flash')
@@ -52,10 +61,13 @@
 
     @include('layouts.partials.customizer')
     @auth
+        @include('layouts.partials.mobile-navigation')
         @include('layouts.partials.operating-context-modal')
     @endauth
     <div class="erp-connectivity-status alert alert-warning shadow-sm" role="status" aria-live="polite" hidden data-erp-connectivity-status data-offline-message="{{ __('pwa.connectivity.offline') }}" data-online-message="{{ __('pwa.connectivity.online') }}">
-        <span class="fas fa-wifi me-2" aria-hidden="true"></span><span data-erp-connectivity-message>{{ __('pwa.connectivity.offline') }}</span>
+        <span class="fas fa-wifi" aria-hidden="true"></span>
+        <span data-erp-connectivity-message>{{ __('pwa.connectivity.offline') }}</span>
+        <button class="btn btn-warning btn-sm" type="button" data-erp-connectivity-retry>{{ __('pwa.connectivity.retry') }}</button>
     </div>
     <div class="erp-pwa-update alert alert-info shadow-sm" role="status" aria-live="polite" hidden data-erp-pwa-update>
         <span>{{ __('pwa.update.available') }}</span>

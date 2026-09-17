@@ -45,6 +45,7 @@ return [
         'cost_centers' => 'Cost Centers',
         'journal_entries' => 'Journal Entries',
         'account_ledger' => 'Account Ledger',
+        'trial_balance' => 'Trial Balance',
         'customer_statement' => 'Customer Statement',
         'supplier_statement' => 'Supplier Statement',
         'estimated_cost_sheets' => 'Estimated Cost Sheets',

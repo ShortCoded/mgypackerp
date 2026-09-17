@@ -16,6 +16,17 @@
     $time24hr = in_array($attributes->get('data-time-24hr', $time24hr), [true, 1, '1', 'true'], true);
     $controlAttributes = $attributes->except(['data-enable-time', 'data-minute-increment', 'data-time-24hr']);
     $providedClass = (string) $controlAttributes->get('class', '');
+    $providedClasses = preg_split('/\s+/', trim($providedClass), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $requiredClasses = [];
+
+    if (! in_array('form-control', $providedClasses, true)) {
+        $requiredClasses[] = 'form-control';
+    }
+
+    if (! in_array('js-date-picker', $providedClasses, true)) {
+        $requiredClasses[] = 'js-date-picker';
+    }
+
     $rawValue = trim((string) ($value ?? ''));
     $storageValue = $enableTime
         ? ($dates->normalizeDateTimeForStorage($rawValue) ?? $rawValue)
@@ -34,10 +45,7 @@
         $pickerAttributes['data-time-24hr'] = $time24hr ? 'true' : 'false';
     }
 
-    $mergedAttributes = $controlAttributes->class([
-        'form-control' => ! str_contains($providedClass, 'form-control'),
-        'js-date-picker' => ! str_contains($providedClass, 'js-date-picker'),
-    ])->merge([
+    $mergedAttributes = $controlAttributes->class($requiredClasses)->merge([
         'id' => $id,
         'name' => $name,
         'type' => 'text',

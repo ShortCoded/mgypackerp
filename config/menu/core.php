@@ -169,6 +169,8 @@ return [
                     'delete' => 'financial_periods.delete',
                     'view_trashed' => 'financial_periods.view_trashed',
                     'restore' => 'financial_periods.restore',
+                    'close' => 'financial_periods.close',
+                    'reopen' => 'financial_periods.reopen',
                     'document_number_control' => 'financial_periods.document_number.control',
                     'document_number_settings_update' => 'financial_periods.document_number_settings.update',
                 ],

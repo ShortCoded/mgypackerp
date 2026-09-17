@@ -109,6 +109,7 @@
   function showValidationErrors($form, errors) {
     const $alert = alertElement($form);
     const $list = $('<ul class="mb-0 ps-3"></ul>');
+    let $firstInput = $();
 
     clearFormErrors($form);
     validationMessages(errors).forEach(function (message) {
@@ -129,12 +130,39 @@
       const base = normalized.split('.')[0];
       const $input = $form.find('[name="' + bracket + '"], [name="' + field + '"], [name="' + normalized + '"], [name="' + base + '"]');
 
+      if ($firstInput.length === 0 && $input.length > 0) {
+        $firstInput = $input.first();
+      }
+
       $input.addClass('is-invalid');
       $input.filter('select').each(function () {
         select2Selection($(this)).addClass('is-invalid');
       });
       $form.find('[data-error-for="' + field + '"], [data-error-for="' + normalized + '"], [data-error-for="' + base + '"]').text(message || '');
     });
+
+    if ($firstInput.length > 0) {
+      const $pane = $firstInput.closest('.tab-pane');
+      if ($pane.length > 0 && $pane.attr('id')) {
+        const trigger = document.querySelector('[data-bs-target="#' + $pane.attr('id') + '"]');
+        if (trigger && window.bootstrap && window.bootstrap.Tab) {
+          window.bootstrap.Tab.getOrCreateInstance(trigger).show();
+        } else if (trigger) {
+          $(trigger).trigger('click');
+        }
+      }
+
+      window.setTimeout(function () {
+        let target = $firstInput[0];
+        if (target && target._flatpickr && target._flatpickr.altInput) {
+          target = target._flatpickr.altInput;
+        } else if ($firstInput.is('select')) {
+          target = select2Selection($firstInput)[0] || target;
+        }
+        target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target?.focus({ preventScroll: true });
+      }, 150);
+    }
   }
 
   function setLoading($button, loading) {
@@ -484,6 +512,20 @@
     });
   }
 
+  function cleanDatePickers($root) {
+    $root.find('.erp-date-picker-display').remove();
+    $root.find('.js-date-picker').each(function () {
+      this._flatpickr = undefined;
+      $(this)
+        .removeAttr('data-date-picker-initialized')
+        .removeAttr('readonly')
+        .removeAttr('tabindex')
+        .removeClass('flatpickr-input active')
+        .attr('type', 'text')
+        .css('display', '');
+    });
+  }
+
   function renumberRows($rows, prefix) {
     $rows.each(function (index) {
       const $row = $(this);
@@ -708,13 +750,20 @@
     const sourceType = String($row.find('.js-purchase-invoice-schedule-source').val() || 'cashbox');
     const isCashbox = sourceType === 'cashbox';
     const isBank = sourceType === 'bank';
+    const $cashbox = $row.find('.js-purchase-invoice-schedule-cashbox');
+    const $bank = $row.find('.js-purchase-invoice-schedule-bank');
 
-    $row.find('.js-purchase-invoice-schedule-cashbox').closest('td').toggle(isCashbox);
-    $row.find('.js-purchase-invoice-schedule-bank').closest('td').toggle(isBank);
+    $cashbox.closest('td').toggle(isCashbox);
+    $bank.closest('td').toggle(isBank);
+    $cashbox.prop('required', isCashbox).attr('aria-required', isCashbox ? 'true' : 'false');
+    $bank.prop('required', isBank).attr('aria-required', isBank ? 'true' : 'false');
+    $row.find('.js-purchase-invoice-schedule-cashbox-required').toggleClass('d-none', !isCashbox);
+    $row.find('.js-purchase-invoice-schedule-bank-required').toggleClass('d-none', !isBank);
   }
 
   function initRepeaterRow($row) {
     cleanSelect2($row);
+    cleanDatePickers($row);
     initSelect2($row);
     initDatePickers($row);
     window.AppNumbers.refresh($row[0]);
@@ -778,7 +827,10 @@
     if (!duplicate) {
       resetScheduleRow($row);
     } else {
-      $row.find('input[type="hidden"]').val('');
+      $row.find('[name$="[public_id]"]').val('');
+      if ($row.find('.js-purchase-invoice-schedule-source').val() === 'scheduled') {
+        $row.find('.js-purchase-invoice-schedule-source').val('cashbox');
+      }
       initRepeaterRow($row);
     }
     renumberRows($tbody.find('.js-purchase-invoice-schedule'), 'payment_schedules');
@@ -950,7 +1002,10 @@
       const $row = $(this).closest('.js-purchase-invoice-schedule');
       const $clone = $row.clone(false, false);
       cleanSelect2($clone);
-      $clone.find('input[type="hidden"]').val('');
+      $clone.find('[name$="[public_id]"]').val('');
+      if ($clone.find('.js-purchase-invoice-schedule-source').val() === 'scheduled') {
+        $clone.find('.js-purchase-invoice-schedule-source').val('cashbox');
+      }
       $row.after($clone);
       initRepeaterRow($clone);
       renumberRows($form.find('.js-purchase-invoice-schedule'), 'payment_schedules');

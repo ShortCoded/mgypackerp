@@ -165,6 +165,156 @@ test('user can login with email phone and username', function (string $field) {
     expect(authActivityLogIsEmpty())->toBeTrue();
 })->with(['email', 'phone', 'username']);
 
+test('user can login with equivalent egyptian phone formats and unicode digits', function (string $identifier) {
+    $user = User::factory()->create([
+        'phone' => '+20 10 1234 5678',
+    ]);
+
+    $this->postJson('/login', [
+        'login' => $identifier,
+        'password' => 'password',
+    ])->assertOk();
+
+    $this->assertAuthenticatedAs($user);
+})->with([
+    'local' => '01012345678',
+    'international with separators' => '+20-10-1234-5678',
+    'international without plus' => '201012345678',
+    'international access prefix' => '0020 10 1234 5678',
+    'arabic indic local digits' => '٠١٠ ١٢٣٤ ٥٦٧٨',
+    'persian local digits' => '۰۱۰-۱۲۳۴-۵۶۷۸',
+]);
+
+test('stored local and unicode phone formats resolve to the same egyptian mobile identity', function (string $storedPhone, string $identifier) {
+    $user = User::factory()->create(['phone' => $storedPhone]);
+
+    $this->postJson('/login', [
+        'login' => $identifier,
+        'password' => 'password',
+    ])->assertOk();
+
+    $this->assertAuthenticatedAs($user);
+})->with([
+    'stored local with spaces' => ['010 1234 5678', '+201012345678'],
+    'stored arabic indic digits' => ['٠١٠-١٢٣٤-٥٦٧٨', '0020 10 1234 5678'],
+]);
+
+test('one account keeps the same identity across username email and phone login', function () {
+    $user = User::factory()->create([
+        'username' => 'same-account-user',
+        'email' => 'same-account@example.com',
+        'phone' => '+20 10 1234 5678',
+    ]);
+
+    foreach (['same-account-user', 'same-account@example.com', '01012345678'] as $identifier) {
+        $this->postJson('/login', [
+            'login' => $identifier,
+            'password' => 'password',
+            'remember' => true,
+        ])->assertOk();
+
+        $this->assertAuthenticatedAs($user);
+        expect(auth()->id())->toBe($user->getKey());
+
+        $this->postJson('/logout')->assertOk();
+        $this->assertGuest();
+    }
+});
+
+test('email login ignores case', function () {
+    $user = User::factory()->create(['email' => 'Login.User@Example.com']);
+
+    $this->postJson('/login', [
+        'login' => 'LOGIN.USER@EXAMPLE.COM',
+        'password' => 'password',
+    ])->assertOk();
+
+    $this->assertAuthenticatedAs($user);
+});
+
+test('numeric username remains a valid username', function () {
+    $user = User::factory()->create([
+        'username' => '123456',
+        'phone' => '+201012345678',
+    ]);
+
+    $this->postJson('/login', [
+        'login' => '123456',
+        'password' => 'password',
+    ])->assertOk();
+
+    $this->assertAuthenticatedAs($user);
+});
+
+test('phone login does not match a suffix or a malformed local number', function (string $identifier) {
+    User::factory()->create(['phone' => '+201012345678']);
+
+    $this->postJson('/login', [
+        'login' => $identifier,
+        'password' => 'password',
+    ])->assertUnprocessable()
+        ->assertJsonPath('errors.login.0', __('auth.messages.invalid_credentials'));
+
+    $this->assertGuest();
+})->with([
+    'missing local zero' => '1012345678',
+    'suffix only' => '12345678',
+]);
+
+test('ambiguous identifier across username and phone fails without selecting an account', function () {
+    User::factory()->create([
+        'username' => '01012345678',
+        'phone' => '+201111111111',
+    ]);
+    User::factory()->create([
+        'username' => 'different-user',
+        'phone' => '+201012345678',
+    ]);
+
+    $this->postJson('/login', [
+        'login' => '01012345678',
+        'password' => 'password',
+    ])->assertUnprocessable()
+        ->assertJsonPath('errors.login.0', __('auth.messages.invalid_credentials'));
+
+    $this->assertGuest();
+});
+
+test('duplicate normalized phone values fail safely', function () {
+    User::factory()->create(['phone' => '01012345678']);
+    User::factory()->create(['phone' => '+20 10 1234 5678']);
+
+    $this->postJson('/login', [
+        'login' => '00201012345678',
+        'password' => 'password',
+    ])->assertUnprocessable()
+        ->assertJsonPath('errors.login.0', __('auth.messages.invalid_credentials'));
+
+    $this->assertGuest();
+});
+
+test('switching identifiers cannot bypass the account login rate limit', function () {
+    $user = User::factory()->create([
+        'username' => 'rate-user',
+        'email' => 'rate@example.com',
+        'phone' => '+201012345678',
+    ]);
+
+    foreach (['rate@example.com', 'rate-user', '01012345678', '+201012345678', '00201012345678'] as $identifier) {
+        $this->postJson('/login', [
+            'login' => $identifier,
+            'password' => 'wrong-password',
+        ])->assertUnprocessable();
+    }
+
+    $this->postJson('/login', [
+        'login' => $user->email,
+        'password' => 'wrong-password',
+    ])->assertStatus(429)
+        ->assertJsonPath('error_code', 'rate_limited')
+        ->assertJsonValidationErrors(['login']);
+});
+
 test('AuthLog successful login stores sanitized rich auth context', function () {
     $user = User::factory()->create();
 
@@ -262,7 +412,7 @@ test('inactive and blocked users cannot login', function (string $status) {
         'password' => 'password',
     ])->assertUnprocessable()
         ->assertJsonValidationErrors(['login'])
-        ->assertJsonPath('errors.login.0', __($status === 'blocked' ? 'auth.messages.account_blocked' : 'auth.messages.account_inactive'));
+        ->assertJsonPath('errors.login.0', __('auth.messages.invalid_credentials'));
 
     $this->assertGuest();
     expect(AuthLog::where('user_id', $user->id)->where('event', 'login_failed_'.$status.'_user')->where('failure_reason', $status.'_account')->exists())->toBeTrue();
@@ -280,7 +430,7 @@ test('soft deleted users cannot login with email phone or username', function (s
         'password' => 'password',
     ])->assertUnprocessable()
         ->assertJsonValidationErrors(['login'])
-        ->assertJsonPath('errors.login.0', __('auth.messages.account_deleted'));
+        ->assertJsonPath('errors.login.0', __('auth.messages.invalid_credentials'));
 
     $this->assertGuest();
     expect(AuthLog::where('user_id', $user->id)->where('event', 'login_failed_deleted_user')->where('failure_reason', 'deleted_account')->exists())->toBeTrue();

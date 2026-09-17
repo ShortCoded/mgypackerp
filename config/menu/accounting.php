@@ -96,6 +96,20 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'trial_balance',
+                'title' => 'Trial Balance',
+                'icon' => 'balance-scale',
+                'route' => 'admin.accounting.reports.trial-balance',
+                'permission' => 'reports.trial_balance.view',
+                'keywords' => ['trial balance', 'opening balance', 'ending balance', 'ميزان المراجعة', 'أرصدة الحسابات'],
+                'actions' => [
+                    'view' => 'reports.trial_balance.view',
+                    'export' => 'reports.trial_balance.export',
+                ],
+                'active' => ['admin.accounting.reports.trial-balance*'],
+                'children' => [],
+            ],
+            [
                 'label' => 'customer_statement',
                 'title' => 'Customer Statement',
                 'icon' => 'file-invoice-dollar',

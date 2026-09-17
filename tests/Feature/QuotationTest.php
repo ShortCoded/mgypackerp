@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Dom\HTMLDocument;
 use Illuminate\Support\Facades\Schema;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
@@ -399,6 +400,106 @@ test('quotation grouped numeric input persists canonically and displays grouped 
         ->postJson(route('admin.sales.quotations.store'), $payload)
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['lines.0.quantity']);
+});
+
+test('quotation totals stay consistent across save view edit and print without readonly recalculation', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $firstProduct] = quotationProductFixture($context['company']);
+    $secondProduct = Product::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => 902,
+        'doc_num' => 'Product-00902',
+        'name' => 'Clear Carton',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'item_unit_id' => $unit->getKey(),
+        'status' => 'active',
+    ]);
+    quotationSetPrice($firstProduct, $context['currency'], '400');
+    quotationSetPrice($secondProduct, $context['currency'], '725');
+    $actor = quotationActor(['quotations.view', 'quotations.create', 'quotations.edit', 'quotations.print']);
+    $lines = [
+        [
+            'product_doc_num' => $firstProduct->doc_num,
+            'description' => 'White PP item',
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '10',
+            'unit_price' => '400',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '5',
+        ],
+        [
+            'product_doc_num' => $secondProduct->doc_num,
+            'description' => 'Clear PS item',
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '5',
+            'unit_price' => '725',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '5',
+        ],
+    ];
+    $payload = quotationPayload($firstProduct, $unit, $context['currency'], [
+        'quotation_type' => Quotation::TypeStandard,
+        'project_name' => null,
+        'discount_type' => null,
+        'discount_value' => '0',
+        'lines' => $lines,
+        'payment_milestones' => [],
+        'execution_schedule_lines' => [],
+    ]);
+
+    $response = $this->actingAs($actor)
+        ->postJson(route('admin.sales.quotations.store'), $payload)
+        ->assertOk();
+    $quotation = Quotation::query()
+        ->with('currentRevision.lines')
+        ->where('doc_num', $response->json('data.doc_num'))
+        ->sole();
+
+    expect((string) $quotation->currentRevision->subtotal)->toBe('7625.0000')
+        ->and((string) $quotation->currentRevision->discount_amount)->toBe('0.0000')
+        ->and((string) $quotation->currentRevision->tax_amount)->toBe('381.2500')
+        ->and((string) $quotation->currentRevision->total)->toBe('8006.2500')
+        ->and($quotation->currentRevision->lines->pluck('line_total')->map(fn ($value): string => (string) $value)->all())
+        ->toBe(['4200.0000', '3806.2500']);
+
+    $showHtml = $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.show', $quotation))
+        ->assertOk()
+        ->assertSee('data-readonly="1"', false)
+        ->getContent();
+    $show = HTMLDocument::createFromString($showHtml, LIBXML_NOERROR);
+
+    expect(trim($show->querySelector('.js-quotation-subtotal')->textContent))->toBe('7,625')
+        ->and(trim($show->querySelector('.js-quotation-discount')->textContent))->toBe('0')
+        ->and(trim($show->querySelector('.js-quotation-tax')->textContent))->toBe('381.25')
+        ->and(trim($show->querySelector('.js-quotation-total')->textContent))->toBe('8,006.25')
+        ->and(collect($show->querySelectorAll('.js-quotation-line-total'))->map(fn ($node): string => trim($node->textContent))->all())
+        ->toBe(['4,200', '3,806.25']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.sales.quotations.edit', $quotation))
+        ->assertOk()
+        ->assertSee('data-readonly="0"', false)
+        ->assertSee('name="discount_type"', false)
+        ->assertSee('name="discount_value"', false);
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.sales.quotations.update', $quotation), $payload)
+        ->assertOk();
+    expect((string) $quotation->refresh()->currentRevision->total)->toBe('8006.2500');
+
+    $print = $this->actingAs($actor)
+        ->withSession(['locale' => 'en'])
+        ->get(route('admin.sales.quotations.print', $quotation))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+    expect(quotationPdfText($print->getContent()))->toContain('8,006.25');
+
+    $script = file_get_contents(public_path('assets/js/modules/Sales/quotations.js'));
+    expect($script)->toContain('if (!readonly) {')
+        ->toContain("\$row.find('.js-quotation-line-discount-amount').text(decimal(discount))");
 });
 
 test('quotation project and discount contracts reject contradictory input', function (): void {

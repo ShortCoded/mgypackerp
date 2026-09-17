@@ -16,6 +16,8 @@ use Modules\Auth\Services\UserPresenceService;
 
 class LoginRequest extends FormRequest
 {
+    private ?string $accountThrottleKey = null;
+
     public function authorize(): bool
     {
         return true;
@@ -50,15 +52,20 @@ class LoginRequest extends FormRequest
         UserAccountStatusService $accounts,
         UserPresenceService $presence
     ): User {
+        $identifier = $this->string('login')->trim()->toString();
         $this->ensureIsNotRateLimited($authLogService);
 
-        $identifier = $this->string('login')->trim()->toString();
-        $field = $this->loginField($identifier);
-        $user = $accounts->findForLogin($field, $identifier);
+        $resolution = $accounts->resolveForLogin($identifier);
+        $user = $resolution->user;
+        $this->accountThrottleKey = $user instanceof User
+            ? $this->accountThrottleKey($user)
+            : null;
+
+        $this->ensureIsNotRateLimited($authLogService);
         $inactiveReason = $accounts->inactiveReason($user);
 
         if ($inactiveReason !== null && $inactiveReason !== 'missing_account') {
-            RateLimiter::hit($this->throttleKey());
+            $this->hitRateLimits();
 
             $authLogService->log($this, $this->failedLoginEvent($inactiveReason), 'failed', [
                 'user' => $user,
@@ -68,18 +75,18 @@ class LoginRequest extends FormRequest
             ]);
 
             throw ValidationException::withMessages([
-                'login' => $accounts->message($inactiveReason),
+                'login' => __('auth.messages.invalid_credentials'),
             ]);
         }
 
         if (! $user instanceof User || ! Hash::check($this->string('password')->toString(), $user->password)) {
-            RateLimiter::hit($this->throttleKey());
+            $this->hitRateLimits();
 
             $authLogService->log($this, 'login_failed_invalid_credentials', 'failed', [
                 'user' => $user,
                 'login' => $identifier,
                 'remember_me' => $this->boolean('remember'),
-                'failure_reason' => 'invalid_credentials',
+                'failure_reason' => $resolution->ambiguous ? 'ambiguous_identifier' : 'invalid_credentials',
             ]);
 
             throw ValidationException::withMessages([
@@ -108,51 +115,83 @@ class LoginRequest extends FormRequest
 
     public function clearRateLimit(): void
     {
-        RateLimiter::clear($this->throttleKey());
+        foreach (array_keys($this->rateLimitKeys()) as $key) {
+            RateLimiter::clear($key);
+        }
     }
 
     public function ensureIsNotRateLimited(AuthLogService $authLogService): void
     {
-        if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
-            return;
+        foreach ($this->rateLimitKeys() as $key => $maxAttempts) {
+            if (! RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+                continue;
+            }
+
+            event(new Lockout($this));
+
+            $seconds = RateLimiter::availableIn($key);
+            $identifier = $this->string('login')->trim()->toString();
+
+            $authLogService->log($this, 'login_throttled', 'blocked', [
+                'login' => $identifier,
+                'remember_me' => $this->boolean('remember'),
+                'failure_reason' => 'too_many_attempts',
+                'seconds_remaining' => $seconds,
+            ]);
+
+            throw ValidationException::withMessages([
+                'login' => __('auth.too_many_attempts', [
+                    'seconds' => $seconds,
+                    'minutes' => ceil($seconds / 60),
+                ]),
+            ])->status(429);
         }
-
-        event(new Lockout($this));
-
-        $seconds = RateLimiter::availableIn($this->throttleKey());
-        $identifier = $this->string('login')->trim()->toString();
-
-        $authLogService->log($this, 'login_throttled', 'blocked', [
-            'login' => $identifier,
-            'remember_me' => $this->boolean('remember'),
-            'failure_reason' => 'too_many_attempts',
-            'seconds_remaining' => $seconds,
-        ]);
-
-        throw ValidationException::withMessages([
-            'login' => __('auth.too_many_attempts', [
-                'seconds' => $seconds,
-                'minutes' => ceil($seconds / 60),
-            ]),
-        ])->status(429);
     }
 
     public function throttleKey(): string
     {
-        return Str::transliterate(Str::lower($this->string('login')->trim()->toString()).'|'.$this->ip());
+        return $this->accountThrottleKey ?? $this->identifierThrottleKey();
     }
 
-    protected function loginField(string $identifier): string
+    private function hitRateLimits(): void
     {
-        if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
-            return 'email';
+        foreach (array_keys($this->rateLimitKeys()) as $key) {
+            RateLimiter::hit($key);
+        }
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function rateLimitKeys(): array
+    {
+        $keys = [
+            $this->identifierThrottleKey() => 5,
+            $this->ipThrottleKey() => 20,
+        ];
+
+        if (is_string($this->accountThrottleKey)) {
+            $keys[$this->accountThrottleKey] = 5;
         }
 
-        if (preg_match('/^\+?[0-9\s\-\(\)]{5,}$/', $identifier) === 1) {
-            return 'phone';
-        }
+        return $keys;
+    }
 
-        return 'username';
+    private function identifierThrottleKey(): string
+    {
+        $identifier = Str::transliterate(Str::lower($this->string('login')->trim()->toString()));
+
+        return 'login|identifier:'.hash('sha256', $identifier).'|ip:'.$this->ip();
+    }
+
+    private function accountThrottleKey(User $user): string
+    {
+        return 'login|user:'.$user->getAuthIdentifier().'|ip:'.$this->ip();
+    }
+
+    private function ipThrottleKey(): string
+    {
+        return 'login|ip:'.$this->ip();
     }
 
     protected function failedValidation(Validator $validator): void

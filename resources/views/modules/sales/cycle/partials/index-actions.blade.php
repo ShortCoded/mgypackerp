@@ -3,12 +3,24 @@
     $workflow = [];
     if (!$trashed && $kind === 'sales_requests') {
         $states = match($record->status) {
-            'draft', 'rejected' => ['submitted' => ['edit', __('Submit for approval')]],
-            'submitted' => ['approved' => ['approve', __('Approve')], 'rejected' => ['approve', __('Reject')]],
+            'draft', 'rejected' => [
+                'submitted' => ['edit', __('Submit for approval')],
+                'cancelled' => ['cancel', __('Cancel')],
+            ],
+            'submitted' => [
+                'approved' => ['approve', __('Approve')],
+                'rejected' => ['approve', __('Reject')],
+                'cancelled' => ['cancel', __('Cancel')],
+            ],
+            'approved' => [
+                'closed' => ['cancel', __('Close')],
+                'cancelled' => ['cancel', __('Cancel')],
+            ],
+            'converted', 'partially_converted' => ['closed' => ['cancel', __('Close')]],
             default => [],
         };
         foreach ($states as $status => [$permission, $label]) {
-            $workflow[] = ['url' => route($prefix.'.transition', $record), 'permission' => $kind.'.'.$permission, 'label' => $label, 'status' => $status, 'reason' => $status === 'rejected'];
+            $workflow[] = ['url' => route($prefix.'.transition', $record), 'permission' => $kind.'.'.$permission, 'label' => $label, 'status' => $status, 'reason' => in_array($status, ['rejected', 'cancelled', 'closed'], true)];
         }
     }
     if (!$trashed && $kind === 'sales_orders') {

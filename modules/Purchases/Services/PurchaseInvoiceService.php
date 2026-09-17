@@ -526,16 +526,21 @@ class PurchaseInvoiceService
         $kept = [];
 
         foreach (array_values($lines) as $index => $line) {
-            $product = $this->product($context['company_id'], $line['product_doc_num'] ?? null);
             $publicId = trim((string) ($line['public_id'] ?? ''));
             $existingLine = $publicId !== '' ? $existing->get($publicId) : null;
+            $product = $this->productForLine(
+                $context['company_id'],
+                $line['product_doc_num'] ?? null,
+                $existingLine instanceof PurchaseInvoiceLine ? $existingLine : null,
+            );
 
             if (! $product instanceof Product) {
-                continue;
+                throw new DomainException(__('purchase_invoices.messages.purchase_product_missing'));
             }
 
             $purchaseOrderLine = $this->purchaseOrderLine($record, $line['purchase_order_line_public_id'] ?? null);
             $unit = $this->unitOptions->unitForProduct($product, $line['unit_doc_num'] ?? null, $context['company_id'])
+                ?: $this->historicalUnitForLine($product, $line['unit_doc_num'] ?? null, $existingLine)
                 ?: $product->unit;
             if (! $purchaseOrderLine instanceof PurchaseOrderLine
                 || (int) $purchaseOrderLine->product_id !== (int) $product->getKey()
@@ -619,6 +624,39 @@ class PurchaseInvoiceService
         return $changed;
     }
 
+    private function productForLine(int $companyId, mixed $productDocNum, ?PurchaseInvoiceLine $existingLine): ?Product
+    {
+        $product = $this->product($companyId, $productDocNum);
+
+        if ($product instanceof Product || ! $existingLine instanceof PurchaseInvoiceLine) {
+            return $product;
+        }
+
+        $historicalProduct = $existingLine->product()->with(['unit', 'equivalentUnit'])->first();
+
+        return $historicalProduct instanceof Product
+            && (int) $historicalProduct->company_id === $companyId
+            && $historicalProduct->doc_num === trim((string) $productDocNum)
+                ? $historicalProduct
+                : null;
+    }
+
+    private function historicalUnitForLine(Product $product, mixed $unitDocNum, mixed $existingLine): ?ItemUnit
+    {
+        if (! $existingLine instanceof PurchaseInvoiceLine
+            || (int) $existingLine->product_id !== (int) $product->getKey()) {
+            return null;
+        }
+
+        $historicalUnit = $existingLine->unit;
+
+        return $historicalUnit instanceof ItemUnit
+            && (int) $historicalUnit->company_id === (int) $product->company_id
+            && $historicalUnit->doc_num === trim((string) $unitDocNum)
+                ? $historicalUnit
+                : null;
+    }
+
     /**
      * @param  list<array<string, mixed>>  $schedules
      * @param  array{company_id: int, financial_period_id: int, branch_id: int|null}  $context
@@ -642,8 +680,12 @@ class PurchaseInvoiceService
                 'due_date' => $row['due_date'],
                 'amount' => $this->numbers->normalizeToScale($row['amount'] ?? 0, 4) ?? '0.0000',
                 'payment_source_type' => $sourceType,
-                'cashbox_id' => $cashbox?->getKey(),
-                'bank_account_id' => $bankAccount?->getKey(),
+                'cashbox_id' => $sourceType === PurchaseInvoice::SourceScheduled && $existingSchedule
+                    ? $existingSchedule->cashbox_id
+                    : $cashbox?->getKey(),
+                'bank_account_id' => $sourceType === PurchaseInvoice::SourceScheduled && $existingSchedule
+                    ? $existingSchedule->bank_account_id
+                    : $bankAccount?->getKey(),
                 'payment_date' => $sourceType === PurchaseInvoice::SourceCashbox ? $row['due_date'] : null,
                 'status' => $existingSchedule?->status ?? PurchaseInvoicePaymentSchedule::StatusScheduled,
                 'notes' => $row['notes'] ?? null,
@@ -662,7 +704,9 @@ class PurchaseInvoiceService
                 $schedule = $record->paymentSchedules()->create([...$values, 'created_by' => auth()->id()]);
             }
 
-            $this->syncLinkedVoucher($record, $schedule, $cashbox);
+            if ($sourceType !== PurchaseInvoice::SourceScheduled) {
+                $this->syncLinkedVoucher($record, $schedule, $cashbox);
+            }
             $kept[] = $schedule->getKey();
         }
 

@@ -5,6 +5,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Route;
 use Modules\Auth\Models\AuthLog;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Models\UserPresenceSession;
@@ -142,9 +143,11 @@ test('notification poll keeps its contract and ordering within its database budg
     });
     DB::flushQueryLog();
     DB::enableQueryLog();
+    $startedAt = hrtime(true);
 
     try {
         $response = $this->actingAs($actor)->getJson(route('admin.notifications.poll'));
+        $elapsedMilliseconds = (hrtime(true) - $startedAt) / 1_000_000;
         $queries = DB::getQueryLog();
     } finally {
         DB::disableQueryLog();
@@ -156,6 +159,8 @@ test('notification poll keeps its contract and ordering within its database budg
     $payload = $response->assertOk()->json('data');
 
     expect($notificationQueries)->toHaveCount(1)
+        ->and(count($queries))->toBeLessThanOrEqual(8)
+        ->and($elapsedMilliseconds)->toBeLessThan(1000)
         ->and($retrievedNotifications)->toBe(0)
         ->and($pollQuery)->not->toContain('metadata', 'dedupe_key', 'scheduled_for', 'updated_at')
         ->and(strtolower($pollQuery))->toContain('select count(*)')
@@ -255,13 +260,7 @@ test('notification polling assets load only in authenticated app layout', functi
         ->assertDontSee('assets/js/modules/Core/notifications.js', false);
 });
 
-test('notification diagnostics are permission protected and expose non-sensitive runtime states', function () {
-    $unauthorized = notificationActor();
-
-    $this->actingAs($unauthorized)
-        ->get(route('admin.notifications.diagnostics'))
-        ->assertForbidden();
-
+test('notification diagnostics remain internal after the customer page is retired', function () {
     $operator = notificationActor(['settings.pwa.view']);
     $this->actingAs($operator);
     config()->set('webpush.vapid.private_key', 'never-visible-diagnostic-key');
@@ -270,11 +269,11 @@ test('notification diagnostics are permission protected and expose non-sensitive
     $runtime = Cache::get('notifications.runtime.last_dispatch');
     expect($runtime)->toBeArray()
         ->and($runtime['status'])->toBe('successful')
-        ->and($runtime)->not->toHaveKeys(['private_key', 'subscriptions']);
+        ->and($runtime)->not->toHaveKeys(['private_key', 'subscriptions'])
+        ->and(Route::has('admin.notifications.diagnostics'))->toBeFalse();
 
-    $this->get(route('admin.notifications.diagnostics'))
-        ->assertOk()
-        ->assertSee(__('notifications.diagnostics.title'))
+    $this->get('/admin/notifications/diagnostics')
+        ->assertNotFound()
         ->assertDontSee('never-visible-diagnostic-key');
 });
 
@@ -299,6 +298,205 @@ test('notification can be marked read only by recipient', function () {
         ->assertJsonPath('data.unread_count', 0);
 
     expect($notification->refresh()->read_at)->not->toBeNull();
+});
+
+test('notification center tolerates legacy incomplete notification data', function () {
+    $actor = notificationActor();
+
+    UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'legacy.event',
+        'category' => 'legacy',
+        'module' => 'modules',
+        'title' => 'Legacy notification',
+        'metadata' => null,
+        'url' => '/admin/missing-document/legacy-record',
+        'delivered_at' => now(),
+    ]);
+
+    $this->actingAs($actor)
+        ->get(route('admin.notifications.index'))
+        ->assertOk()
+        ->assertSee('Legacy notification');
+});
+
+test('notification center uses shared fields readable labels and compact customer controls', function () {
+    $actor = notificationActor();
+
+    UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'chat.message',
+        'category' => 'chat',
+        'module' => 'chat',
+        'title' => 'Readable notification',
+        'delivered_at' => now(),
+    ]);
+    UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'internal.raw-event',
+        'category' => 'legacy',
+        'module' => 'internal-module',
+        'title' => 'Unknown notification',
+        'delivered_at' => now()->subMinute(),
+    ]);
+    UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'purchases.submitted',
+        'category' => 'purchases',
+        'module' => 'purchases',
+        'title' => 'Approval requested',
+        'delivered_at' => now()->subMinutes(2),
+    ]);
+
+    $response = $this->actingAs($actor)
+        ->get(route('admin.notifications.index', [
+            'state' => 'all',
+            'from' => now()->subDay()->toDateString(),
+            'to' => now()->toDateString(),
+        ]))
+        ->assertOk()
+        ->assertSee('data-notifications-center', false)
+        ->assertSee('data-push-notification-explained', false)
+        ->assertSee('js-select2-local', false)
+        ->assertSee('js-date-picker', false)
+        ->assertSee('form-control form-control-sm', false)
+        ->assertSee('form-select form-select-sm', false)
+        ->assertSee(__('notifications.types.chat_message'))
+        ->assertSee(__('notifications.types.other'))
+        ->assertSee(__('notifications.operational.title', [
+            'module' => __('notifications.modules.purchases'),
+            'status' => __('notifications.statuses.submitted'),
+        ]))
+        ->assertSee(__('notifications.modules.other'))
+        ->assertDontSee('data-notification-sound-test', false)
+        ->assertDontSee('admin.notifications.diagnostics', false)
+        ->assertDontSee(__('notifications.push.permission_granted'));
+
+    expect($response->getContent())
+        ->not->toContain('>chat.message<', '>internal.raw-event<', '>internal-module<')
+        ->toContain('value="'.now()->subDay()->toDateString().'"')
+        ->toContain('value="'.now()->toDateString().'"');
+});
+
+test('notification center explains reversed dates and distinguishes filtered empty results', function () {
+    $actor = notificationActor();
+
+    $this->actingAs($actor)
+        ->from(route('admin.notifications.index'))
+        ->get(route('admin.notifications.index', ['from' => '2026-09-17', 'to' => '2026-09-16']))
+        ->assertRedirect(route('admin.notifications.index'))
+        ->assertSessionHasErrors([
+            'to' => __('notifications.validation.to_after_or_equal'),
+        ]);
+
+    $this->get(route('admin.notifications.index', ['search' => 'does-not-exist']))
+        ->assertOk()
+        ->assertSee(__('notifications.empty_filtered'));
+
+    $this->get(route('admin.notifications.index'))
+        ->assertOk()
+        ->assertSee(__('notifications.empty'))
+        ->assertDontSee(__('notifications.empty_filtered'));
+
+    $this->get(route('admin.notifications.index', ['module' => 'chat', 'type' => 'chat.message']))
+        ->assertOk()
+        ->assertSee('value="chat" selected', false)
+        ->assertSee('value="chat.message" selected', false)
+        ->assertSee(__('notifications.modules.chat'))
+        ->assertSee(__('notifications.types.chat_message'));
+});
+
+test('marking all notifications read stays scoped to the authenticated recipient', function () {
+    $actor = notificationActor();
+    $other = notificationActor();
+    $actorNotification = UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Actor unread',
+        'delivered_at' => now(),
+    ]);
+    $otherNotification = UserNotification::query()->create([
+        'user_id' => $other->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Other unread',
+        'delivered_at' => now(),
+    ]);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.notifications.read-all'))
+        ->assertOk()
+        ->assertJsonPath('data.unread_count', 0);
+
+    expect($actorNotification->refresh()->read_at)->not->toBeNull()
+        ->and($otherNotification->refresh()->read_at)->toBeNull();
+});
+
+test('opening a notification marks only it read and handles unavailable targets safely', function () {
+    $actor = notificationActor(['my_board.view']);
+    $other = notificationActor(['my_board.view']);
+    $unavailable = UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'legacy.event',
+        'category' => 'legacy',
+        'title' => 'Unavailable target',
+        'url' => '/admin/missing-document/legacy-record',
+        'delivered_at' => now(),
+    ]);
+    $valid = UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Valid target',
+        'url' => route('admin.my-board.index', [], false),
+        'delivered_at' => now(),
+    ]);
+    $missingDocument = UserNotification::query()->create([
+        'user_id' => $actor->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Missing document',
+        'url' => route('admin.my-board.show', ['userTask' => 'Task-MISSING'], false),
+        'delivered_at' => now(),
+    ]);
+
+    $this->actingAs($other)
+        ->get(route('admin.notifications.open', $unavailable))
+        ->assertNotFound();
+
+    $this->actingAs($actor)
+        ->get(route('admin.notifications.open', $unavailable))
+        ->assertRedirect(route('admin.notifications.index'))
+        ->assertSessionHas('warning', __('notifications.messages.target_unavailable'));
+
+    expect($unavailable->refresh()->read_at)->not->toBeNull()
+        ->and($valid->refresh()->read_at)->toBeNull()
+        ->and($missingDocument->refresh()->read_at)->toBeNull();
+
+    $this->get(route('admin.notifications.open', $missingDocument))
+        ->assertRedirect(route('admin.notifications.index'))
+        ->assertSessionHas('warning', __('notifications.messages.target_unavailable'));
+
+    $this->get(route('admin.notifications.open', $valid))
+        ->assertRedirect(route('admin.my-board.index'));
+
+    expect($valid->refresh()->read_at)->not->toBeNull();
+
+    $restricted = notificationActor();
+    $forbiddenTarget = UserNotification::query()->create([
+        'user_id' => $restricted->getKey(),
+        'type' => 'task.assigned',
+        'category' => 'task',
+        'title' => 'Forbidden target',
+        'url' => route('admin.my-board.index', [], false),
+        'delivered_at' => now(),
+    ]);
+
+    $this->actingAs($restricted)
+        ->get(route('admin.notifications.open', $forbiddenTarget))
+        ->assertRedirect(route('admin.notifications.index'))
+        ->assertSessionHas('warning', __('notifications.messages.target_unavailable'));
 });
 
 test('creating board task notifies assigned users without notifying creator', function () {

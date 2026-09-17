@@ -61,6 +61,7 @@ return [
     'general_ledger' => 'General Ledger',
     'journal_entries' => 'Journal Entries',
     'account_ledger' => 'Account Ledger',
+    'trial_balance' => 'Trial Balance',
     'customer_statement' => 'Customer Statement',
     'supplier_statement' => 'Supplier Statement',
     'sales' => 'Sales',

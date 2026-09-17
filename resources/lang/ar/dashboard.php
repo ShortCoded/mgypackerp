@@ -4,6 +4,7 @@ return [
     'personal' => [
         'title' => 'لوحة عملي',
         'summary' => 'لديك :required أعمال مفتوحة، منها :overdue متأخرة و:approvals تنتظر قرارك.',
+        'summary_empty' => 'لا توجد أعمال مفتوحة تحتاج متابعتك الآن.',
         'last_updated' => 'آخر تحديث: :time',
         'stale' => 'تعذر التحديث؛ يتم عرض آخر بيانات ناجحة.',
         'required_work' => 'المطلوب مني',
@@ -11,14 +12,19 @@ return [
         'empty_work' => 'لا توجد أعمال مفتوحة مسندة إليك الآن.',
         'empty_updates' => 'لا توجد مستجدات حديثة.',
         'source_unavailable' => 'مصدر «:source» غير متاح حاليًا ولم يُعرض كصفر وهمي.',
+        'context_required' => 'اختر شركة وفرعًا لتحديد الطلبات المنتظرة لقرارك.',
         'cards' => [
             'open_tasks' => 'مهامي المفتوحة', 'due_today' => 'مستحق اليوم', 'overdue' => 'متأخر',
-            'approvals' => 'بانتظار قراري', 'unread' => 'إشعارات جديدة',
+            'approvals' => 'بانتظار قراري', 'unread' => 'إشعارات غير مقروءة',
+            'unread_conversations' => 'محادثات غير مقروءة', 'completed_today' => 'مهامي المكتملة اليوم',
+            'in_progress' => 'مهامي قيد التنفيذ',
         ],
         'meta' => [
-            'open_tasks' => 'من حالة المهام الحالية', 'due_today' => 'موعدها خلال اليوم',
-            'overdue' => 'لم تكتمل بعد موعدها', 'approvals' => 'لا توجد طلبات تنتظر قرارك',
-            'approvals_oldest' => 'أقدم طلب ينتظر منذ :time', 'unread' => 'قراءة الجرس لا تنهي العمل',
+            'open_tasks' => 'المهام التي ما زالت مفتوحة', 'due_today' => 'ينتهي موعدها اليوم',
+            'overdue' => 'تجاوزت موعدها ولم تكتمل', 'approvals' => 'لا توجد طلبات تنتظر قرارك',
+            'approvals_oldest' => 'أقدم طلب ينتظر منذ :time', 'unread' => 'تنتظر قراءتك',
+            'unread_conversations' => 'محادثات تحتوي رسائل غير مقروءة',
+            'completed_today' => 'اكتملت اليوم', 'in_progress' => 'يجري العمل عليها الآن',
         ],
         'sources' => [
             'purchase_requisitions' => 'طلبات شراء تحتاج اعتمادًا', 'purchase_orders' => 'أوامر شراء تحتاج اعتمادًا',
@@ -32,6 +38,16 @@ return [
         'work' => [
             'document' => 'المستند :document', 'waiting_since' => 'ينتظر منذ :time', 'task' => 'مهمة مسندة إليك',
             'due' => 'الاستحقاق: :time', 'no_due_date' => 'بدون موعد استحقاق', 'open' => 'فتح',
+        ],
+        'actions' => [
+            'approve' => 'اعتماد', 'review' => 'مراجعة', 'pay' => 'صرف', 'credit_override' => 'مراجعة الإيقاف الائتماني',
+            'authorize' => 'تصريح', 'receive' => 'استلام', 'inspect' => 'فحص', 'manage' => 'مراجعة',
+        ],
+        'decisions' => [
+            'title' => 'طلبات بانتظار قراري', 'subtitle' => 'الطلبات المسند قرارها حاليًا إلى دورك داخل سياق التشغيل المحدد.',
+            'type' => 'نوع الطلب', 'number' => 'الرقم', 'requester' => 'الطالب', 'status' => 'الحالة',
+            'required_action' => 'الإجراء المطلوب', 'waiting_since' => 'ينتظر منذ', 'open' => 'فتح المستند',
+            'empty' => 'لا توجد طلبات تنتظر قرارك حاليًا.', 'requester_unavailable' => 'غير متاح',
         ],
     ],
     'title' => 'لوحة التحكم',

@@ -5,7 +5,6 @@
   const sources = Object.assign({}, config.sources || {});
   const enabledStorageKey = config.enabledStorageKey || 'erp_notification_sound_enabled';
   const volumeStorageKey = config.volumeStorageKey || 'erp_notification_sound_volume';
-  const lastTestStorageKey = config.lastTestStorageKey || 'erp_notification_sound_last_test';
   const throttleMs = Number(config.throttleMs || 2500);
   const defaultVolume = clamp(Number(config.defaultVolume || 0.55));
   const audioByKey = new Map();
@@ -38,7 +37,7 @@
   }
 
   function isEnabled() {
-    return storedValue(enabledStorageKey) === '1';
+    return storedValue(enabledStorageKey) !== '0';
   }
 
   function volume() {
@@ -100,11 +99,7 @@
     if (!enabled) {
       setStatus(config.messages?.needsActivation || '', false);
     } else if (unlocked) {
-      const testedAt = Number(storedValue(lastTestStorageKey));
-      const lastTest = Number.isFinite(testedAt) && testedAt > 0
-        ? String(config.messages?.lastTest || '').replace(':time', new Date(testedAt).toLocaleString())
-        : '';
-      setStatus([config.messages?.ready || '', lastTest].filter(Boolean).join(' '), false);
+      setStatus(config.messages?.ready || '', false);
     }
   }
 
@@ -190,19 +185,6 @@
     updateControls();
   }
 
-  function test(key) {
-    storeValue(enabledStorageKey, '1');
-    updateControls();
-    return play(key || 'action', { force: true }).then(function (played) {
-      if (played) {
-        storeValue(lastTestStorageKey, Date.now());
-        updateControls();
-      }
-
-      return played;
-    });
-  }
-
   function unlockAfterInteraction() {
     if (!isEnabled() || unlocked) {
       return;
@@ -239,18 +221,11 @@
 
   document.addEventListener('click', function (event) {
     const toggle = event.target.closest('[data-notification-sound-toggle]');
-    const testButton = event.target.closest('[data-notification-sound-test]');
 
     if (toggle) {
       event.preventDefault();
       event.stopPropagation();
       setEnabled(!isEnabled());
-      return;
-    }
-
-    if (testButton) {
-      event.preventDefault();
-      test(testButton.getAttribute('data-notification-sound-test'));
     }
   });
 
@@ -271,7 +246,6 @@
     play: play,
     setEnabled: setEnabled,
     setVolume: setVolume,
-    test: test,
     updateToggles: updateControls
   };
 

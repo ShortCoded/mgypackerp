@@ -8,18 +8,25 @@ test('the shared mobile stylesheet preserves readable and touch friendly control
         ->toContain('.dashboard-kpi-category')
         ->toContain('.btn-group > .dropdown-toggle-split')
         ->toContain('.navbar-nav-icons .theme-control-dropdown > .nav-link')
-        ->toContain('.erp-pwa-navigation-item[hidden]')
+        ->toContain('.erp-pwa-navigation-shell[hidden]')
         ->toContain('.erp-pwa-navigation-button')
-        ->toContain('.erp-pwa-standalone .erp-operating-context-trigger')
+        ->toContain('.erp-pwa-standalone:not(.erp-virtual-keyboard-open) .content')
+        ->toContain('.erp-mobile-header-tools')
+        ->toContain('.erp-mobile-navigation')
+        ->toContain('@media screen and (max-width: 1199.98px)')
         ->toContain('@media screen and (max-width: 575.98px)')
         ->toContain('.nav-tabs')
         ->toContain('scroll-snap-type: inline proximity')
         ->toContain('.erp-datatable-card th.dt-select')
         ->toContain('touch-action: pan-x pan-y')
         ->toContain('.card-header > .row.flex-between-center > .col')
-        ->toContain('@media screen and (max-width: 389.98px)')
-        ->toContain('.navbar-top .erp-theme-switch-item')
-        ->toContain('@media screen and (max-width: 339.98px)');
+        ->toContain('.erp-header-actions .erp-user-menu > .nav-link')
+        ->toContain('.erp-header-actions .erp-notifications-menu > .nav-link')
+        ->toContain('.notification-indicator:not(.has-unread)::before')
+        ->toContain('.dropdown-menu-notification.dropdown-caret::after')
+        ->toContain('inset-inline-end: 4.25rem')
+        ->toContain('--swal2-background: var(--falcon-emphasis-bg)')
+        ->not->toContain('@media screen and (max-width: 389.98px)');
 });
 
 test('line item cards keep mobile actions large and inside the card flow', function () {
@@ -37,6 +44,9 @@ test('line item cards keep mobile actions large and inside the card flow', funct
 test('shared tables and topbar expose mobile accessibility hooks', function () {
     $tableCard = file_get_contents(resource_path('views/components/admin/report/table-card.blade.php'));
     $topbar = file_get_contents(resource_path('views/layouts/partials/topbar.blade.php'));
+    $appLayout = file_get_contents(resource_path('views/layouts/app.blade.php'));
+    $notifications = file_get_contents(resource_path('views/layouts/partials/notifications.blade.php'));
+    $mobileNavigation = file_get_contents(resource_path('views/layouts/partials/mobile-navigation.blade.php'));
     $pwaNavigation = file_get_contents(resource_path('views/layouts/partials/pwa-navigation.blade.php'));
     $purchaseRequisition = file_get_contents(resource_path('views/modules/purchases/procurement/requisition-form.blade.php'));
     $userTasks = file_get_contents(resource_path('views/modules/core/user-tasks/index.blade.php'));
@@ -48,7 +58,18 @@ test('shared tables and topbar expose mobile accessibility hooks', function () {
         ->toContain('role="region"')
         ->toContain('tabindex="0"')
         ->and(substr_count($topbar, 'erp-theme-switch-item'))->toBe(2)
-        ->and(substr_count($topbar, "@include('layouts.partials.pwa-navigation')"))->toBe(2)
+        ->and($topbar)->not->toContain("@include('layouts.partials.pwa-navigation')")
+        ->and($appLayout)->toContain("@include('layouts.partials.mobile-navigation')")
+        ->toContain("@include('layouts.partials.pwa-navigation')")
+        ->and($notifications)
+        ->not->toContain('data-push-notification-status')
+        ->not->toContain('data-notification-sound-status')
+        ->not->toContain('data-notifications-health')
+        ->and($mobileNavigation)
+        ->toContain('data-erp-mobile-navigation')
+        ->toContain("@include('layouts.partials.sidebar'")
+        ->toContain('data-navigation-search-open')
+        ->toContain('data-erp-open-settings')
         ->and($pwaNavigation)
         ->toContain('data-erp-pwa-navigation hidden')
         ->toContain('role="group" dir="ltr"')

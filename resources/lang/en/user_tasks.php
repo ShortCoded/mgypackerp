@@ -31,6 +31,11 @@ return [
     'board_subtitle' => 'Your private tasks and notes board.',
     'team_board_subtitle' => 'Task reporting and management across assigned users.',
     'viewing_board_of' => 'Viewing board of',
+    'focus' => [
+        'active' => 'Showing dashboard filter: :filter', 'clear' => 'Show full board',
+        'open' => 'Open tasks', 'due_today' => 'Due today', 'overdue' => 'Overdue',
+        'completed_today' => 'Completed today', 'in_progress' => 'In progress',
+    ],
     'create' => 'Create Task',
     'edit' => 'Edit Task',
     'view' => 'View Task',

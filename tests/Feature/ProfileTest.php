@@ -271,6 +271,39 @@ test('current password is required for profile password changes', function () {
         ->and($user->password)->toBe($originalPassword);
 });
 
+test('profile password validation styles appear only after submitting the password form', function () {
+    $user = profileActor(['profile.view', 'profile.password.update']);
+
+    $initialResponse = $this->actingAs($user)
+        ->get(route('profile.show'));
+
+    $initialResponse
+        ->assertOk()
+        ->assertSee('class="js-profile-password-form"', false)
+        ->assertSee('method="POST" novalidate', false);
+
+    preg_match('/<input[^>]*id="profile-current-password"[^>]*>/', $initialResponse->getContent(), $initialCurrentPassword);
+    preg_match('/<input[^>]*id="profile-new-password"[^>]*>/', $initialResponse->getContent(), $initialNewPassword);
+    preg_match('/<input[^>]*id="profile-password-confirmation"[^>]*>/', $initialResponse->getContent(), $initialPasswordConfirmation);
+
+    expect($initialCurrentPassword[0] ?? '')->not->toContain('is-invalid')
+        ->and($initialNewPassword[0] ?? '')->not->toContain('is-invalid')
+        ->and($initialPasswordConfirmation[0] ?? '')->not->toContain('is-invalid');
+
+    $this->from(route('profile.show'))
+        ->put(route('password.update'), [])
+        ->assertRedirect(route('profile.show'))
+        ->assertSessionHasErrors(['current_password', 'password'], null, 'updatePassword');
+
+    $submittedResponse = $this->get(route('profile.show'));
+
+    preg_match('/<input[^>]*id="profile-current-password"[^>]*>/', $submittedResponse->getContent(), $submittedCurrentPassword);
+    preg_match('/<input[^>]*id="profile-new-password"[^>]*>/', $submittedResponse->getContent(), $submittedNewPassword);
+
+    expect($submittedCurrentPassword[0] ?? '')->toContain('is-invalid')
+        ->and($submittedNewPassword[0] ?? '')->toContain('is-invalid');
+});
+
 test('empty optional profile values render blank without unavailable placeholders', function () {
     $user = profileActor(['profile.view']);
     $user->forceFill([

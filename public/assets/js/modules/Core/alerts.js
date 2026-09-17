@@ -10,6 +10,14 @@
         return direction === 'rtl' ? 'rtl' : 'ltr';
     }
 
+    function currentTheme() {
+        return document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light';
+    }
+
+    function syncTheme() {
+        document.documentElement.setAttribute('data-swal2-theme', currentTheme());
+    }
+
     function cancelledResult() {
         if (window.jQuery && typeof window.jQuery.Deferred === 'function') {
             return window.jQuery.Deferred().resolve({ isConfirmed: false }).promise();
@@ -91,11 +99,24 @@
             return cancelledResult();
         }
 
+        syncTheme();
+
         return window.Swal.fire(prepareOptions(options));
+    }
+
+    syncTheme();
+
+    if (typeof window.MutationObserver === 'function') {
+        new window.MutationObserver(function (mutations) {
+            if (mutations.some(function (mutation) { return mutation.attributeName === 'data-bs-theme'; })) {
+                syncTheme();
+            }
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
     }
 
     window.AppAlerts = {
         direction: currentDirection,
+        theme: currentTheme,
         options: prepareOptions,
         fire: fire,
         toast: function (icon, title, options) {

@@ -2,6 +2,7 @@
 
 return [
     'admin' => 'Admin',
+    'account_menu' => 'Account menu',
     'all_rights_reserved' => 'All rights reserved.',
     'auth_logs' => 'Auth Logs',
     'auto' => 'Auto',
@@ -36,6 +37,7 @@ return [
     'rtl_mode_help' => 'Switch your language direction.',
     'language' => 'Language',
     'language_help' => 'Choose the interface language and direction.',
+    'main_navigation' => 'Main navigation',
     'search' => 'Search...',
     'search_placeholder' => 'Search is ready for future ERP records.',
     'settings' => 'Settings',
@@ -50,4 +52,5 @@ return [
     'vertical_navbar_style_help' => 'Switch between styles for your vertical navbar.',
     'version' => 'Version :version',
     'vibrant' => 'Vibrant',
+    'work_context' => 'Work context',
 ];

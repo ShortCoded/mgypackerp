@@ -469,6 +469,8 @@
       subtotal += base;
       lineDiscount += discount;
       tax += rowTax;
+      $row.find('.js-quotation-line-discount-amount').text(decimal(discount));
+      $row.find('.js-quotation-line-tax-amount').text(decimal(rowTax));
       $row.find('.js-quotation-line-total').text(decimal(total));
     });
 
@@ -690,16 +692,19 @@
 
   function initForm() {
     const $form = $('.js-quotation-form').first();
+    const readonly = String($form.data('readonly') || '0') === '1';
 
     initSelect2(document);
     initDatePickers(document);
     initSummernote();
-    syncQuotationType($form);
-    syncDiscountInputs($form);
-    syncMainCurrency($form);
-    calculateTotals($form);
-    loadCustomerTerms($form);
-    $form.find('.js-quotation-line').each(function () { window.AppSalesPricing?.suggest(this); });
+    if (!readonly) {
+      syncQuotationType($form);
+      syncDiscountInputs($form);
+      syncMainCurrency($form);
+      calculateTotals($form);
+      loadCustomerTerms($form);
+      $form.find('.js-quotation-line').each(function () { window.AppSalesPricing?.suggest(this); });
+    }
 
     const $sourceRequest = $form.find('[data-quotation-source]');
     $sourceRequest.off('.quotationSource').on('select2:select.quotationSource select2:clear.quotationSource', function () {

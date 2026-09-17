@@ -87,6 +87,11 @@ class UpdateFinancialPeriodRequest extends FormRequest
             }
 
             if ($financialPeriod instanceof FinancialPeriod
+                && $this->boolean('is_closed') !== (bool) $financialPeriod->is_closed) {
+                $validator->errors()->add('is_closed', __('financial_periods.messages.status_requires_workflow'));
+            }
+
+            if ($financialPeriod instanceof FinancialPeriod
                 && $fromDate !== null
                 && $toDate !== null
                 && $toDate->gte($fromDate)

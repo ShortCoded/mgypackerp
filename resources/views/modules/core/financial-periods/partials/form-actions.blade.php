@@ -21,6 +21,16 @@
     @endif
 
     @if ($isView && $record)
+        @if (! $isTrashed && ! $record->is_closed && auth()->user()?->can('financial_periods.close'))
+            <button type="submit" form="financial-period-close-form" class="btn btn-warning btn-sm" onclick='return confirm(@js(__('financial_periods.messages.close_confirm_text')))'>
+                <span class="fas fa-lock me-1"></span>{{ __('financial_periods.actions.close') }}
+            </button>
+        @elseif (! $isTrashed && $record->is_closed && auth()->user()?->can('financial_periods.reopen'))
+            <button type="submit" form="financial-period-reopen-form" class="btn btn-falcon-warning btn-sm" onclick='return confirm(@js(__('financial_periods.messages.reopen_confirm_text')))'>
+                <span class="fas fa-lock-open me-1"></span>{{ __('financial_periods.actions.reopen') }}
+            </button>
+        @endif
+
         @if (! $isTrashed && $canEdit)
             <a class="btn btn-primary btn-sm" href="{{ route('admin.financial-periods.edit', $record->doc_num) }}" data-shortcut-action="form.edit" title="{{ __('common.shortcuts.edit') }}" data-bs-title="{{ __('common.shortcuts.edit') }}">
                 <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}

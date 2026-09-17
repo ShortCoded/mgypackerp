@@ -241,6 +241,7 @@ class Product extends Model
             self::ClassificationRawMaterial,
             self::ClassificationSemiFinished,
             self::ClassificationPackaging,
+            self::ClassificationService,
             self::ClassificationOther,
         ];
     }

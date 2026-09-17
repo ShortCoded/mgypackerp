@@ -7,14 +7,16 @@
 
 @php
     $unstyledTypes = ['checkbox', 'hidden', 'radio'];
+    $controlClass = $type === 'range' ? 'form-range' : 'form-control';
     $providedClass = (string) $attributes->get('class', '');
+    $providedClasses = preg_split('/\s+/', trim($providedClass), -1, PREG_SPLIT_NO_EMPTY) ?: [];
     $needsControlClass = ! in_array($type, $unstyledTypes, true)
-        && ! str_contains($providedClass, 'form-control');
+        && ! in_array($controlClass, $providedClasses, true);
     $defaultAttributes = in_array($type, $unstyledTypes, true)
         ? ['type' => $type, 'name' => $name, 'value' => $value, 'id' => $id]
         : ['id' => $id, 'name' => $name, 'type' => $type, 'value' => $value];
     $mergedAttributes = ($needsControlClass || $providedClass !== ''
-        ? $attributes->class(['form-control' => $needsControlClass])
+        ? $attributes->class($needsControlClass ? [$controlClass] : [])
         : $attributes)->merge($defaultAttributes);
     $attributeOrder = in_array($type, $unstyledTypes, true)
         ? ['type', 'id', 'name', 'value', 'class']

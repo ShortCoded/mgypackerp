@@ -6,7 +6,7 @@
     $requiresSelection = (bool) ($context['requires_selection'] ?? true);
 @endphp
 
-<li class="nav-item d-flex align-items-center">
+<li class="nav-item d-flex align-items-center erp-operating-context-item {{ $class ?? '' }}">
     <button
         class="btn btn-falcon-default btn-sm erp-operating-context-trigger {{ $requiresSelection ? 'is-missing' : '' }}"
         type="button"
@@ -14,22 +14,22 @@
         title="{{ __('operating_context.change_context') }}"
         data-bs-title="{{ __('operating_context.change_context') }}"
     >
-        <span class="fas fa-building text-primary me-1"></span>
+        <span class="fas fa-building text-primary me-1" aria-hidden="true"></span>
         <span class="erp-operating-context-line">
             <span class="text-600">{{ __('operating_context.current_company') }}:</span>
-            <span class="fw-semibold" data-operating-context-company>{{ $companyLabel }}</span>
+            <span class="fw-semibold" dir="auto" data-operating-context-company>{{ $companyLabel }}</span>
         </span>
         <span class="vr mx-2"></span>
-        <span class="fas fa-code-branch text-primary me-1"></span>
+        <span class="fas fa-code-branch text-primary me-1" aria-hidden="true"></span>
         <span class="erp-operating-context-line">
             <span class="text-600">{{ __('operating_context.current_branch') }}:</span>
-            <span class="fw-semibold" data-operating-context-branch>{{ $branchLabel }}</span>
+            <span class="fw-semibold" dir="auto" data-operating-context-branch>{{ $branchLabel }}</span>
         </span>
         <span class="vr mx-2"></span>
-        <span class="fas fa-calendar-alt text-primary me-1"></span>
+        <span class="fas fa-calendar-alt text-primary me-1" aria-hidden="true"></span>
         <span class="erp-operating-context-line">
             <span class="text-600">{{ __('operating_context.current_financial_period') }}:</span>
-            <span class="fw-semibold" data-operating-context-period>{{ $periodLabel }}</span>
+            <span class="fw-semibold" dir="auto" data-operating-context-period>{{ $periodLabel }}</span>
         </span>
     </button>
 </li>

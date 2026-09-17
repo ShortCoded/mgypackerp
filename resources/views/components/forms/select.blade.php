@@ -16,12 +16,15 @@
         default => null,
     };
     $providedClass = (string) $attributes->get('class', '');
-    $controlClasses = [
-        'form-select' => ! str_contains($providedClass, 'form-select'),
-    ];
+    $providedClasses = preg_split('/\s+/', trim($providedClass), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $controlClasses = [];
 
-    if ($variantClass !== null) {
-        $controlClasses[$variantClass] = ! str_contains($providedClass, $variantClass);
+    if (! in_array('form-select', $providedClasses, true)) {
+        $controlClasses[] = 'form-select';
+    }
+
+    if ($variantClass !== null && ! in_array($variantClass, $providedClasses, true)) {
+        $controlClasses[] = $variantClass;
     }
 
     $mergedAttributes = $attributes->class($controlClasses)->merge([

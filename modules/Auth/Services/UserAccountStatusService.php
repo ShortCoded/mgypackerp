@@ -3,26 +3,18 @@
 namespace Modules\Auth\Services;
 
 use App\Models\User;
-use Illuminate\Support\Str;
 use Modules\Core\Services\RequestMemo;
 
 class UserAccountStatusService
 {
     public function __construct(
         private readonly RequestMemo $memo,
+        private readonly LoginIdentifierResolver $loginIdentifiers,
     ) {}
 
-    public function findForLogin(string $field, string $identifier): ?User
+    public function resolveForLogin(string $identifier): LoginIdentifierResolution
     {
-        $query = User::withTrashed();
-
-        if ($field === 'username') {
-            $query->whereRaw('LOWER(username) = ?', [Str::lower($identifier)]);
-        } else {
-            $query->where($field, $identifier);
-        }
-
-        return $query->first();
+        return $this->loginIdentifiers->resolve($identifier);
     }
 
     public function freshUser(User $user): ?User

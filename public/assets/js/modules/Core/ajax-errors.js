@@ -216,6 +216,10 @@
         const errors = data.errors && typeof data.errors === 'object' ? data.errors : {};
         const $firstInput = renderFields($form, errors);
 
+        if (window.AppNavigationGuard && typeof window.AppNavigationGuard.submissionFailed === 'function') {
+            window.AppNavigationGuard.submissionFailed($form && $form.get ? $form.get(0) : null);
+        }
+
         showSummary($form, message(response));
 
         if (!options || options.focus !== false) {

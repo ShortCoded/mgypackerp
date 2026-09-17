@@ -223,9 +223,10 @@ async function handlePush(event) {
   await self.registration.showNotification(payload.title || ERP_PWA_DEFAULT_PUSH_TITLE, {
     body: payload.body || '',
     icon: payload.icon || undefined,
-    badge: payload.badge || payload.icon || undefined,
+    badge: payload.badge || undefined,
     tag: payload.tag || (payload.data && payload.data.id) || undefined,
     renotify: false,
+    silent: false,
     data: Object.assign({}, payload.data || {}, { url: targetUrl })
   });
 }

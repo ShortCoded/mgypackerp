@@ -1,0 +1,398 @@
+{
+  "artifacts": [
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-dashboard-cleanup/notification-center-desktop-ar-1440.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-dashboard-cleanup/notification-filters-open-desktop-ar-1440.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-dashboard-cleanup/notification-center-mobile-ar-390.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-dashboard-cleanup/dashboard-desktop-ar-1440.png",
+    "/mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/artifacts/notification-dashboard-cleanup/dashboard-mobile-ar-390.png"
+  ],
+  "browserErrors": [],
+  "dashboard": {
+    "contextInContentHeader": false,
+    "headerText": "لوحة التحكم",
+    "personalHealthText": "",
+    "personalSummary": "لا توجد أعمال مفتوحة تحتاج متابعتك الآن.",
+    "title": "لوحة التحكم"
+  },
+  "english": {
+    "deviceStatus": "Device notifications are currently unavailable.",
+    "diagnostics": false,
+    "direction": "ltr",
+    "fields": [
+      {
+        "bottom": 569.40625,
+        "id": "notification-search",
+        "left": 52,
+        "right": 338,
+        "top": 493.421875,
+        "width": 286
+      },
+      {
+        "bottom": 648.390625,
+        "id": "notification-module",
+        "left": 52,
+        "right": 338,
+        "top": 585.40625,
+        "width": 286
+      },
+      {
+        "bottom": 727.375,
+        "id": "notification-type",
+        "left": 52,
+        "right": 338,
+        "top": 664.390625,
+        "width": 286
+      },
+      {
+        "bottom": 806.359375,
+        "id": "notification-state",
+        "left": 52,
+        "right": 338,
+        "top": 743.375,
+        "width": 286
+      },
+      {
+        "bottom": 898.34375,
+        "id": "notification-from",
+        "left": 52,
+        "right": 338,
+        "top": 822.359375,
+        "width": 286
+      },
+      {
+        "bottom": 990.328125,
+        "id": "notification-to",
+        "left": 52,
+        "right": 338,
+        "top": 914.34375,
+        "width": 286
+      }
+    ],
+    "rawDateInputs": 0,
+    "sharedDateInputs": 2,
+    "sharedSelects": 3,
+    "testButtons": 0,
+    "viewportWidth": 390,
+    "visibleFieldCount": 6
+  },
+  "layoutAudits": [
+    {
+      "width": 1440,
+      "deviceStatus": "إشعارات الجهاز غير متاحة حاليًا.",
+      "diagnostics": false,
+      "direction": "rtl",
+      "fields": [
+        {
+          "bottom": 325.984375,
+          "id": "notification-search",
+          "left": 1073.84375,
+          "right": 1254.5,
+          "top": 265,
+          "width": 180.65625
+        },
+        {
+          "bottom": 327.984375,
+          "id": "notification-module",
+          "left": 893.1875,
+          "right": 1073.84375,
+          "top": 265,
+          "width": 180.65625
+        },
+        {
+          "bottom": 327.984375,
+          "id": "notification-type",
+          "left": 712.53125,
+          "right": 893.1875,
+          "top": 265,
+          "width": 180.65625
+        },
+        {
+          "bottom": 327.984375,
+          "id": "notification-state",
+          "left": 531.875,
+          "right": 712.53125,
+          "top": 265,
+          "width": 180.65625
+        },
+        {
+          "bottom": 325.984375,
+          "id": "notification-from",
+          "left": 351.21875,
+          "right": 531.875,
+          "top": 265,
+          "width": 180.65625
+        },
+        {
+          "bottom": 325.984375,
+          "id": "notification-to",
+          "left": 170.5625,
+          "right": 351.21875,
+          "top": 265,
+          "width": 180.65625
+        }
+      ],
+      "rawDateInputs": 0,
+      "sharedDateInputs": 2,
+      "sharedSelects": 3,
+      "testButtons": 0,
+      "viewportWidth": 1440,
+      "visibleFieldCount": 6
+    },
+    {
+      "width": 1024,
+      "deviceStatus": "إشعارات الجهاز غير متاحة حاليًا.",
+      "diagnostics": false,
+      "direction": "rtl",
+      "fields": [
+        {
+          "bottom": 319.984375,
+          "id": "notification-search",
+          "left": 658.015625,
+          "right": 965,
+          "top": 259,
+          "width": 306.984375
+        },
+        {
+          "bottom": 321.984375,
+          "id": "notification-module",
+          "left": 351.03125,
+          "right": 658.015625,
+          "top": 259,
+          "width": 306.984375
+        },
+        {
+          "bottom": 321.984375,
+          "id": "notification-type",
+          "left": 44.046875,
+          "right": 351.03125,
+          "top": 259,
+          "width": 306.984375
+        },
+        {
+          "bottom": 400.96875,
+          "id": "notification-state",
+          "left": 658.015625,
+          "right": 965,
+          "top": 337.984375,
+          "width": 306.984375
+        },
+        {
+          "bottom": 398.96875,
+          "id": "notification-from",
+          "left": 351.03125,
+          "right": 658.015625,
+          "top": 337.984375,
+          "width": 306.984375
+        },
+        {
+          "bottom": 398.96875,
+          "id": "notification-to",
+          "left": 44.046875,
+          "right": 351.03125,
+          "top": 337.984375,
+          "width": 306.984375
+        }
+      ],
+      "rawDateInputs": 0,
+      "sharedDateInputs": 2,
+      "sharedSelects": 3,
+      "testButtons": 0,
+      "viewportWidth": 1024,
+      "visibleFieldCount": 6
+    },
+    {
+      "width": 768,
+      "deviceStatus": "إشعارات الجهاز غير متاحة حاليًا.",
+      "diagnostics": false,
+      "direction": "rtl",
+      "fields": [
+        {
+          "bottom": 364.984375,
+          "id": "notification-search",
+          "left": 376.5,
+          "right": 709,
+          "top": 304,
+          "width": 332.5
+        },
+        {
+          "bottom": 366.984375,
+          "id": "notification-module",
+          "left": 44,
+          "right": 376.5,
+          "top": 304,
+          "width": 332.5
+        },
+        {
+          "bottom": 445.96875,
+          "id": "notification-type",
+          "left": 376.5,
+          "right": 709,
+          "top": 382.984375,
+          "width": 332.5
+        },
+        {
+          "bottom": 445.96875,
+          "id": "notification-state",
+          "left": 44,
+          "right": 376.5,
+          "top": 382.984375,
+          "width": 332.5
+        },
+        {
+          "bottom": 522.953125,
+          "id": "notification-from",
+          "left": 376.5,
+          "right": 709,
+          "top": 461.96875,
+          "width": 332.5
+        },
+        {
+          "bottom": 522.953125,
+          "id": "notification-to",
+          "left": 44,
+          "right": 376.5,
+          "top": 461.96875,
+          "width": 332.5
+        }
+      ],
+      "rawDateInputs": 0,
+      "sharedDateInputs": 2,
+      "sharedSelects": 3,
+      "testButtons": 0,
+      "viewportWidth": 768,
+      "visibleFieldCount": 6
+    },
+    {
+      "width": 390,
+      "deviceStatus": "إشعارات الجهاز غير متاحة حاليًا.",
+      "diagnostics": false,
+      "direction": "rtl",
+      "fields": [
+        {
+          "bottom": 488.984375,
+          "id": "notification-search",
+          "left": 52,
+          "right": 338,
+          "top": 413,
+          "width": 286
+        },
+        {
+          "bottom": 567.96875,
+          "id": "notification-module",
+          "left": 52,
+          "right": 338,
+          "top": 504.984375,
+          "width": 286
+        },
+        {
+          "bottom": 646.953125,
+          "id": "notification-type",
+          "left": 52,
+          "right": 338,
+          "top": 583.96875,
+          "width": 286
+        },
+        {
+          "bottom": 725.9375,
+          "id": "notification-state",
+          "left": 52,
+          "right": 338,
+          "top": 662.953125,
+          "width": 286
+        },
+        {
+          "bottom": 817.921875,
+          "id": "notification-from",
+          "left": 52,
+          "right": 338,
+          "top": 741.9375,
+          "width": 286
+        },
+        {
+          "bottom": 909.90625,
+          "id": "notification-to",
+          "left": 52,
+          "right": 338,
+          "top": 833.921875,
+          "width": 286
+        }
+      ],
+      "rawDateInputs": 0,
+      "sharedDateInputs": 2,
+      "sharedSelects": 3,
+      "testButtons": 0,
+      "viewportWidth": 390,
+      "visibleFieldCount": 6
+    },
+    {
+      "width": 320,
+      "deviceStatus": "إشعارات الجهاز غير متاحة حاليًا.",
+      "diagnostics": false,
+      "direction": "rtl",
+      "fields": [
+        {
+          "bottom": 549.71875,
+          "id": "notification-search",
+          "left": 52,
+          "right": 268,
+          "top": 473.734375,
+          "width": 216
+        },
+        {
+          "bottom": 628.703125,
+          "id": "notification-module",
+          "left": 52,
+          "right": 268,
+          "top": 565.71875,
+          "width": 216
+        },
+        {
+          "bottom": 707.6875,
+          "id": "notification-type",
+          "left": 52,
+          "right": 268,
+          "top": 644.703125,
+          "width": 216
+        },
+        {
+          "bottom": 786.671875,
+          "id": "notification-state",
+          "left": 52,
+          "right": 268,
+          "top": 723.6875,
+          "width": 216
+        },
+        {
+          "bottom": 878.65625,
+          "id": "notification-from",
+          "left": 52,
+          "right": 268,
+          "top": 802.671875,
+          "width": 216
+        },
+        {
+          "bottom": 970.640625,
+          "id": "notification-to",
+          "left": 52,
+          "right": 268,
+          "top": 894.65625,
+          "width": 216
+        }
+      ],
+      "rawDateInputs": 0,
+      "sharedDateInputs": 2,
+      "sharedSelects": 3,
+      "testButtons": 0,
+      "viewportWidth": 320,
+      "visibleFieldCount": 6
+    }
+  ],
+  "responseErrors": [],
+  "savedFilters": {
+    "from": "2026-09-01",
+    "module": "chat",
+    "state": "unread",
+    "to": "2026-09-17",
+    "type": "chat.message"
+  }
+}

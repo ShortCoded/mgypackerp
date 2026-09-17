@@ -67,6 +67,12 @@
 
 @section('content')
     <div class="my-board-shell">
+        @if (filled($boardConfig['focusLabel'] ?? null))
+            <div class="alert alert-info d-flex align-items-center justify-content-between gap-3" role="status">
+                <span><span class="fas fa-filter me-2" aria-hidden="true"></span>{{ __('user_tasks.focus.active', ['filter' => $boardConfig['focusLabel']]) }}</span>
+                <a class="btn btn-sm btn-falcon-default" href="{{ route('admin.my-board.index') }}">{{ __('user_tasks.focus.clear') }}</a>
+            </div>
+        @endif
         <div class="mb-3 card">
             <div class="py-3 card-body">
                 <div class="row flex-between-center g-3">

@@ -85,6 +85,10 @@ class StoreFinancialPeriodRequest extends FormRequest
                 $validator->errors()->add('to_date', __('financial_periods.validation.to_date_after_or_equal'));
             }
 
+            if ($this->boolean('is_closed')) {
+                $validator->errors()->add('is_closed', __('financial_periods.messages.status_requires_workflow'));
+            }
+
             if ($fromDate !== null
                 && $toDate !== null
                 && $toDate->gte($fromDate)

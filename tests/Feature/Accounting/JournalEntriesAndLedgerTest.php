@@ -8,6 +8,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
+use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Database\Seeders\CurrencySeeder;
@@ -180,8 +181,12 @@ test('journal and ledger permissions are discovered and menu items are visible',
         'journal_entries.post',
         'journal_entries.view_trashed',
         'journal_entries.restore',
+        'financial_periods.close',
+        'financial_periods.reopen',
         'reports.account_ledger.view',
         'reports.account_ledger.export',
+        'reports.trial_balance.view',
+        'reports.trial_balance.export',
         'reports.customer_statement.view',
         'reports.customer_statement.export',
         'reports.supplier_statement.view',
@@ -196,7 +201,7 @@ test('journal and ledger permissions are discovered and menu items are visible',
     $children = collect(require config_path('menu/accounting.php'))->first()['children'] ?? [];
 
     expect(collect($children)->pluck('label')->all())
-        ->toContain('journal_entries', 'account_ledger', 'customer_statement', 'supplier_statement');
+        ->toContain('journal_entries', 'account_ledger', 'trial_balance', 'customer_statement', 'supplier_statement');
 });
 
 test('manual journal lifecycle is balanced draft to posted and posted entries are immutable', function (): void {
@@ -463,6 +468,254 @@ test('canonical ledger normalizes posted foreign currency amounts to the main cu
         ->and($result['currency']['code'])->toBe($context['currency']->code);
 });
 
+test('trial balance uses posted journals across periods without double counting hierarchy totals', function (): void {
+    $context = journalEntryContext();
+    $actor = journalEntryActor([
+        'reports.trial_balance.view',
+        'reports.trial_balance.export',
+        'reports.account_ledger.view',
+    ]);
+    $priorPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99901,
+        'doc_num' => 'FP-TB-PRIOR',
+        'company_id' => $context['company']->getKey(),
+        'name' => 'Trial balance prior year',
+        'from_date' => '2025-01-01',
+        'to_date' => '2025-12-31',
+        'is_closed' => true,
+    ]);
+    $group = Account::query()->create([
+        'doc_number' => 99901,
+        'doc_num' => 'ACC-TB-GROUP',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '991-TB',
+        'name' => 'Trial Balance Group',
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'level' => 1,
+        'is_group' => true,
+        'is_postable' => false,
+        'status' => 'active',
+    ]);
+    $debitAccount = Account::query()->create([
+        'doc_number' => 99902,
+        'doc_num' => 'ACC-TB-DEBIT',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '991-TB-1',
+        'name' => 'Trial Balance Debit',
+        'parent_id' => $group->getKey(),
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'level' => 2,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $creditAccount = Account::query()->create([
+        'doc_number' => 99903,
+        'doc_num' => 'ACC-TB-CREDIT',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '991-TB-2',
+        'name' => 'Trial Balance Credit',
+        'parent_id' => $group->getKey(),
+        'account_type' => Account::TypeLiability,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceCredit,
+        'level' => 2,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $zeroAccount = Account::query()->create([
+        'doc_number' => 99904,
+        'doc_num' => 'ACC-TB-ZERO',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '992-TB',
+        'name' => 'Trial Balance Zero',
+        'account_type' => Account::TypeExpense,
+        'statement_type' => Account::StatementIncomeStatement,
+        'normal_balance' => Account::BalanceDebit,
+        'level' => 1,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+
+    $priorContext = $context;
+    $priorContext['period'] = $priorPeriod;
+    journalPostedMovement($priorContext, $debitAccount, $creditAccount, 99911, '2025-12-31', '100.0000', '0.0000');
+    journalPostedMovement($context, $debitAccount, $creditAccount, 99912, '2026-03-01', '0.0000', '30.0000');
+    journalPostedMovement($context, $debitAccount, $creditAccount, 99913, '2026-03-02', '30.0000', '0.0000');
+    journalPostedMovement($context, $debitAccount, $creditAccount, 99914, '2026-03-03', '999.0000', '0.0000')
+        ->update(['status' => JournalEntry::StatusDraft, 'is_posted' => false]);
+    $debitAccount->update(['status' => 'inactive']);
+
+    $filters = [
+        'company_id' => $context['company']->getKey(),
+        'from_date' => '2026-01-01',
+        'to_date' => '2026-12-31',
+        'branch_id' => null,
+        'cost_center_id' => null,
+        'include_zero' => false,
+    ];
+    $result = app(TrialBalanceQueryService::class)->report($filters);
+    $rows = collect($result['rows'])->keyBy('doc_num');
+
+    expect($result['is_balanced'])->toBeTrue()
+        ->and($result['totals'])->toBe([
+            'opening_debit' => '100.0000',
+            'opening_credit' => '100.0000',
+            'period_debit' => '60.0000',
+            'period_credit' => '60.0000',
+            'ending_debit' => '100.0000',
+            'ending_credit' => '100.0000',
+        ])
+        ->and($rows->get('ACC-TB-DEBIT')['opening_debit'])->toBe('100.0000')
+        ->and($rows->get('ACC-TB-DEBIT')['period_debit'])->toBe('30.0000')
+        ->and($rows->get('ACC-TB-DEBIT')['period_credit'])->toBe('30.0000')
+        ->and($rows->get('ACC-TB-DEBIT')['ending_debit'])->toBe('100.0000')
+        ->and($rows->get('ACC-TB-DEBIT')['is_inactive'])->toBeTrue()
+        ->and($rows->get('ACC-TB-GROUP')['period_debit'])->toBe('60.0000')
+        ->and($rows->get('ACC-TB-GROUP')['period_credit'])->toBe('60.0000')
+        ->and($rows->has($zeroAccount->doc_num))->toBeFalse();
+
+    $withZero = app(TrialBalanceQueryService::class)->report([
+        ...$filters,
+        'include_zero' => true,
+    ]);
+    expect(collect($withZero['rows'])->pluck('doc_num'))->toContain($zeroAccount->doc_num);
+
+    $query = [
+        'run' => 1,
+        'from_date' => '2026-01-01',
+        'to_date' => '2026-12-31',
+    ];
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.trial-balance', $query))
+        ->assertOk()
+        ->assertSee(__('trial_balance.title'))
+        ->assertSee('Trial Balance Debit')
+        ->assertSee(__('trial_balance.status.inactive'))
+        ->assertDontSee('Trial Balance Zero');
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.trial-balance.export.csv', $query))
+        ->assertOk()
+        ->assertDownload('trial-balance.csv');
+
+    $pdf = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.trial-balance.export.pdf', $query))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+});
+
+test('financial period close transfers the result once and controlled reopen reverses it', function (): void {
+    $context = journalEntryContext();
+    $actor = journalEntryActor([
+        'financial_periods.view',
+        'financial_periods.edit',
+        'financial_periods.close',
+        'financial_periods.reopen',
+        'journal_entries.view',
+    ]);
+    $revenue = Account::query()
+        ->forCompany($context['company']->getKey())
+        ->where('account_code', '411')
+        ->firstOrFail();
+    $expense = Account::query()
+        ->forCompany($context['company']->getKey())
+        ->where('account_code', '528')
+        ->firstOrFail();
+    $retainedEarnings = Account::query()
+        ->forCompany($context['company']->getKey())
+        ->where('account_code', '34')
+        ->firstOrFail();
+    $asset = Account::query()
+        ->forCompany($context['company']->getKey())
+        ->active()
+        ->where('account_type', Account::TypeAsset)
+        ->where('is_group', false)
+        ->where('is_postable', true)
+        ->firstOrFail();
+
+    journalPostedMovement($context, $revenue, $asset, 99921, '2026-06-01', '0.0000', '244.0000');
+    journalPostedMovement($context, $expense, $asset, 99922, '2026-06-02', '147.2000', '0.0000');
+    $draft = journalPostedMovement($context, $expense, $asset, 99923, '2026-06-03', '10.0000', '0.0000');
+    $draft->update(['status' => JournalEntry::StatusDraft, 'is_posted' => false]);
+
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.close', $context['period']->doc_num))
+        ->assertRedirect()
+        ->assertSessionHasErrors('period_close');
+    expect($context['period']->refresh()->is_closed)->toBeFalse();
+
+    $draft->update(['status' => JournalEntry::StatusCancelled]);
+
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.close', $context['period']->doc_num))
+        ->assertRedirect(route('admin.financial-periods.show', $context['period']->doc_num))
+        ->assertSessionHas('success');
+
+    $closing = JournalEntry::query()
+        ->with('lines')
+        ->where('financial_period_id', $context['period']->getKey())
+        ->where('source_type', 'period_closing')
+        ->firstOrFail();
+    $closingLines = $closing->lines->keyBy('account_id');
+
+    expect($context['period']->refresh()->is_closed)->toBeTrue()
+        ->and($closing->is_posted)->toBeTrue()
+        ->and($closing->entry_date->toDateString())->toBe($context['period']->to_date->toDateString())
+        ->and($closingLines->get($revenue->getKey())->debit_amount)->toBe('244.0000')
+        ->and($closingLines->get($expense->getKey())->credit_amount)->toBe('147.2000')
+        ->and($closingLines->get($retainedEarnings->getKey())->credit_amount)->toBe('96.8000');
+
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.close', $context['period']->doc_num))
+        ->assertRedirect();
+    expect(JournalEntry::query()->where('source_type', 'period_closing')->count())->toBe(1);
+
+    $this->actingAs($actor)
+        ->putJson(route('admin.financial-periods.update', $context['period']->doc_num), [
+            'name' => $context['period']->name,
+            'from_date' => $context['period']->from_date->toDateString(),
+            'to_date' => $context['period']->to_date->toDateString(),
+            'is_closed' => false,
+            'notes' => $context['period']->notes,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('is_closed');
+
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.reopen', $context['period']->doc_num))
+        ->assertRedirect(route('admin.financial-periods.show', $context['period']->doc_num));
+
+    $closing->refresh();
+    $reversal = JournalEntry::query()->findOrFail($closing->reversed_entry_id);
+    expect($context['period']->refresh()->is_closed)->toBeFalse()
+        ->and($reversal->source_type)->toBe('period_closing_reversal')
+        ->and($reversal->is_posted)->toBeTrue();
+
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.close', $context['period']->doc_num))
+        ->assertRedirect(route('admin.financial-periods.show', $context['period']->doc_num));
+
+    expect($context['period']->refresh()->is_closed)->toBeTrue()
+        ->and(JournalEntry::query()
+            ->where('financial_period_id', $context['period']->getKey())
+            ->whereIn('source_type', ['period_closing', 'period_closing_2'])
+            ->count())->toBe(2)
+        ->and(JournalEntry::query()
+            ->where('financial_period_id', $context['period']->getKey())
+            ->where('source_type', 'period_closing_reversal')
+            ->count())->toBe(1);
+});
+
 test('account ledger PDF export uses the standard report renderer', function (): void {
     $context = journalEntryContext();
     [$subject, $counterpart] = journalEntryAccounts($context['company']);
@@ -710,7 +963,7 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->assertSee(__('ledger_reports.movement_descriptions.supplier_payable'))
         ->assertDontSee('مستحقات المورد عن فاتورة مشتريات')
         ->assertDontSee('JE-99312')
-        ->assertDontSee('910')
+        ->assertDontSee('910.0000')
         ->assertDontSee('id="branch_doc_num"', false)
         ->assertDontSee('id="cost_center_doc_num"', false)
         ->assertDontSee($supplierAccountA->codeNameLabel());

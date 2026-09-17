@@ -133,7 +133,11 @@ final class CostAccountingReportService
             ->where('journal_entries.company_id', $companyId)
             ->where('journal_entries.financial_period_id', $financialPeriodId)
             ->where('journal_entries.status', JournalEntry::StatusPosted)
-            ->where('journal_entries.is_posted', true);
+            ->where('journal_entries.is_posted', true)
+            ->where(function (Builder $query): void {
+                $query->whereNull('journal_entries.source_type')
+                    ->orWhere('journal_entries.source_type', 'not like', 'period_closing%');
+            });
     }
 
     /** @return list<int> */

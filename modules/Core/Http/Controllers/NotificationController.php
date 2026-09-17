@@ -8,9 +8,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
@@ -39,14 +36,23 @@ class NotificationController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $filters = $request->validate([
-            'search' => ['nullable', 'string', 'max:100'],
-            'module' => ['nullable', 'string', 'max:50'],
-            'type' => ['nullable', 'string', 'max:100'],
-            'state' => ['nullable', 'string', 'in:all,read,unread'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date', 'after_or_equal:from'],
-        ]);
+        $filters = $request->validate(
+            [
+                'search' => ['nullable', 'string', 'max:100'],
+                'module' => ['nullable', 'string', 'max:50'],
+                'type' => ['nullable', 'string', 'max:100'],
+                'state' => ['nullable', 'string', 'in:all,read,unread'],
+                'from' => ['nullable', 'date'],
+                'to' => ['nullable', 'date', 'after_or_equal:from'],
+            ],
+            [
+                'to.after_or_equal' => __('notifications.validation.to_after_or_equal'),
+            ],
+            [
+                'from' => __('notifications.filters.from'),
+                'to' => __('notifications.filters.to'),
+            ],
+        );
 
         $query = $this->access->queryFor($user)->delivered();
         $search = trim((string) ($filters['search'] ?? ''));
@@ -77,14 +83,37 @@ class NotificationController extends Controller
             ->whereNotNull('module')
             ->distinct()
             ->orderBy('module')
-            ->pluck('module');
+            ->pluck('module')
+            ->mapWithKeys(fn (string $module): array => [$module => $this->translatedOptionLabel('modules', $module)]);
         $types = $this->access->queryFor($user)
             ->delivered()
             ->distinct()
             ->orderBy('type')
-            ->pluck('type');
+            ->pluck('type')
+            ->mapWithKeys(fn (string $type): array => [$type => $this->translatedOptionLabel('types', $type)]);
 
-        return view('modules.Core.notifications.index', compact('notifications', 'modules', 'types', 'filters'));
+        if (filled($filters['module'] ?? null) && ! $modules->has($filters['module'])) {
+            $modules->put($filters['module'], $this->translatedOptionLabel('modules', $filters['module']));
+        }
+
+        if (filled($filters['type'] ?? null) && ! $types->has($filters['type'])) {
+            $types->put($filters['type'], $this->translatedOptionLabel('types', $filters['type']));
+        }
+
+        $hasActiveFilters = $search !== ''
+            || filled($filters['module'] ?? null)
+            || filled($filters['type'] ?? null)
+            || ($filters['state'] ?? 'all') !== 'all'
+            || filled($filters['from'] ?? null)
+            || filled($filters['to'] ?? null);
+
+        return view('modules.Core.notifications.index', compact(
+            'notifications',
+            'modules',
+            'types',
+            'filters',
+            'hasActiveFilters',
+        ));
     }
 
     public function poll(Request $request): JsonResponse
@@ -101,48 +130,6 @@ class NotificationController extends Controller
             'success' => true,
             'data' => $poll,
         ]);
-    }
-
-    public function diagnostics(): View
-    {
-        $events = UserNotification::query()
-            ->whereNotNull('event_uuid')
-            ->select(['event_uuid', 'module', 'type'])
-            ->selectRaw('COUNT(*) as recipient_count')
-            ->selectRaw('MAX(created_at) as occurred_at')
-            ->selectRaw("SUM(CASE WHEN push_status = 'accepted' THEN 1 ELSE 0 END) as accepted_count")
-            ->selectRaw("SUM(CASE WHEN push_status = 'failed' THEN 1 ELSE 0 END) as failed_count")
-            ->selectRaw("SUM(CASE WHEN push_status IN ('queued', 'sending') THEN 1 ELSE 0 END) as pending_count")
-            ->groupBy(['event_uuid', 'module', 'type'])
-            ->latest('occurred_at')
-            ->limit(30)
-            ->get();
-        $pushStatuses = UserNotification::query()
-            ->whereNotNull('push_status')
-            ->select('push_status')
-            ->selectRaw('COUNT(*) as aggregate')
-            ->groupBy('push_status')
-            ->orderBy('push_status')
-            ->pluck('aggregate', 'push_status');
-        $queue = [
-            'pending' => Schema::hasTable('jobs') ? DB::table('jobs')->count() : null,
-            'failed' => Schema::hasTable('failed_jobs') ? DB::table('failed_jobs')->count() : null,
-        ];
-        $configuration = [
-            'vapid_subject' => filled(config('webpush.vapid.subject')),
-            'vapid_public_key' => filled(config('webpush.vapid.public_key')),
-            'vapid_private_key' => filled(config('webpush.vapid.private_key')),
-            'queue_connection' => (string) config('queue.default'),
-        ];
-        $runtime = Cache::get('notifications.runtime.last_dispatch');
-
-        return view('modules.Core.notifications.diagnostics', compact(
-            'events',
-            'pushStatuses',
-            'queue',
-            'configuration',
-            'runtime',
-        ));
     }
 
     public function read(Request $request, UserNotification $notification): JsonResponse
@@ -202,12 +189,16 @@ class NotificationController extends Controller
         }
 
         if (! $this->selectNotificationContext($request, $notification)) {
-            return redirect($this->safeRedirects->fallback())
+            return to_route('admin.notifications.index')
                 ->with('warning', __('notifications.messages.context_unavailable'));
         }
 
-        $target = $this->safeRedirects->sanitizeIntended($notification->url)
-            ?? $this->safeRedirects->fallback();
+        $target = $this->safeRedirects->sanitizeIntendedForUser($notification->url, $user);
+
+        if ($target === null) {
+            return to_route('admin.notifications.index')
+                ->with('warning', __('notifications.messages.target_unavailable'));
+        }
 
         return redirect($target);
     }
@@ -236,6 +227,31 @@ class NotificationController extends Controller
         }
 
         return true;
+    }
+
+    private function translatedOptionLabel(string $group, string $value): string
+    {
+        $key = str_replace(['.', '-'], '_', $value);
+        $translationKey = "notifications.{$group}.{$key}";
+
+        if (trans()->has($translationKey)) {
+            return __($translationKey);
+        }
+
+        if ($group === 'types' && str_contains($value, '.')) {
+            [$module, $status] = explode('.', $value, 2);
+            $moduleKey = 'notifications.modules.'.str_replace(['.', '-'], '_', $module);
+            $statusKey = 'notifications.statuses.'.str_replace(['.', '-'], '_', $status);
+
+            if (trans()->has($moduleKey) && trans()->has($statusKey)) {
+                return __('notifications.operational.title', [
+                    'module' => __($moduleKey),
+                    'status' => __($statusKey),
+                ]);
+            }
+        }
+
+        return __("notifications.{$group}.other");
     }
 
     /**

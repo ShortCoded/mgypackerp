@@ -25,7 +25,15 @@ function button() {
   };
 }
 
-function navigationHarness({ canGoBack, canGoForward, iosStandalone = false, standalone = false } = {}) {
+function navigationHarness({
+  currentUrl = 'https://erp.test/dashboard',
+  entryIndex,
+  entryUrls = [],
+  guardAllows = true,
+  iosStandalone = false,
+  referrer = '',
+  standalone = false,
+} = {}) {
   const backButton = button();
   const forwardButton = button();
   const pageReloadButton = button();
@@ -37,6 +45,8 @@ function navigationHarness({ canGoBack, canGoForward, iosStandalone = false, sta
   const state = {
     backs: 0,
     forwards: 0,
+    guardCalls: 0,
+    assigned: [],
     reloads: 0,
   };
   const displayModeQuery = {
@@ -45,17 +55,44 @@ function navigationHarness({ canGoBack, canGoForward, iosStandalone = false, sta
       mediaListeners.set(type, callback);
     },
   };
-  const navigation = typeof canGoBack === 'boolean' && typeof canGoForward === 'boolean'
+  const entries = entryUrls.map((url) => ({ url }));
+  const navigation = Number.isInteger(entryIndex)
     ? {
-        canGoBack,
-        canGoForward,
+        canGoBack: entryIndex > 0,
+        canGoForward: entryIndex < entries.length - 1,
+        currentEntry: entries[entryIndex],
+        entries() {
+          return entries;
+        },
+        back() {
+          state.backs += 1;
+        },
+        forward() {
+          state.forwards += 1;
+        },
         addEventListener(type, callback) {
           navigationListeners.set(type, callback);
         },
       }
     : undefined;
   const window = {
-    AppPwaRuntime: {},
+    AppNavigationGuard: {
+      run(action) {
+        state.guardCalls += 1;
+
+        if (!guardAllows) {
+          return false;
+        }
+
+        action();
+
+        return true;
+      },
+    },
+    AppPwaRuntime: {
+      navigationBlockedPaths: ['/login', '/lock-screen', '/logout'],
+      navigationFallbackUrl: '/dashboard',
+    },
     history: {
       back() {
         state.backs += 1;
@@ -65,7 +102,11 @@ function navigationHarness({ canGoBack, canGoForward, iosStandalone = false, sta
       },
     },
     location: {
-      href: 'https://erp.test/dashboard',
+      href: currentUrl,
+      origin: 'https://erp.test',
+      assign(url) {
+        state.assigned.push(url);
+      },
       reload() {
         state.reloads += 1;
       },
@@ -84,6 +125,7 @@ function navigationHarness({ canGoBack, canGoForward, iosStandalone = false, sta
     ['[data-erp-pwa-page-reload]', pageReloadButton],
   ]);
   const document = {
+    referrer,
     documentElement: {
       classList: {
         toggle(className, enabled) {
@@ -125,19 +167,32 @@ test('PWA navigation stays hidden in a regular browser tab', () => {
   assert.equal(harness.rootClasses.has('erp-pwa-standalone'), false);
 });
 
-test('standalone PWA shows working back forward and reload controls', () => {
+test('standalone PWA at its fallback keeps unknown history actions disabled', () => {
   const harness = navigationHarness({ standalone: true });
 
   assert.equal(harness.toolbar.hidden, false);
   assert.equal(harness.rootClasses.has('erp-pwa-standalone'), true);
-  assert.equal(harness.backButton.disabled, false);
-  assert.equal(harness.forwardButton.disabled, false);
+  assert.equal(harness.backButton.disabled, true);
+  assert.equal(harness.forwardButton.disabled, true);
 
-  harness.backButton.click();
-  harness.forwardButton.click();
   harness.pageReloadButton.click();
 
-  assert.deepEqual(harness.state, { backs: 1, forwards: 1, reloads: 1 });
+  assert.equal(harness.state.reloads, 1);
+  assert.equal(harness.state.guardCalls, 1);
+});
+
+test('direct internal deep link uses the configured safe fallback', () => {
+  const harness = navigationHarness({
+    currentUrl: 'https://erp.test/admin/purchases/requisitions/42',
+    standalone: true,
+  });
+
+  assert.equal(harness.backButton.disabled, false);
+  assert.equal(harness.forwardButton.disabled, true);
+
+  harness.backButton.click();
+
+  assert.deepEqual(harness.state.assigned, ['https://erp.test/dashboard']);
 });
 
 test('iOS standalone mode shows the PWA navigation controls', () => {
@@ -149,20 +204,50 @@ test('iOS standalone mode shows the PWA navigation controls', () => {
 
 test('navigation API capabilities disable unavailable history actions', () => {
   const harness = navigationHarness({
-    canGoBack: false,
-    canGoForward: true,
+    entryIndex: 1,
+    entryUrls: [
+      'https://erp.test/dashboard',
+      'https://erp.test/admin/purchases',
+      'https://erp.test/admin/purchases/requisitions',
+    ],
     standalone: true,
   });
 
-  assert.equal(harness.backButton.disabled, true);
+  assert.equal(harness.backButton.disabled, false);
   assert.equal(harness.forwardButton.disabled, false);
 
+  harness.backButton.click();
+  harness.forwardButton.click();
+
+  assert.equal(harness.state.backs, 1);
+  assert.equal(harness.state.forwards, 1);
+
+  harness.navigation.currentEntry = harness.navigation.entries()[2];
   harness.navigation.canGoBack = true;
   harness.navigation.canGoForward = false;
   harness.navigationListeners.get('currententrychange')();
 
   assert.equal(harness.backButton.disabled, false);
   assert.equal(harness.forwardButton.disabled, true);
+});
+
+test('external referrer is never used as a back destination', () => {
+  const harness = navigationHarness({
+    currentUrl: 'https://erp.test/dashboard',
+    referrer: 'https://external.example/landing',
+    standalone: true,
+  });
+
+  assert.equal(harness.backButton.disabled, true);
+});
+
+test('unsaved-change guard can cancel PWA reload', () => {
+  const harness = navigationHarness({ guardAllows: false, standalone: true });
+
+  harness.pageReloadButton.click();
+
+  assert.equal(harness.state.guardCalls, 1);
+  assert.equal(harness.state.reloads, 0);
 });
 
 test('display mode changes reveal controls without a page reload', () => {

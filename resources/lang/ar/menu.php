@@ -61,6 +61,7 @@ return [
     'general_ledger' => 'الحسابات العامة',
     'journal_entries' => 'قيود اليومية',
     'account_ledger' => 'كشف حساب الأستاذ',
+    'trial_balance' => 'ميزان المراجعة',
     'customer_statement' => 'كشف حساب عميل',
     'supplier_statement' => 'كشف حساب مورد',
     'sales' => 'المبيعات',

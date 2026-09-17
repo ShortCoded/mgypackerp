@@ -73,6 +73,10 @@ class FinancialPeriodService
                 : $this->documentNumberService->nextForCompany('financial_periods', FinancialPeriod::class, $companyId);
             $values = $this->normalizedValues($data);
 
+            if ($values['is_closed'] ?? false) {
+                throw new DomainException(__('financial_periods.messages.status_requires_workflow'));
+            }
+
             $record = FinancialPeriod::query()->create([
                 'company_id' => $companyId,
                 ...$values,
@@ -99,6 +103,11 @@ class FinancialPeriodService
             $oldDocNum = $record->doc_num;
             $canChangeDocumentNumber = array_key_exists('doc_number', $data);
             $newValues = $this->normalizedValues($data, $record);
+
+            if (array_key_exists('is_closed', $newValues)
+                && (bool) $newValues['is_closed'] !== (bool) $record->is_closed) {
+                throw new DomainException(__('financial_periods.messages.status_requires_workflow'));
+            }
 
             if ($canChangeDocumentNumber) {
                 $newValues['doc_number'] = (int) $data['doc_number'];

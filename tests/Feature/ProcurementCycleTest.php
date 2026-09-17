@@ -133,9 +133,10 @@ test('purchasable classifications and production demand lineage are explicit', f
         Product::ClassificationRawMaterial,
         Product::ClassificationSemiFinished,
         Product::ClassificationPackaging,
+        Product::ClassificationService,
         Product::ClassificationOther,
     ])->and($fixture['raw']->isPurchasable())->toBeTrue()
-        ->and($fixture['service']->isPurchasable())->toBeFalse()
+        ->and($fixture['service']->isPurchasable())->toBeTrue()
         ->and($fixture['finished']->isPurchasable())->toBeFalse();
 
     $requisition = app(ProcurementSourcingService::class)->createRequisition([
@@ -1508,8 +1509,8 @@ test('purchase order stores span active company branches while remaining company
     ]))->assertOk()->json('results');
 
     expect(collect($productResults)->pluck('id'))
-        ->toContain($fixture['raw']->doc_num)
-        ->not->toContain($fixture['service']->doc_num, $fixture['finished']->doc_num)
+        ->toContain($fixture['raw']->doc_num, $fixture['service']->doc_num)
+        ->not->toContain($fixture['finished']->doc_num)
         ->and(collect($historicalService)->pluck('id'))->toContain($fixture['service']->doc_num);
 
     $payload = [

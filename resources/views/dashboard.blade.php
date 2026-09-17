@@ -1,10 +1,6 @@
 @extends('layouts.app')
 
-@php
-    $dates = app(\Modules\Core\Services\DateFormatService::class);
-@endphp
-
-@section('title', __('dashboard.plastics.title'))
+@section('title', __('dashboard.title'))
 
 @push('styles')
     <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/employee-self-service.css') }}">
@@ -14,32 +10,20 @@
 @section('content')
     <div class="plastics-dashboard">
         <header class="mb-3 plastics-dashboard-header">
-            <div class="gap-2 d-flex flex-column flex-xl-row align-items-xl-center justify-content-between">
-                <div class="min-w-0">
-                    <div class="mb-2 d-flex align-items-center gap-2">
-                        <span class="text-primary fas fa-industry"></span>
-                        <h4 class="mb-0">{{ __('dashboard.plastics.title') }}</h4>
-                    </div>
-                    <div class="small text-600 d-flex flex-wrap gap-3 plastics-dashboard-context">
-                        <span class="text-truncate"><span class="far fa-building me-1"></span>{{ $context['company'] }}</span>
-                        <span class="text-truncate"><span class="fas fa-code-branch me-1"></span>{{ $context['branch'] }}</span>
-                        <span class="text-truncate"><span class="far fa-calendar-alt me-1"></span>{{ $context['financialPeriod'] }}</span>
-                        <span>{{ $context['financialPeriodDates'] }}</span>
-                    </div>
-                </div>
-                <div class="small text-600">
-                    {{ __('dashboard.plastics.last_updated', ['time' => $lastUpdatedAt]) }}
-                </div>
-            </div>
+            <h4 class="mb-0">{{ __('dashboard.title') }}</h4>
         </header>
 
         <section class="plastics-dashboard-section" data-personal-dashboard>
-            <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2 mb-2">
-                <div>
-                    <h5 class="mb-1">{{ __('dashboard.personal.title') }}</h5>
-                    <p class="mb-0 text-600" data-personal-summary>{{ __('dashboard.personal.summary', ['required' => $personalDashboard['summary']['required_count'], 'overdue' => $personalDashboard['summary']['overdue_count'], 'approvals' => $personalDashboard['summary']['approval_count']]) }}</p>
-                </div>
-                <div class="small text-600" data-personal-health>{{ __('dashboard.personal.last_updated', ['time' => $personalDashboard['summary']['updated_at_label']]) }}</div>
+            <div class="mb-2">
+                <h5 class="mb-1">{{ __('dashboard.personal.title') }}</h5>
+                <p class="mb-0 text-600" data-personal-summary>
+                    @if ($personalDashboard['summary']['required_count'] === 0 && $personalDashboard['summary']['overdue_count'] === 0 && $personalDashboard['summary']['approval_count'] === 0)
+                        {{ __('dashboard.personal.summary_empty') }}
+                    @else
+                        {{ __('dashboard.personal.summary', ['required' => $personalDashboard['summary']['required_count'], 'overdue' => $personalDashboard['summary']['overdue_count'], 'approvals' => $personalDashboard['summary']['approval_count']]) }}
+                    @endif
+                </p>
+                <p class="small text-danger d-none mb-0 mt-1" data-personal-health role="status" aria-live="polite"></p>
             </div>
 
             @foreach ($personalDashboard['limitations'] as $limitation)
@@ -256,7 +240,7 @@
             hiddenIntervalMs: 120000,
             messages: {
                 summary: {{ Illuminate\Support\Js::from(__('dashboard.personal.summary', ['required' => ':required', 'overdue' => ':overdue', 'approvals' => ':approvals'])) }},
-                lastUpdated: {{ Illuminate\Support\Js::from(__('dashboard.personal.last_updated', ['time' => ':time'])) }},
+                summaryEmpty: @json(__('dashboard.personal.summary_empty')),
                 stale: @json(__('dashboard.personal.stale')),
                 emptyWork: @json(__('dashboard.personal.empty_work')),
                 emptyUpdates: @json(__('dashboard.personal.empty_updates')),

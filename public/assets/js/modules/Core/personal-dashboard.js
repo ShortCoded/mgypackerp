@@ -89,18 +89,20 @@
 
   function render(data) {
     const summary = data.summary || {};
+    const required = Number(summary.required_count || 0);
+    const overdue = Number(summary.overdue_count || 0);
+    const approvals = Number(summary.approval_count || 0);
 
     if (summaryElement) {
-      summaryElement.textContent = message(config.messages?.summary, {
-        required: summary.required_count || 0,
-        overdue: summary.overdue_count || 0,
-        approvals: summary.approval_count || 0
-      });
+      summaryElement.textContent = required === 0 && overdue === 0 && approvals === 0
+        ? (config.messages?.summaryEmpty || '')
+        : message(config.messages?.summary, { required: required, overdue: overdue, approvals: approvals });
     }
 
     if (healthElement) {
-      healthElement.textContent = message(config.messages?.lastUpdated, { time: summary.updated_at_label || '' });
+      healthElement.textContent = '';
       healthElement.classList.remove('text-danger');
+      healthElement.classList.add('d-none');
     }
 
     renderCards(data.cards || []);
@@ -133,6 +135,7 @@
       if (healthElement) {
         healthElement.textContent = config.messages?.stale || '';
         healthElement.classList.add('text-danger');
+        healthElement.classList.remove('d-none');
       }
     }).finally(function () {
       inFlight = false;

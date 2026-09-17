@@ -302,28 +302,28 @@
                         <h6 class="mb-0">{{ __('profile.sections.password_security') }}</h6>
                     </div>
                     <div class="card-body bg-body-tertiary p-3">
-                        <form action="{{ route('password.update') }}" method="POST">
+                        <form class="js-profile-password-form" action="{{ route('password.update') }}" method="POST" novalidate>
                             @csrf
                             @method('PUT')
 
                             <div class="row gx-2 gy-3 align-items-end">
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-current-password" :label="__('profile.fields.current_password')" required />
-                                    <x-forms.input id="profile-current-password" name="current_password" type="password" class="form-control @error('current_password', 'updatePassword') is-invalid @enderror" autocomplete="current-password" required />
+                                    <x-forms.input id="profile-current-password" name="current_password" type="password" :class="'form-control'.($errors->getBag('updatePassword')->has('current_password') ? ' is-invalid' : '')" autocomplete="current-password" required />
                                     @error('current_password', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-new-password" :label="__('profile.fields.new_password')" required />
-                                    <x-forms.input id="profile-new-password" name="password" type="password" class="form-control @error('password', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required />
+                                    <x-forms.input id="profile-new-password" name="password" type="password" :class="'form-control'.($errors->getBag('updatePassword')->has('password') ? ' is-invalid' : '')" autocomplete="new-password" required />
                                     @error('password', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror
                                 </div>
                                 <div class="col-md-4">
                                     <x-forms.label for="profile-password-confirmation" :label="__('profile.fields.password_confirmation')" required />
-                                    <x-forms.input id="profile-password-confirmation" name="password_confirmation" type="password" class="form-control @error('password_confirmation', 'updatePassword') is-invalid @enderror" autocomplete="new-password" required />
+                                    <x-forms.input id="profile-password-confirmation" name="password_confirmation" type="password" :class="'form-control'.($errors->getBag('updatePassword')->has('password_confirmation') ? ' is-invalid' : '')" autocomplete="new-password" required />
                                     @error('password_confirmation', 'updatePassword')
                                         <div class="invalid-feedback">{{ $message }}</div>
                                     @enderror

@@ -76,6 +76,12 @@ beforeEach(function (): void {
             abort(429);
         });
 
+        Route::get('/validation-limited', function () {
+            throw ValidationException::withMessages([
+                'login' => ['Too many attempts.'],
+            ])->status(429);
+        });
+
         Route::get('/legacy-response/{locale}', function (string $locale) {
             app()->setLocale($locale);
 
@@ -120,6 +126,14 @@ test('validation responses use the localized field envelope in both locales', fu
     'English' => ['en', 'This name already exists.'],
     'Arabic' => ['ar', 'هذا الاسم موجود بالفعل.'],
 ]);
+
+test('validation exception status is preserved by the shared json error contract', function (): void {
+    $this->getJson('/_test/erp-error-contract/validation-limited')
+        ->assertStatus(429)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('error_code', 'rate_limited')
+        ->assertJsonValidationErrors(['login']);
+});
 
 test('unexpected JSON failures are safe localized and traceable', function (string $locale, string $expectedPrefix): void {
     $response = $this->getJson("/_test/erp-error-contract/unexpected/{$locale}");

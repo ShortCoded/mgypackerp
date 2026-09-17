@@ -16,31 +16,41 @@
                 drawCallback: () => window.AppDataTables.applyFalconEnhancements(document)
             }));
         $('#trash_filter').off('change.salesIndex').on('change.salesIndex', () => grid.ajax.reload());
-        table.off('click.salesIndex', '.js-sales-index-action').on('click.salesIndex', '.js-sales-index-action', async function () {
+        $(document).off('click.salesIndex', '.js-sales-index-action').on('click.salesIndex', '.js-sales-index-action', async function (event) {
+            event.preventDefault();
+            event.stopPropagation();
             const button = $(this);
-            if (button.prop('disabled')) return;
+            if (button.prop('disabled') || button.data('processing')) return;
             const messages = window.salesIndexMessages || {};
             const requiresReason = button.attr('data-reason') === '1';
-            const confirmation = await window.AppAlerts.confirm({
+            const confirmationOptions = {
                 title: button.text().trim(), icon: 'question', showCancelButton: true,
                 confirmButtonText: messages.confirm, cancelButtonText: messages.cancel,
-                ...(requiresReason ? {input: 'textarea', inputLabel: messages.reason, inputValidator: value => !value.trim() ? messages.reason : undefined} : {})
-            });
-            if (!confirmation.isConfirmed) return;
-            button.prop('disabled', true);
+                ...(requiresReason ? {input: 'textarea', inputLabel: messages.reason, inputValidator: value => !String(value || '').trim() ? messages.reason : undefined} : {})
+            };
+
+            button.data('processing', true).prop('disabled', true);
+            const confirmation = window.AppAlerts && typeof window.AppAlerts.confirm === 'function'
+                ? await window.AppAlerts.confirm(confirmationOptions)
+                : {isConfirmed: window.confirm(confirmationOptions.title), value: ''};
+            if (!confirmation.isConfirmed) {
+                button.data('processing', false).prop('disabled', false);
+                return;
+            }
             $('#sales-index-error').addClass('d-none').text('');
             $.ajax({url: button.data('url'), method: button.data('method') || 'POST',
-                headers: {'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'), Accept: 'application/json'},
+                headers: {'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'), Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
                 data: {status: button.data('status') || undefined, reason: requiresReason ? confirmation.value : undefined}
             }).done(response => {
                 window.AppAlerts.toast('success', response.message || messages.saved);
                 grid.ajax.reload(null, false);
             }).fail(xhr => {
                 const response = xhr.responseJSON || {};
-                const message = response.message || messages.error;
+                const validationMessage = Object.values(response.errors || {}).flat().find(Boolean);
+                const message = validationMessage || response.message || messages.error;
                 $('#sales-index-error').removeClass('d-none').text(message);
                 window.AppAlerts.toast('error', message);
-            }).always(() => button.prop('disabled', false));
+            }).always(() => button.data('processing', false).prop('disabled', false));
         });
         $(filters).off('.salesIndex')
             .on('submit.salesIndex', event => {event.preventDefault(); grid.ajax.reload();})

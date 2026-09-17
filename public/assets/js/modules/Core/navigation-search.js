@@ -51,6 +51,7 @@
 
   function closeDropdown(blurInput) {
     dropdown.classList.remove('show');
+    root.classList.remove('is-mobile-open');
     input.setAttribute('aria-expanded', 'false');
     activeIndex = -1;
     open = false;

@@ -25,6 +25,7 @@
   ],
   "skills": {
     "paths": [
+      ".agents/skills",
       ".opencode/skills"
     ]
   },

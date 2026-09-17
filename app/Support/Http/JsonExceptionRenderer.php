@@ -36,10 +36,14 @@ class JsonExceptionRenderer
         }
 
         if ($exception instanceof ValidationException) {
+            $status = $exception->status >= 400 && $exception->status < 500
+                ? $exception->status
+                : 422;
+
             return $this->errors->make(
-                __('erp_errors.validation_failed'),
-                'validation_failed',
-                422,
+                __($status === 429 ? 'erp_errors.rate_limited' : 'erp_errors.validation_failed'),
+                $status === 429 ? 'rate_limited' : 'validation_failed',
+                $status,
                 $exception->errors(),
             );
         }

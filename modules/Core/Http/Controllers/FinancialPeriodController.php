@@ -7,10 +7,12 @@ use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Accounting\Services\FinancialPeriodClosingService;
 use Modules\Core\DataTables\FinancialPeriodsDataTable;
 use Modules\Core\Http\Requests\BulkDeleteFinancialPeriodsRequest;
 use Modules\Core\Http\Requests\StoreFinancialPeriodRequest;
@@ -207,6 +209,62 @@ class FinancialPeriodController extends Controller
             'success' => true,
             'message' => __('financial_periods.messages.deleted'),
         ]);
+    }
+
+    public function close(Request $request, string $financialPeriod, FinancialPeriodClosingService $closing): RedirectResponse
+    {
+        $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
+
+        try {
+            $result = $closing->close($financialPeriod);
+        } catch (DomainException $exception) {
+            $this->logActivity($request, 'financial_periods.close_blocked', [
+                ...$this->recordPublicProperties($financialPeriod),
+                'reason' => $exception->getMessage(),
+            ], 'blocked');
+
+            return back()->withErrors(['period_close' => $exception->getMessage()]);
+        }
+
+        $this->logActivity($request, 'financial_periods.close', [
+            ...$this->recordPublicProperties($result['period']),
+            'journal_entry_doc_num' => $result['journal_entry']?->doc_num,
+            'already_closed' => $result['already_closed'],
+        ]);
+
+        return redirect()
+            ->route('admin.financial-periods.show', $result['period']->doc_num)
+            ->with('success', $result['already_closed']
+                ? __('financial_periods.messages.already_closed')
+                : __('financial_periods.messages.closed'));
+    }
+
+    public function reopen(Request $request, string $financialPeriod, FinancialPeriodClosingService $closing): RedirectResponse
+    {
+        $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
+
+        try {
+            $result = $closing->reopen($financialPeriod);
+        } catch (DomainException $exception) {
+            $this->logActivity($request, 'financial_periods.reopen_blocked', [
+                ...$this->recordPublicProperties($financialPeriod),
+                'reason' => $exception->getMessage(),
+            ], 'blocked');
+
+            return back()->withErrors(['period_close' => $exception->getMessage()]);
+        }
+
+        $this->logActivity($request, 'financial_periods.reopen', [
+            ...$this->recordPublicProperties($result['period']),
+            'reversal_journal_entry_doc_num' => $result['reversal_entry']?->doc_num,
+            'already_open' => $result['already_open'],
+        ]);
+
+        return redirect()
+            ->route('admin.financial-periods.show', $result['period']->doc_num)
+            ->with('success', $result['already_open']
+                ? __('financial_periods.messages.already_open')
+                : __('financial_periods.messages.reopened'));
     }
 
     public function bulkDelete(BulkDeleteFinancialPeriodsRequest $request): JsonResponse

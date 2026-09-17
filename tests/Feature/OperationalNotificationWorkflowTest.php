@@ -65,10 +65,20 @@ test('submitted purchase request notifies only scoped approver and dashboard rem
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
 
-    $this->actingAs($approver)->withSession($context)
+    $dashboardResponse = $this->actingAs($approver)->withSession($context)
         ->getJson(route('dashboard.data'))
         ->assertOk()
         ->assertJsonPath('data.summary.approval_count', 1);
+    $approvalCard = collect($dashboardResponse->json('data.cards'))->firstWhere('key', 'approvals');
+
+    expect($approvalCard['url'])->toBe(route('dashboard.pending-decisions', [], false));
+
+    $this->get(route('dashboard.pending-decisions'))
+        ->assertOk()
+        ->assertSee($requisition->doc_num)
+        ->assertSee($fixture['user']->name)
+        ->assertSee(route('admin.purchases.purchase-requisitions.show', $requisition, false));
+
     $this->postJson(route('admin.notifications.read', $notification))->assertOk();
     $this->getJson(route('dashboard.data'))
         ->assertOk()
@@ -78,22 +88,79 @@ test('submitted purchase request notifies only scoped approver and dashboard rem
     app(PermissionRegistrar::class)->forgetCachedPermissions();
     $approver->unsetRelation('roles')->unsetRelation('permissions');
 
+    $this->getJson(route('dashboard.data'))
+        ->assertOk()
+        ->assertJsonPath('data.summary.approval_count', 0);
     $this->getJson(route('admin.notifications.poll'))
         ->assertOk()
         ->assertJsonPath('data.unread_count', 0)
         ->assertJsonCount(0, 'data.notifications');
+
+    $approverRole->givePermissionTo($actionPermission);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $approver->unsetRelation('roles')->unsetRelation('permissions');
+
+    app(ProcurementSourcingService::class)->approveRequisition($requisition);
+
+    $this->getJson(route('dashboard.data'))
+        ->assertOk()
+        ->assertJsonPath('data.summary.approval_count', 0);
+    $this->get(route('dashboard.pending-decisions'))
+        ->assertOk()
+        ->assertDontSee($requisition->doc_num);
 });
 
 test('personal dashboard supports approval sources that use a public uuid instead of a document number', function (): void {
     app(PermissionRegistrar::class)->forgetCachedPermissions();
     $permission = Permission::findOrCreate('hr.hr_requests.manage', 'web');
+    $viewPermission = Permission::findOrCreate('hr.hr_requests.view', 'web');
     $secondPermission = Permission::findOrCreate('purchases.purchase_requisition_approvals.approve', 'web');
+    $secondViewPermission = Permission::findOrCreate('purchases.purchase_requisitions.view', 'web');
     $user = User::factory()->create();
-    $user->givePermissionTo([$permission, $secondPermission]);
+    $user->givePermissionTo([$permission, $viewPermission, $secondPermission, $secondViewPermission]);
+
+    $response = $this->actingAs($user)
+        ->getJson(route('dashboard.data'))
+        ->assertOk()
+        ->assertJsonPath('data.summary.approval_count', 0);
+    $approvalCard = collect($response->json('data.cards'))->firstWhere('key', 'approvals');
+
+    expect($approvalCard)->not->toBeNull()
+        ->and($approvalCard['url'])->toBe(route('dashboard.pending-decisions', [], false));
+});
+
+test('rejected and cancelled requests leave the same pending decision count and list', function (): void {
+    $fixture = procurementFixture();
+    $user = $fixture['user'];
+    $user->givePermissionTo([
+        Permission::findOrCreate('purchases.purchase_requisition_approvals.approve', 'web'),
+        Permission::findOrCreate('purchases.purchase_requisitions.view', 'web'),
+    ]);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $sourcing = app(ProcurementSourcingService::class);
+    $rejected = procurementManualRequisition($fixture);
+    $cancelled = procurementManualRequisition($fixture);
+    $sourcing->submitRequisition($rejected);
+    $sourcing->submitRequisition($cancelled);
 
     $this->actingAs($user)
         ->getJson(route('dashboard.data'))
         ->assertOk()
-        ->assertJsonPath('data.summary.approval_count', 0)
-        ->assertJsonPath('data.cards.3.key', 'approvals');
+        ->assertJsonPath('data.summary.approval_count', 2);
+
+    $sourcing->rejectRequisition($rejected, 'No longer required');
+
+    $this->getJson(route('dashboard.data'))
+        ->assertOk()
+        ->assertJsonPath('data.summary.approval_count', 1);
+
+    $sourcing->finishRequisition($cancelled, PurchaseRequisition::StatusCancelled, 'Cancelled by requester');
+
+    $this->getJson(route('dashboard.data'))
+        ->assertOk()
+        ->assertJsonPath('data.summary.approval_count', 0);
+    $this->get(route('dashboard.pending-decisions'))
+        ->assertOk()
+        ->assertDontSee($rejected->doc_num)
+        ->assertDontSee($cancelled->doc_num);
 });

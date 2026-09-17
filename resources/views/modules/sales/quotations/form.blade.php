@@ -60,6 +60,7 @@
         action="{{ $action }}"
         method="{{ $method }}"
         data-mode="{{ $mode }}"
+        data-readonly="{{ $isReadonly ? '1' : '0' }}"
         data-customer-terms-url="{{ route('admin.sales.select2.customer-quotation-terms') }}"
         data-main-currency-doc-num="{{ $mainCurrencyOption['id'] ?? '' }}"
         data-main-currency-label="{{ $mainCurrencyOption['text'] ?? '' }}"
@@ -406,7 +407,10 @@
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext">{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$numbers->format($line['discount_value']) : __('common.empty_value') }}</div>
+                                                    <div class="form-control-plaintext">
+                                                        <div>{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$numbers->format($line['discount_value']) : __('common.empty_value') }}</div>
+                                                        <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</span></small>
+                                                    </div>
                                                 @else
                                                     <div class="input-group input-group-sm">
                                                         <x-forms.select class="form-select js-quotation-calc" name="lines[{{ $index }}][discount_type]">
@@ -416,13 +420,18 @@
                                                         </x-forms.select>
                                                     <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" :disabled="blank($line['discount_type'] ?? null)" />
                                                     </div>
+                                                    <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</span></small>
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
-                                                    <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['tax_rate'] ?? 0) }}</div>
+                                                    <div class="form-control-plaintext text-center" dir="ltr">
+                                                        <div>{{ $numbers->format($line['tax_rate'] ?? 0) }}%</div>
+                                                        <small class="text-600 js-quotation-line-tax-amount">{{ $numbers->format($line['tax_amount'] ?? 0) }}</small>
+                                                    </div>
                                                 @else
                                                     <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][tax_rate]'" :value="$line['tax_rate'] ?? 0" :scale="4" min="0" max="100" step="0.0001" />
+                                                    <small class="d-block text-center text-600 js-quotation-line-tax-amount" dir="ltr">{{ $numbers->format($line['tax_amount'] ?? 0) }}</small>
                                                 @endif
                                             </td>
                                             <td class="text-center">
@@ -455,15 +464,22 @@
                         </div>
                             @unless($isReadonly)<div class="card-footer"><button class="btn btn-falcon-default btn-sm js-quotation-add-line" type="button"><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button></div>@endunless
                         <div class="invalid-feedback d-block" data-error-for="lines"></div>
-                        <div class="col-12 col-lg-5 mt-3 ms-auto">
+                        <div class="col-12 col-lg-5 mt-3 ms-auto card card-body bg-light border-0">
                             <div class="row g-2 align-items-center">
                                 <label class="col-5 col-form-label">{{ __('quotations.attributes.revision_discount') }}</label>
                                 <div class="col-7">
                                     @if ($isReadonly)
                                         <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$numbers->format($currentRevision->discount_value) : __('common.empty_value') }}</div>
                                     @else
-                                        <x-forms.input type="hidden" name="discount_type" value="" /><x-forms.input type="hidden" name="discount_value" value="0" />
-                                        <div class="form-control-plaintext">{{ __('quotations.discount_types.none') }}</div>
+                                        <div class="input-group input-group-sm">
+                                            <x-forms.select class="form-select js-quotation-calc" name="discount_type">
+                                                <option value="">{{ __('quotations.discount_types.none') }}</option>
+                                                <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
+                                                <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
+                                            </x-forms.select>
+                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" :disabled="blank($discountType)" />
+                                        </div>
+                                        <div class="invalid-feedback d-block" data-error-for="discount_value"></div>
                                     @endif
                                 </div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>

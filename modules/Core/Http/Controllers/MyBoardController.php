@@ -4,6 +4,7 @@ namespace Modules\Core\Http\Controllers;
 
 use App\Models\User;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -112,9 +113,11 @@ class MyBoardController extends Controller
 
         abort_unless($this->access->canViewBoard($user, $boardUser), 403, __('user_tasks.messages.manage_board_forbidden'));
 
-        $items = $this->access
-            ->boardQuery($boardUser)
-            ->withCount(['comments', 'views'])
+        $query = $this->access
+            ->boardQuery($boardUser);
+        $this->applyDashboardFocus($query, $request->string('focus')->toString());
+
+        $items = $query->withCount(['comments', 'views'])
             ->get()
             ->map(fn (UserTask $task): array => $this->boardItemPayload($task, $user))
             ->groupBy(fn (array $item): string => (string) ($item['board_list_doc_num'] ?: $item['status']));
@@ -591,9 +594,12 @@ class MyBoardController extends Controller
         $user = $request->user();
         $canAssign = $user instanceof User && $this->access->canAssign($user);
         $canSwitchBoardUser = $user instanceof User && $this->access->canSwitchBoardUser($user);
+        $focus = $this->dashboardFocus($request->string('focus')->toString());
 
         return [
             'mode' => $mode,
+            'focus' => $focus,
+            'focusLabel' => $focus !== null ? __('user_tasks.focus.'.$focus) : null,
             'direction' => config('languages.available.'.app()->getLocale().'.dir', 'ltr'),
             'actor' => $user instanceof User ? $this->boardUserPayload($user) : null,
             'boardUser' => $this->boardUserPayload($boardUser),
@@ -623,7 +629,7 @@ class MyBoardController extends Controller
                 'viewAllNotes' => $canSwitchBoardUser && (bool) $user?->can('my_board.notes.view_all'),
             ],
             'urls' => [
-                'data' => route('admin.my-board.data'),
+                'data' => route('admin.my-board.data', array_filter(['focus' => $focus])),
                 'allTasks' => route('admin.my-board.all-tasks'),
                 'allNotes' => route('admin.my-board.all-notes'),
                 'store' => route('admin.my-board.store'),
@@ -702,6 +708,35 @@ class MyBoardController extends Controller
                 'summernoteMissing' => __('user_tasks.messages.summernote_missing'),
             ],
         ];
+    }
+
+    /**
+     * @param  Builder<UserTask>  $query
+     */
+    private function applyDashboardFocus(Builder $query, string $focus): void
+    {
+        match ($this->dashboardFocus($focus)) {
+            'open' => $query->where('type', UserTask::TypeTask)->where('status', '!=', UserTask::StatusDone),
+            'due_today' => $query->where('type', UserTask::TypeTask)
+                ->where('status', '!=', UserTask::StatusDone)
+                ->whereBetween('due_at', [now()->startOfDay(), now()->endOfDay()]),
+            'overdue' => $query->where('type', UserTask::TypeTask)
+                ->where('status', '!=', UserTask::StatusDone)
+                ->where('due_at', '<', now()),
+            'completed_today' => $query->where('type', UserTask::TypeTask)
+                ->where('status', UserTask::StatusDone)
+                ->whereBetween('completed_at', [now()->startOfDay(), now()->endOfDay()]),
+            'in_progress' => $query->where('type', UserTask::TypeTask)
+                ->where('status', UserTask::StatusInProgress),
+            default => null,
+        };
+    }
+
+    private function dashboardFocus(string $focus): ?string
+    {
+        return in_array($focus, ['open', 'due_today', 'overdue', 'completed_today', 'in_progress'], true)
+            ? $focus
+            : null;
     }
 
     /**

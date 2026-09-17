@@ -24,6 +24,7 @@
 <script src="{{ $erpAsset->url('assets/js/modules/Core/datatables-defaults.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/numeric-input.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/client-context.js') }}"></script>
+<script src="{{ $erpAsset->url('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/alerts.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/page-cache-guard.js') }}"></script>
 @auth
@@ -73,6 +74,7 @@
                 'empty' => __('notifications.empty'),
                 'updatedNow' => __('notifications.updated_now'),
                 'updateFailed' => __('notifications.update_failed'),
+                'actionFailed' => __('common.messages.unexpected_error'),
                 'batchReceived' => __('notifications.batch_received'),
             ],
         ];
@@ -84,14 +86,12 @@
             ],
             'enabledStorageKey' => 'erp_notification_sound_enabled_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
             'volumeStorageKey' => 'erp_notification_sound_volume_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
-            'lastTestStorageKey' => 'erp_notification_sound_last_test_' . hash_hmac('sha256', (string) auth()->id(), (string) config('app.key')),
             'throttleMs' => 2500,
             'defaultVolume' => 0.55,
             'messages' => [
                 'ready' => __('notifications.sound.ready'),
                 'needsActivation' => __('notifications.sound.needs_activation'),
                 'blocked' => __('notifications.sound.blocked'),
-                'lastTest' => __('notifications.sound.last_test'),
             ],
         ];
         $webPushConfigured = filled(config('webpush.vapid.subject'))
@@ -176,6 +176,10 @@
                 'unexpected' => __('common.messages.unexpected_error'),
             ],
         ];
+        $appNavigationGuard = [
+            'unsavedChangesMessage' => __('pwa.navigation.unsaved_changes'),
+            'submissionGraceMs' => 15000,
+        ];
     @endphp
     <script>
         window.AppSession = @json($appSession);
@@ -193,7 +197,9 @@
             refreshUrl: @json(route('auth.csrf-token', [], false))
         });
         window.AppAjaxErrorsConfig = @json($appAjaxErrors);
+        window.AppNavigationGuardConfig = @json($appNavigationGuard);
     </script>
+    <script src="{{ $erpAsset->url('assets/js/modules/Core/navigation-guard.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/ajax-errors.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Auth/helpers.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/session-timeout.js') }}"></script>
@@ -215,13 +221,20 @@
 <script src="{{ $erpAsset->url('assets/js/modules/Core/layout.js') }}"></script>
 @php
     $appPwaSettings = $appPwaSettings ?? app(\Modules\Core\Services\PwaSettingsService::class)->settings();
+    $appPwaNavigationBlockedPaths = [
+        route('login', [], false),
+        route('lock-screen.show', [], false),
+        route('logout', [], false),
+    ];
 @endphp
 <script>
     window.AppPwaRuntime = {
         enabled: @json($appPwaSettings['enabled'] && $appPwaSettings['service_worker_enabled']),
         serviceWorkerUrl: @json(route('pwa.service-worker', [], false)),
         scope: @json($appPwaSettings['scope']),
-        cachePrefix: 'erp-pwa-cache'
+        cachePrefix: 'erp-pwa-cache',
+        navigationFallbackUrl: @json(route('dashboard', [], false)),
+        navigationBlockedPaths: @json($appPwaNavigationBlockedPaths)
     };
 </script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/pwa-runtime.js') }}"></script>
