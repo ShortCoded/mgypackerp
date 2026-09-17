@@ -189,11 +189,12 @@ test('menu uses the required business domain order and maps representative scree
         'inventory',
         'production',
         'quality',
+        'maintenance',
+        'finance',
         'accounting_costing',
         'fixed_assets',
-        'maintenance',
         'human_resources',
-        'reports',
+        ...($phaseMode === 'expanded' ? ['reports'] : []),
         'tools',
     ];
 
@@ -207,24 +208,14 @@ test('menu uses the required business domain order and maps representative scree
     )->pluck('label')->all();
 
     expect($subgroupsFor('basic_data'))->toContain('organization_setup', 'users_permissions')
-        ->and($leavesFor('basic_data', 'organization_setup'))->toContain('companies', 'branches', 'financial_periods')
+        ->and($leavesFor('basic_data', 'organization_setup'))->toContain('companies', 'branches')
+        ->and($leavesFor('basic_data', 'organization_setup'))->not->toContain('financial_periods')
         ->and($leavesFor('basic_data', 'users_permissions'))->toContain('users', 'roles')
-        ->and($subgroupsFor('sales'))->toContain('customers', 'quotations', 'sales_cycle_reports')
-        ->and($subgroupsFor('purchases'))->toContain(
-            'purchase_requisitions',
-            'supplier_quotations',
-            'purchase_orders',
-            'supply_orders',
-            'goods_receipts',
-            'purchase_invoices',
-            'purchase_returns',
-            'supplier_payments',
-            'suppliers',
-            'purchase_reports',
-        )
+        ->and($subgroupsFor('sales'))->toBe(['customers', 'customer_terms', 'price_lists', 'sales_requests', 'quotations', 'sales_orders', 'sales_invoices', 'deliveries', 'customer_collections', 'sales_returns', 'sales_cycle_reports'])
+        ->and($leavesFor('sales', 'sales_cycle_reports'))->toContain('customers_report')
+        ->and($subgroupsFor('purchases'))->toBe(['suppliers', 'purchase_requisitions', 'purchase_orders', 'supplier_quotations', 'supply_orders', 'purchase_inspections', 'goods_receipts', 'purchase_invoices', 'supplier_payments', 'purchase_returns', 'purchase_reports'])
         ->and($leavesFor('purchases', 'purchase_reports'))->toContain('suppliers_report', 'report_purchase_requests', 'report_supply_orders')
-        ->and($subgroupsFor('inventory'))->toContain('item_data', 'opening_inventory')
-        ->and($leavesFor('inventory', 'item_data'))->toContain(
+        ->and($subgroupsFor('inventory'))->toContain(
             'products',
             'raw_materials',
             'packaging_materials',
@@ -237,23 +228,21 @@ test('menu uses the required business domain order and maps representative scree
             'item_groups',
             'item_origin_countries',
         )
-        ->and($leavesFor('inventory', 'opening_inventory'))->toContain('opening_stocks', 'unpriced_inventory_receipts', 'opening_stock_pricings')
-        ->and($leavesFor('inventory', 'inventory_inquiries'))->toContain('inventory_stock_balance_inquiry', 'inventory_operational_reports', 'production_reports_receipts')
-        ->and($leavesFor('production', 'production_operations'))->toContain('production_stages', 'product_production_stages', 'production_work_orders', 'production_runs', 'production_material_requests', 'production_expenses')
+        ->and($subgroupsFor('inventory'))->toContain('opening_stocks', 'unpriced_inventory_receipts', 'opening_stock_pricings')
+        ->and($leavesFor('inventory', 'inventory_module_reports'))->toContain('inventory_stock_balance_inquiry', 'inventory_operational_reports', 'production_reports_receipts')
+        ->and($subgroupsFor('production'))->toContain('production_stages', 'product_production_stages', 'production_work_orders', 'production_runs', 'production_material_requests', 'production_expenses')
         ->and($leavesFor('production', 'production_reports_operations'))->toContain('production_reports_overview', 'production_reports_orders', 'production_reports_runs', 'production_reports_materials')
-        ->and($leavesFor('quality', 'quality_management'))->toContain('production_quality', 'production_quality_active', 'production_quality_reports', 'production_reports_quality')
-        ->and($leavesFor('production', 'production_operations'))->not->toContain('production_identifier_types', 'production_identifiers', 'production_resources')
-        ->and($subgroupsFor('accounting_costing'))->toContain('general_accounting', 'treasury_banks', 'cost_accounting')
-        ->and($leavesFor('accounting_costing', 'general_accounting'))->toContain('chart_of_accounts', 'opening_balances')
-        ->and($leavesFor('accounting_costing', 'treasury_banks'))->toContain('currencies', 'bank_accounts', 'cashboxes')
+        ->and($subgroupsFor('quality'))->toContain('production_quality', 'production_quality_active')
+        ->and($leavesFor('quality', 'quality_reports'))->toContain('production_quality_reports', 'production_reports_quality')
+        ->and($subgroupsFor('production'))->not->toContain('production_identifier_types', 'production_identifiers', 'production_resources')
+        ->and($subgroupsFor('finance'))->toContain('currencies', 'bank_accounts', 'cashboxes', 'cash_receipt_vouchers', 'cash_payment_vouchers', 'cheques', 'fund_transfers')
+        ->and($subgroupsFor('accounting_costing'))->toContain('general_accounting', 'cost_accounting', 'accounting_costing_reports')
+        ->and($leavesFor('accounting_costing', 'general_accounting'))->toContain('chart_of_accounts', 'opening_balances', 'financial_periods', 'period_closing')
         ->and($leavesFor('accounting_costing', 'cost_accounting'))->toContain('cost_centers')
-        ->and($subgroupsFor('fixed_assets'))->toContain('fixed_assets_register')
-        ->and($subgroupsFor('maintenance'))->toContain('maintenance_requests', 'maintenance_orders', 'maintenance_material_requests', 'maintenance_expenses')
-        ->and($subgroupsFor('maintenance'))->not->toContain('maintenance_operations')
-        ->and($leavesFor('human_resources', 'employee_data'))->toContain('hr_employees')
-        ->and($subgroupsFor('reports'))->toContain('sales_reports', 'inventory_reports')
-        ->and($leavesFor('reports', 'sales_reports'))->toContain('customers_report')
-        ->and($leavesFor('reports', 'inventory_reports'))->toContain('products_data_report')
+        ->and($leavesFor('accounting_costing', 'accounting_costing_reports'))->toContain('account_ledger', 'trial_balance')
+        ->and($subgroupsFor('fixed_assets'))->toBe(['fixed_assets_register', 'fixed_asset_movements', 'fixed_asset_depreciation', 'asset_reports'])
+        ->and($subgroupsFor('maintenance'))->toBe(['maintenance_plans', 'maintenance_requests', 'maintenance_orders', 'maintenance_material_requests', 'maintenance_expenses', 'maintenance_report_group'])
+        ->and($subgroupsFor('human_resources'))->toContain('hr_employees', 'hr_shifts', 'hr_requests')
         ->and($subgroupsFor('tools'))->toContain('files_documents', 'work_management', 'communication', 'application_tools')
         ->and($leavesFor('tools', 'files_documents'))->toContain('open_documents', 'file_manager')
         ->and($leavesFor('tools', 'work_management'))->toContain('calendar', 'my_board', 'task_boards', 'team_board')
@@ -265,7 +254,6 @@ test('menu uses the required business domain order and maps representative scree
             'administration',
             'item_data',
             'general_ledger',
-            'finance',
             'costing',
             'planning_production',
         );
@@ -311,13 +299,12 @@ test('inventory item data exposes only real persisted screens and keeps product 
 
     $menu = app(MenuService::class)->structure();
     $inventory = collect($menu)->firstWhere('label', 'inventory');
-    $itemData = collect($inventory['children'])->firstWhere('label', 'item_data');
     $visibleKeys = collect(businessDomainMenuLeaves($menu))->pluck('label')->all();
     $registry = app(ErpUiScreenRegistry::class);
     $productDataShells = collect($registry->screens())
         ->filter(fn ($screen): bool => $screen->module() === 'product_data');
 
-    expect(collect($itemData['children'])->pluck('label'))->toContain(
+    expect(collect($inventory['children'])->pluck('label'))->toContain(
         'products',
         'raw_materials',
         'packaging_materials',
@@ -341,9 +328,8 @@ test('inventory item data exposes only real persisted screens and keeps product 
     app()->setLocale('ar');
     $arabicMenu = app(MenuService::class)->structure();
     $arabicInventory = collect($arabicMenu)->firstWhere('label', 'inventory');
-    $arabicItemData = collect($arabicInventory['children'])->firstWhere('label', 'item_data');
 
-    expect(collect($arabicItemData['children'])->pluck('text'))->toContain(__('menu.item_origin_countries'));
+    expect(collect($arabicInventory['children'])->pluck('text'))->toContain(__('menu.item_origin_countries'));
 
     app()->setLocale('en');
 });
@@ -358,7 +344,7 @@ test('phase-gated purchase orders keep their route and visibility behavior', fun
 
     config()->set('erp.phase_mode', 'expanded');
     $expandedPurchases = collect(app(MenuService::class)->getMenu($actor))->firstWhere('label', 'purchases');
-    $purchaseOrders = collect($expandedPurchases['children'])->firstWhere('label', 'purchase_orders');
+    $purchaseOrders = collect(businessDomainMenuLeaves([$expandedPurchases]))->firstWhere('label', 'purchase_orders');
 
     expect($expandedPurchases)->not->toBeNull()
         ->and($purchaseOrders['route'])->toBe('admin.purchases.purchase-orders.index')
@@ -399,17 +385,17 @@ test('only the owning business domain and functional subgroup open for child rou
         ->and($activeDomains)->toBe([$expectedDomain])
         ->and($openSubgroups)->toBe($expectedSubgroup === null ? [] : [$expectedSubgroup]);
 })->with([
-    'inventory item data create' => ['admin.item-units.create', 'item_units.view', 'inventory', 'item_data', 'legacy'],
-    'sales customer show' => ['admin.sales.customers.show', 'customers.view', 'sales', 'customer_data', 'legacy'],
-    'purchases supplier edit' => ['admin.purchases.suppliers.edit', 'suppliers.view', 'purchases', 'supplier_data', 'legacy'],
-    'inventory item edit' => ['admin.products.edit', 'products.view', 'inventory', 'item_data', 'legacy'],
-    'production stages' => ['admin.production.stages.index', 'production.stages.view', 'production', 'production_operations', 'legacy'],
-    'accounting treasury edit' => ['admin.finance.bank-accounts.edit', 'bank_accounts.view', 'accounting_costing', 'treasury_banks', 'legacy'],
+    'inventory item data create' => ['admin.item-units.create', 'item_units.view', 'inventory', null, 'legacy'],
+    'sales customer show' => ['admin.sales.customers.show', 'customers.view', 'sales', null, 'legacy'],
+    'purchases supplier edit' => ['admin.purchases.suppliers.edit', 'suppliers.view', 'purchases', null, 'legacy'],
+    'inventory item edit' => ['admin.products.edit', 'products.view', 'inventory', null, 'legacy'],
+    'production stages' => ['admin.production.stages.index', 'production.stages.view', 'production', 'production_management', 'legacy'],
+    'accounting treasury edit' => ['admin.finance.bank-accounts.edit', 'bank_accounts.view', 'accounting_costing', 'finance', 'legacy'],
     'fixed assets register' => ['admin.fixed-assets.assets.index', 'fixed_assets.view', 'accounting_costing', 'fixed_assets', 'expanded'],
-    'quality inspections' => ['admin.production.quality.index', 'production.quality.view', 'quality', 'quality_management', 'expanded'],
-    'maintenance work orders' => ['admin.maintenance.orders.index', 'maintenance.orders.view', 'maintenance', null, 'expanded'],
+    'quality inspections' => ['admin.production.quality.index', 'production.quality.view', 'production', 'quality', 'expanded'],
+    'maintenance work orders' => ['admin.maintenance.orders.index', 'maintenance.orders.view', 'production', 'maintenance', 'expanded'],
     'tools files index' => ['admin.file-manager.index', 'file_manager.view', 'tools', 'files_documents', 'legacy'],
-    'reports index' => ['admin.reports.customers.index', 'reports.customers.view', 'reports', 'sales_reports', 'legacy'],
+    'reports index' => ['admin.reports.customers.index', 'reports.customers.view', 'sales', 'sales_cycle_reports', 'legacy'],
     'expanded sales edit' => ['admin.sales.sales-orders.edit', 'sales_orders.view', 'sales', null, 'expanded'],
 ]);
 
@@ -420,10 +406,9 @@ test('permission filtering hides unauthorized children and empty business domain
     $menu = app(MenuService::class)->getMenu($actor);
     $sales = collect($menu)->firstWhere('label', 'sales');
 
-    expect(collect($menu)->pluck('label')->all())->toBe(['dashboard', 'sales'])
+    expect(collect($menu)->pluck('label')->all())->toBe(['dashboard', 'sales', 'human_resources'])
         ->and($sales)->not->toBeNull()
-        ->and(collect($sales['children'])->pluck('label')->all())->toBe(['customer_data'])
-        ->and(collect($sales['children'][0]['children'])->pluck('label')->all())->toBe(['customers']);
+        ->and(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'customer_terms']);
 });
 
 test('permission form uses the same recursive business domain hierarchy', function (): void {
@@ -452,11 +437,8 @@ test('permission form uses the same recursive business domain hierarchy', functi
         'purchases',
         'inventory',
         'production',
-        'quality',
         'accounting_costing',
-        'fixed_assets',
         'human_resources',
-        'reports',
         'tools',
     ])->and(array_column($groups, 'label'))->toBe([
         __('common.groups.general'),
@@ -465,11 +447,8 @@ test('permission form uses the same recursive business domain hierarchy', functi
         __('menu.purchases'),
         __('menu.inventory'),
         __('menu.production'),
-        __('menu.quality'),
         __('menu.accounting_costing'),
-        __('menu.fixed_assets'),
         __('menu.human_resources'),
-        __('menu.reports'),
         __('menu.tools'),
     ]);
 
@@ -478,27 +457,16 @@ test('permission form uses the same recursive business domain hierarchy', functi
     );
 
     expect($permissionsByDomain['basic_data'])->toContain('roles.view')
-        ->and($permissionsByDomain['sales'])->toContain('customers.view')
+        ->and($permissionsByDomain['sales'])->toContain('customers.view', 'reports.customers.view')
         ->and($permissionsByDomain['purchases'])->toContain('suppliers.view')
         ->and($permissionsByDomain['inventory'])->toContain('item_units.view', 'products.view')
-        ->and($permissionsByDomain['production'])->toContain('production.orders.view')
-        ->and($permissionsByDomain['quality'])->toContain('production.quality.view')
+        ->and($permissionsByDomain['production'])->toContain('production.orders.view', 'production.quality.view')
         ->and($permissionsByDomain['production'])->not->toContain('production.identifiers.view', 'production.resources.view')
-        ->and($permissionsByDomain['accounting_costing'])->toContain('accounts.view')
-        ->and($permissionsByDomain['fixed_assets'])->toContain('fixed_assets.view')
+        ->and($permissionsByDomain['accounting_costing'])->toContain('accounts.view', 'fixed_assets.view')
         ->and($permissionsByDomain['human_resources'])->toContain('hr.employees.view')
-        ->and($permissionsByDomain['reports'])->toContain('reports.customers.view')
         ->and($permissionsByDomain['tools'])->toContain('file_manager.view');
 
-    $inventoryGroup = collect($groups)->firstWhere('key', 'inventory');
-    $itemData = collect($inventoryGroup['children'])->firstWhere('key', 'inventory_item_data');
-    $reportsGroup = collect($groups)->firstWhere('key', 'reports');
-    $salesReports = collect($reportsGroup['children'])->firstWhere('key', 'reports_sales_reports');
-
-    expect($itemData['label'])->toBe(__('menu.item_data'))
-        ->and(businessDomainPermissionNames([$itemData]))->toContain('item_units.view', 'products.view')
-        ->and($salesReports['label'])->toBe(__('menu.sales_reports'))
-        ->and(businessDomainPermissionNames([$salesReports]))->toContain('reports.customers.view');
+    expect($permissionsByDomain['inventory'])->toContain('item_units.view', 'products.view');
 });
 
 test('domain labels are localized exactly and navigation renderers keep unique collapse ids and scrolling', function (): void {
@@ -516,7 +484,6 @@ test('domain labels are localized exactly and navigation renderers keep unique c
         ->and($english['accounting_costing'])->toBe('Accounting & Costing')
         ->and($english['fixed_assets'])->toBe('Fixed Assets')
         ->and($english['human_resources'])->toBe('Human Resources')
-        ->and($english['reports'])->toBe('Reports')
         ->and($english['tools'])->toBe('Tools');
 
     app()->setLocale('ar');
@@ -531,7 +498,6 @@ test('domain labels are localized exactly and navigation renderers keep unique c
         ->and($arabic['accounting_costing'])->toBe('الحسابات والتكاليف')
         ->and($arabic['fixed_assets'])->toBe('الأصول الثابتة')
         ->and($arabic['human_resources'])->toBe('الموارد البشرية')
-        ->and($arabic['reports'])->toBe('التقارير')
         ->and($arabic['tools'])->toBe('الأدوات');
 
     $englishVerticalHtml = view('layouts.partials.menu.vertical-items', [

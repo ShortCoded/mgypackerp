@@ -420,6 +420,11 @@ class ProcurementCycleReport
             default => collect(),
         };
 
+        $geographySupplierDocNums = $this->supplierGeographyDocNums($companyId, $filters);
+        if ($geographySupplierDocNums !== null) {
+            $rows = $rows->whereIn('supplier_doc_num', $geographySupplierDocNums)->values();
+        }
+
         $currencyCodes = Currency::query()->where('company_id', $companyId)->pluck('code', 'doc_num');
         $rows = $rows->map(fn (array $row): array => [...$row,
             'currency_doc_num' => $currencyCodes->has($row['currency']) ? $row['currency'] : $currencyCodes->search($row['currency'], true),
@@ -468,8 +473,11 @@ class ProcurementCycleReport
         $period = FinancialPeriod::query()->where('company_id', $companyId)->findOrFail($periodId);
         $from = $filters['date_from'] ?? $period->from_date->toDateString();
         $to = $filters['date_to'] ?? $period->to_date->toDateString();
+        $geographySupplierDocNums = $this->supplierGeographyDocNums($companyId, $filters);
         $suppliers = Supplier::query()->where('company_id', $companyId)->whereNotNull('account_id')
-            ->when(filled($filters['supplier_doc_num'] ?? null), fn ($query) => $query->where('doc_num', $filters['supplier_doc_num']))->get()->keyBy('account_id');
+            ->when(filled($filters['supplier_doc_num'] ?? null), fn ($query) => $query->where('doc_num', $filters['supplier_doc_num']))
+            ->when($geographySupplierDocNums !== null, fn ($query) => $query->whereIn('doc_num', $geographySupplierDocNums))
+            ->get()->keyBy('account_id');
         $currencies = Currency::query()->where('company_id', $companyId)->get()->keyBy('id');
         $entries = JournalEntryLine::query()->with('journalEntry')
             ->whereIn('account_id', $suppliers->keys())
@@ -1144,6 +1152,31 @@ class ProcurementCycleReport
         }
 
         return $rows->values();
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, string>|null
+     */
+    private function supplierGeographyDocNums(int $companyId, array $filters): ?Collection
+    {
+        $locationFilters = collect([
+            'country' => $filters['country_doc_num'] ?? null,
+            'governorate' => $filters['governorate_doc_num'] ?? null,
+            'cityLookup' => $filters['city_doc_num'] ?? null,
+            'area' => $filters['area_doc_num'] ?? null,
+        ])->filter(fn (mixed $value): bool => filled($value));
+
+        if ($locationFilters->isEmpty()) {
+            return null;
+        }
+
+        return Supplier::query()->forCompany($companyId)
+            ->when($locationFilters->has('country'), fn ($query) => $query->whereHas('country', fn ($location) => $location->where('doc_num', $locationFilters['country'])))
+            ->when($locationFilters->has('governorate'), fn ($query) => $query->whereHas('governorate', fn ($location) => $location->where('doc_num', $locationFilters['governorate'])))
+            ->when($locationFilters->has('cityLookup'), fn ($query) => $query->whereHas('cityLookup', fn ($location) => $location->where('doc_num', $locationFilters['cityLookup'])))
+            ->when($locationFilters->has('area'), fn ($query) => $query->whereHas('area', fn ($location) => $location->where('doc_num', $locationFilters['area'])))
+            ->pluck('doc_num');
     }
 
     /** @param array<string, mixed> $values

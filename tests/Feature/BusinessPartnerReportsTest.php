@@ -11,6 +11,10 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ProductDataReport;
+use Modules\HR\Models\HrArea;
+use Modules\HR\Models\HrCity;
+use Modules\HR\Models\HrCountry;
+use Modules\HR\Models\HrGovernorate;
 use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierCreditLimit;
 use Modules\Sales\Models\Customer;
@@ -105,6 +109,29 @@ function businessPartnerReportRecords(Company $company): array
         'is_main' => true,
         'status' => 'active',
     ]);
+    $country = HrCountry::query()->create([
+        'doc_number' => 8801,
+        'doc_num' => 'Country-8801',
+        'name' => 'Egypt',
+    ]);
+    $governorate = HrGovernorate::query()->create([
+        'doc_number' => 8801,
+        'doc_num' => 'Governorate-8801',
+        'name' => 'Cairo Governorate',
+        'country_id' => $country->getKey(),
+    ]);
+    $city = HrCity::query()->create([
+        'doc_number' => 8801,
+        'doc_num' => 'City-8801',
+        'name' => 'Cairo City',
+        'governorate_id' => $governorate->getKey(),
+    ]);
+    $area = HrArea::query()->create([
+        'doc_number' => 8801,
+        'doc_num' => 'Area-8801',
+        'name' => 'Nasr City',
+        'city_id' => $city->getKey(),
+    ]);
     $customer = Customer::query()->create([
         'doc_number' => 8801,
         'doc_num' => 'CUS-8801',
@@ -120,6 +147,10 @@ function businessPartnerReportRecords(Company $company): array
         'address' => 'Cairo',
         'tax_number' => 'TAX-CUS-1',
         'commercial_register' => 'CR-CUS-1',
+        'country_id' => $country->getKey(),
+        'governorate_id' => $governorate->getKey(),
+        'city_id' => $city->getKey(),
+        'area_id' => $area->getKey(),
         'created_at' => '2026-04-10 09:00:00',
     ]);
     $supplier = Supplier::query()->create([
@@ -137,6 +168,10 @@ function businessPartnerReportRecords(Company $company): array
         'address' => 'Giza',
         'tax_number' => 'TAX-SUP-1',
         'commercial_register' => 'CR-SUP-1',
+        'country_id' => $country->getKey(),
+        'governorate_id' => $governorate->getKey(),
+        'city_id' => $city->getKey(),
+        'area_id' => $area->getKey(),
         'created_at' => '2026-05-11 10:00:00',
     ]);
     $customer->forceFill(['created_at' => '2026-04-10 09:00:00'])->saveQuietly();
@@ -163,6 +198,7 @@ function businessPartnerReportRecords(Company $company): array
         'company_id' => $company->getKey(),
         'name' => 'Inactive Customer',
         'status' => 'inactive',
+        'country' => 'Legacy Egypt',
         'created_at' => '2026-04-12 09:00:00',
     ]);
     Supplier::query()->create([
@@ -171,6 +207,7 @@ function businessPartnerReportRecords(Company $company): array
         'company_id' => $company->getKey(),
         'name' => 'Inactive Supplier',
         'status' => 'inactive',
+        'country' => 'Legacy Egypt',
         'created_at' => '2026-05-12 10:00:00',
     ]);
 
@@ -213,7 +250,7 @@ function businessPartnerReportRecords(Company $company): array
         'status' => 'active',
     ]);
 
-    return compact('customer', 'supplier', 'customerGroup', 'customerAccount', 'supplierGroup', 'supplierAccount') + [
+    return compact('customer', 'supplier', 'customerGroup', 'customerAccount', 'supplierGroup', 'supplierAccount', 'country', 'governorate', 'city', 'area') + [
         'customer_group' => $customerGroup,
         'customer_account' => $customerAccount,
         'supplier_group' => $supplierGroup,
@@ -321,6 +358,11 @@ test('customer and supplier report pages render their shared responsive UI in bo
             ->assertSee('name="phone"', false)
             ->assertSee('name="account_group_doc_num"', false)
             ->assertSee('name="account_doc_num"', false)
+            ->assertSee('name="country_doc_num"', false)
+            ->assertSee('name="governorate_doc_num"', false)
+            ->assertSee('name="city_doc_num"', false)
+            ->assertSee('name="area_doc_num"', false)
+            ->assertSee('name="data_completeness"', false)
             ->assertSee('name="status"', false)
             ->assertSee('name="created_from"', false)
             ->assertSee('name="created_to"', false)
@@ -378,6 +420,11 @@ test('partner report data is company scoped filterable duplicate free and plain 
             'phone' => $expected['phone'],
             'account_group_doc_num' => $expected['group']->doc_num,
             'account_doc_num' => $expected['account']->doc_num,
+            'country_doc_num' => $records['country']->doc_num,
+            'governorate_doc_num' => $records['governorate']->doc_num,
+            'city_doc_num' => $records['city']->doc_num,
+            'area_doc_num' => $records['area']->doc_num,
+            'data_completeness' => 'complete',
             'status' => 'active',
             'created_from' => $expected['created_from'],
             'created_to' => $expected['created_to'],
@@ -405,6 +452,53 @@ test('partner report data is company scoped filterable duplicate free and plain 
         $this->getJson(route("admin.reports.{$report}.filter-options.account-groups", ['q' => explode(' ', $expected['group']->name)[0]]))
             ->assertOk()
             ->assertJsonFragment(['id' => $expected['group']->doc_num]);
+    }
+});
+
+test('partner reports expose dependent locations and data quality filters to report only users', function (): void {
+    $context = businessPartnerReportContext($this);
+    $actor = businessPartnerReportActor([
+        'reports.customers.view',
+        'reports.suppliers.view',
+    ]);
+    $records = businessPartnerReportRecords($context['company']);
+    $this->actingAs($actor);
+
+    $this->getJson(route('admin.select2.countries', ['q' => 'Egypt']))
+        ->assertOk()
+        ->assertJsonFragment(['id' => $records['country']->doc_num]);
+    $this->getJson(route('admin.select2.governorates', [
+        'country_doc_num' => $records['country']->doc_num,
+    ]))
+        ->assertOk()
+        ->assertJsonFragment(['id' => $records['governorate']->doc_num]);
+    $this->getJson(route('admin.select2.cities', [
+        'governorate_doc_num' => $records['governorate']->doc_num,
+    ]))
+        ->assertOk()
+        ->assertJsonFragment(['id' => $records['city']->doc_num]);
+    $this->getJson(route('admin.select2.areas', [
+        'city_doc_num' => $records['city']->doc_num,
+    ]))
+        ->assertOk()
+        ->assertJsonFragment(['id' => $records['area']->doc_num]);
+
+    foreach (['customers' => 'CUS-8802', 'suppliers' => 'SUP-8802'] as $report => $incompleteDocNum) {
+        $complete = $this->getJson(route("admin.reports.{$report}.data", businessPartnerReportDataTablePayload() + [
+            'data_completeness' => 'complete',
+        ]));
+        $complete->assertOk()
+            ->assertJsonPath('recordsFiltered', 1)
+            ->assertJsonMissing(['doc_num' => $incompleteDocNum]);
+
+        foreach (['any_issue', 'missing_location', 'missing_address', 'missing_contact', 'legacy_unlinked_location'] as $filter) {
+            $this->getJson(route("admin.reports.{$report}.data", businessPartnerReportDataTablePayload() + [
+                'data_completeness' => $filter,
+            ]))
+                ->assertOk()
+                ->assertJsonPath('recordsFiltered', 1)
+                ->assertJsonFragment(['doc_num' => $incompleteDocNum]);
+        }
     }
 });
 

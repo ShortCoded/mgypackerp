@@ -34,7 +34,7 @@
                                 <div class="border rounded-2 p-3 h-100">
                                     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
                                         <label class="form-check mb-0">
-                                            <input class="form-check-input" type="checkbox" name="selected_stage_ids[]" value="{{ $stage->id }}" @checked(in_array($stage->id, old('selected_stage_ids', $selected->keys()->all())))>
+                                            <x-forms.input class="form-check-input" type="checkbox" name="selected_stage_ids[]" value="{{ $stage->id }}" :checked="in_array($stage->id, old('selected_stage_ids', $selected->keys()->all()))" />
                                             <span class="form-check-label fw-semi-bold">{{ $stage->code }} — {{ $stage->name }}</span>
                                         </label>
                                         <span class="badge badge-subtle-secondary">{{ $stage->output_type ?: '—' }}</span>

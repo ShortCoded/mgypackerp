@@ -108,6 +108,51 @@
 
             <div class="col-12">
                 <div class="business-partner-filter-group-heading">
+                    <span class="fas fa-map-marker-alt"></span>
+                    <span>{{ __('business_partner_reports.filter_groups.geography') }}</span>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="{{ $reportId }}-country">{{ $report['filter_labels']['country_doc_num'] }}</label>
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-country" name="country_doc_num" data-filter-label="{{ $report['filter_labels']['country_doc_num'] }}" data-url="{{ route('admin.select2.countries') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_country') }}" data-allow-clear="true">
+                    <option value=""></option>
+                </x-forms.select>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="{{ $reportId }}-governorate">{{ $report['filter_labels']['governorate_doc_num'] }}</label>
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-governorate" name="governorate_doc_num" data-filter-label="{{ $report['filter_labels']['governorate_doc_num'] }}" data-url="{{ route('admin.select2.governorates') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_governorate') }}" data-allow-clear="true" data-depends-on="#{{ $reportId }}-country" data-dependent-param="country_doc_num" data-disable-when-dependency-empty="true">
+                    <option value=""></option>
+                </x-forms.select>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="{{ $reportId }}-city">{{ $report['filter_labels']['city_doc_num'] }}</label>
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-city" name="city_doc_num" data-filter-label="{{ $report['filter_labels']['city_doc_num'] }}" data-url="{{ route('admin.select2.cities') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_city') }}" data-allow-clear="true" data-depends-on="#{{ $reportId }}-governorate" data-dependent-param="governorate_doc_num" data-disable-when-dependency-empty="true">
+                    <option value=""></option>
+                </x-forms.select>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="{{ $reportId }}-area">{{ $report['filter_labels']['area_doc_num'] }}</label>
+                <x-forms.select class="{{ $ajaxSelectClass }}" id="{{ $reportId }}-area" name="area_doc_num" data-filter-label="{{ $report['filter_labels']['area_doc_num'] }}" data-url="{{ route('admin.select2.areas') }}" data-placeholder="{{ __('business_partner_reports.placeholders.select_area') }}" data-allow-clear="true" data-depends-on="#{{ $reportId }}-city" data-dependent-param="city_doc_num" data-disable-when-dependency-empty="true">
+                    <option value=""></option>
+                </x-forms.select>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="{{ $reportId }}-data-completeness">{{ $report['filter_labels']['data_completeness'] }}</label>
+                <x-forms.select class="{{ $staticSelectClass }}" id="{{ $reportId }}-data-completeness" name="data_completeness" data-filter-label="{{ $report['filter_labels']['data_completeness'] }}" data-placeholder="{{ __('reports.all_records') }}" data-allow-clear="true">
+                    <option value=""></option>
+                    @foreach (['complete', 'any_issue', 'missing_location', 'missing_address', 'missing_contact', 'legacy_unlinked_location'] as $completeness)
+                        <option value="{{ $completeness }}">{{ __('business_partner_reports.completeness.'.$completeness) }}</option>
+                    @endforeach
+                </x-forms.select>
+            </div>
+
+            <div class="col-12">
+                <div class="business-partner-filter-group-heading">
                     <span class="far fa-calendar-alt"></span>
                     <span>{{ __('business_partner_reports.filter_groups.dates') }}</span>
                 </div>

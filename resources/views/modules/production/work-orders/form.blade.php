@@ -180,7 +180,7 @@
                 <x-forms.textarea name="lines[__INDEX__][description]" rows="2" maxlength="1000"></x-forms.textarea>
             </td>
             <td class="erp-entry-line-text line-card-full">
-                <input type="hidden" name="lines[__INDEX__][stage_selection_present]" value="1">
+                <x-forms.input type="hidden" name="lines[__INDEX__][stage_selection_present]" value="1" />
                 <x-forms.select variant="ajax" name="lines[__INDEX__][stage_public_ids][]" :url="route('admin.production.work-orders.select2.stages')" :placeholder="__('production_execution.orders.select_stages')" multiple />
             </td>
             <td class="erp-entry-line-text">

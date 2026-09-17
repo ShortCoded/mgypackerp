@@ -40,6 +40,9 @@ Route::middleware('auth')
         Route::get('/reports/operations/print', [InventoryReportController::class, 'print'])
             ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
             ->name('reports.print');
+        Route::get('/reports/valuation', [InventoryReportController::class, 'valuation'])
+            ->middleware('can:inventory.reports.financial')
+            ->name('reports.valuation');
         Route::get('/stock-balances', [InventoryReportController::class, 'stockBalances'])
             ->middleware('can:inventory.reports.operational')
             ->name('stock-balances.index');

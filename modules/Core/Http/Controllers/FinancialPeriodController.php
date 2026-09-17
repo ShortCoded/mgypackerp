@@ -46,6 +46,29 @@ class FinancialPeriodController extends Controller
         ]);
     }
 
+    public function closing(Request $request, FinancialPeriodClosingService $closing): View
+    {
+        $companyId = $this->companyContext->requireCompanyId($request);
+        $periods = FinancialPeriod::query()
+            ->forCompany($companyId)
+            ->orderByDesc('from_date')
+            ->get();
+        $selectedDocNum = trim((string) $request->query('period', ''));
+        $selectedPeriod = $selectedDocNum !== ''
+            ? $periods->firstWhere('doc_num', $selectedDocNum)
+            : $periods->firstWhere('is_closed', false) ?? $periods->first();
+
+        abort_if($selectedDocNum !== '' && ! $selectedPeriod instanceof FinancialPeriod, 404);
+
+        return view('modules.core.financial-periods.closing', [
+            'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.financial-periods.closing'),
+            'company' => $this->companyContext->currentCompany($request),
+            'periods' => $periods,
+            'selectedPeriod' => $selectedPeriod,
+            'preview' => $selectedPeriod instanceof FinancialPeriod ? $closing->preview($selectedPeriod) : null,
+        ]);
+    }
+
     public function data(Request $request, FinancialPeriodsDataTable $dataTable): JsonResponse
     {
         return $dataTable->json($request);
@@ -213,6 +236,19 @@ class FinancialPeriodController extends Controller
 
     public function close(Request $request, string $financialPeriod, FinancialPeriodClosingService $closing): RedirectResponse
     {
+        $operation = $request->validate([
+            'return_to' => ['nullable', 'in:closing'],
+            'operation_note' => ['nullable', 'string', 'max:1000'],
+            'confirm_result_transfer' => ['nullable', 'boolean'],
+        ]);
+        $returnToClosing = ($operation['return_to'] ?? null) === 'closing';
+
+        if ($returnToClosing && ! $request->boolean('confirm_result_transfer')) {
+            throw ValidationException::withMessages([
+                'confirm_result_transfer' => __('financial_periods.closing.confirmation_required'),
+            ]);
+        }
+
         $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
 
         try {
@@ -221,6 +257,7 @@ class FinancialPeriodController extends Controller
             $this->logActivity($request, 'financial_periods.close_blocked', [
                 ...$this->recordPublicProperties($financialPeriod),
                 'reason' => $exception->getMessage(),
+                'operation_note' => $operation['operation_note'] ?? null,
             ], 'blocked');
 
             return back()->withErrors(['period_close' => $exception->getMessage()]);
@@ -230,7 +267,17 @@ class FinancialPeriodController extends Controller
             ...$this->recordPublicProperties($result['period']),
             'journal_entry_doc_num' => $result['journal_entry']?->doc_num,
             'already_closed' => $result['already_closed'],
+            'operation_note' => $operation['operation_note'] ?? null,
         ]);
+
+        if ($returnToClosing) {
+            return redirect()
+                ->route('admin.financial-periods.closing', ['period' => $result['period']->doc_num])
+                ->with('success', $result['already_closed']
+                    ? __('financial_periods.messages.already_closed')
+                    : __('financial_periods.messages.closed'))
+                ->with('financial_period_operation_entry', $result['journal_entry']?->doc_num);
+        }
 
         return redirect()
             ->route('admin.financial-periods.show', $result['period']->doc_num)
@@ -241,6 +288,11 @@ class FinancialPeriodController extends Controller
 
     public function reopen(Request $request, string $financialPeriod, FinancialPeriodClosingService $closing): RedirectResponse
     {
+        $operation = $request->validate([
+            'return_to' => ['nullable', 'in:closing'],
+            'operation_note' => ['nullable', 'string', 'max:1000'],
+        ]);
+        $returnToClosing = ($operation['return_to'] ?? null) === 'closing';
         $financialPeriod = $this->recordByDocNum($request, $financialPeriod);
 
         try {
@@ -249,6 +301,7 @@ class FinancialPeriodController extends Controller
             $this->logActivity($request, 'financial_periods.reopen_blocked', [
                 ...$this->recordPublicProperties($financialPeriod),
                 'reason' => $exception->getMessage(),
+                'operation_note' => $operation['operation_note'] ?? null,
             ], 'blocked');
 
             return back()->withErrors(['period_close' => $exception->getMessage()]);
@@ -258,7 +311,17 @@ class FinancialPeriodController extends Controller
             ...$this->recordPublicProperties($result['period']),
             'reversal_journal_entry_doc_num' => $result['reversal_entry']?->doc_num,
             'already_open' => $result['already_open'],
+            'operation_note' => $operation['operation_note'] ?? null,
         ]);
+
+        if ($returnToClosing) {
+            return redirect()
+                ->route('admin.financial-periods.closing', ['period' => $result['period']->doc_num])
+                ->with('success', $result['already_open']
+                    ? __('financial_periods.messages.already_open')
+                    : __('financial_periods.messages.reopened'))
+                ->with('financial_period_operation_entry', $result['reversal_entry']?->doc_num);
+        }
 
         return redirect()
             ->route('admin.financial-periods.show', $result['period']->doc_num)

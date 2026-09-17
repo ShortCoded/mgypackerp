@@ -185,7 +185,7 @@ test('classification and default chart account seeders are idempotent', function
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $context = accountEnsureOperatingContext();
 
-    expect(AccountClassification::query()->count())->toBe(135)
+    expect(AccountClassification::query()->count())->toBe(139)
         ->and(Account::query()->where('company_id', $context['company']->getKey())->whereNull('parent_id')->count())->toBe(5)
         ->and(Account::query()->whereNull('company_id')->exists())->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1')->first()?->is_system)->toBeTrue()
@@ -197,10 +197,10 @@ test('classification and default chart account seeders are idempotent', function
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1112')->first()?->is_group)->toBeTrue()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1112')->first()?->is_postable)->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1121')->first()?->classification?->code)->toBe('accounts_receivable')
-        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1133')->first()?->classification?->code)->toBe('inventory')
+        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1133')->first()?->classification?->code)->toBe('finished_goods_inventory')
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '2111')->first()?->classification?->code)->toBe('accounts_payable')
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '411')->first()?->classification?->code)->toBe('sales_revenue')
-        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '521')->first()?->classification?->code)->toBe(AccountClassification::Expenses)
+        ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '521')->first()?->classification?->code)->toBe('salary_expense')
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '11')->first()?->is_group)->toBeTrue()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '11')->first()?->is_postable)->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1111')->first()?->is_group)->toBeTrue()
@@ -679,7 +679,7 @@ test('child account derives type and statement from parent while normal balance 
         ->and($account->normal_balance)->toBe('credit');
 });
 
-test('detailed classifications are selectable while expenses remains the fallback', function () {
+test('detailed classifications are selectable while group accounts may remain unclassified', function () {
     $this->seed(AccountClassificationsSeeder::class);
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.account_code.control']);
@@ -698,14 +698,15 @@ test('detailed classifications are selectable while expenses remains the fallbac
         ->assertOk();
 
     $account = Account::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
-    $parentItem = $this->actingAs($actor)
-        ->getJson(route('admin.accounting.select2.accounts', ['q' => $parent->account_code]))
+    $parentItems = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['q' => $parent->doc_num]))
         ->assertOk()
-        ->json('results.0');
+        ->json('results');
+    $parentItem = collect($parentItems)->firstWhere('account_code', $parent->account_code);
 
     expect($account->classification?->code)->toBe('purchase_returns')
         ->and($account->normal_balance)->toBe('credit')
-        ->and($parentItem['classification_code'] ?? null)->toBe(AccountClassification::Expenses);
+        ->and($parentItem['classification_code'] ?? null)->toBeNull();
 
     foreach ([
         AccountClassification::Expenses,

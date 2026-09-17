@@ -164,6 +164,6 @@ class BreadcrumbService
      */
     private function loadMenu(): array
     {
-        return $this->menu->structure();
+        return $this->menu->navigationStructure();
     }
 }

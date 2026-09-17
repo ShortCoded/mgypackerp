@@ -348,7 +348,7 @@ test('cost center create normal save behaves as save and new', function () {
         ->get(route('admin.accounting.cost-centers.create'))
         ->assertOk()
         ->assertDontSee('Packaging Center', false)
-        ->assertDontSee('210', false);
+        ->assertDontSee('value="210"', false);
 });
 
 test('cost center code generation follows the account child code pattern', function () {

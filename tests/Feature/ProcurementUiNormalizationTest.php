@@ -911,12 +911,11 @@ test('purchase navigation follows the operational document sequence', function (
         'purchase_invoices',
         'supplier_payments',
         'purchase_returns',
-        'purchase_reports',
     ];
     $purchases = collect(app(MenuService::class)->structure())->firstWhere('label', 'purchases');
 
     expect(config('menu_sections.leaf_order.purchases'))->toBe($expectedOrder)
-        ->and(collect($purchases['children'])->pluck('label')->all())->toBe($expectedOrder);
+        ->and(collect($purchases['children'])->pluck('label')->all())->toBe([...$expectedOrder, 'purchase_reports']);
 
     app()->setLocale('ar');
     expect(__('menu.purchase_inspections'))->toBe('فحوص المشتريات');

@@ -7,8 +7,10 @@ use Modules\Finance\Http\Controllers\CashboxController;
 use Modules\Finance\Http\Controllers\CashPaymentVoucherController;
 use Modules\Finance\Http\Controllers\CashReceiptVoucherController;
 use Modules\Finance\Http\Controllers\ChequeController;
+use Modules\Finance\Http\Controllers\FinanceReportController;
 use Modules\Finance\Http\Controllers\FundTransferController;
 use Modules\Finance\Http\Controllers\OpeningBalanceController;
+use Modules\Finance\Services\FinanceReportService;
 use Modules\Finance\Services\FinanceSelect2Service;
 
 Route::middleware('auth')
@@ -259,4 +261,30 @@ Route::middleware('auth')
             Route::put('/{openingBalance}', 'update')->middleware('can:opening_balances.edit')->name('update');
             Route::delete('/{openingBalance}', 'destroy')->middleware('can:opening_balances.delete')->name('destroy');
         });
+    });
+
+Route::middleware('auth')
+    ->prefix('admin/reports/finance')
+    ->as('admin.reports.finance.')
+    ->controller(FinanceReportController::class)
+    ->group(function (): void {
+        Route::get('/', 'index')->name('index');
+        Route::get('/export/excel', 'excel')->name('export.excel');
+        Route::get('/export/csv', 'csv')->name('export.csv');
+        Route::get('/export/pdf', 'pdf')->name('export.pdf');
+
+        foreach ([
+            'cashbox-balances' => FinanceReportService::CashboxBalances,
+            'cashbox-statement' => FinanceReportService::CashboxStatement,
+            'bank-account-balances' => FinanceReportService::BankAccountBalances,
+            'bank-account-statement' => FinanceReportService::BankAccountStatement,
+            'cheque-transit' => FinanceReportService::DueCheques,
+            'treasury-transfers' => FinanceReportService::FundTransfers,
+            'customer-aging' => FinanceReportService::CustomerAging,
+            'supplier-aging' => FinanceReportService::SupplierAging,
+        ] as $slug => $type) {
+            Route::get("/{$slug}", 'index')
+                ->defaults('finance_report_type', $type)
+                ->name("{$slug}.index");
+        }
     });

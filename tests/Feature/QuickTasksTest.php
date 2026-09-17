@@ -12,7 +12,6 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\QuickTask;
-use Modules\Core\Models\QuickTaskAttachment;
 use Modules\Core\Models\TaskBoard;
 use Modules\Core\Services\ArchiveFileService;
 use Modules\Core\Services\ArchiveFolderService;
@@ -179,20 +178,21 @@ function quickTasksFindMenuNode(array $nodes, string $label): ?array
     return null;
 }
 
-test('quick tasks permissions and tools menu entries are registered from menu config', function (): void {
+test('legacy quick task permissions and menu entries are replaced by the unified team board', function (): void {
     $permissions = app(PermissionRegistryService::class)->all();
     $toolsMenu = require base_path('config/menu/tools.php');
     $quickTasksNode = quickTasksFindMenuNode($toolsMenu, 'quick_tasks');
     $managementNode = quickTasksFindMenuNode($toolsMenu, 'quick_tasks_management');
     $taskBoardsNode = quickTasksFindMenuNode($toolsMenu, 'task_boards');
+    $teamBoardNode = quickTasksFindMenuNode($toolsMenu, 'team_board');
 
     expect($permissions)
-        ->toContain('quick_tasks.view')
-        ->toContain('quick_tasks.create')
-        ->toContain('quick_tasks.update')
-        ->toContain('quick_tasks.delete')
-        ->toContain('quick_tasks.restore')
-        ->toContain('quick_tasks.change_status')
+        ->not->toContain('quick_tasks.view')
+        ->not->toContain('quick_tasks.create')
+        ->not->toContain('quick_tasks.update')
+        ->not->toContain('quick_tasks.delete')
+        ->not->toContain('quick_tasks.restore')
+        ->not->toContain('quick_tasks.change_status')
         ->toContain('quick_tasks.start')
         ->toContain('quick_tasks.mark_ready')
         ->toContain('quick_tasks.mark_done')
@@ -211,301 +211,64 @@ test('quick tasks permissions and tools menu entries are registered from menu co
         ->and($taskBoardsNode)->not->toBeNull()
         ->and($taskBoardsNode['route'])->toBe('admin.task-boards.index')
         ->and($taskBoardsNode['permission'])->toBe('task_boards.view')
-        ->and($quickTasksNode)->not->toBeNull()
-        ->and($managementNode)->not->toBeNull()
-        ->and($managementNode['route'])->toBe('admin.quick-tasks.index')
-        ->and($managementNode['permission'])->toBe('quick_tasks.view');
+        ->and($quickTasksNode)->toBeNull()
+        ->and($managementNode)->toBeNull()
+        ->and($teamBoardNode)->not->toBeNull()
+        ->and($teamBoardNode['route'])->toBe('admin.tools.team-board.index');
 });
 
-test('management page renders for permitted users', function (): void {
-    $actor = quickTasksActor(['quick_tasks.view', 'quick_tasks.create', 'quick_tasks.delete', 'quick_tasks.restore']);
-    $context = quickTasksContext($this);
+test('legacy quick task management page redirects to the unified team board', function (): void {
+    $actor = quickTasksActor(['quick_tasks.view']);
 
     $this->actingAs($actor)
-        ->withSession($context['session'])
         ->get(route('admin.quick-tasks.index'))
-        ->assertOk()
-        ->assertSee(__('quick_tasks.management_title'))
-        ->assertSee('quick-tasks-table', false);
+        ->assertRedirect(route('admin.tools.team-board.index'));
 });
 
-test('tasks can be created with file manager attachments in the active operating context', function (): void {
-    Storage::fake('local');
-
-    $actor = quickTasksActor([
-        'quick_tasks.view',
-        'quick_tasks.create',
-        'quick_tasks.update',
-        'quick_tasks.manage_attachments',
-        'file_manager.view',
-    ]);
-    $assignee = User::factory()->create();
-    $context = quickTasksContext($this);
-    $archiveFile = quickTasksArchiveFileForCompany(
-        $context['company'],
-        UploadedFile::fake()->create('cutting-note.pdf', 64, 'application/pdf'),
-    );
-
-    $response = $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->post(route('admin.quick-tasks.store'), [
-            'title' => 'Prepare showroom sample',
-            'summary' => 'Move sample to display area',
-            'details' => 'Attach the latest cutting note before moving.',
-            'status' => QuickTask::StatusNew,
-            'priority' => QuickTask::PriorityHigh,
-            'assigned_to_doc_num' => $assignee->doc_num,
-            'attachment_file_doc_nums' => [$archiveFile->doc_num],
-        ], ['Accept' => 'application/json']);
-
-    $response
-        ->assertOk()
-        ->assertJsonPath('success', true)
-        ->assertJsonMissingPath('data.id')
-        ->assertJsonMissingPath('data.company_id');
-
-    $task = QuickTask::query()->with('attachments')->firstOrFail();
-    $attachment = $task->attachments->first();
-
-    expect($task->company_id)->toBe($context['company']->getKey())
-        ->and($task->branch_id)->toBe($context['branch']->getKey())
-        ->and($task->created_by)->toBe($actor->getKey())
-        ->and($task->assigned_to)->toBe($assignee->getKey())
-        ->and($task->doc_num)->toStartWith('QT-')
-        ->and($attachment)->not->toBeNull()
-        ->and($attachment->archive_file_id)->toBe($archiveFile->getKey())
-        ->and($attachment->original_name)->toBe('cutting-note.pdf')
-        ->and($attachment->public_uuid)->not->toBeEmpty();
-
-    Storage::disk('local')->assertExists($attachment->path);
-
+test('legacy quick task creation redirects to the unified team board', function (): void {
+    $actor = quickTasksActor(['quick_tasks.create']);
     $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->get(route('admin.quick-tasks.attachments.show', $attachment->public_uuid))
-        ->assertOk();
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->deleteJson(route('admin.quick-tasks.attachments.destroy', $attachment->public_uuid))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    Storage::disk('local')->assertExists($archiveFile->path);
-    expect(QuickTaskAttachment::query()->whereKey($attachment->getKey())->exists())->toBeFalse();
+        ->post(route('admin.quick-tasks.store'))
+        ->assertStatus(303)
+        ->assertRedirect(route('admin.tools.team-board.index'));
 });
 
-test('datatable scopes active tasks to the current company and branch', function (): void {
-    $actor = quickTasksActor(['quick_tasks.view', 'quick_tasks.change_status']);
-    $context = quickTasksContext($this);
-    $otherContext = quickTasksContext($this);
+test('legacy quick task data endpoint redirects to unified team task data', function (): void {
+    $actor = quickTasksActor(['quick_tasks.view']);
 
-    $new = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusNew]);
-    $inProgress = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusInProgress]);
-    $ready = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusReady]);
-    $done = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusDone]);
-    $cancelled = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusCancelled]);
-    $deleted = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusNew]);
-    $deleted->delete();
-    $other = quickTasksRecord($otherContext['company'], $otherContext['branch'], $actor, ['status' => QuickTask::StatusNew]);
-
-    $datatable = $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->getJson(route('admin.quick-tasks.data', ['draw' => 1, 'start' => 0, 'length' => 10]));
-
-    $datatable->assertOk();
-
-    $rows = $datatable->json('data');
-    $encodedRows = json_encode($rows, JSON_THROW_ON_ERROR);
-
-    expect($rows[0])
-        ->toHaveKeys([
-            'checkbox',
-            'doc_num',
-            'title',
-            'summary',
-            'task_board',
-            'status',
-            'priority',
-            'assigned_to',
-            'attachments_count',
-            'created_by',
-            'created_at',
-            'updated_by',
-            'updated_at',
-            'actions',
-        ])
-        ->not->toHaveKeys(['id', 'company_id', 'branch_id', 'task_board_id', 'assigned_to_id', 'created_by_id', 'updated_by_id', 'deleted_by_id'])
-        ->and($encodedRows)->toContain($new->doc_num)
-        ->and($encodedRows)->not->toContain($other->doc_num);
+    $this->actingAs($actor)
+        ->get(route('admin.quick-tasks.data', ['draw' => 1]))
+        ->assertRedirect(route('admin.tools.team-board.tasks.data', ['draw' => 1]));
 });
 
-test('status changes move tasks through the board and done tasks disappear', function (): void {
-    $actor = quickTasksActor([
-        'quick_tasks.view',
-        'quick_tasks.change_status',
-        'quick_tasks.start',
-        'quick_tasks.mark_ready',
-        'quick_tasks.mark_done',
-    ]);
-    $context = quickTasksContext($this);
-    $task = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusNew]);
-
+test('legacy quick task status changes redirect without mutating legacy records', function (): void {
+    $actor = quickTasksActor(['quick_tasks.change_status']);
     $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $task->doc_num), ['status' => QuickTask::StatusInProgress])
-        ->assertOk()
-        ->assertJsonPath('data.status', QuickTask::StatusInProgress);
-
-    expect($task->refresh()->status)->toBe(QuickTask::StatusInProgress);
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $task->doc_num), ['status' => QuickTask::StatusReady])
-        ->assertOk()
-        ->assertJsonPath('data.status', QuickTask::StatusReady);
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $task->doc_num), ['status' => QuickTask::StatusDone])
-        ->assertOk()
-        ->assertJsonPath('data.status', QuickTask::StatusDone);
+        ->patch(route('admin.quick-tasks.change-status', 'QT-legacy'))
+        ->assertStatus(303)
+        ->assertRedirect(route('admin.tools.team-board.index'));
 });
 
-test('specific status transition permissions are enforced', function (): void {
-    $actor = quickTasksActor(['quick_tasks.view', 'quick_tasks.change_status']);
-    $context = quickTasksContext($this);
-    $task = quickTasksRecord($context['company'], $context['branch'], $actor, ['status' => QuickTask::StatusReady]);
-
+test('legacy quick task redirects still enforce their compatibility permission', function (): void {
+    $actor = quickTasksActor([]);
     $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $task->doc_num), ['status' => QuickTask::StatusDone])
+        ->patch(route('admin.quick-tasks.change-status', 'QT-legacy'))
         ->assertForbidden();
-
-    expect($task->refresh()->status)->toBe(QuickTask::StatusReady);
-
-    Permission::findOrCreate('quick_tasks.mark_done', 'web');
-    $actor->givePermissionTo('quick_tasks.mark_done');
-
-    $this->actingAs($actor->refresh())
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $task->doc_num), ['status' => QuickTask::StatusDone])
-        ->assertOk()
-        ->assertJsonPath('data.status', QuickTask::StatusDone);
 });
 
-test('attachments can be deleted and soft-deleted tasks can be restored', function (): void {
-    Storage::fake('local');
-
-    $actor = quickTasksActor(['quick_tasks.view', 'quick_tasks.update', 'quick_tasks.delete', 'quick_tasks.restore', 'quick_tasks.manage_attachments']);
-    $context = quickTasksContext($this);
-    $task = quickTasksRecord($context['company'], $context['branch'], $actor);
-    $path = 'quick-tasks/'.$context['company']->getKey().'/'.$task->doc_num.'/note.txt';
-
-    Storage::disk('local')->put($path, 'Attachment body');
-
-    $attachment = QuickTaskAttachment::query()->create([
-        'quick_task_id' => $task->getKey(),
-        'disk' => 'local',
-        'path' => $path,
-        'original_name' => 'note.txt',
-        'mime_type' => 'text/plain',
-        'size' => 15,
-        'uploaded_by' => $actor->getKey(),
-    ]);
-
+test('legacy quick task attachment mutations redirect to the unified team board', function (): void {
+    $actor = quickTasksActor(['quick_tasks.manage_attachments']);
     $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->deleteJson(route('admin.quick-tasks.attachments.destroy', $attachment->public_uuid))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    Storage::disk('local')->assertMissing($path);
-    expect(QuickTaskAttachment::query()->whereKey($attachment->getKey())->exists())->toBeFalse();
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->deleteJson(route('admin.quick-tasks.destroy', $task->doc_num))
-        ->assertOk();
-
-    expect($task->refresh()->trashed())->toBeTrue();
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.restore', $task->doc_num))
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    expect($task->refresh()->trashed())->toBeFalse()
-        ->and($task->restored_by)->toBe($actor->getKey())
-        ->and($task->restored_at)->not->toBeNull();
-
-    $bulkTask = quickTasksRecord($context['company'], $context['branch'], $actor);
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->deleteJson(route('admin.quick-tasks.destroy', $bulkTask->doc_num))
-        ->assertOk();
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.bulk-restore'), [
-            'doc_nums' => [$bulkTask->doc_num],
-        ])
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    expect($bulkTask->refresh()->trashed())->toBeFalse()
-        ->and($bulkTask->restored_by)->toBe($actor->getKey())
-        ->and($bulkTask->restored_at)->not->toBeNull();
+        ->delete(route('admin.quick-tasks.attachments.destroy', (string) Str::uuid()))
+        ->assertStatus(303)
+        ->assertRedirect(route('admin.tools.team-board.index'));
 });
 
-test('quick task form renders ERP sections summernote ajax board select and document picker', function (): void {
-    $actor = quickTasksActor([
-        'quick_tasks.view',
-        'quick_tasks.create',
-        'quick_tasks.update',
-        'quick_tasks.manage_attachments',
-        'file_manager.view',
-        'file_manager.upload',
-        'file_manager.folders.create',
-        'task_boards.view',
-    ]);
-    $context = quickTasksContext($this);
-    $board = quickTasksBoard($context['company'], $context['branch'], $actor);
-    $board->users()->attach($actor->getKey());
-    $task = quickTasksRecord($context['company'], $context['branch'], $actor, [
-        'task_board_id' => $board->getKey(),
-        'details' => '<p>Prepare <strong>rich</strong> task notes.</p>',
-    ]);
-
+test('legacy quick task create form redirects to unified task creation', function (): void {
+    $actor = quickTasksActor(['quick_tasks.create']);
     $this->actingAs($actor)
-        ->withSession($context['session'])
         ->get(route('admin.quick-tasks.create'))
-        ->assertOk()
-        ->assertSee(__('quick_tasks.sections.details'))
-        ->assertSee(__('quick_tasks.sections.attachments'))
-        ->assertSee('js-quick-task-rich-editor', false)
-        ->assertSee('vendors/summernote/summernote-bs5.min.js', false)
-        ->assertSee(route('admin.select2.task-boards'), false)
-        ->assertSee('data-file-picker', false)
-        ->assertSee('data-picker-accept="document"', false)
-        ->assertSee('id="file-picker-modal"', false);
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->get(route('admin.quick-tasks.edit', $task->doc_num))
-        ->assertOk()
-        ->assertSee($board->doc_num)
-        ->assertSee('Prepare &lt;strong&gt;rich&lt;/strong&gt; task notes.', false)
-        ->assertSee(__('quick_tasks.sections.audit_info'));
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->get(route('admin.quick-tasks.show', $task->doc_num))
-        ->assertOk()
-        ->assertSee(__('quick_tasks.view'))
-        ->assertSee('<strong>rich</strong>', false)
-        ->assertDontSee('js-quick-task-rich-editor', false);
+        ->assertRedirect(route('admin.tools.team-board.tasks.create'));
 });
 
 test('quick task board select2 returns active assigned boards only', function (): void {
@@ -960,60 +723,10 @@ test('task board public url regeneration invalidates old display token', functio
         ->assertNotFound();
 });
 
-test('authenticated task board assignments protect quick task table and mutations', function (): void {
-    $actor = quickTasksActor([
-        'quick_tasks.view',
-        'quick_tasks.create',
-        'quick_tasks.update',
-        'quick_tasks.delete',
-        'quick_tasks.change_status',
-        'task_boards.view',
-    ]);
-    $context = quickTasksContext($this);
-    $visibleBoard = quickTasksBoard($context['company'], $context['branch'], $actor);
-    $hiddenBoard = quickTasksBoard($context['company'], $context['branch'], $actor);
-    $visibleBoard->users()->attach($actor->getKey());
-
-    $visibleTask = quickTasksRecord($context['company'], $context['branch'], $actor, [
-        'task_board_id' => $visibleBoard->getKey(),
-    ]);
-    $hiddenTask = quickTasksRecord($context['company'], $context['branch'], $actor, [
-        'task_board_id' => $hiddenBoard->getKey(),
-    ]);
-
-    $datatable = $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->getJson(route('admin.quick-tasks.data', ['draw' => 1, 'start' => 0, 'length' => 10]));
-
-    $rows = json_encode($datatable->json('data'), JSON_THROW_ON_ERROR);
-
-    expect($rows)
-        ->toContain($visibleTask->doc_num)
-        ->not->toContain($hiddenTask->doc_num);
+test('legacy quick task assignment data redirects to unified team task data', function (): void {
+    $actor = quickTasksActor(['quick_tasks.view']);
 
     $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->patchJson(route('admin.quick-tasks.change-status', $hiddenTask->doc_num), ['status' => QuickTask::StatusInProgress])
-        ->assertNotFound();
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->postJson(route('admin.quick-tasks.store'), [
-            'title' => 'Visible display task',
-            'status' => QuickTask::StatusNew,
-            'priority' => QuickTask::PriorityNormal,
-            'task_board_doc_num' => $visibleBoard->doc_num,
-        ])
-        ->assertOk()
-        ->assertJsonPath('success', true);
-
-    $this->actingAs($actor)
-        ->withSession($context['session'])
-        ->postJson(route('admin.quick-tasks.store'), [
-            'title' => 'Hidden display task',
-            'status' => QuickTask::StatusNew,
-            'priority' => QuickTask::PriorityNormal,
-            'task_board_doc_num' => $hiddenBoard->doc_num,
-        ])
-        ->assertUnprocessable();
+        ->get(route('admin.quick-tasks.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertRedirect(route('admin.tools.team-board.tasks.data', ['draw' => 1, 'start' => 0, 'length' => 10]));
 });

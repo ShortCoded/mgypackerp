@@ -231,24 +231,21 @@ test('audit reports the exact historical orphan shape as blocked review evidence
 
     expect($asset->getKey())->toBe(1)
         ->and($asset->doc_num)->toBe('FA-00001')
-        ->and($originalAccount->getKey())->toBe(81)
-        ->and($originalAccount->doc_num)->toBe('ACC-00081')
-        ->and($replacementAccount->getKey())->toBe(82)
-        ->and($replacementAccount->doc_num)->toBe('ACC-00082')
-        ->and((int) $asset->account_id)->toBe(82)
-        ->and(FixedAsset::query()->where('account_id', 81)->exists())->toBeFalse();
+        ->and($originalAccount->getKey())->not->toBe($replacementAccount->getKey())
+        ->and((int) $asset->account_id)->toBe((int) $replacementAccount->getKey())
+        ->and(FixedAsset::query()->where('account_id', $originalAccount->getKey())->exists())->toBeFalse();
 
     $result = app(FixedAssetDuplicateAccountAuditService::class)->audit($context['company'], $asset->doc_num);
     $case = $result['cases'][0];
-    $originalCandidate = collect($case['accounts'])->firstWhere('id', 81);
-    $replacementCandidate = collect($case['accounts'])->firstWhere('id', 82);
+    $originalCandidate = collect($case['accounts'])->firstWhere('id', $originalAccount->getKey());
+    $replacementCandidate = collect($case['accounts'])->firstWhere('id', $replacementAccount->getKey());
 
     expect($result['duplicate_assets'])->toBe(0)
         ->and($result['review_candidates'])->toBe(1)
         ->and($result['safe_cases'])->toBe(0)
         ->and($result['blocked_cases'])->toBe(1)
-        ->and(collect($case['accounts'])->pluck('id')->all())->toBe([81, 82])
-        ->and($case['current_account_id'])->toBe(82)
+        ->and(collect($case['accounts'])->pluck('id')->all())->toBe([$originalAccount->getKey(), $replacementAccount->getKey()])
+        ->and($case['current_account_id'])->toBe($replacementAccount->getKey())
         ->and($case['repair_status'])->toBe('blocked')
         ->and($originalCandidate['association_role'])->toBe('review_candidate')
         ->and($originalCandidate['detection_confidence'])->toBe('review_only')
@@ -267,12 +264,12 @@ test('audit reports the exact historical orphan shape as blocked review evidence
         '--asset' => $asset->doc_num,
     ])
         ->expectsOutputToContain('actual_duplicates=0 review_candidates=1 safe_empty_account_repairs=0')
-        ->expectsOutputToContain('ACC-00081')
-        ->expectsOutputToContain('ACC-00082')
+        ->expectsOutputToContain($originalAccount->doc_num)
+        ->expectsOutputToContain($replacementAccount->doc_num)
         ->assertSuccessful();
 
     expect($asset->fresh()->getAttributes())->toBe($beforeAsset)
-        ->and(Account::query()->whereIn('id', [81, 82])->oldest('id')->get()->map->getAttributes()->all())->toBe($beforeAccounts);
+        ->and(Account::query()->whereIn('id', [$originalAccount->getKey(), $replacementAccount->getKey()])->oldest('id')->get()->map->getAttributes()->all())->toBe($beforeAccounts);
 });
 
 test('activity account history detects the orphan without an account name match', function (): void {
@@ -304,12 +301,11 @@ test('activity account history detects the orphan without an account name match'
     $originalCandidate = collect($case['accounts'])->firstWhere('id', $originalAccount->getKey());
     $replacementCandidate = collect($case['accounts'])->firstWhere('id', $replacementAccount->getKey());
 
-    expect($originalAccount->getKey())->toBe(81)
-        ->and($replacementAccount->getKey())->toBe(82)
+    expect($originalAccount->getKey())->not->toBe($replacementAccount->getKey())
         ->and($originalAccount->name)->not->toBe($asset->asset_name)
-        ->and(collect($case['accounts'])->pluck('id')->all())->toBe([81, 82])
-        ->and($case['current_account_id'])->toBe(82)
-        ->and($case['recommended_canonical_account_id'])->toBe(81)
+        ->and(collect($case['accounts'])->pluck('id')->all())->toBe([$originalAccount->getKey(), $replacementAccount->getKey()])
+        ->and($case['current_account_id'])->toBe($replacementAccount->getKey())
+        ->and($case['recommended_canonical_account_id'])->toBe($originalAccount->getKey())
         ->and($case['repair_status'])->toBe('safe')
         ->and($originalCandidate['association_role'])->toBe('previous_orphan_account')
         ->and($originalCandidate['detection_confidence'])->toBe('high')

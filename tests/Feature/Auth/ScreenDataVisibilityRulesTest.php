@@ -317,13 +317,16 @@ test('product report rows and filter options combine product and material polici
     expect(collect($options)->pluck('id')->all())
         ->toEqualCanonicalizing([$latestProduct->doc_num, $latestRawMaterial->doc_num, $latestPackagingMaterial->doc_num]);
 
-    foreach (['admin.purchases.select2.products', 'admin.inventory.select2.opening-stock-products'] as $routeName) {
+    foreach ([
+        'admin.purchases.select2.products' => [$latestRawMaterial->doc_num, $latestPackagingMaterial->doc_num],
+        'admin.inventory.select2.opening-stock-products' => [$latestProduct->doc_num, $latestRawMaterial->doc_num, $latestPackagingMaterial->doc_num],
+    ] as $routeName => $expectedDocNums) {
         $lookupOptions = $this->getJson(route($routeName, ['per_page' => 50]))
             ->assertOk()
             ->json('results');
 
         expect(collect($lookupOptions)->pluck('id')->all())
-            ->toEqualCanonicalizing([$latestProduct->doc_num, $latestRawMaterial->doc_num, $latestPackagingMaterial->doc_num]);
+            ->toEqualCanonicalizing($expectedDocNums);
     }
 
     $this->getJson(route('admin.inventory.products.details', $olderProduct->doc_num))
@@ -418,7 +421,7 @@ test('rule management is company scoped registry driven and rejects unsafe hiera
     $target = User::factory()->create();
 
     expect(app(ScreenDataVisibilityRegistry::class)->selectorOptions())
-        ->toHaveCount(36)
+        ->toHaveCount(33)
         ->and(app(ScreenDataVisibilityRegistry::class)->isSupported('customers'))->toBeTrue()
         ->and(app(ScreenDataVisibilityRegistry::class)->isSupported('packaging_materials'))->toBeTrue()
         ->and(app(ScreenDataVisibilityRegistry::class)->isSupported('accounts'))->toBeFalse();

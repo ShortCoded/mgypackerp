@@ -357,7 +357,7 @@ test('file manager folders prevent duplicate sibling names and block non empty f
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.file-manager.folders.destroy', $folder->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('message', __('archive.folder_not_empty'));
 
     $blockedActivity = Activity::query()->where('action', 'archive.folder.delete_blocked')->firstOrFail();
@@ -1230,7 +1230,7 @@ test('bulk delete cannot delete another operating company file', function () {
         ->deleteJson(route('admin.file-manager.bulk-delete'), [
             'file_doc_nums' => [$file->doc_num],
         ])
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', __('archive.selected_files_invalid'));
 
@@ -1267,7 +1267,7 @@ test('archive file delete is blocked when file is used by product main image', f
     app(ArchiveFileUsageService::class)->replaceFileForRecord($file, $product, Product::ImageCollection, Product::MainImageRole);
 
     $this->deleteJson(route('admin.file-manager.files.destroy', $file->doc_num))
-        ->assertUnprocessable()
+        ->assertStatus(409)
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', __('archive.file_used_in', [
             'records' => __('products.singular').' / Product-01001 / Used File Product',

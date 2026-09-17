@@ -16,7 +16,8 @@ test('asset navigation exposes four real destinations and retains deployed workf
     coreFixedAssetContext();
     $menu = collect(app(MenuService::class)->getMenu($actor))->firstWhere('label', 'accounting_costing');
     $assets = collect($menu['children'])->firstWhere('label', 'fixed_assets');
-    expect(array_column($assets['children'], 'label'))->toBe(['fixed_assets_register', 'fixed_asset_movements', 'fixed_asset_depreciation', 'fixed_asset_reports']);
+    expect(array_column($assets['children'], 'label'))->toBe(['fixed_assets_register', 'fixed_asset_movements', 'fixed_asset_depreciation', 'asset_reports'])
+        ->and(array_column($assets['children'][3]['children'], 'label'))->toBe(['fixed_asset_reports']);
     expect(config('erp_ui_screens.fixed_assets.screens', []))->toBe([]);
     foreach (['asset-acquisition', 'asset-capitalization', 'asset-improvement', 'asset-custody', 'asset-history', 'asset-sale', 'depreciation-review'] as $obsolete) {
         expect(Route::has('admin.fixed-assets.'.$obsolete.'.index'))->toBeFalse();

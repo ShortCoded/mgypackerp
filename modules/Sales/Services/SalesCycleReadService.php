@@ -71,6 +71,7 @@ class SalesCycleReadService
             ->with(['lines' => fn ($query) => $query->withSum(['returnLines as returned_quantity' => fn ($returns) => $returns->whereHas('salesReturn', fn ($return) => $return->whereNotIn('status', ['draft', 'cancelled', 'rejected']))], 'quantity')])
             ->where('company_id', $companyId)->where('branch_id', $branchId)->where('posting_status', 'posted')->where('document_type', CustomerInvoice::TypeInvoice)
             ->when($filters['customer_id'] ?? null, fn ($query, $id) => $query->where('customer_id', $id))
+            ->when(array_key_exists('customer_ids', $filters) && $filters['customer_ids'] !== null, fn ($query) => $query->whereIn('customer_id', $filters['customer_ids']))
             ->when($filters['currency_id'] ?? null, fn ($query, $id) => $query->where('currency_id', $id))
             ->when($filters['invoice_id'] ?? null, fn ($query, $id) => $query->whereKey($id))
             ->when($filters['order_id'] ?? null, fn ($query, $id) => $query->where('sales_order_id', $id))

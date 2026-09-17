@@ -73,14 +73,14 @@ test('navigation search keeps moved fixed asset routes under their nested locali
         ->getJson(route('admin.navigation-search', ['q' => 'fixed assets register']))
         ->assertOk()
         ->assertJsonPath('data.results.0.route_name', 'admin.fixed-assets.assets.index')
-        ->assertJsonPath('data.results.0.parent_path', 'Accounting & Costing / Fixed Assets / Asset Data');
+        ->assertJsonPath('data.results.0.parent_path', 'Accounting & Costing / Fixed Assets');
 
     $this->withSession(['locale' => 'ar'])
         ->actingAs($user)
         ->getJson(route('admin.navigation-search', ['q' => 'دليل الأصول الثابتة']))
         ->assertOk()
         ->assertJsonPath('data.results.0.route_name', 'admin.fixed-assets.assets.index')
-        ->assertJsonPath('data.results.0.parent_path', 'الحسابات والتكاليف / الأصول الثابتة / بيانات الأصول');
+        ->assertJsonPath('data.results.0.parent_path', 'الحسابات والتكاليف / الأصول الثابتة');
 });
 
 test('empty query returns current user recent searches only', function () {

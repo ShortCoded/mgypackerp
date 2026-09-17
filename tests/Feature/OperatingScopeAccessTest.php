@@ -163,7 +163,7 @@ test('restricted operating scope ids are loaded once per dimension during a requ
         ->and($queries->filter(fn (array $query): bool => str_contains($query['query'], 'role_financial_period_access')))->toHaveCount(1);
 });
 
-test('operating context options expose only allowed companies and no branches or periods before company selection', function () {
+test('operating context options auto-select the only allowed company and expose its branches and periods', function () {
     $allowedCompany = operatingScopeAccessCompany('Allowed Modal Company');
     $blockedCompany = operatingScopeAccessCompany('Blocked Modal Company');
     operatingScopeAccessBranch($allowedCompany, 'Allowed Modal Branch One');
@@ -185,8 +185,10 @@ test('operating context options expose only allowed companies and no branches or
     expect(collect($payload['companies'])->pluck('doc_num')->all())
         ->toContain($allowedCompany->doc_num)
         ->not->toContain($blockedCompany->doc_num)
-        ->and($payload['branches'])->toBe([])
-        ->and($payload['financial_periods'])->toBe([]);
+        ->and($payload['auto_select']['company']['doc_num'])->toBe($allowedCompany->doc_num)
+        ->and(collect($payload['branches'])->pluck('company_doc_num')->unique()->values()->all())->toBe([$allowedCompany->doc_num])
+        ->and($payload['branches'])->toHaveCount(2)
+        ->and($payload['financial_periods'])->toHaveCount(2);
 });
 
 test('operating context branch and period options are limited to selected company and allowed role scope', function () {
@@ -275,6 +277,7 @@ test('saving operating context rejects unauthorized companies branches and finan
 test('roles operating scope company selector returns only assignable companies for limited admins', function () {
     $allowedCompany = operatingScopeAccessCompany('Assignable Company');
     $blockedCompany = operatingScopeAccessCompany('Unassignable Company');
+    operatingScopeAccessRole(['name' => 'admin']);
     $role = operatingScopeAccessRole([
         'branch_access_restricted' => false,
         'financial_period_access_restricted' => false,
@@ -386,6 +389,7 @@ test('role create and update reject branch and period values outside selected co
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['accessible_financial_period_doc_nums']);
 
+    operatingScopeAccessRole(['name' => 'admin']);
     $role = operatingScopeAccessRole([
         'name' => 'role-update-mismatch-target',
         'company_access_restricted' => false,

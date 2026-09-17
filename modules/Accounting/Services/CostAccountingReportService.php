@@ -13,9 +13,9 @@ final class CostAccountingReportService
     public function __construct(private readonly CostCenterRequirementPolicy $requirements) {}
 
     /** @return Collection<int, object> */
-    public function trialBalanceByCostCenter(int $companyId, int $financialPeriodId): Collection
+    public function trialBalanceByCostCenter(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
             ->groupBy(
                 'journal_entry_lines.cost_center_id', 'cost_centers.cost_center_code', 'cost_centers.name',
@@ -32,11 +32,11 @@ final class CostAccountingReportService
     }
 
     /** @return Collection<int, object> */
-    public function costCenterLedger(int $companyId, int $financialPeriodId, int $costCenterId): Collection
+    public function costCenterLedger(int $companyId, int $financialPeriodId, int $costCenterId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
         $costCenterIds = $this->descendantIds($companyId, $costCenterId);
 
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
             ->whereIn('journal_entry_lines.cost_center_id', $costCenterIds)
             ->orderBy('journal_entries.entry_date')
@@ -51,9 +51,9 @@ final class CostAccountingReportService
     }
 
     /** @return Collection<int, object> */
-    public function departmentalProfitAndLoss(int $companyId, int $financialPeriodId): Collection
+    public function departmentalProfitAndLoss(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->leftJoin('hr_departments', 'hr_departments.id', '=', 'journal_entry_lines.department_id')
             ->where('accounts.statement_type', 'income_statement')
             ->groupBy('journal_entry_lines.department_id', 'hr_departments.name', 'accounts.account_type')
@@ -66,9 +66,9 @@ final class CostAccountingReportService
     }
 
     /** @return Collection<int, object> */
-    public function payrollCostByDepartmentAndCostCenter(int $companyId, int $financialPeriodId): Collection
+    public function payrollCostByDepartmentAndCostCenter(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->leftJoin('hr_departments', 'hr_departments.id', '=', 'journal_entry_lines.department_id')
             ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
             ->where('journal_entries.source_type', 'hr_payroll_run')
@@ -87,9 +87,9 @@ final class CostAccountingReportService
     }
 
     /** @return Collection<int, object> */
-    public function manufacturingOverheadByCostCenter(int $companyId, int $financialPeriodId): Collection
+    public function manufacturingOverheadByCostCenter(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
             ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
             ->whereIn('account_classifications.code', [
@@ -108,9 +108,9 @@ final class CostAccountingReportService
     }
 
     /** @return Collection<int, object> */
-    public function unallocatedRequiredTransactions(int $companyId, int $financialPeriodId): Collection
+    public function unallocatedRequiredTransactions(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Collection
     {
-        return $this->postedLines($companyId, $financialPeriodId)
+        return $this->postedLines($companyId, $financialPeriodId, $branchId, $from, $to)
             ->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
             ->whereNull('journal_entry_lines.cost_center_id')
             ->whereIn('account_classifications.code', $this->requirements->requiredClassificationCodes())
@@ -124,7 +124,7 @@ final class CostAccountingReportService
             ]);
     }
 
-    private function postedLines(int $companyId, int $financialPeriodId): Builder
+    private function postedLines(int $companyId, int $financialPeriodId, ?int $branchId = null, ?string $from = null, ?string $to = null): Builder
     {
         return DB::table('journal_entry_lines')
             ->join('journal_entries', 'journal_entries.id', '=', 'journal_entry_lines.journal_entry_id')
@@ -132,6 +132,15 @@ final class CostAccountingReportService
             ->whereNull('journal_entries.deleted_at')
             ->where('journal_entries.company_id', $companyId)
             ->where('journal_entries.financial_period_id', $financialPeriodId)
+            ->when($branchId, fn (Builder $query) => $query->where(function (Builder $branchQuery) use ($branchId): void {
+                $branchQuery->where('journal_entry_lines.branch_id', $branchId)
+                    ->orWhere(function (Builder $entryBranch) use ($branchId): void {
+                        $entryBranch->whereNull('journal_entry_lines.branch_id')
+                            ->where('journal_entries.branch_id', $branchId);
+                    });
+            }))
+            ->when($from, fn (Builder $query) => $query->whereDate('journal_entries.entry_date', '>=', $from))
+            ->when($to, fn (Builder $query) => $query->whereDate('journal_entries.entry_date', '<=', $to))
             ->where('journal_entries.status', JournalEntry::StatusPosted)
             ->where('journal_entries.is_posted', true)
             ->where(function (Builder $query): void {

@@ -7,7 +7,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Models\Company;
-use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 
@@ -153,7 +152,8 @@ class IntegratedPlasticFactoryDemoVerifier
                 && DB::table('customer_invoices')->where('company_id', $companyId)->whereNotNull('sales_order_id')->exists()
                 && DB::table('sales_returns')->where('company_id', $companyId)->whereNotNull('credit_note_id')->exists(),
             'sales_stock_production_delivery_and_return_are_exact' => $salesLinkedCycle['order_quantity'] === 100.0
-                && $salesLinkedCycle['reserved_quantity'] === 30.0
+                && $salesLinkedCycle['reserved_quantity'] === 100.0
+                && ($salesLinkedCycle['order_quantity'] - $salesLinkedCycle['production_requested_quantity']) === 30.0
                 && $salesLinkedCycle['production_requested_quantity'] === 70.0
                 && $salesLinkedCycle['produced_quantity'] === 70.0
                 && $salesLinkedCycle['production_runs'] === [20.0, 20.0, 30.0]
@@ -383,9 +383,12 @@ class IntegratedPlasticFactoryDemoVerifier
             ->where('company_id', $companyId)
             ->whereNull('deleted_at')
             ->whereNotIn('status', ['disposed', 'sold', 'written_off'])
-            ->where(function ($query): void {
-                $query->where('status', '!=', FixedAsset::StatusDraft)
-                    ->orWhere('entry_type', FixedAsset::EntryTypeOpeningAsset);
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('fixed_asset_movements')
+                    ->whereColumn('fixed_asset_movements.fixed_asset_id', 'fixed_assets.id')
+                    ->whereIn('fixed_asset_movements.movement_type', ['opening', 'capitalization'])
+                    ->where('fixed_asset_movements.status', 'posted');
             })
             ->get();
 

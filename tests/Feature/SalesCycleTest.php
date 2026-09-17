@@ -7,7 +7,11 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
+use Modules\HR\Models\HrArea;
+use Modules\HR\Models\HrCity;
+use Modules\HR\Models\HrCountry;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrGovernorate;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
@@ -1426,6 +1430,36 @@ test('sales reports separate operational fulfillment financial aging and product
         ->assertSee('Sales by Item')
         ->assertSee('Customer / Item Sales Analysis')
         ->assertSee($fixture['finished']->name);
+});
+
+test('sales reports filter every customer based section by normalized geography', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
+    $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
+
+    $country = HrCountry::query()->create(['doc_number' => 98901, 'doc_num' => 'Country-98901', 'name' => 'Report Country']);
+    $governorate = HrGovernorate::query()->create(['doc_number' => 98901, 'doc_num' => 'Governorate-98901', 'name' => 'Report Governorate', 'country_id' => $country->id]);
+    $city = HrCity::query()->create(['doc_number' => 98901, 'doc_num' => 'City-98901', 'name' => 'Report City', 'governorate_id' => $governorate->id]);
+    $area = HrArea::query()->create(['doc_number' => 98901, 'doc_num' => 'Area-98901', 'name' => 'Report Area', 'city_id' => $city->id]);
+    $fixture['customer']->update(['country_id' => $country->id, 'governorate_id' => $governorate->id, 'city_id' => $city->id, 'area_id' => $area->id]);
+
+    $invoice = salesPostedServiceInvoice($fixture, '100', '0', '1');
+    $session = salesCycleSession($fixture);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'invoices', 'area_doc_num' => $area->doc_num]))
+        ->assertOk()
+        ->assertSee($invoice->doc_num)
+        ->assertSee('Report Area');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'invoices', 'area_doc_num' => 'Area-DOES-NOT-EXIST']))
+        ->assertOk()
+        ->assertDontSee($invoice->doc_num);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.select2.countries'))
+        ->assertOk();
 });
 
 test('sales screens and validation follow language changes while retaining document data', function (): void {

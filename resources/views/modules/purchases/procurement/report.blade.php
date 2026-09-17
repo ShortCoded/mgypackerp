@@ -69,6 +69,30 @@
                 </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-country">{{ __('fields.common.country') }}</label>
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-country" name="country_doc_num" data-url="{{ route('admin.select2.countries') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}">
+                    @if($locationFilters['country'])<option value="{{ $locationFilters['country']->doc_num }}" selected>{{ $locationFilters['country']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-governorate">{{ __('fields.common.governorate') }}</label>
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-governorate" name="governorate_doc_num" data-url="{{ route('admin.select2.governorates') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" data-depends-on="#procurement-country" data-dependent-param="country_doc_num" data-disable-when-dependency-empty="true">
+                    @if($locationFilters['governorate'])<option value="{{ $locationFilters['governorate']->doc_num }}" selected>{{ $locationFilters['governorate']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-city">{{ __('fields.common.city') }}</label>
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-city" name="city_doc_num" data-url="{{ route('admin.select2.cities') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" data-depends-on="#procurement-governorate" data-dependent-param="governorate_doc_num" data-disable-when-dependency-empty="true">
+                    @if($locationFilters['city'])<option value="{{ $locationFilters['city']->doc_num }}" selected>{{ $locationFilters['city']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-area">{{ __('fields.common.area') }}</label>
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-area" name="area_doc_num" data-url="{{ route('admin.select2.areas') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" data-depends-on="#procurement-city" data-dependent-param="city_doc_num" data-disable-when-dependency-empty="true">
+                    @if($locationFilters['area'])<option value="{{ $locationFilters['area']->doc_num }}" selected>{{ $locationFilters['area']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-product">{{ __('Item') }}</label>
                 <x-forms.select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.products') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-product" name="product_doc_num">
                     <option value="">{{ __('All') }}</option>

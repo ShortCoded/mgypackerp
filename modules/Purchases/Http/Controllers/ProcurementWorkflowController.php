@@ -28,7 +28,11 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
+use Modules\HR\Models\HrArea;
+use Modules\HR\Models\HrCity;
+use Modules\HR\Models\HrCountry;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrGovernorate;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -1060,6 +1064,12 @@ class ProcurementWorkflowController extends Controller
             'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->latest('id')->limit(200)->get(),
             'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id']))->orderBy('name')->get(),
             'warehouses' => BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))->whereNull('deleted_at')->orderBy('name')->get(),
+            'locationFilters' => [
+                'country' => HrCountry::query()->where('doc_num', $filters['country_doc_num'] ?? '')->first(),
+                'governorate' => HrGovernorate::query()->where('doc_num', $filters['governorate_doc_num'] ?? '')->first(),
+                'city' => HrCity::query()->where('doc_num', $filters['city_doc_num'] ?? '')->first(),
+                'area' => HrArea::query()->where('doc_num', $filters['area_doc_num'] ?? '')->first(),
+            ],
         ]);
     }
 
@@ -1501,6 +1511,10 @@ class ProcurementWorkflowController extends Controller
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
             'supplier_doc_num' => ['nullable', 'string', 'max:100'],
+            'country_doc_num' => ['nullable', 'string', 'max:100'],
+            'governorate_doc_num' => ['nullable', 'string', 'max:100'],
+            'city_doc_num' => ['nullable', 'string', 'max:100'],
+            'area_doc_num' => ['nullable', 'string', 'max:100'],
             'product_doc_num' => ['nullable', 'string', 'max:100'],
             'purchase_requisition_doc_num' => ['nullable', 'string', 'max:100'],
             'purchase_order_doc_num' => ['nullable', 'string', 'max:100'],

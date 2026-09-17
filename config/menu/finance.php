@@ -2,9 +2,9 @@
 
 return [
     [
-        'label' => 'accounting_costing',
-        'title' => 'Accounting & Costing',
-        'icon' => 'calculator',
+        'label' => 'finance',
+        'title' => 'Finance',
+        'icon' => 'money-check-alt',
         'route' => null,
         'permission' => null,
         'keywords' => ['finance', 'currencies', 'bank accounts', 'cashboxes', 'opening balances', 'المالية', 'العملات', 'البنوك', 'الخزائن'],

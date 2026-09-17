@@ -46,6 +46,8 @@ class MenuService
     private function nestNavigationItems(array $items): array
     {
         $configuredChildren = config('menu_sections.navigation_children', []);
+        $configuredContentGroups = config('menu_sections.navigation_content_groups', []);
+        $configuredChildOrder = config('menu_sections.navigation_child_order', []);
 
         if (! is_array($configuredChildren) || $configuredChildren === []) {
             return $items;
@@ -91,15 +93,54 @@ class MenuService
             }
         }
 
-        $buildItem = function (string $label, array $ancestors = []) use (&$buildItem, $childrenByParent, $itemsByLabel): array {
+        $buildItem = function (string $label, array $ancestors = []) use (&$buildItem, $childrenByParent, $configuredChildOrder, $configuredContentGroups, $itemsByLabel): array {
             if (in_array($label, $ancestors, true)) {
                 throw new LogicException("Circular navigation hierarchy detected at [{$label}].");
             }
 
             $item = $itemsByLabel[$label];
 
+            $contentGroup = is_array($configuredContentGroups[$label] ?? null)
+                ? $configuredContentGroups[$label]
+                : null;
+
+            if ($contentGroup !== null && $item['children'] !== []) {
+                $contentGroupLabel = is_string($contentGroup['label'] ?? null)
+                    ? $contentGroup['label']
+                    : '';
+
+                if ($contentGroupLabel !== '') {
+                    $item['children'] = [$this->normalizeItem([
+                        'label' => $contentGroupLabel,
+                        'icon' => (string) ($contentGroup['icon'] ?? 'folder-open'),
+                        'route' => null,
+                        'permission' => null,
+                        'children' => $item['children'],
+                    ], includeActions: false)];
+                }
+            }
+
             foreach ($childrenByParent[$label] ?? [] as $childLabel) {
                 $item['children'][] = $buildItem($childLabel, [...$ancestors, $label]);
+            }
+
+            $childOrder = is_array($configuredChildOrder[$label] ?? null)
+                ? array_flip($configuredChildOrder[$label])
+                : [];
+
+            if ($childOrder !== []) {
+                $originalOrder = collect($item['children'])
+                    ->pluck('label')
+                    ->flip()
+                    ->all();
+
+                usort($item['children'], fn (array $first, array $second): int => [
+                    $childOrder[$first['label'] ?? ''] ?? 999,
+                    $originalOrder[$first['label'] ?? ''] ?? 999,
+                ] <=> [
+                    $childOrder[$second['label'] ?? ''] ?? 999,
+                    $originalOrder[$second['label'] ?? ''] ?? 999,
+                ]);
             }
 
             return $item;
@@ -127,6 +168,17 @@ class MenuService
     }
 
     /**
+     * Canonical hierarchy shared by navigation, breadcrumbs, and search before
+     * user-specific permission filtering.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function navigationStructure(): array
+    {
+        return $this->nestNavigationItems($this->loadMenu());
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function permissionStructure(): array
@@ -135,9 +187,11 @@ class MenuService
 
         return $this->memo->remember(
             "menu.permissions.structure.{$locale}",
-            fn (): array => array_map(
-                fn (array $item): array => $this->normalizeItem($item, includeActions: true),
-                $this->domainMenuItems(includeExpanded: true),
+            fn (): array => $this->nestNavigationItems(
+                array_map(
+                    fn (array $item): array => $this->normalizeItem($item, includeActions: true),
+                    $this->domainMenuItems(includeExpanded: true),
+                ),
             ),
         );
     }
@@ -230,10 +284,21 @@ class MenuService
             return true;
         }
 
-        $actual = request()->route()?->parameters() ?? [];
+        $actual = [];
+        $route = request()->route();
+
+        if (is_object($route) && method_exists($route, 'parameters')) {
+            try {
+                $actual = $route->parameters();
+            } catch (LogicException) {
+                $actual = [];
+            }
+        }
 
         foreach ($expected as $key => $value) {
-            $actualValue = $actual[$key] ?? null;
+            $actualValue = array_key_exists($key, $actual)
+                ? $actual[$key]
+                : request()->query($key);
 
             if (is_object($actualValue) && method_exists($actualValue, 'getRouteKey')) {
                 $actualValue = $actualValue->getRouteKey();
@@ -589,6 +654,19 @@ class MenuService
      */
     private function finalizeSection(array $section): array
     {
+        $subgroupLeafOrders = config('menu_sections.subgroup_leaf_order', []);
+
+        foreach ($section['subgroups'] as $subgroupLabel => &$subgroup) {
+            $leafOrder = is_array($subgroupLeafOrders[$subgroupLabel] ?? null)
+                ? array_flip($subgroupLeafOrders[$subgroupLabel])
+                : [];
+
+            if ($leafOrder !== []) {
+                usort($subgroup['children'], fn (array $first, array $second): int => ($leafOrder[$first['label'] ?? ''] ?? 999) <=> ($leafOrder[$second['label'] ?? ''] ?? 999));
+            }
+        }
+        unset($subgroup);
+
         $subgroups = array_values($section['subgroups']);
 
         usort($subgroups, fn (array $first, array $second): int => [

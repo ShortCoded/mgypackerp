@@ -165,7 +165,7 @@ test('ajax protected requests still return json unauthenticated responses', func
         ])
         ->get('/dashboard')
         ->assertUnauthorized()
-        ->assertJsonPath('message', 'Unauthenticated.');
+        ->assertJsonPath('message', __('erp_errors.authentication_required'));
 });
 
 test('manual lock screen blocks protected pages until password unlock', function () {

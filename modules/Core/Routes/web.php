@@ -1035,6 +1035,9 @@ Route::middleware('auth')
         Route::get('/financial-periods/data', [FinancialPeriodController::class, 'data'])
             ->middleware('can:financial_periods.view')
             ->name('financial-periods.data');
+        Route::get('/financial-periods/closing', [FinancialPeriodController::class, 'closing'])
+            ->middleware('can:financial_periods.view')
+            ->name('financial-periods.closing');
         Route::get('/financial-periods/create', [FinancialPeriodController::class, 'create'])
             ->middleware('can:financial_periods.create')
             ->name('financial-periods.create');

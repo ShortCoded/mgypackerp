@@ -125,6 +125,7 @@ test('login is rejected when active online distinct users count equals max onlin
 
     $loginUser = User::factory()->create();
     $message = Lang::get('auth.messages.seat_limit_reached', [], 'en');
+    $validationMessage = Lang::get('erp_errors.validation_failed', [], 'en');
 
     $this
         ->withSession(['locale' => 'en'])
@@ -133,7 +134,7 @@ test('login is rejected when active online distinct users count equals max onlin
             'password' => 'password',
         ])->assertUnprocessable()
         ->assertJson([
-            'message' => $message,
+            'message' => $validationMessage,
             'errors' => [
                 'login' => [$message],
             ],
@@ -158,6 +159,7 @@ test('login is rejected when active online distinct users count is above max onl
 
     $loginUser = User::factory()->create();
     $message = Lang::get('auth.messages.seat_limit_reached', [], 'en');
+    $validationMessage = Lang::get('erp_errors.validation_failed', [], 'en');
 
     $this
         ->withSession(['locale' => 'en'])
@@ -165,7 +167,7 @@ test('login is rejected when active online distinct users count is above max onl
             'login' => $loginUser->email,
             'password' => 'password',
         ])->assertUnprocessable()
-        ->assertJsonPath('message', $message)
+        ->assertJsonPath('message', $validationMessage)
         ->assertJsonPath('errors.login.0', $message);
 
     $this->assertGuest();
@@ -355,6 +357,7 @@ test('login is blocked when same user has an active presence session', function 
     ]);
 
     $message = Lang::get('auth.messages.already_logged_in', [], 'en');
+    $validationMessage = Lang::get('erp_errors.validation_failed', [], 'en');
 
     $response = $this
         ->withSession(['locale' => 'en'])
@@ -367,7 +370,7 @@ test('login is blocked when same user has an active presence session', function 
     $response
         ->assertUnprocessable()
         ->assertJson([
-            'message' => $message,
+            'message' => $validationMessage,
             'errors' => [
                 'login' => [$message],
             ],
@@ -415,6 +418,7 @@ test('duplicate login message is translated to arabic', function () {
     ]);
 
     $message = Lang::get('auth.messages.already_logged_in', [], 'ar');
+    $validationMessage = Lang::get('erp_errors.validation_failed', [], 'ar');
 
     $this
         ->withSession(['locale' => 'ar'])
@@ -422,7 +426,7 @@ test('duplicate login message is translated to arabic', function () {
             'login' => $user->email,
             'password' => 'password',
         ])->assertUnprocessable()
-        ->assertJsonPath('message', $message)
+        ->assertJsonPath('message', $validationMessage)
         ->assertJsonPath('errors.login.0', $message);
 
     $this->assertGuest();
@@ -547,6 +551,7 @@ test('stale or offline locked unlock is blocked when seats are full', function (
     $user = User::factory()->create();
     $fillerUser = User::factory()->create();
     $message = Lang::get('auth.messages.seat_limit_reached_on_unlock', [], 'en');
+    $validationMessage = Lang::get('erp_errors.validation_failed', [], 'en');
 
     $this->actingAs($user)
         ->withSession(['locale' => 'en'])
@@ -570,7 +575,7 @@ test('stale or offline locked unlock is blocked when seats are full', function (
         'password' => 'password',
     ])->assertUnprocessable()
         ->assertJson([
-            'message' => $message,
+            'message' => $validationMessage,
             'errors' => [
                 'password' => [$message],
             ],

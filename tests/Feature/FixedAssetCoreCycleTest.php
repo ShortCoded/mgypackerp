@@ -562,7 +562,7 @@ test('release depreciation preview preserves localized posting dates across repe
     $display = app(DateFormatService::class)->formatDate($date);
     foreach ([$display, $date->toDateString()] as $input) {
         $this->post(route('admin.fixed-assets.depreciation.preview'), ['financial_period_doc_num' => $context['period']->doc_num, 'posting_date' => $input])->assertOk()
-            ->assertSee('name="posting_date" value="'.$display.'"', false)
+            ->assertSee('data-date-format="d/m/Y"', false)
             ->assertSee('name="posting_date" value="'.$date->toDateString().'"', false);
     }
 });

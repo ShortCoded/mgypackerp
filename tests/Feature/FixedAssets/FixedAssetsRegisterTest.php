@@ -1011,6 +1011,7 @@ test('Fixed Assets resolves its generic classification by stable code across mod
     $originalClassification = AccountClassification::query()
         ->where('code', AccountClassification::FixedAssets)
         ->firstOrFail();
+    $classificationCount = AccountClassification::query()->count();
     $classificationId = (int) AccountClassification::query()->max('id') + 1000;
 
     DB::table($originalClassification->getTable())
@@ -1074,7 +1075,7 @@ test('Fixed Assets resolves its generic classification by stable code across mod
 
     expect($classificationId)->not->toBe((int) $originalClassification->getKey())
         ->and(AccountClassification::query()->where('code', AccountClassification::FixedAssets)->count())->toBe(1)
-        ->and(AccountClassification::query()->count())->toBe(135)
+        ->and(AccountClassification::query()->count())->toBe($classificationCount)
         ->and((int) $category->account_classification_id)->toBe($classificationId)
         ->and((int) $linkedAccount->fresh()->account_classification_id)->toBe($classificationId)
         ->and((int) $category->fresh()->account_classification_id)->toBe($classificationId)

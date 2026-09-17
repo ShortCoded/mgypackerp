@@ -27,6 +27,10 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
+use Modules\HR\Models\HrArea;
+use Modules\HR\Models\HrCity;
+use Modules\HR\Models\HrCountry;
+use Modules\HR\Models\HrGovernorate;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
@@ -1597,6 +1601,11 @@ test('procurement reports filter, print, and export without leaking confidential
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo('reports.purchases.view');
+    $country = HrCountry::query()->create(['doc_number' => 98911, 'doc_num' => 'Country-98911', 'name' => 'Supplier Report Country']);
+    $governorate = HrGovernorate::query()->create(['doc_number' => 98911, 'doc_num' => 'Governorate-98911', 'name' => 'Supplier Report Governorate', 'country_id' => $country->id]);
+    $city = HrCity::query()->create(['doc_number' => 98911, 'doc_num' => 'City-98911', 'name' => 'Supplier Report City', 'governorate_id' => $governorate->id]);
+    $area = HrArea::query()->create(['doc_number' => 98911, 'doc_num' => 'Area-98911', 'name' => 'Supplier Report Area', 'city_id' => $city->id]);
+    $fixture['firstSupplier']->update(['country_id' => $country->id, 'governorate_id' => $governorate->id, 'city_id' => $city->id, 'area_id' => $area->id]);
     $invoice = PurchaseInvoice::query()->create([
         'doc_number' => 9601,
         'doc_num' => 'PINV-REPORT-PROC',
@@ -1655,6 +1664,19 @@ test('procurement reports filter, print, and export without leaking confidential
         ->and($confidentialExport->headings())->not->toContain('Amount')
         ->and($confidentialExport->map($rows->first()))->not->toContain(125);
 
+    expect($report->rows(
+        ProcurementCycleReport::SupplierPayables,
+        ['area_doc_num' => $area->doc_num],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    ))->toHaveCount(1)
+        ->and($report->rows(
+            ProcurementCycleReport::SupplierPayables,
+            ['area_doc_num' => 'Area-DOES-NOT-EXIST'],
+            $fixture['company']->getKey(),
+            $fixture['period']->getKey(),
+        ))->toBeEmpty();
+
     $query = ['report_type' => ProcurementCycleReport::SupplierPayables];
     $this->get(route('admin.purchases.procurement-cycle-report.index', $query))->assertForbidden();
     $fixture['user']->givePermissionTo('purchases.prices.view');
@@ -1662,6 +1684,8 @@ test('procurement reports filter, print, and export without leaking confidential
         ->get(route('admin.purchases.procurement-cycle-report.index', $query))
         ->assertOk()
         ->assertSee($invoice->doc_num)
+        ->assertSee('name="country_doc_num"', false)
+        ->assertSee('name="area_doc_num"', false)
         ->assertSee('name="production_order_doc_num"', false)
         ->assertSee('name="work_order_reference"', false)
         ->assertDontSee(route('admin.purchases.procurement-cycle-report.export.excel', $query), false);

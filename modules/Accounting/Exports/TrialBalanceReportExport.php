@@ -16,18 +16,14 @@ class TrialBalanceReportExport implements FromArray, ShouldAutoSize, WithHeading
     public function array(): array
     {
         $rows = [];
+        $columns = $this->result['presentation']['columns'];
 
         foreach ($this->result['rows'] as $row) {
             $rows[] = [
                 $row['account_code'],
                 str_repeat('    ', max(0, $row['level'] - 1)).$row['name'],
                 $row['is_inactive'] ? __('trial_balance.status.inactive') : __('trial_balance.status.active'),
-                $row['opening_debit'],
-                $row['opening_credit'],
-                $row['period_debit'],
-                $row['period_credit'],
-                $row['ending_debit'],
-                $row['ending_credit'],
+                ...array_map(fn (string $column): string => $row[$column], $columns),
             ];
         }
 
@@ -35,12 +31,7 @@ class TrialBalanceReportExport implements FromArray, ShouldAutoSize, WithHeading
             '',
             __('trial_balance.total'),
             '',
-            $this->result['totals']['opening_debit'],
-            $this->result['totals']['opening_credit'],
-            $this->result['totals']['period_debit'],
-            $this->result['totals']['period_credit'],
-            $this->result['totals']['ending_debit'],
-            $this->result['totals']['ending_credit'],
+            ...array_map(fn (string $column): string => $this->result['totals'][$column], $columns),
         ];
 
         return $rows;
@@ -53,12 +44,10 @@ class TrialBalanceReportExport implements FromArray, ShouldAutoSize, WithHeading
             __('trial_balance.columns.account_code'),
             __('trial_balance.columns.account_name'),
             __('trial_balance.columns.status'),
-            __('trial_balance.columns.opening_debit'),
-            __('trial_balance.columns.opening_credit'),
-            __('trial_balance.columns.period_debit'),
-            __('trial_balance.columns.period_credit'),
-            __('trial_balance.columns.ending_debit'),
-            __('trial_balance.columns.ending_credit'),
+            ...array_map(
+                fn (string $column): string => __('trial_balance.headings.'.$column),
+                $this->result['presentation']['columns'],
+            ),
         ];
     }
 }

@@ -258,15 +258,17 @@
       reindex(schedules, 'payment_schedules');
       initializeWidgets(schedules.lastElementChild);
     });
-    $(document).off('select2:select.salesProduct', '.js-sales-product').on('select2:select.salesProduct', '.js-sales-product', function (event) {
-      const row = this.closest('tr'); const data = event.params.data;
-      window.salesProductUnits ||= {}; window.salesProductUnits[this.value] = data.units || [];
-      populateUnits(row);
-      let details = row.querySelector('[data-sales-product-details]');
-      if (!details) {details = document.createElement('small'); details.dataset.salesProductDetails = ''; details.className = 'text-600'; this.parentElement.append(details);}
-      details.textContent = [data.productData?.color, data.productData?.model, data.productData?.size].filter(Boolean).join(' · ');
-      suggestPrice(row); calculateLineTotal(row);
-    });
+    if (typeof $ === 'function') {
+      $(document).off('select2:select.salesProduct', '.js-sales-product').on('select2:select.salesProduct', '.js-sales-product', function (event) {
+        const row = this.closest('tr'); const data = event.params.data;
+        window.salesProductUnits ||= {}; window.salesProductUnits[this.value] = data.units || [];
+        populateUnits(row);
+        let details = row.querySelector('[data-sales-product-details]');
+        if (!details) {details = document.createElement('small'); details.dataset.salesProductDetails = ''; details.className = 'text-600'; this.parentElement.append(details);}
+        details.textContent = [data.productData?.color, data.productData?.model, data.productData?.size].filter(Boolean).join(' · ');
+        suggestPrice(row); calculateLineTotal(row);
+      });
+    }
     document.addEventListener('change', (event) => {
       if (event.target.matches('.js-sales-product') && !event.target.matches('.js-select2-ajax')) populateUnits(event.target.closest('tr'));
       if (event.target.matches('.js-sales-unit, .js-sales-product:not(.js-select2-ajax)')) suggestPrice(event.target.closest('tr'));
@@ -282,8 +284,12 @@
       if (source.value) url.searchParams.set('source_request_doc_num', source.value);
       window.location.assign(url.toString());
     };
-    $(source).off('.salesOrderSource')
-      .on('select2:select.salesOrderSource select2:clear.salesOrderSource', openSource);
+    if (typeof $ === 'function') {
+      $(source).off('.salesOrderSource')
+        .on('select2:select.salesOrderSource select2:clear.salesOrderSource', openSource);
+    } else {
+      source?.addEventListener('change', openSource);
+    }
     document.addEventListener('input', (event) => {
       if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-tax')) {
         calculateLineTotal(event.target.closest('tr'));

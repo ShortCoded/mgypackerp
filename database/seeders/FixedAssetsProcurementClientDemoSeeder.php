@@ -12,7 +12,6 @@ use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
-use Modules\Accounting\Services\JournalEntryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
@@ -29,8 +28,11 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
 use Modules\Finance\Services\ChequeService;
+use Modules\Finance\Services\OpeningBalanceApprovalService;
+use Modules\Finance\Services\OpeningBalanceService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
+use Modules\FixedAssets\Services\FixedAssetCostMovementService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetService;
@@ -396,21 +398,37 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
             'previous_depreciation_until_date' => ($year - 1).'-12-31', 'useful_life' => '10', 'status' => FixedAsset::StatusActive,
             'notes' => $this->note('Opening asset: historical cost 100,000 and accumulated depreciation 40,000.'),
         ]);
-        app(JournalEntryService::class)->createPostedFromSource([
-            'entry_date' => "{$year}-01-01", 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(),
-            'branch_id' => $branch->getKey(), 'currency_id' => $currency->getKey(), 'exchange_rate' => '1.000000',
-            'description' => 'Client demo opening fixed asset reconciliation', 'notes' => $this->note('Opening fixed asset GL bridge.'),
-            'source_type' => 'client_demo_opening_fixed_asset', 'source_id' => $opening->getKey(), 'source_doc_num' => $opening->doc_num,
-        ], [
-            ['account_id' => $opening->account_id, 'debit_amount' => '100000', 'credit_amount' => 0, 'description' => 'Historical asset cost', 'branch_id' => $branch->getKey(), 'cost_center_id' => $resources['injection']->getKey()],
-            ['account_id' => $accumulatedDepreciation->getKey(), 'debit_amount' => 0, 'credit_amount' => '40000', 'description' => 'Historical accumulated depreciation', 'branch_id' => $branch->getKey(), 'cost_center_id' => $resources['injection']->getKey()],
-            ['account_id' => $this->postingAccount($company, '31')->getKey(), 'debit_amount' => 0, 'credit_amount' => '60000', 'description' => 'Opening equity', 'branch_id' => $branch->getKey()],
-        ]);
+        $openingBalance = app(OpeningBalanceService::class)->create([
+            'currency_doc_num' => $currency->doc_num,
+            'document_date' => "{$year}-01-01",
+            'exchange_rate' => 1,
+            'description' => 'Client demo opening fixed asset reconciliation',
+            'notes' => $this->note('Opening fixed asset GL bridge.'),
+            'lines' => [
+                ['account_doc_num' => $opening->account->doc_num, 'transaction_type' => 'debit', 'amount' => '100000', 'description' => 'Historical asset cost', 'branch_id' => $opening->branch_id, 'cost_center_id' => $opening->cost_center_id],
+                ['account_doc_num' => $accumulatedDepreciation->doc_num, 'transaction_type' => 'credit', 'amount' => '40000', 'description' => 'Historical accumulated depreciation', 'branch_id' => $opening->branch_id, 'cost_center_id' => $opening->cost_center_id],
+                ['account_doc_num' => $this->postingAccount($company, '31')->doc_num, 'transaction_type' => 'credit', 'amount' => '60000', 'description' => 'Opening equity', 'branch_id' => $branch->getKey()],
+            ],
+        ])['record'];
+        $openingBalance = app(OpeningBalanceApprovalService::class)->approve($openingBalance);
+        app(FixedAssetCostMovementService::class)->recognize(
+            $opening,
+            "{$year}-01-01",
+            $openingBalance->journalEntry->doc_num,
+        );
 
         $reversed = $this->asset($service, $groups['vehicles'], $clearing, $currency, $resources, [
             'asset_date' => "{$year}-01-05", 'asset_name' => 'Forklift Write-off Reversal — Client Demo', 'serial_number' => 'CD-ASSET-WO-REV',
-            'purchase_value' => '45000', 'salvage_value' => '5000', 'status' => FixedAsset::StatusActive,
+            'purchase_value' => '45000', 'salvage_value' => '5000', 'status' => FixedAsset::StatusDraft,
         ]);
+        $reversed = $lifecycle->activate($reversed, "{$year}-01-05");
+        foreach (["{$year}-01-31", "{$year}-02-28", "{$year}-03-31"] as $postingDate) {
+            app(FixedAssetDepreciationService::class)->post([
+                'financial_period_doc_num' => $period->doc_num,
+                'posting_date' => $postingDate,
+                'asset_doc_nums' => [$reversed->doc_num],
+            ]);
+        }
         $reversedDisposal = $lifecycle->dispose($reversed, [
             'disposal_date' => "{$year}-04-01", 'disposition_type' => FixedAssetDisposal::TypeWriteOff,
             'settlement_path' => FixedAssetDisposal::SettlementDirect, 'proceeds' => 0,
@@ -420,8 +438,16 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
 
         $writtenOff = $this->asset($service, $groups['it'], $clearing, $currency, $resources, [
             'asset_date' => "{$year}-01-10", 'asset_name' => 'Obsolete Server — Client Demo', 'serial_number' => 'CD-ASSET-WRITTEN-OFF',
-            'purchase_value' => '30000', 'salvage_value' => '0', 'status' => FixedAsset::StatusActive,
+            'purchase_value' => '30000', 'salvage_value' => '0', 'status' => FixedAsset::StatusDraft,
         ]);
+        $writtenOff = $lifecycle->activate($writtenOff, "{$year}-01-10");
+        foreach (["{$year}-01-31", "{$year}-02-28", "{$year}-03-31"] as $postingDate) {
+            app(FixedAssetDepreciationService::class)->post([
+                'financial_period_doc_num' => $period->doc_num,
+                'posting_date' => $postingDate,
+                'asset_doc_nums' => [$writtenOff->doc_num],
+            ]);
+        }
         $lifecycle->dispose($writtenOff, [
             'disposal_date' => "{$year}-04-02", 'disposition_type' => FixedAssetDisposal::TypeWriteOff,
             'settlement_path' => FixedAssetDisposal::SettlementDirect, 'proceeds' => 0,
@@ -439,12 +465,17 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
             [$groups['machinery'], 'Suspended Granulator — Client Demo', 'CD-ASSET-SUSPENDED', '80000', '8000', FixedAsset::StatusSuspended, true],
             [$groups['furniture'], 'Warehouse Racking — Client Demo', 'CD-ASSET-RACKING', '140000', '14000', FixedAsset::StatusActive, true],
         ] as $definition) {
-            $this->asset($service, $definition[0], $clearing, $currency, $resources, [
+            $asset = $this->asset($service, $definition[0], $clearing, $currency, $resources, [
                 'asset_date' => "{$year}-01-01", 'asset_name' => $definition[1], 'serial_number' => $definition[2],
                 'purchase_value' => $definition[3], 'salvage_value' => $definition[4], 'status' => $definition[5],
                 'is_depreciable' => $definition[6], 'previous_depreciation' => $definition[7] ?? 0,
                 'previous_depreciation_until_date' => isset($definition[7]) ? ($year - 1).'-12-31' : null,
+                'entry_type' => isset($definition[7]) ? FixedAsset::EntryTypeOpeningAsset : FixedAsset::EntryTypeNewAsset,
             ]);
+
+            if ($definition[5] !== FixedAsset::StatusDraft) {
+                $lifecycle->activate($asset, "{$year}-01-01");
+            }
         }
     }
 
@@ -641,6 +672,9 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
                 'measurements' => ['mfi' => '12.0 g/10min', 'visual_contamination' => 'passed'],
             ]],
         ]);
+
+        $receipt = $receiving->postReceipt($receipt->refresh());
+        $receiptLine = $receipt->lines->firstOrFail();
 
         return [$receipt, $receiptLine];
     }
@@ -850,6 +884,12 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
                     'quantity' => '1',
                     'unit_price' => '7500',
                     'tax_rate' => '14',
+                ]],
+                'payment_schedules' => [[
+                    'due_date' => "{$year}-06-30",
+                    'amount' => '8550',
+                    'payment_source_type' => PurchaseInvoice::SourceScheduled,
+                    'notes' => $this->note('Overdue unpaid service installment for AP aging.'),
                 ]],
             ])['record'];
         }

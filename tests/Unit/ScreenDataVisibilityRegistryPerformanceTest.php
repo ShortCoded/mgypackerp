@@ -21,8 +21,8 @@ test('visibility registry reuses immutable definitions and a model-specific rout
     $routeIndexProperty = new ReflectionProperty($registry, 'routePatternsByModel');
     $routeIndex = $routeIndexProperty->getValue($registry);
 
-    expect($definitionsProperty->getValue($registry))->toHaveCount(30)
-        ->and($unsupportedProperty->getValue($registry))->toHaveCount(6)
+    expect($definitionsProperty->getValue($registry))->toHaveCount(29)
+        ->and($unsupportedProperty->getValue($registry))->toHaveCount(4)
         ->and(array_keys($routeIndex[Product::class]))->toBe([
             'products',
             'raw_materials',

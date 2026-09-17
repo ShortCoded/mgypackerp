@@ -80,7 +80,9 @@ test('depreciation screen defaults to the current month end inside the selected 
     try {
         $this->get(route('admin.fixed-assets.depreciation.index'))
             ->assertOk()
-            ->assertSee('name="posting_date" value="'.$today->copy()->endOfMonth()->min($context['period']->to_date)->format('d/m/Y').'"', false)
+            ->assertSee('name="posting_date"', false)
+            ->assertSee('value="'.$today->copy()->endOfMonth()->min($context['period']->to_date)->toDateString().'"', false)
+            ->assertSee('data-date-format="d/m/Y"', false)
             ->assertSee(__('fixed_assets.usability.depreciation_month_end'));
     } finally {
         Carbon::setTestNow();

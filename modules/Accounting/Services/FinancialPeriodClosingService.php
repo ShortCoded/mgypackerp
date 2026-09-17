@@ -22,7 +22,95 @@ class FinancialPeriodClosingService
         private readonly PostingAccountResolver $accounts,
         private readonly NumericFormatService $numbers,
         private readonly OperatingCompanyContextService $companyContext,
+        private readonly PeriodClosePreflightService $preflight,
     ) {}
+
+    /**
+     * @return array{
+     *     period: FinancialPeriod,
+     *     checks: list<array{key: string, status: 'pass'|'warning'|'blocker', message: string, count?: int}>,
+     *     has_blockers: bool,
+     *     trial_balance: array{debit: string, credit: string, difference: string},
+     *     closing_plan: array{lines: list<array<string, mixed>>, period_result: string, total_debit: string, total_credit: string}|null,
+     *     closing_plan_error: string|null,
+     *     existing_closing_entry: JournalEntry|null,
+     *     next_period: FinancialPeriod|null
+     * }
+     */
+    public function preview(FinancialPeriod $period): array
+    {
+        $this->assertCurrentCompany($period);
+
+        $draftCount = $this->draftJournalCount($period);
+        $trialBalance = $this->trialBalance($period);
+        $closingPlan = null;
+        $closingPlanError = null;
+
+        try {
+            $closingPlan = $this->closingPlan($period);
+        } catch (DomainException $exception) {
+            $closingPlanError = $exception->getMessage();
+        }
+
+        $checks = [
+            [
+                'key' => 'period_type_policy',
+                'status' => 'warning',
+                'message' => __('financial_periods.closing.checks.period_type_policy'),
+            ],
+            [
+                'key' => 'draft_journals',
+                'status' => $draftCount > 0 ? 'blocker' : 'pass',
+                'message' => $draftCount > 0
+                    ? trans_choice('financial_periods.messages.draft_journals_block_close', $draftCount, ['count' => $draftCount])
+                    : __('financial_periods.closing.checks.no_draft_journals'),
+                'count' => $draftCount,
+            ],
+            [
+                'key' => 'trial_balance',
+                'status' => bccomp($trialBalance['difference'], '0', 4) === 0 ? 'pass' : 'blocker',
+                'message' => bccomp($trialBalance['difference'], '0', 4) === 0
+                    ? __('financial_periods.closing.checks.trial_balance_balanced')
+                    : __('financial_periods.messages.unbalanced_trial_balance', [
+                        'debit' => $trialBalance['debit'],
+                        'credit' => $trialBalance['credit'],
+                    ]),
+            ],
+        ];
+
+        if ($closingPlanError !== null) {
+            $checks[] = [
+                'key' => 'retained_earnings',
+                'status' => 'blocker',
+                'message' => $closingPlanError,
+            ];
+        } else {
+            $checks[] = [
+                'key' => 'retained_earnings',
+                'status' => 'pass',
+                'message' => __('financial_periods.closing.checks.closing_mapping_ready'),
+            ];
+        }
+
+        array_push($checks, ...$this->preflight->checks($period));
+
+        return [
+            'period' => $period,
+            'checks' => $checks,
+            'has_blockers' => collect($checks)->contains(
+                fn (array $check): bool => $check['status'] === 'blocker',
+            ),
+            'trial_balance' => $trialBalance,
+            'closing_plan' => $closingPlan,
+            'closing_plan_error' => $closingPlanError,
+            'existing_closing_entry' => $this->latestClosingEntry($period),
+            'next_period' => FinancialPeriod::query()
+                ->forCompany((int) $period->company_id)
+                ->whereDate('from_date', '>', $period->to_date?->toDateString())
+                ->orderBy('from_date')
+                ->first(),
+        ];
+    }
 
     /**
      * @return array{period: FinancialPeriod, journal_entry: JournalEntry|null, already_closed: bool}
@@ -43,8 +131,9 @@ class FinancialPeriodClosingService
 
             $this->assertNoDraftJournals($period);
             $this->assertTrialBalanceIsBalanced($period);
-            $balances = $this->incomeAccountBalances($period);
-            $entry = $balances === [] ? null : $this->createClosingEntry($period, $balances);
+            $this->preflight->assertReady($period);
+            $closingPlan = $this->closingPlan($period);
+            $entry = $closingPlan['lines'] === [] ? null : $this->createClosingEntry($period, $closingPlan['lines']);
 
             $period->forceFill([
                 'is_closed' => true,
@@ -146,6 +235,31 @@ class FinancialPeriodClosingService
 
     private function assertTrialBalanceIsBalanced(FinancialPeriod $period): void
     {
+        $trialBalance = $this->trialBalance($period);
+
+        if (bccomp($trialBalance['difference'], '0', 4) !== 0) {
+            throw new DomainException(__('financial_periods.messages.unbalanced_trial_balance', [
+                'debit' => $trialBalance['debit'],
+                'credit' => $trialBalance['credit'],
+            ]));
+        }
+    }
+
+    private function draftJournalCount(FinancialPeriod $period): int
+    {
+        return JournalEntry::query()
+            ->where('company_id', $period->company_id)
+            ->where('financial_period_id', $period->getKey())
+            ->where('status', JournalEntry::StatusDraft)
+            ->whereNull('deleted_at')
+            ->count();
+    }
+
+    /**
+     * @return array{debit: string, credit: string, difference: string}
+     */
+    private function trialBalance(FinancialPeriod $period): array
+    {
         $debit = '0.0000';
         $credit = '0.0000';
 
@@ -155,12 +269,11 @@ class FinancialPeriodClosingService
             $credit = bcadd($credit, bcmul((string) $line->credit_amount, $rate, 4), 4);
         }
 
-        if (bccomp($debit, $credit, 4) !== 0) {
-            throw new DomainException(__('financial_periods.messages.unbalanced_trial_balance', [
-                'debit' => $debit,
-                'credit' => $credit,
-            ]));
-        }
+        return [
+            'debit' => $debit,
+            'credit' => $credit,
+            'difference' => bcsub($debit, $credit, 4),
+        ];
     }
 
     /**
@@ -202,15 +315,21 @@ class FinancialPeriodClosingService
     }
 
     /**
-     * @param  array<int, array{account: Account, signed: string}>  $balances
+     * @return array{lines: list<array<string, mixed>>, period_result: string, total_debit: string, total_credit: string}
      */
-    private function createClosingEntry(FinancialPeriod $period, array $balances): JournalEntry
+    private function closingPlan(FinancialPeriod $period): array
     {
-        $retainedEarnings = $this->accounts->resolve(
-            (int) $period->company_id,
-            'retained_earnings',
-            __('financial_periods.journal.closing_event'),
-        );
+        $balances = $this->incomeAccountBalances($period);
+
+        if ($balances === []) {
+            return [
+                'lines' => [],
+                'period_result' => '0.0000',
+                'total_debit' => '0.0000',
+                'total_credit' => '0.0000',
+            ];
+        }
+
         $lines = [];
         $debit = '0.0000';
         $credit = '0.0000';
@@ -220,6 +339,8 @@ class FinancialPeriodClosingService
             $amount = bccomp($signed, '0', 4) > 0 ? $signed : bcmul($signed, '-1', 4);
             $line = [
                 'account_id' => (int) $balance['account']->getKey(),
+                'account_doc_num' => (string) $balance['account']->doc_num,
+                'account_label' => $balance['account']->codeNameLabel(),
                 'debit_amount' => bccomp($signed, '0', 4) < 0 ? $amount : '0.0000',
                 'credit_amount' => bccomp($signed, '0', 4) > 0 ? $amount : '0.0000',
                 'description' => __('financial_periods.journal.close_account', [
@@ -231,16 +352,46 @@ class FinancialPeriodClosingService
             $lines[] = $line;
         }
 
-        $difference = bcsub($debit, $credit, 4);
-        if (bccomp($difference, '0', 4) !== 0) {
-            $amount = bccomp($difference, '0', 4) > 0 ? $difference : bcmul($difference, '-1', 4);
+        $periodResult = bcsub($debit, $credit, 4);
+        if (bccomp($periodResult, '0', 4) !== 0) {
+            $retainedEarnings = $this->accounts->resolve(
+                (int) $period->company_id,
+                'retained_earnings',
+                __('financial_periods.journal.closing_event'),
+            );
+            $amount = bccomp($periodResult, '0', 4) > 0 ? $periodResult : bcmul($periodResult, '-1', 4);
             $lines[] = [
                 'account_id' => (int) $retainedEarnings->getKey(),
-                'debit_amount' => bccomp($difference, '0', 4) < 0 ? $amount : '0.0000',
-                'credit_amount' => bccomp($difference, '0', 4) > 0 ? $amount : '0.0000',
+                'account_doc_num' => (string) $retainedEarnings->doc_num,
+                'account_label' => $retainedEarnings->codeNameLabel(),
+                'debit_amount' => bccomp($periodResult, '0', 4) < 0 ? $amount : '0.0000',
+                'credit_amount' => bccomp($periodResult, '0', 4) > 0 ? $amount : '0.0000',
                 'description' => __('financial_periods.journal.transfer_result'),
             ];
+
+            $debit = bcadd($debit, bccomp($periodResult, '0', 4) < 0 ? $amount : '0.0000', 4);
+            $credit = bcadd($credit, bccomp($periodResult, '0', 4) > 0 ? $amount : '0.0000', 4);
         }
+
+        return [
+            'lines' => array_values($lines),
+            'period_result' => $periodResult,
+            'total_debit' => $debit,
+            'total_credit' => $credit,
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $lines
+     */
+    private function createClosingEntry(FinancialPeriod $period, array $lines): JournalEntry
+    {
+        $journalLines = array_map(fn (array $line): array => [
+            'account_id' => $line['account_id'],
+            'debit_amount' => $line['debit_amount'],
+            'credit_amount' => $line['credit_amount'],
+            'description' => $line['description'],
+        ], $lines);
 
         $sourceType = $this->nextClosingSourceType($period);
         $currency = Currency::query()
@@ -261,7 +412,7 @@ class FinancialPeriodClosingService
             'source_type' => $sourceType,
             'source_id' => (int) $period->getKey(),
             'source_doc_num' => (string) $period->doc_num,
-        ], $lines);
+        ], $journalLines);
     }
 
     private function periodLines(FinancialPeriod $period): Builder

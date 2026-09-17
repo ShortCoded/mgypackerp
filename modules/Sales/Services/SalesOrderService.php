@@ -5,6 +5,7 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -27,7 +28,7 @@ class SalesOrderService
         private readonly SalesCycleAuditService $audit,
     ) {}
 
-    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int, branch_store_id?: int|null} $context */
     public function createFromQuotation(Quotation $quotation, array $context, ?array $selection = null): SalesOrder
     {
         return DB::transaction(function () use ($quotation, $context, $selection): SalesOrder {
@@ -48,6 +49,14 @@ class SalesOrderService
             }
             if (! $locked->customer_id || ! $locked->currency_id || $revision->lines->isEmpty()) {
                 throw new DomainException(__('The quotation requires a customer, currency, and at least one sales line.'));
+            }
+
+            $branchStoreId = null;
+            if (! empty($context['branch_store_id'])) {
+                $branchStoreId = BranchStore::query()
+                    ->where('branch_id', $context['branch_id'])
+                    ->findOrFail((int) $context['branch_store_id'])
+                    ->getKey();
             }
 
             $requestedDate = $revision->lines->pluck('requested_date')->filter()->max();
@@ -91,7 +100,7 @@ class SalesOrderService
                 'customer_id' => $locked->customer_id,
                 'business_employee_id' => $locked->business_employee_id,
                 'currency_id' => $locked->currency_id,
-                'branch_store_id' => null,
+                'branch_store_id' => $branchStoreId,
                 'order_date' => now()->toDateString(),
                 'expected_delivery_date' => $expectedDeliveryDate,
                 'sales_channel' => 'quotation',

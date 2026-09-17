@@ -93,7 +93,8 @@ class PlasticFactoryDemoVerifier
                 && (float) $goldenAsset->salvage_value === 12000.0
                 && $goldenAsset->status === FixedAsset::StatusSold
                 && DB::table('fixed_asset_depreciations')->where('fixed_asset_id', $goldenAsset->getKey())->where('status', 'posted')->count() === 2
-                && DB::table('fixed_asset_movements')->where('fixed_asset_id', $goldenAsset->getKey())->where('status', 'posted')->count() === 1
+                && DB::table('fixed_asset_movements')->where('fixed_asset_id', $goldenAsset->getKey())->where('movement_type', 'capitalization')->where('status', 'posted')->exists()
+                && DB::table('fixed_asset_movements')->where('fixed_asset_id', $goldenAsset->getKey())->where('movement_type', 'transfer')->where('status', 'posted')->exists()
                 && DB::table('fixed_asset_disposals')->where('fixed_asset_id', $goldenAsset->getKey())->where('disposition_type', FixedAssetDisposal::TypeSale)->where('status', FixedAssetDisposal::StatusPosted)->exists(),
             'write_off_and_reversal_exist' => DB::table('fixed_asset_disposals')->where('company_id', $companyId)
                 ->where('disposition_type', FixedAssetDisposal::TypeWriteOff)->where('status', FixedAssetDisposal::StatusReversed)->exists()
@@ -210,7 +211,11 @@ class PlasticFactoryDemoVerifier
             return INF;
         }
 
-        $entryId = DB::table('journal_entries')->where('source_type', 'client_demo_opening_fixed_asset')->where('source_id', $asset->getKey())->value('id');
+        $entryId = DB::table('fixed_asset_movements')
+            ->where('fixed_asset_id', $asset->getKey())
+            ->where('movement_type', 'opening')
+            ->where('status', 'posted')
+            ->value('journal_entry_id');
 
         if ($entryId === null) {
             return INF;

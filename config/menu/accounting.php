@@ -82,6 +82,21 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'period_closing',
+                'title' => 'Period Closing & Carry Forward',
+                'icon' => 'lock',
+                'route' => 'admin.financial-periods.closing',
+                'permission' => 'financial_periods.view',
+                'keywords' => ['period close', 'carry forward', 'reopen period', 'إقفال الفترة', 'ترحيل الأرصدة', 'إعادة فتح الفترة'],
+                'actions' => [
+                    'view' => 'financial_periods.view',
+                    'close' => 'financial_periods.close',
+                    'reopen' => 'financial_periods.reopen',
+                ],
+                'active' => ['admin.financial-periods.closing'],
+                'children' => [],
+            ],
+            [
                 'label' => 'account_ledger',
                 'title' => 'Account Ledger',
                 'icon' => 'list-alt',
@@ -107,6 +122,20 @@ return [
                     'export' => 'reports.trial_balance.export',
                 ],
                 'active' => ['admin.accounting.reports.trial-balance*'],
+                'children' => [],
+            ],
+            [
+                'label' => 'financial_statements',
+                'title' => 'Financial Statements',
+                'icon' => 'file-invoice-dollar',
+                'route' => 'admin.accounting.reports.financial-statements',
+                'permission' => 'reports.financial_statements.view',
+                'keywords' => ['income statement', 'financial position', 'balance sheet', 'equity changes', 'قائمة الدخل', 'المركز المالي', 'حقوق الملكية'],
+                'actions' => [
+                    'view' => 'reports.financial_statements.view',
+                    'export' => 'reports.financial_statements.export',
+                ],
+                'active' => ['admin.accounting.reports.financial-statements*'],
                 'children' => [],
             ],
             [

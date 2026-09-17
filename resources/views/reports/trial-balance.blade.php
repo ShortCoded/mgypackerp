@@ -3,25 +3,26 @@
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
     @php($dates = app(\Modules\Core\Services\DateFormatService::class))
+    @php($visibleColumns = data_get($result, 'presentation.columns', []))
 
     <div class="report-filter-summary">
         <strong>{{ __('trial_balance.title') }}</strong>
         <div>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }} — {{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</div>
-        <div>{{ data_get($result, 'currency.code') }} / {{ __('trial_balance.messages.'.($result['is_balanced'] ? 'balanced' : 'unbalanced')) }}</div>
+        <div>{{ data_get($result, 'currency.code') }} / {{ __('trial_balance.messages.'.$result['balance_status']) }}</div>
+        <div>
+            {{ __('trial_balance.value_modes.'.$result['presentation']['value_mode']) }} /
+            {{ __('trial_balance.display_modes.'.$result['presentation']['display_mode']) }} /
+            {{ __('trial_balance.totals_bases.'.$result['presentation']['totals_basis']) }}
+        </div>
     </div>
 
     <table class="report-table trial-balance-table">
         <thead>
             <tr>
-                <th rowspan="2">{{ __('trial_balance.columns.account_code') }}</th>
-                <th rowspan="2">{{ __('trial_balance.columns.account_name') }}</th>
-                <th colspan="2">{{ __('trial_balance.columns.opening') }}</th>
-                <th colspan="2">{{ __('trial_balance.columns.period') }}</th>
-                <th colspan="2">{{ __('trial_balance.columns.ending') }}</th>
-            </tr>
-            <tr>
-                @foreach(['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'ending_debit', 'ending_credit'] as $column)
-                    <th>{{ __('trial_balance.columns.'.$column) }}</th>
+                <th>{{ __('trial_balance.columns.account_code') }}</th>
+                <th>{{ __('trial_balance.columns.account_name') }}</th>
+                @foreach($visibleColumns as $column)
+                    <th>{{ __('trial_balance.headings.'.$column) }}</th>
                 @endforeach
             </tr>
         </thead>
@@ -32,7 +33,7 @@
                     <td style="padding-inline-start: {{ max(0, $row['level'] - 1) * 7 }}px">
                         {{ $row['name'] }}@if($row['is_inactive']) ({{ __('trial_balance.status.inactive') }})@endif
                     </td>
-                    @foreach(['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'ending_debit', 'ending_credit'] as $column)
+                    @foreach($visibleColumns as $column)
                         <td>{{ $numbers->format($row[$column]) }}</td>
                     @endforeach
                 </tr>
@@ -41,7 +42,7 @@
         <tfoot>
             <tr>
                 <td colspan="2">{{ __('trial_balance.total') }}</td>
-                @foreach(['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'ending_debit', 'ending_credit'] as $column)
+                @foreach($visibleColumns as $column)
                     <td>{{ $numbers->format($result['totals'][$column]) }}</td>
                 @endforeach
             </tr>

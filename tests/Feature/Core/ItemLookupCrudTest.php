@@ -139,8 +139,6 @@ test('item lookups and product masters are grouped under inventory item data', f
     $inventory = collect($menu)->firstWhere('label', 'inventory');
     $basicDataLabels = collect($basicData['children'])->pluck('label')->all();
     $inventoryLabels = collect($inventory['children'])->pluck('label')->all();
-    $itemData = collect($inventory['children'])->firstWhere('label', 'item_data');
-    $itemDataLabels = collect($itemData['children'])->pluck('label')->all();
 
     expect($topLevelLabels)
         ->toContain('basic_data')
@@ -149,8 +147,7 @@ test('item lookups and product masters are grouped under inventory item data', f
         ->and($basicData)->not->toBeNull()
         ->and($inventory)->not->toBeNull()
         ->and($basicDataLabels)->toBe(['organization_setup'])
-        ->and($inventoryLabels)->toBe(['item_data'])
-        ->and($itemDataLabels)->toBe([
+        ->and($inventoryLabels)->toBe([
             'products',
             'item_categories',
             'item_units',

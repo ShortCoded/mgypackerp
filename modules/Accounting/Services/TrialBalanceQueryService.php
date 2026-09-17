@@ -12,6 +12,22 @@ use Modules\Core\Services\NumericFormatService;
 
 class TrialBalanceQueryService
 {
+    public const ValueTotals = 'totals';
+
+    public const ValueBalances = 'balances';
+
+    public const ValueCombined = 'combined';
+
+    public const TotalsPeriod = 'period';
+
+    public const TotalsCumulative = 'cumulative';
+
+    public const DisplayAggregate = 'aggregate';
+
+    public const DisplayDetail = 'detail';
+
+    public const DisplayTree = 'tree';
+
     public function __construct(private readonly NumericFormatService $numbers) {}
 
     /**
@@ -21,7 +37,11 @@ class TrialBalanceQueryService
      *     to_date: string,
      *     branch_id?: int|null,
      *     cost_center_id?: int|null,
-     *     include_zero?: bool
+     *     include_zero?: bool,
+     *     value_mode?: string,
+     *     totals_basis?: string,
+     *     display_mode?: string,
+     *     level?: int|null
      * }  $filters
      * @return array<string, mixed>
      */
@@ -45,6 +65,31 @@ class TrialBalanceQueryService
                 'deleted_at',
             ]);
 
+        $valueMode = $this->validOption(
+            $filters['value_mode'] ?? null,
+            [self::ValueTotals, self::ValueBalances, self::ValueCombined],
+            self::ValueCombined,
+        );
+        $totalsBasis = $this->validOption(
+            $filters['totals_basis'] ?? null,
+            [self::TotalsPeriod, self::TotalsCumulative],
+            self::TotalsPeriod,
+        );
+        $displayMode = $this->validOption(
+            $filters['display_mode'] ?? null,
+            [self::DisplayAggregate, self::DisplayDetail, self::DisplayTree],
+            self::DisplayTree,
+        );
+        $maximumLevel = max(1, (int) ($accounts->max('level') ?? 1));
+        $selectedLevel = min($maximumLevel, max(1, (int) ($filters['level'] ?? $maximumLevel)));
+        $filters = [
+            ...$filters,
+            'value_mode' => $valueMode,
+            'totals_basis' => $totalsBasis,
+            'display_mode' => $displayMode,
+            'level' => $selectedLevel,
+        ];
+
         $direct = $this->directBalances($filters, $accounts->modelKeys());
         $children = $accounts
             ->groupBy(fn (Account $account): int => (int) ($account->parent_id ?? 0))
@@ -59,39 +104,55 @@ class TrialBalanceQueryService
 
         $includeZero = (bool) ($filters['include_zero'] ?? false);
         $rows = $accounts
-            ->map(function (Account $account) use ($aggregates): array {
-                $balance = $aggregates[(int) $account->getKey()] ?? $this->emptyBalance();
-                $endingSigned = bcadd(
-                    $balance['opening_signed'],
-                    bcsub($balance['period_debit'], $balance['period_credit'], 4),
-                    4,
-                );
-                [$openingDebit, $openingCredit] = $this->splitSigned($balance['opening_signed']);
-                [$endingDebit, $endingCredit] = $this->splitSigned($endingSigned);
+            ->map(function (Account $account) use ($aggregates, $children, $direct, $displayMode): array {
+                $accountId = (int) $account->getKey();
+                $balance = $displayMode === self::DisplayDetail
+                    ? ($direct[$accountId] ?? $this->emptyBalance())
+                    : ($aggregates[$accountId] ?? $this->emptyBalance());
 
                 return [
-                    'id' => (int) $account->getKey(),
+                    'id' => $accountId,
+                    'parent_id' => $account->parent_id ? (int) $account->parent_id : null,
                     'doc_num' => (string) $account->doc_num,
                     'account_code' => (string) $account->account_code,
                     'name' => $account->displayName(),
                     'level' => (int) $account->level,
                     'is_group' => (bool) $account->is_group,
+                    'has_children' => ($children[$accountId] ?? []) !== [],
                     'is_postable' => (bool) $account->is_postable,
                     'is_inactive' => $account->status !== 'active' || $account->trashed(),
-                    'opening_debit' => $openingDebit,
-                    'opening_credit' => $openingCredit,
-                    'period_debit' => $balance['period_debit'],
-                    'period_credit' => $balance['period_credit'],
-                    'ending_debit' => $endingDebit,
-                    'ending_credit' => $endingCredit,
-                    'has_activity' => $this->hasActivity($balance),
+                    ...$balance,
+                    'has_direct_activity' => isset($direct[$accountId]) && $this->hasAnyActivity($direct[$accountId]),
                 ];
             })
-            ->when(! $includeZero, fn (Collection $rows): Collection => $rows->where('has_activity', true))
+            ->when(
+                $displayMode === self::DisplayAggregate,
+                fn (Collection $rows): Collection => $rows->filter(
+                    fn (array $row): bool => $row['level'] === $selectedLevel
+                        || ($row['level'] < $selectedLevel && ! $row['has_children'])
+                ),
+            )
+            ->when(
+                $displayMode === self::DisplayDetail,
+                fn (Collection $rows): Collection => $rows->filter(
+                    fn (array $row): bool => $row['has_direct_activity'] || ($includeZero && $row['is_postable'])
+                ),
+            )
+            ->when(
+                ! $includeZero,
+                fn (Collection $rows): Collection => $rows->filter(
+                    fn (array $row): bool => $this->hasVisibleActivity($row, $valueMode, $totalsBasis)
+                ),
+            )
             ->values()
             ->all();
 
         $totals = $this->totals($direct);
+        $scopeIsPartial = ($filters['branch_id'] ?? null) !== null || ($filters['cost_center_id'] ?? null) !== null;
+        $isBalanced = bccomp($totals['opening_debit'], $totals['opening_credit'], 4) === 0
+            && bccomp($totals['period_debit'], $totals['period_credit'], 4) === 0
+            && bccomp($totals['cumulative_debit'], $totals['cumulative_credit'], 4) === 0
+            && bccomp($totals['ending_debit'], $totals['ending_credit'], 4) === 0;
 
         return [
             'currency' => Currency::query()
@@ -100,11 +161,19 @@ class TrialBalanceQueryService
                 ->where('is_main', true)
                 ->first(['doc_num', 'code', 'name'])?->only(['doc_num', 'code', 'name']),
             'filters' => $filters,
+            'presentation' => [
+                'value_mode' => $valueMode,
+                'totals_basis' => $totalsBasis,
+                'display_mode' => $displayMode,
+                'level' => $selectedLevel,
+                'maximum_level' => $maximumLevel,
+                'columns' => $this->columns($valueMode, $totalsBasis),
+            ],
             'rows' => $rows,
             'totals' => $totals,
-            'is_balanced' => bccomp($totals['opening_debit'], $totals['opening_credit'], 4) === 0
-                && bccomp($totals['period_debit'], $totals['period_credit'], 4) === 0
-                && bccomp($totals['ending_debit'], $totals['ending_credit'], 4) === 0,
+            'scope_is_partial' => $scopeIsPartial,
+            'is_balanced' => $isBalanced,
+            'balance_status' => $scopeIsPartial ? 'partial_scope' : ($isBalanced ? 'balanced' : 'unbalanced'),
             'generated_at' => now(),
             'generated_by' => auth()->user()?->name,
         ];
@@ -113,7 +182,7 @@ class TrialBalanceQueryService
     /**
      * @param  array<string, mixed>  $filters
      * @param  list<int>  $accountIds
-     * @return array<int, array{opening_signed: string, period_debit: string, period_credit: string}>
+     * @return array<int, array<string, string>>
      */
     private function directBalances(array $filters, array $accountIds): array
     {
@@ -128,6 +197,8 @@ class TrialBalanceQueryService
             $balances[$accountId] ??= $this->emptyBalance();
             $debit = $this->baseAmount($row->debit_amount, $row->exchange_rate);
             $credit = $this->baseAmount($row->credit_amount, $row->exchange_rate);
+            $balances[$accountId]['cumulative_debit'] = bcadd($balances[$accountId]['cumulative_debit'], $debit, 4);
+            $balances[$accountId]['cumulative_credit'] = bcadd($balances[$accountId]['cumulative_credit'], $credit, 4);
 
             if ((string) $row->entry_date < $filters['from_date']) {
                 $balances[$accountId]['opening_signed'] = bcadd(
@@ -141,6 +212,10 @@ class TrialBalanceQueryService
 
             $balances[$accountId]['period_debit'] = bcadd($balances[$accountId]['period_debit'], $debit, 4);
             $balances[$accountId]['period_credit'] = bcadd($balances[$accountId]['period_credit'], $credit, 4);
+        }
+
+        foreach ($balances as $accountId => $balance) {
+            $balances[$accountId] = $this->withBalanceSides($balance);
         }
 
         return $balances;
@@ -181,10 +256,10 @@ class TrialBalanceQueryService
 
     /**
      * @param  array<int, list<int>>  $children
-     * @param  array<int, array{opening_signed: string, period_debit: string, period_credit: string}>  $direct
-     * @param  array<int, array{opening_signed: string, period_debit: string, period_credit: string}>  $aggregates
+     * @param  array<int, array<string, string>>  $direct
+     * @param  array<int, array<string, string>>  $aggregates
      * @param  array<int, bool>  $visiting
-     * @return array{opening_signed: string, period_debit: string, period_credit: string}
+     * @return array<string, string>
      */
     private function aggregate(int $accountId, array $children, array $direct, array &$aggregates, array &$visiting): array
     {
@@ -201,72 +276,139 @@ class TrialBalanceQueryService
 
         foreach ($children[$accountId] ?? [] as $childId) {
             $child = $this->aggregate($childId, $children, $direct, $aggregates, $visiting);
-            $balance['opening_signed'] = bcadd($balance['opening_signed'], $child['opening_signed'], 4);
-            $balance['period_debit'] = bcadd($balance['period_debit'], $child['period_debit'], 4);
-            $balance['period_credit'] = bcadd($balance['period_credit'], $child['period_credit'], 4);
+
+            foreach ($this->summableColumns() as $column) {
+                $balance[$column] = bcadd($balance[$column], $child[$column], 4);
+            }
         }
 
         unset($visiting[$accountId]);
 
-        return $aggregates[$accountId] = $balance;
+        return $aggregates[$accountId] = $this->withNetSides($balance);
     }
 
     /**
-     * @param  array<int, array{opening_signed: string, period_debit: string, period_credit: string}>  $direct
-     * @return array{opening_debit: string, opening_credit: string, period_debit: string, period_credit: string, ending_debit: string, ending_credit: string}
+     * @param  array<int, array<string, string>>  $direct
+     * @return array<string, string>
      */
     private function totals(array $direct): array
     {
-        $openingDebit = '0.0000';
-        $openingCredit = '0.0000';
-        $periodDebit = '0.0000';
-        $periodCredit = '0.0000';
-        $endingDebit = '0.0000';
-        $endingCredit = '0.0000';
+        $totals = $this->emptyBalance();
 
         foreach ($direct as $balance) {
-            [$accountOpeningDebit, $accountOpeningCredit] = $this->splitSigned($balance['opening_signed']);
-            [$accountEndingDebit, $accountEndingCredit] = $this->splitSigned(
-                bcadd(
-                    $balance['opening_signed'],
-                    bcsub($balance['period_debit'], $balance['period_credit'], 4),
-                    4,
-                ),
-            );
-            $openingDebit = bcadd($openingDebit, $accountOpeningDebit, 4);
-            $openingCredit = bcadd($openingCredit, $accountOpeningCredit, 4);
-            $periodDebit = bcadd($periodDebit, $balance['period_debit'], 4);
-            $periodCredit = bcadd($periodCredit, $balance['period_credit'], 4);
-            $endingDebit = bcadd($endingDebit, $accountEndingDebit, 4);
-            $endingCredit = bcadd($endingCredit, $accountEndingCredit, 4);
+            foreach ($this->summableColumns() as $column) {
+                $totals[$column] = bcadd($totals[$column], $balance[$column], 4);
+            }
         }
 
-        return [
-            'opening_debit' => $openingDebit,
-            'opening_credit' => $openingCredit,
-            'period_debit' => $periodDebit,
-            'period_credit' => $periodCredit,
-            'ending_debit' => $endingDebit,
-            'ending_credit' => $endingCredit,
-        ];
+        return collect($this->summableColumns())
+            ->mapWithKeys(fn (string $column): array => [$column => $totals[$column]])
+            ->all();
     }
 
-    /** @return array{opening_signed: string, period_debit: string, period_credit: string} */
+    /** @return array<string, string> */
     private function emptyBalance(): array
     {
         return [
             'opening_signed' => '0.0000',
+            'opening_debit' => '0.0000',
+            'opening_credit' => '0.0000',
             'period_debit' => '0.0000',
             'period_credit' => '0.0000',
+            'cumulative_debit' => '0.0000',
+            'cumulative_credit' => '0.0000',
+            'ending_debit' => '0.0000',
+            'ending_credit' => '0.0000',
+            'net_opening_debit' => '0.0000',
+            'net_opening_credit' => '0.0000',
+            'net_ending_debit' => '0.0000',
+            'net_ending_credit' => '0.0000',
         ];
     }
 
-    /** @param array{opening_signed: string, period_debit: string, period_credit: string} $balance */
-    private function hasActivity(array $balance): bool
+    /** @param array<string, string> $balance */
+    private function withBalanceSides(array $balance): array
     {
-        return bccomp($balance['opening_signed'], '0', 4) !== 0
-            || bccomp($balance['period_debit'], '0', 4) !== 0
-            || bccomp($balance['period_credit'], '0', 4) !== 0;
+        [$balance['opening_debit'], $balance['opening_credit']] = $this->splitSigned($balance['opening_signed']);
+        [$balance['ending_debit'], $balance['ending_credit']] = $this->splitSigned(
+            bcadd(
+                $balance['opening_signed'],
+                bcsub($balance['period_debit'], $balance['period_credit'], 4),
+                4,
+            ),
+        );
+
+        return $this->withNetSides($balance);
+    }
+
+    /** @param array<string, string> $balance */
+    private function withNetSides(array $balance): array
+    {
+        [$balance['net_opening_debit'], $balance['net_opening_credit']] = $this->splitSigned(
+            bcsub($balance['opening_debit'], $balance['opening_credit'], 4),
+        );
+        [$balance['net_ending_debit'], $balance['net_ending_credit']] = $this->splitSigned(
+            bcsub($balance['ending_debit'], $balance['ending_credit'], 4),
+        );
+
+        return $balance;
+    }
+
+    /** @return list<string> */
+    private function summableColumns(): array
+    {
+        return [
+            'opening_debit',
+            'opening_credit',
+            'period_debit',
+            'period_credit',
+            'cumulative_debit',
+            'cumulative_credit',
+            'ending_debit',
+            'ending_credit',
+        ];
+    }
+
+    /** @param array<string, string> $balance */
+    private function hasAnyActivity(array $balance): bool
+    {
+        return collect($this->summableColumns())
+            ->contains(fn (string $column): bool => bccomp($balance[$column], '0', 4) !== 0);
+    }
+
+    /** @param array<string, mixed> $row */
+    private function hasVisibleActivity(array $row, string $valueMode, string $totalsBasis): bool
+    {
+        return collect($this->columns($valueMode, $totalsBasis))
+            ->contains(fn (string $column): bool => bccomp((string) $row[$column], '0', 4) !== 0);
+    }
+
+    /** @return list<string> */
+    private function columns(string $valueMode, string $totalsBasis): array
+    {
+        $totalsColumns = $totalsBasis === self::TotalsCumulative
+            ? ['cumulative_debit', 'cumulative_credit']
+            : ['period_debit', 'period_credit'];
+
+        return match ($valueMode) {
+            self::ValueTotals => $totalsColumns,
+            self::ValueBalances => ['opening_debit', 'opening_credit', 'ending_debit', 'ending_credit'],
+            default => [
+                'opening_debit',
+                'opening_credit',
+                'period_debit',
+                'period_credit',
+                ...($totalsBasis === self::TotalsCumulative ? $totalsColumns : []),
+                'ending_debit',
+                'ending_credit',
+            ],
+        };
+    }
+
+    /** @param list<string> $allowed */
+    private function validOption(mixed $value, array $allowed, string $default): string
+    {
+        return is_string($value) && in_array($value, $allowed, true) ? $value : $default;
     }
 
     /** @return array{0: string, 1: string} */

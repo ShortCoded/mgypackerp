@@ -39,6 +39,7 @@ use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDepreciation;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
+use Modules\FixedAssets\Services\FixedAssetCostMovementService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetLifecycleService;
 use Modules\FixedAssets\Services\FixedAssetService;
@@ -55,10 +56,12 @@ use Modules\Inventory\Services\StockCountService;
 use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMold;
 use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionShift;
 use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Services\ProductionCycleService;
+use Modules\Production\Services\ProductionQualityWorkflowService;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderChangeRequest;
@@ -744,6 +747,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'company_id' => $resources['company']->getKey(),
             'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(),
+            'branch_store_id' => $resources['finished_store']->getKey(),
         ]);
         $order = $orders->approve($order);
         $goodsLine = $order->lines->firstWhere('product_id', $pail->getKey());
@@ -753,7 +757,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
         $delivery = $fulfillment->deliver($order, [[
             'sales_order_line_id' => $goodsLine->getKey(), 'quantity' => '200',
         ]], [
-            'document_date' => '2026-08-25',
+            'document_date' => now()->toDateString(),
             'vehicle_number' => 'EGY-TRK-2607', 'driver_name' => 'Mahmoud Hassan',
             'driver_phone' => '+20 100 333 2607', 'destination_address' => 'Cairo Paints Receiving Warehouse',
             'notes' => $this->note('Golden sales delivery note with inventory and COGS posting.'),
@@ -772,7 +776,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
         app(CustomerReceiptService::class)->createAndApprove([
             'company_id' => $resources['company']->getKey(), 'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(), 'customer_id' => $partners['primary_customer']->getKey(),
-            'receipt_date' => '2026-08-25', 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
+            'receipt_date' => now()->toDateString(), 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
             'payment_method' => 'cash', 'cashbox_id' => $resources['cashbox']->getKey(), 'amount' => '10000',
             'receipt_type' => CustomerReceipt::TypeCollection,
             'notes' => $this->note('Allocated cash receipt for the first sales invoice installment.'),
@@ -894,6 +898,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'company_id' => $company->getKey(),
             'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(),
+            'branch_store_id' => $resources['finished_store']->getKey(),
         ]));
         $crateLine = $order->lines->firstWhere('product_id', $crate->getKey());
         $serviceLine = $order->lines->firstWhere('product_id', $service->getKey());
@@ -931,14 +936,14 @@ class IntegratedPlasticFactorySeeder extends Seeder
         $deliveryOne = $fulfillment->deliver($order->fresh(), [[
             'sales_order_line_id' => $crateLine->getKey(), 'quantity' => '60',
         ]], [
-            'document_date' => '2026-08-25', 'vehicle_number' => 'EGY-CRATE-01', 'driver_name' => 'Khaled Amin',
+            'document_date' => now()->toDateString(), 'vehicle_number' => 'EGY-CRATE-01', 'driver_name' => 'Khaled Amin',
             'destination_address' => 'October Chemical Industries Receiving Dock',
             'notes' => $this->note('First exact split delivery: 60 crates.'),
         ]);
         $deliveryTwo = $fulfillment->deliver($order->fresh(), [[
             'sales_order_line_id' => $crateLine->getKey(), 'quantity' => '40',
         ]], [
-            'document_date' => '2026-08-25', 'vehicle_number' => 'EGY-CRATE-02', 'driver_name' => 'Mina Atef',
+            'document_date' => now()->toDateString(), 'vehicle_number' => 'EGY-CRATE-02', 'driver_name' => 'Mina Atef',
             'destination_address' => 'October Chemical Industries Receiving Dock',
             'notes' => $this->note('Second exact split delivery: 40 crates.'),
         ]);
@@ -970,7 +975,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
         $receiptService->createAndApprove([
             'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(), 'customer_id' => $partners['production_customer']->getKey(),
-            'receipt_date' => '2026-08-25', 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
+            'receipt_date' => now()->toDateString(), 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
             'payment_method' => 'cash', 'cashbox_id' => $resources['cashbox']->getKey(), 'amount' => '5000',
             'receipt_type' => CustomerReceipt::TypeCollection,
             'notes' => $this->note('Cash receipt for the exact sales-linked production invoice.'),
@@ -980,7 +985,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
         $receiptService->createAndApprove([
             'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(), 'customer_id' => $partners['production_customer']->getKey(),
-            'receipt_date' => '2026-08-25', 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
+            'receipt_date' => now()->toDateString(), 'currency_id' => $resources['egp']->getKey(), 'exchange_rate' => 1,
             'payment_method' => 'bank', 'bank_account_id' => $resources['bank_account']->getKey(), 'amount' => '8000',
             'reference_no' => 'OCI-BANK-260829-01', 'receipt_type' => CustomerReceipt::TypeCollection,
             'notes' => $this->note('Bank receipt that closes the exact sales-linked production invoice.'),
@@ -1041,10 +1046,12 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ],
         ])->all();
         $cycle->accountMaterials($run->fresh(), $resources['raw_store']->getKey(), $accounting);
-        $cycle->recordInspection($run->fresh(), [
+        $inspection = $cycle->recordInspection($run->fresh(), [
             'quality_inspection_type_id' => $finalType->getKey(), 'result' => 'passed',
+            'results' => $this->qualityInspectionResults($finalType, 'passed'),
             'notes' => 'Final dimensional, visual, stacking, and load checks passed.',
         ]);
+        $this->closePassedInspection($cycle, $inspection);
         $cycle->receiveFinishedGoods($run->fresh(), $resources['finished_store']->getKey(), $quantity);
         $cycle->completeRun($run->fresh());
     }
@@ -1154,7 +1161,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             (int) $resources['branch']->getKey(),
             (int) $resources['finished_store']->getKey(),
             (int) $product->getKey(),
-            '2026-08-25',
+            now()->toDateString(),
             'RUNTIME-DEMO-SALES-BATCH-REPAIR',
         );
     }
@@ -1271,14 +1278,17 @@ class IntegratedPlasticFactorySeeder extends Seeder
         ]);
         $cycle->recordInspection($run->fresh(), [
             'quality_inspection_type_id' => $inProcessType->getKey(), 'result' => 'failed',
+            'results' => $this->qualityInspectionResults($inProcessType, 'failed'),
             'defect_code' => 'QC-WEIGHT-HIGH', 'affected_base_quantity' => '10',
             'corrective_action' => 'Reduce holding pressure, verify cooling time, and resample.',
             'notes' => $this->note('Intentional failed inspection demonstrates the quality-hold workflow.'),
         ]);
-        $cycle->recordInspection($run->fresh(), [
+        $inspection = $cycle->recordInspection($run->fresh(), [
             'quality_inspection_type_id' => $inProcessType->getKey(), 'result' => 'passed',
+            'results' => $this->qualityInspectionResults($inProcessType, 'passed'),
             'notes' => 'Corrective settings verified and resample passed.',
         ]);
+        $this->closePassedInspection($cycle, $inspection);
         $cycle->resumeRun($run->fresh());
 
         $accounting = $run->requirements()->with('product')->get()->mapWithKeys(function ($requirement): array {
@@ -1290,10 +1300,12 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ]];
         })->all();
         $cycle->accountMaterials($run->fresh(), $resources['raw_store']->getKey(), $accounting);
-        $cycle->recordInspection($run->fresh(), [
+        $inspection = $cycle->recordInspection($run->fresh(), [
             'quality_inspection_type_id' => $finalType->getKey(), 'result' => 'passed',
+            'results' => $this->qualityInspectionResults($finalType, 'passed'),
             'notes' => 'Visual, fit, handle-load, and leak checks passed for the released batch.',
         ]);
+        $this->closePassedInspection($cycle, $inspection);
         $cycle->receiveFinishedGoods($run->fresh(), $resources['finished_store']->getKey(), '490');
         $cycle->completeRun($run->fresh());
     }
@@ -1434,6 +1446,8 @@ class IntegratedPlasticFactorySeeder extends Seeder
                 'measurements' => ['mfi' => '12.1 g/10min', 'visual_contamination' => 'passed'],
             ]],
         ]);
+        $receipt = $receiving->postReceipt($receipt->refresh());
+        $receiptLine = $receipt->lines->firstOrFail();
         $invoice = app(PurchaseInvoiceService::class)->create([
             'financial_period_doc_num' => $period->doc_num, 'supplier_doc_num' => $partners['primary_supplier']->doc_num,
             'purchase_order_doc_num' => $order->doc_num, 'purchase_type' => 'standard',
@@ -1930,6 +1944,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
                     'rejected_quantity' => '0',
                 ]],
             ]);
+            $receiving->postReceipt($receipt->refresh());
         }
 
         $fullyReceivedOpenOrder = PurchaseOrder::query()
@@ -2045,7 +2060,10 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ]],
         ]);
 
-        return [$receipt->fresh(), $receiptLine->fresh()];
+        $receipt = $receiving->postReceipt($receipt->refresh());
+        $receiptLine = $receipt->lines->firstOrFail();
+
+        return [$receipt, $receiptLine];
     }
 
     /** @param array<string, mixed> $resources */
@@ -2114,10 +2132,12 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ]];
         })->all();
         $cycle->accountMaterials($run->fresh(), $resources['raw_store']->getKey(), $accounting);
-        $cycle->recordInspection($run->fresh(), [
+        $inspection = $cycle->recordInspection($run->fresh(), [
             'quality_inspection_type_id' => $finalType->getKey(), 'result' => 'passed',
+            'results' => $this->qualityInspectionResults($finalType, 'passed'),
             'notes' => 'Final dimensional, visual, handle-load, and leak checks passed.',
         ]);
+        $this->closePassedInspection($cycle, $inspection);
         $cycle->receiveFinishedGoods($run->fresh(), $resources['finished_store']->getKey(), '98');
         $cycle->completeRun($run->fresh());
 
@@ -2156,7 +2176,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'company_id' => $resources['company']->getKey(),
             'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(),
-            'document_date' => '2026-08-25',
+            'document_date' => now()->toDateString(),
         ];
 
         $movements->createAndPost([
@@ -2206,7 +2226,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'financial_period_id' => $period->getKey(),
             'branch_id' => $resources['branch']->getKey(),
             'branch_store_id' => $resources['finished_store']->getKey(),
-            'count_date' => '2026-08-25',
+            'count_date' => now()->toDateString(),
             'stock_status' => InventoryTransaction::StatusAvailable,
             'product_ids' => [$pail->getKey()],
             'notes' => $this->note('Cycle count with one verified unit shortage.'),
@@ -2332,11 +2352,6 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'notes' => $this->note('Draft asset for acquisition workflow testing.'),
         ]);
 
-        app(FixedAssetDepreciationService::class)->post([
-            'financial_period_doc_num' => $period->doc_num,
-            'posting_date' => '2026-01-31',
-            'asset_doc_nums' => [$machine->doc_num],
-        ]);
     }
 
     /** @param array<string, mixed> $resources */
@@ -2376,11 +2391,23 @@ class IntegratedPlasticFactorySeeder extends Seeder
                 'amount' => $line[2],
                 'description' => $line[3],
                 'branch_id' => $resources['branch']->getKey(),
-                'cost_center_id' => $line[0]->is($asset->account) ? $resources['injection_cost_center']->getKey() : null,
+                'cost_center_id' => $line[0]->is($asset->account) || $line[0]->is($accumulatedDepreciation)
+                    ? $resources['injection_cost_center']->getKey()
+                    : null,
                 'bank_account_id' => $line[0]->is($resources['bank_account']->account) ? $resources['bank_account']->getKey() : null,
             ])->all(),
         ])['record'];
-        app(OpeningBalanceApprovalService::class)->approve($opening);
+        $opening = app(OpeningBalanceApprovalService::class)->approve($opening);
+        $asset = app(FixedAssetCostMovementService::class)->recognize(
+            $asset->refresh(),
+            $period->from_date->toDateString(),
+            $opening->journalEntry->doc_num,
+        );
+        app(FixedAssetDepreciationService::class)->post([
+            'financial_period_doc_num' => $period->doc_num,
+            'posting_date' => '2026-01-31',
+            'asset_doc_nums' => [$asset->doc_num],
+        ]);
     }
 
     /** @param array<string, mixed> $resources */
@@ -2543,6 +2570,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
 
         $lifecycle = app(FixedAssetLifecycleService::class);
         $depreciation = app(FixedAssetDepreciationService::class);
+        $goldenAsset = $goldenAsset->refresh();
 
         if ($goldenAsset->status === FixedAsset::StatusDraft) {
             $goldenAsset = $lifecycle->activate($goldenAsset, '2026-01-02');
@@ -2616,6 +2644,9 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ->first();
 
         if (! $reversedWriteOff instanceof FixedAssetDisposal) {
+            $this->postAssetDepreciationThrough($depreciation, $period, $reversedWriteOffAsset, [
+                '2026-01-31', '2026-02-28', '2026-03-31',
+            ]);
             $reversedWriteOff = $lifecycle->dispose($reversedWriteOffAsset, [
                 'disposal_date' => '2026-04-15',
                 'disposition_type' => FixedAssetDisposal::TypeWriteOff,
@@ -2635,6 +2666,9 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ->firstOrFail();
 
         if (! FixedAssetDisposal::query()->where('fixed_asset_id', $writtenOffAsset->getKey())->exists()) {
+            $this->postAssetDepreciationThrough($depreciation, $period, $writtenOffAsset, [
+                '2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30',
+            ]);
             $lifecycle->dispose($writtenOffAsset, [
                 'disposal_date' => '2026-05-15',
                 'disposition_type' => FixedAssetDisposal::TypeWriteOff,
@@ -2669,7 +2703,6 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'LAND-MGY-A3-18',
             'GEN-MGY-2024-01',
             'LIFECYCLE-MGY-2025-001',
-            'COMP-MGY-DEMO-001',
         ];
         $assets = FixedAsset::query()
             ->where('company_id', $resources['company']->getKey())
@@ -2734,7 +2767,18 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'notes' => $this->note('Canonical opening-balance support for Fixed Asset subledger-to-GL reconciliation.'),
             'lines' => $lines,
         ])['record'];
-        app(OpeningBalanceApprovalService::class)->approve($opening);
+        $opening = app(OpeningBalanceApprovalService::class)->approve($opening);
+        $recognition = app(FixedAssetCostMovementService::class);
+
+        foreach ($assets as $asset) {
+            if (! $asset->hasPostedRecognition()) {
+                $recognition->recognize(
+                    $asset,
+                    $period->from_date->toDateString(),
+                    $opening->journalEntry->doc_num,
+                );
+            }
+        }
     }
 
     /** @param array<string, mixed> $resources */
@@ -2866,6 +2910,66 @@ class IntegratedPlasticFactorySeeder extends Seeder
             ->where('company_id', $company->getKey())
             ->where('barcode', $barcode)
             ->firstOrFail();
+    }
+
+    /** @param list<string> $postingDates */
+    private function postAssetDepreciationThrough(
+        FixedAssetDepreciationService $depreciation,
+        FinancialPeriod $period,
+        FixedAsset $asset,
+        array $postingDates,
+    ): void {
+        foreach ($postingDates as $postingDate) {
+            if (FixedAssetDepreciation::query()
+                ->where('fixed_asset_id', $asset->getKey())
+                ->where('status', FixedAssetDepreciation::StatusPosted)
+                ->whereDate('period_end', $postingDate)
+                ->exists()) {
+                continue;
+            }
+
+            $depreciation->post([
+                'financial_period_doc_num' => $period->doc_num,
+                'posting_date' => $postingDate,
+                'asset_doc_nums' => [$asset->doc_num],
+            ]);
+        }
+    }
+
+    /** @return list<array{quality_checkpoint_id: int, result: string, measured_value: string|null}> */
+    private function qualityInspectionResults(QualityInspectionType $type, string $overallResult): array
+    {
+        return DB::table('quality_checkpoints')
+            ->where('company_id', $type->company_id)
+            ->where('quality_inspection_type_id', $type->getKey())
+            ->where('is_active', true)
+            ->whereNull('deleted_at')
+            ->orderBy('sequence')
+            ->get(['id', 'response_type'])
+            ->values()
+            ->map(fn (object $checkpoint, int $index): array => [
+                'quality_checkpoint_id' => (int) $checkpoint->id,
+                'result' => $overallResult === 'failed' && $index === 0 ? 'failed' : 'passed',
+                'measured_value' => $checkpoint->response_type === 'numeric'
+                    ? ($overallResult === 'failed' && $index === 0 ? '12.40' : '12.00')
+                    : null,
+            ])
+            ->all();
+    }
+
+    private function closePassedInspection(
+        ProductionCycleService $cycle,
+        ProductionQualityInspection $inspection,
+    ): ProductionQualityInspection {
+        if ($inspection->status === ProductionQualityInspection::StatusSubmitted) {
+            $inspection = $cycle->reviewInspection($inspection, true);
+        }
+
+        if ($inspection->status === ProductionQualityInspection::StatusApproved) {
+            $inspection = app(ProductionQualityWorkflowService::class)->close($inspection);
+        }
+
+        return $inspection;
     }
 
     private function note(string $description): string

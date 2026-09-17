@@ -343,11 +343,13 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
     ]);
 
     $basicData = permissionRegistryFindNodeByLabel($groups, __('menu.basic_data'));
+    $accountingCosting = permissionRegistryFindNodeByLabel($groups, __('menu.accounting_costing'));
     $tools = permissionRegistryFindNodeByLabel($groups, __('menu.tools'));
     $humanResources = permissionRegistryFindNodeByLabel($groups, __('menu.human_resources'));
     $myBoard = permissionRegistryFindNodeByLabel($groups, __('menu.my_board'));
 
     expect($basicData)->not->toBeNull();
+    expect($accountingCosting)->not->toBeNull();
     expect($tools)->not->toBeNull();
     expect($humanResources)->not->toBeNull();
     expect($myBoard)->not->toBeNull();
@@ -355,8 +357,8 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
     $basicDataChildLabels = collect($basicData['children'])->pluck('label')->all();
     $toolsChildLabels = collect($tools['children'])->pluck('label')->all();
     $organizationSetup = collect($basicData['children'])->firstWhere('label', __('menu.organization_setup'));
-    $employeeData = collect($humanResources['children'])->firstWhere('label', __('menu.employee_data'));
-    $hrSetup = collect($humanResources['children'])->firstWhere('label', __('menu.hr_setup'));
+    $generalAccounting = collect($accountingCosting['children'])->firstWhere('label', __('menu.general_accounting'));
+    $humanResourcesChildLabels = collect($humanResources['children'])->pluck('label')->all();
     $workManagement = collect($tools['children'])->firstWhere('label', __('menu.work_management'));
     $applicationTools = collect($tools['children'])->firstWhere('label', __('menu.application_tools'));
 
@@ -368,12 +370,13 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
         ->toContain(__('menu.work_management'))
         ->toContain(__('menu.application_tools'));
     expect(collect($organizationSetup['children'])->pluck('label')->all())
-        ->toContain(__('menu.companies'), __('menu.branches'), __('menu.financial_periods'));
-    expect(collect($employeeData['children'])->pluck('label')->all())->toBe([__('menu.hr_employees')]);
-    expect(collect($hrSetup['children'])->pluck('label')->all())->toBe([
-        __('menu.hr_departments'),
-        __('menu.hr_countries'),
-    ]);
+        ->toContain(__('menu.companies'), __('menu.branches'))
+        ->not->toContain(__('menu.financial_periods'));
+    expect(collect($generalAccounting['children'])->pluck('label')->all())
+        ->toContain(__('menu.financial_periods'));
+    expect($humanResourcesChildLabels)
+        ->toContain(__('menu.hr_employees'), __('menu.hr_departments'), __('menu.hr_countries'))
+        ->not->toContain(__('menu.employee_data'), __('menu.hr_setup'));
     expect(collect($workManagement['children'])->pluck('label')->all())->toContain(__('menu.my_board'));
     expect(collect($applicationTools['children'])->pluck('label')->all())->toContain(__('menu.pwa_settings'));
 
@@ -388,7 +391,7 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
         ->not->toContain('permissions.view');
 });
 
-test('branches and financial periods appear in menu only for permitted users', function () {
+test('branches and financial periods appear in their canonical menus only for permitted users', function () {
     Permission::findOrCreate('companies.view', 'web');
     Permission::findOrCreate('branches.view', 'web');
     Permission::findOrCreate('financial_periods.view', 'web');
@@ -400,16 +403,24 @@ test('branches and financial periods appear in menu only for permitted users', f
         app(MenuService::class)->getMenu($permitted),
         'basic_data'
     );
+    $accountingCosting = permissionRegistryFindNodeByLabel(
+        app(MenuService::class)->getMenu($permitted),
+        'accounting_costing'
+    );
 
     expect($basicData)->not->toBeNull();
+    expect($accountingCosting)->not->toBeNull();
 
     $organizationSetup = collect($basicData['children'])->firstWhere('label', 'organization_setup');
     $children = collect($organizationSetup['children'])->pluck('label')->all();
+    $generalAccounting = collect($accountingCosting['children'])->firstWhere('label', 'general_accounting');
+    $generalAccountingChildren = collect($generalAccounting['children'])->pluck('label')->all();
 
     expect($children)
         ->toContain('companies')
         ->toContain('branches')
-        ->toContain('financial_periods');
+        ->not->toContain('financial_periods');
+    expect($generalAccountingChildren)->toContain('financial_periods');
 
     $blockedMenu = app(MenuService::class)->getMenu(User::factory()->create());
 

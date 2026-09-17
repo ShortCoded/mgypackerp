@@ -214,11 +214,21 @@ function hrAllReviewHrIndexRoutes(): array
 
 function hrAllReviewHrMenuRoutes(): array
 {
-    $routes = hrAllReviewHrIndexRoutes();
-    $attendanceIndex = array_search('admin.hr.biometric-devices.index', $routes, true);
-    array_splice($routes, $attendanceIndex === false ? count($routes) : $attendanceIndex, 0, ['employee.hr.self-service.index']);
-
-    return $routes;
+    return [
+        'admin.hr.employees.index',
+        'admin.hr.departments.index',
+        'admin.hr.sections.index',
+        'admin.hr.jobs.index',
+        'admin.hr.employment-types.index',
+        'admin.hr.biometric-devices.index',
+        'admin.hr.shifts.index',
+        'employee.hr.self-service.index',
+        'admin.hr.document-types.index',
+        'admin.hr.insurance-offices.index',
+        'admin.hr.social-insurance-policies.index',
+        'admin.hr.employment-tax-policies.index',
+        ...hrRestoredLegacyHrIndexRoutes(),
+    ];
 }
 
 function hrSimplifiedHrMenuLabels(): array
@@ -496,7 +506,35 @@ test('Human Resources menu exposes current screens and retained lookup screens',
 
     expect($humanResources)->not->toBeNull()
         ->and($humanResources['text'])->toBe('Human Resources')
-        ->and($labels)->toBe(['employee_data', 'hr_setup', 'attendance_leave'])
+        ->and($labels)->toBe([
+            'hr_employees',
+            'hr_departments',
+            'hr_sections',
+            'hr_jobs',
+            'hr_employment_types',
+            'hr_biometric_devices',
+            'hr_shifts',
+            'employee_self_service',
+            'hr_document_types',
+            'hr_insurance_offices',
+            'hr_social_insurance_policies',
+            'hr_employment_tax_policies',
+            'hr_allowances',
+            'hr_areas',
+            'hr_cities',
+            'hr_countries',
+            'hr_faculties',
+            'hr_governorates',
+            'hr_grades',
+            'hr_hiring_statuses',
+            'hr_identifications',
+            'hr_military_services',
+            'hr_nationalities',
+            'hr_qualifications',
+            'hr_religions',
+            'hr_specializations',
+            'hr_universities',
+        ])
         ->and(hrMenuItemByLabel([$humanResources], 'hr_employees')['text'])->toBe('Employees')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_sections')['text'])->toBe('Job Sections')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_jobs')['text'])->toBe('Jobs')
@@ -531,7 +569,7 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
     expect($lookupOnlyHr)->not->toBeNull();
-    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['hr_setup', 'attendance_leave'])
+    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['employee_self_service', 'hr_countries'])
         ->and(hrMenuItemByLabel([$lookupOnlyHr], 'hr_countries'))->not->toBeNull();
 });
 

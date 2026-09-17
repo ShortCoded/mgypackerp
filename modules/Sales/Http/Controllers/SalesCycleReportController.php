@@ -21,7 +21,11 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\HR\Models\HrArea;
+use Modules\HR\Models\HrCity;
+use Modules\HR\Models\HrCountry;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrGovernorate;
 use Modules\Sales\Exports\SalesCycleReportExport;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
@@ -58,6 +62,7 @@ class SalesCycleReportController extends Controller
         $to = $request->date('to');
         $filters = collect([
             'currency_doc_num', 'warehouse_uuid', 'category_doc_num', 'customer_doc_num', 'product_doc_num', 'sales_person_doc_num', 'branch_doc_num',
+            'country_doc_num', 'governorate_doc_num', 'city_doc_num', 'area_doc_num',
             'quotation_doc_num', 'order_doc_num', 'invoice_doc_num', 'quotation_status',
             'order_status', 'overdue_state', 'payment_state', 'return_reason', 'quality_disposition',
         ])->mapWithKeys(fn (string $field): array => [$field => $request->string($field)->trim()->toString()])->all();
@@ -71,6 +76,19 @@ class SalesCycleReportController extends Controller
         $categoryId = $this->contextId(ItemCategory::query()->where('company_id', $companyId), $filters['category_doc_num']);
         $warehouseId = $filters['warehouse_uuid'] === '' ? null : (BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $companyId))->where('public_uuid', $filters['warehouse_uuid'])->value('id') ?? -1);
         $customerId = $this->contextId(Customer::query()->where('company_id', $companyId), $filters['customer_doc_num']);
+        $countryId = $this->contextId(HrCountry::query(), $filters['country_doc_num']);
+        $governorateId = $this->contextId(HrGovernorate::query(), $filters['governorate_doc_num']);
+        $cityId = $this->contextId(HrCity::query(), $filters['city_doc_num']);
+        $areaId = $this->contextId(HrArea::query(), $filters['area_doc_num']);
+        $hasGeographyFilter = (bool) ($countryId || $governorateId || $cityId || $areaId);
+        $geographyCustomerIds = $hasGeographyFilter
+            ? Customer::query()->forCompany($companyId)
+                ->when($countryId, fn (Builder $query) => $query->where('country_id', $countryId))
+                ->when($governorateId, fn (Builder $query) => $query->where('governorate_id', $governorateId))
+                ->when($cityId, fn (Builder $query) => $query->where('city_id', $cityId))
+                ->when($areaId, fn (Builder $query) => $query->where('area_id', $areaId))
+                ->pluck('id')
+            : null;
         $productId = $this->contextId(Product::query()->where('company_id', $companyId), $filters['product_doc_num']);
         $salesPersonId = $this->contextId(HrEmployee::query()->where('company_id', $context['company_id']), $filters['sales_person_doc_num']);
         $branchId = $this->contextId(Branch::query()->where('company_id', $companyId), $filters['branch_doc_num']) ?? (int) $context['branch_id'];
@@ -94,7 +112,7 @@ class SalesCycleReportController extends Controller
         $returnReason = in_array($filters['return_reason'], $returnReasons, true) ? $filters['return_reason'] : null;
         $qualityDisposition = in_array($filters['quality_disposition'], ['saleable', 'quarantine', 'rework', 'scrap'], true) ? $filters['quality_disposition'] : null;
 
-        $applyOrderFilters = static function ($query) use ($customerId, $productId, $salesPersonId, $branchId, $quotationId, $orderId, $orderStatus, $overdueState, $currencyId, $warehouseId, $categoryId) {
+        $applyOrderFilters = static function ($query) use ($customerId, $geographyCustomerIds, $productId, $salesPersonId, $branchId, $quotationId, $orderId, $orderStatus, $overdueState, $currencyId, $warehouseId, $categoryId) {
             return $query->where('currency_id', $currencyId)
                 ->when($warehouseId, fn ($builder) => $builder->where(function ($warehouseQuery) use ($warehouseId): void {
                     $warehouseQuery->where('branch_store_id', $warehouseId)
@@ -104,6 +122,7 @@ class SalesCycleReportController extends Controller
                 }))
                 ->when($categoryId, fn ($builder) => $builder->whereHas('lines.product', fn ($product) => $product->where('item_category_id', $categoryId)))
                 ->when($customerId, fn ($builder) => $builder->where('customer_id', $customerId))
+                ->when($geographyCustomerIds !== null, fn ($builder) => $builder->whereIn('customer_id', $geographyCustomerIds))
                 ->when($productId, fn ($builder) => $builder->whereHas('lines', fn ($lines) => $lines->where('product_id', $productId)))
                 ->when($salesPersonId, fn ($builder) => $builder->where('business_employee_id', $salesPersonId))
                 ->when($branchId, fn ($builder) => $builder->where('branch_id', $branchId))
@@ -119,9 +138,10 @@ class SalesCycleReportController extends Controller
             ? $applyOrderFilters(SalesOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId))->pluck('id')
             : collect();
 
-        $applyInvoiceFilters = static function ($query) use ($customerId, $productId, $branchId, $invoiceId, $paymentState, $hasOrderFilter, $filteredOrderIds, $currencyId) {
+        $applyInvoiceFilters = static function ($query) use ($customerId, $geographyCustomerIds, $productId, $branchId, $invoiceId, $paymentState, $hasOrderFilter, $filteredOrderIds, $currencyId) {
             return $query->where('customer_invoices.currency_id', $currencyId)
                 ->when($customerId, fn ($builder) => $builder->where('customer_invoices.customer_id', $customerId))
+                ->when($geographyCustomerIds !== null, fn ($builder) => $builder->whereIn('customer_invoices.customer_id', $geographyCustomerIds))
                 ->when($branchId, fn ($builder) => $builder->where('customer_invoices.branch_id', $branchId))
                 ->when($invoiceId, fn ($builder) => $builder->where('customer_invoices.id', $invoiceId))
                 ->when($hasOrderFilter, fn ($builder) => $builder->whereIn('customer_invoices.sales_order_id', $filteredOrderIds))
@@ -173,6 +193,7 @@ class SalesCycleReportController extends Controller
         $quotations = Quotation::query()->with(['customer', 'currentRevision'])
             ->where('company_id', $companyId)->where('currency_id', $currencyId)
             ->when($customerId, fn ($query) => $query->where('customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('customer_id', $geographyCustomerIds))
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->when($salesPersonId, fn ($query) => $query->where('business_employee_id', $salesPersonId))
             ->when($quotationId, fn ($query) => $query->whereKey($quotationId))
@@ -230,6 +251,7 @@ class SalesCycleReportController extends Controller
             ->where('branch_id', $branchId)
             ->where('currency_id', $currencyId)
             ->when($customerId, fn (Builder $query) => $query->where('customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn (Builder $query) => $query->whereIn('customer_id', $geographyCustomerIds))
             ->when($salesPersonId, fn (Builder $query) => $query->whereHas('order', fn (Builder $order) => $order->where('business_employee_id', $salesPersonId)))
             ->when($orderId, fn (Builder $query) => $query->where(fn (Builder $source) => $source
                 ->where('sales_order_id', $orderId)
@@ -258,6 +280,7 @@ class SalesCycleReportController extends Controller
                     ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
             })
             ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('sales_returns.customer_id', $geographyCustomerIds))
             ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
             ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
             ->when($orderId, fn ($query) => $query->where('sales_returns.sales_order_id', $orderId))
@@ -273,6 +296,7 @@ class SalesCycleReportController extends Controller
                     ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
             })
             ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('sales_returns.customer_id', $geographyCustomerIds))
             ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
             ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
             ->when($orderId, fn ($query) => $query->where('sales_returns.sales_order_id', $orderId))
@@ -285,6 +309,7 @@ class SalesCycleReportController extends Controller
 
         $readService = app(SalesCycleReadService::class);
         $readFilters = ['customer_id' => $customerId, 'product_id' => $productId, 'category_id' => $categoryId, 'currency_id' => $currencyId,
+            'customer_ids' => $geographyCustomerIds,
             'branch_store_id' => $warehouseId, 'sales_person_id' => $salesPersonId, 'order_id' => $orderId, 'invoice_id' => $invoiceId,
             'overdue_state' => $overdueState, 'payment_state' => $paymentState, 'from' => $from, 'to' => $to];
         $ledgerQuery = $readService->ledger($companyId, $branchId, $readFilters)->withSum(['creditNotes as returns_amount' => fn ($query) => $query->where('posting_status', 'posted')], 'total_amount');
@@ -308,6 +333,7 @@ class SalesCycleReportController extends Controller
             $customersWithoutPriceLists = DB::table('customers as pricing_customers')
                 ->where('pricing_customers.company_id', $companyId)->where('pricing_customers.status', 'active')->whereNull('pricing_customers.deleted_at')
                 ->when($customerId, fn ($query) => $query->where('pricing_customers.id', $customerId))
+                ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('pricing_customers.id', $geographyCustomerIds))
                 ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('price_lists as customer_price_lists')
                     ->whereColumn('customer_price_lists.customer_id', 'pricing_customers.id')
                     ->where('customer_price_lists.company_id', $companyId)->where('customer_price_lists.currency_id', $currencyId)
@@ -321,6 +347,7 @@ class SalesCycleReportController extends Controller
                 ->whereColumn('coverage_products.company_id', 'coverage_customers.company_id')->where('coverage_products.status', 'active')->whereNull('coverage_products.deleted_at')
                 ->whereIn('coverage_products.item_classification', Product::salesItemClassifications())
                 ->when($customerId, fn ($query) => $query->where('coverage_customers.id', $customerId))
+                ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('coverage_customers.id', $geographyCustomerIds))
                 ->when($productId, fn ($query) => $query->where('coverage_products.id', $productId))
                 ->when($categoryId, fn ($query) => $query->where('coverage_products.item_category_id', $categoryId))
                 ->whereNotExists(function ($query) use ($companyId, $currencyId, $pricingDate): void {
@@ -343,6 +370,10 @@ class SalesCycleReportController extends Controller
             'quotation' => $quotationId && $quotationId > 0 ? Quotation::query()->where('company_id', $companyId)->find($quotationId) : null,
             'order' => $orderId && $orderId > 0 ? SalesOrder::query()->where('company_id', $companyId)->find($orderId) : null,
             'invoice' => $invoiceId && $invoiceId > 0 ? CustomerInvoice::query()->where('company_id', $companyId)->find($invoiceId) : null,
+            'country' => $countryId && $countryId > 0 ? HrCountry::query()->find($countryId) : null,
+            'governorate' => $governorateId && $governorateId > 0 ? HrGovernorate::query()->find($governorateId) : null,
+            'city' => $cityId && $cityId > 0 ? HrCity::query()->find($cityId) : null,
+            'area' => $areaId && $areaId > 0 ? HrArea::query()->find($areaId) : null,
         ];
 
         return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));

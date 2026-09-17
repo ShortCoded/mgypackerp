@@ -7,6 +7,11 @@
         'phone',
         'account_group_doc_num',
         'account_doc_num',
+        'country_doc_num',
+        'governorate_doc_num',
+        'city_doc_num',
+        'area_doc_num',
+        'data_completeness',
         'status',
         'created_from',
         'created_to'

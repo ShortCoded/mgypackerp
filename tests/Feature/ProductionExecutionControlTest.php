@@ -209,8 +209,10 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain('$numbers->format($reportTotals[\'quantity_in\'])')
         ->not->toContain('One ledger-backed dataset powers this screen');
 
-    expect(file_get_contents(resource_path('views/modules/inventory/stock-counts/show.blade.php')))
-        ->toContain('$numbers->format($line->system_quantity)')
+    expect(file_get_contents(base_path('modules/Inventory/Http/Controllers/StockCountController.php')))
+        ->toContain("'system_quantity' => \$this->numbers->format(\$line->system_quantity)");
+    expect(file_get_contents(resource_path('views/modules/inventory/stock-counts/form.blade.php')))
+        ->toContain("\$line['system_quantity'] ?? 0")
         ->toContain('arrow-step="1"')
         ->not->toContain('type="number" step="0.00000001"');
     expect(trans('roles.permission_labels.labor', [], 'ar'))->toBe('تسجيل العمالة والساعات')

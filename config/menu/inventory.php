@@ -71,6 +71,19 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'inventory_valuation_report',
+                'title' => 'Inventory Valuation Comparison',
+                'icon' => 'balance-scale',
+                'route' => 'admin.inventory.reports.valuation',
+                'permission' => 'inventory.reports.financial',
+                'keywords' => ['inventory valuation', 'moving average', 'periodic average', 'fifo', 'تقييم المخزون'],
+                'actions' => [
+                    'view' => 'inventory.reports.financial',
+                ],
+                'active' => ['admin.inventory.reports.valuation'],
+                'children' => [],
+            ],
+            [
                 'label' => 'production_reports_receipts',
                 'title' => 'Finished Goods Receipts Report',
                 'icon' => 'dolly-flatbed',

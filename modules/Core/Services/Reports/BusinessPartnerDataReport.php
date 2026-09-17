@@ -54,6 +54,11 @@ abstract class BusinessPartnerDataReport
         'phone',
         'account_group_doc_num',
         'account_doc_num',
+        'country_doc_num',
+        'governorate_doc_num',
+        'city_doc_num',
+        'area_doc_num',
+        'data_completeness',
         'status',
         'created_from',
         'created_to',
@@ -173,6 +178,17 @@ abstract class BusinessPartnerDataReport
 
         if (! in_array($filters['status'] ?? null, ['active', 'inactive'], true)) {
             unset($filters['status']);
+        }
+
+        if (! in_array($filters['data_completeness'] ?? null, [
+            'complete',
+            'any_issue',
+            'missing_location',
+            'missing_address',
+            'missing_contact',
+            'legacy_unlinked_location',
+        ], true)) {
+            unset($filters['data_completeness']);
         }
 
         foreach (['created_from', 'created_to'] as $dateFilter) {
@@ -407,6 +423,11 @@ abstract class BusinessPartnerDataReport
             'phone' => __('business_partner_reports.filters.phone_or_mobile'),
             'account_group_doc_num' => $fields['account_group'],
             'account_doc_num' => $fields['account'],
+            'country_doc_num' => $fields['country'],
+            'governorate_doc_num' => $fields['governorate'],
+            'city_doc_num' => $fields['city'],
+            'area_doc_num' => $fields['area'],
+            'data_completeness' => __('business_partner_reports.filters.data_completeness'),
             'status' => $fields['status'],
             'created_from' => __('business_partner_reports.filters.created_from'),
             'created_to' => __('business_partner_reports.filters.created_to'),
@@ -536,6 +557,10 @@ abstract class BusinessPartnerDataReport
         foreach ([
             'account_doc_num' => 'partner_accounts.doc_num',
             'account_group_doc_num' => 'partner_account_groups.doc_num',
+            'country_doc_num' => 'partner_countries.doc_num',
+            'governorate_doc_num' => 'partner_governorates.doc_num',
+            'city_doc_num' => 'partner_cities.doc_num',
+            'area_doc_num' => 'partner_areas.doc_num',
         ] as $filter => $column) {
             $value = $this->stringFilter($filters[$filter] ?? null);
 
@@ -549,6 +574,12 @@ abstract class BusinessPartnerDataReport
         if ($status !== null && in_array($status, ['active', 'inactive'], true)) {
             $query->where("{$table}.status", $status);
         }
+
+        $this->applyDataCompletenessFilter(
+            $query,
+            $table,
+            $this->stringFilter($filters['data_completeness'] ?? null),
+        );
 
         $from = $this->dates->parseDate($this->stringFilter($filters['created_from'] ?? null));
         $to = $this->dates->parseDate($this->stringFilter($filters['created_to'] ?? null));
@@ -687,7 +718,82 @@ abstract class BusinessPartnerDataReport
             return '';
         }
 
-        return $key === 'status' ? $this->statusLabel($value) : $this->plainText($value);
+        if ($key === 'status') {
+            return $this->statusLabel($value);
+        }
+
+        if ($key === 'data_completeness') {
+            $translationKey = "business_partner_reports.completeness.{$value}";
+
+            return trans()->has($translationKey) ? __($translationKey) : $this->plainText($value);
+        }
+
+        return $this->plainText($value);
+    }
+
+    /**
+     * @param  Builder<Model>  $query
+     */
+    private function applyDataCompletenessFilter(Builder $query, string $table, ?string $filter): void
+    {
+        if ($filter === null) {
+            return;
+        }
+
+        $missingLocation = function (Builder $query) use ($table): void {
+            $query
+                ->whereNull("{$table}.country_id")
+                ->orWhereNull("{$table}.governorate_id")
+                ->orWhereNull("{$table}.city_id");
+        };
+        $missingAddress = fn (Builder $query): Builder => $query->whereRaw(
+            "NULLIF(TRIM(COALESCE({$table}.address, '')), '') IS NULL"
+        );
+        $missingContact = function (Builder $query) use ($table): void {
+            $query
+                ->whereRaw("NULLIF(TRIM(COALESCE({$table}.phone, '')), '') IS NULL")
+                ->whereRaw("NULLIF(TRIM(COALESCE({$table}.mobile, '')), '') IS NULL")
+                ->whereRaw("NULLIF(TRIM(COALESCE({$table}.email, '')), '') IS NULL");
+        };
+        $legacyUnlinked = function (Builder $query) use ($table): void {
+            foreach ([
+                'country_id' => 'country',
+                'governorate_id' => 'governorate',
+                'city_id' => 'city',
+            ] as $idColumn => $legacyColumn) {
+                $query->orWhere(function (Builder $query) use ($idColumn, $legacyColumn, $table): void {
+                    $query
+                        ->whereNull("{$table}.{$idColumn}")
+                        ->whereRaw("NULLIF(TRIM(COALESCE({$table}.{$legacyColumn}, '')), '') IS NOT NULL");
+                });
+            }
+        };
+
+        match ($filter) {
+            'complete' => $query
+                ->whereNotNull("{$table}.country_id")
+                ->whereNotNull("{$table}.governorate_id")
+                ->whereNotNull("{$table}.city_id")
+                ->whereRaw("NULLIF(TRIM(COALESCE({$table}.address, '')), '') IS NOT NULL")
+                ->where(function (Builder $query) use ($table): void {
+                    $query
+                        ->whereRaw("NULLIF(TRIM(COALESCE({$table}.phone, '')), '') IS NOT NULL")
+                        ->orWhereRaw("NULLIF(TRIM(COALESCE({$table}.mobile, '')), '') IS NOT NULL")
+                        ->orWhereRaw("NULLIF(TRIM(COALESCE({$table}.email, '')), '') IS NOT NULL");
+                }),
+            'missing_location' => $query->where($missingLocation),
+            'missing_address' => $query->where($missingAddress),
+            'missing_contact' => $query->where($missingContact),
+            'legacy_unlinked_location' => $query->where($legacyUnlinked),
+            'any_issue' => $query->where(function (Builder $query) use ($legacyUnlinked, $missingAddress, $missingContact, $missingLocation): void {
+                $query
+                    ->where($missingLocation)
+                    ->orWhere($missingAddress)
+                    ->orWhere($missingContact)
+                    ->orWhere($legacyUnlinked);
+            }),
+            default => null,
+        };
     }
 
     /**

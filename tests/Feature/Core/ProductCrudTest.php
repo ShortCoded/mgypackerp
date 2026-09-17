@@ -2594,12 +2594,12 @@ test('product bom requests require compatible units without rejecting unitless d
 
 test('invalid submitted product components reject master creation', function () {
     $actor = productCrudActor(['products.create']);
-    $nonRawProduct = Product::query()->create([
+    $nonComponentProduct = Product::query()->create([
         'company_id' => $this->productCompany->getKey(),
         'doc_number' => 72,
         'doc_num' => 'Product-00072',
-        'name' => 'Finished Chair',
-        'item_classification' => Product::ClassificationFinishedProduct,
+        'name' => 'Freight Service',
+        'item_classification' => Product::ClassificationService,
         'status' => 'active',
     ]);
 
@@ -2608,7 +2608,7 @@ test('invalid submitted product components reject master creation', function () 
             'name' => 'Invalid Component Master',
             'components' => [
                 [
-                    'component_product_doc_num' => $nonRawProduct->doc_num,
+                    'component_product_doc_num' => $nonComponentProduct->doc_num,
                     'quantity' => '1',
                 ],
             ],

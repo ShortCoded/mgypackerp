@@ -66,7 +66,8 @@ test('default database seeder is baseline only and idempotent', function (): voi
         ->and(Permission::query()->whereIn('name', $registryPermissions)->where('guard_name', 'web')->count())->toBe(count($registryPermissions))
         ->and(Permission::query()->select('name', 'guard_name')->groupBy('name', 'guard_name')->havingRaw('COUNT(*) > 1')->count())->toBe(0)
         ->and(Permission::query()->count())->toBe($firstPermissionCount)
-        ->and(DB::table('account_classifications')->count())->toBe(0)
+        ->and(DB::table('account_classifications')->count())->toBe(1)
+        ->and(DB::table('account_classifications')->value('code'))->toBe('expenses')
         ->and(DB::table('currencies')->count())->toBe(0)
         ->and(DB::table('products')->count())->toBe(0)
         ->and(Account::query()->where('company_id', $company->getKey())->count())->toBe(5)
@@ -115,7 +116,7 @@ test('protected root accounts cannot be deleted individually or in bulk', functi
     $this->withSession($session)
         ->actingAs($admin)
         ->deleteJson(route('admin.accounting.accounts.destroy', $root->doc_num))
-        ->assertStatus(422)
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     expect($root->refresh()->trashed())->toBeFalse();
@@ -125,7 +126,7 @@ test('protected root accounts cannot be deleted individually or in bulk', functi
         ->deleteJson(route('admin.accounting.accounts.bulk-delete'), [
             'doc_nums' => [$root->doc_num],
         ])
-        ->assertStatus(422)
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     expect($root->refresh()->trashed())->toBeFalse();
@@ -140,7 +141,7 @@ test('protected root cost centers cannot be deleted individually or in bulk', fu
     $this->withSession($session)
         ->actingAs($admin)
         ->deleteJson(route('admin.accounting.cost-centers.destroy', $root->doc_num))
-        ->assertStatus(422)
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     expect($root->refresh()->trashed())->toBeFalse();
@@ -150,7 +151,7 @@ test('protected root cost centers cannot be deleted individually or in bulk', fu
         ->deleteJson(route('admin.accounting.cost-centers.bulk-delete'), [
             'doc_nums' => [$root->doc_num],
         ])
-        ->assertStatus(422)
+        ->assertStatus(409)
         ->assertJsonPath('success', false);
 
     expect($root->refresh()->trashed())->toBeFalse();

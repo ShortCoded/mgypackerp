@@ -4,6 +4,7 @@ return [
     'title' => 'Trial Balance',
     'actions' => [
         'run' => 'Run report',
+        'toggle' => 'Expand or collapse account group',
     ],
     'filters' => [
         'from_date' => 'From date',
@@ -11,7 +12,26 @@ return [
         'branch' => 'Branch',
         'cost_center' => 'Cost center',
         'include_zero' => 'Include accounts with no balance or movement',
+        'value_mode' => 'Value type',
+        'totals_basis' => 'Totals basis',
+        'display_mode' => 'Display level',
+        'level' => 'Account-tree level',
+        'level_value' => 'Level :level',
         'all' => 'All',
+    ],
+    'value_modes' => [
+        'totals' => 'Debit and credit totals',
+        'balances' => 'Opening and ending balances',
+        'combined' => 'Totals and balances',
+    ],
+    'totals_bases' => [
+        'period' => 'Selected-period movement',
+        'cumulative' => 'All posted movement through the end date',
+    ],
+    'display_modes' => [
+        'aggregate' => 'Aggregated at selected level',
+        'detail' => 'Accounts with direct journal activity',
+        'tree' => 'Expandable account tree',
     ],
     'columns' => [
         'account_code' => 'Account code',
@@ -27,6 +47,16 @@ return [
         'ending_debit' => 'Debit',
         'ending_credit' => 'Credit',
     ],
+    'headings' => [
+        'opening_debit' => 'Opening debit balance',
+        'opening_credit' => 'Opening credit balance',
+        'period_debit' => 'Period debit movement',
+        'period_credit' => 'Period credit movement',
+        'cumulative_debit' => 'Cumulative debit movement',
+        'cumulative_credit' => 'Cumulative credit movement',
+        'ending_debit' => 'Ending debit balance',
+        'ending_credit' => 'Ending credit balance',
+    ],
     'status' => [
         'active' => 'Active',
         'inactive' => 'Inactive / historical',
@@ -39,6 +69,7 @@ return [
         'posted_source_only' => 'Calculated exclusively from posted journal lines in the operating company. Opening balances include posted entries before the selected range.',
         'balanced' => 'Balanced',
         'unbalanced' => 'Out of balance',
+        'partial_scope' => 'Partial analytical scope — debit and credit need not balance',
         'no_accounts' => 'No posted balances or movements match the selected filters.',
         'operating_context_required' => 'Select an operating company and financial period first.',
         'date_outside_period' => 'The report date range must be inside the selected financial period.',

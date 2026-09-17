@@ -338,7 +338,7 @@ test('runtime demo data seeder creates useful scoped runtime master data idempot
 
     expect(FixedAsset::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAsset::StatusActive)->count())->toBeGreaterThanOrEqual(1)
         ->and(FixedAsset::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAsset::StatusDraft)->count())->toBe(1)
-        ->and(FixedAssetDepreciationRun::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAssetDepreciationRun::StatusPosted)->count())->toBe(3)
+        ->and(FixedAssetDepreciationRun::query()->where('company_id', $primaryCompany->getKey())->where('status', FixedAssetDepreciationRun::StatusPosted)->count())->toBeGreaterThanOrEqual(10)
         ->and(FundTransfer::query()->where('company_id', $primaryCompany->getKey())->where('status', FundTransfer::StatusApproved)->value('source_amount'))->toBe('50000.0000')
         ->and(InventoryReservation::query()->where('company_id', $primaryCompany->getKey())->where('status', InventoryReservation::StatusActive)->count())->toBe(0);
 

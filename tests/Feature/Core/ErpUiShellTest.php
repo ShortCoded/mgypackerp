@@ -222,6 +222,7 @@ test('canonical fixed asset breadcrumbs follow the business domain hierarchy', f
 
     expect(collect($breadcrumbs)->pluck('label')->all())->toBe([
         'Dashboard',
+        'Accounting & Costing',
         'Fixed Assets',
         'Fixed Assets Register',
     ])->and($breadcrumbs[array_key_last($breadcrumbs)]['active'])->toBeTrue()
@@ -274,7 +275,7 @@ test('navigation styling provides readable interactive nested menus in both dire
             'position: fixed',
             'html[dir="ltr"] .navbar-top',
             'html[dir="rtl"] .navbar-top',
-            '@media (max-width: 991.98px)',
+            '@media (max-width: 1199.98px)',
             '#navbarVerticalNav .nav-link.dropdown-indicator::after',
         )
         ->and($navigationStyles)->not->toContain('calc(100% + .25rem)')
@@ -336,10 +337,20 @@ test('legacy placeholder permissions do not expose retired shells in navigation'
     $actor = User::factory()->create();
     $actor->givePermissionTo($permissions);
 
-    $visibleLabels = collect(app(MenuService::class)->getMenu($actor))
-        ->flatMap(fn (array $domain): array => collect($domain['children'] ?? [])
-            ->flatMap(fn (array $group): array => collect($group['children'] ?? [])->pluck('label')->all())
-            ->all());
+    $routedLabels = function (array $items) use (&$routedLabels): array {
+        $labels = [];
+
+        foreach ($items as $item) {
+            if (is_string($item['route'] ?? null) && $item['route'] !== '') {
+                $labels[] = $item['label'];
+            }
+
+            $labels = [...$labels, ...$routedLabels($item['children'] ?? [])];
+        }
+
+        return $labels;
+    };
+    $visibleLabels = collect($routedLabels(app(MenuService::class)->getMenu($actor)));
 
     expect($visibleLabels->intersect($aliases->pluck('key')))->toBeEmpty();
 });

@@ -3,6 +3,7 @@
 namespace Modules\Inventory\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
@@ -13,6 +14,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemCategory;
 use Modules\Core\Models\ItemColor;
 use Modules\Core\Models\ItemDecal;
@@ -31,6 +33,7 @@ use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Inventory\Services\InventoryReportService;
+use Modules\Inventory\Services\InventoryValuationService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class InventoryReportController extends Controller
@@ -41,6 +44,7 @@ class InventoryReportController extends Controller
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
         private readonly NumericFormatService $numbers,
+        private readonly InventoryValuationService $valuation,
     ) {}
 
     public function index(Request $request): View
@@ -81,6 +85,89 @@ class InventoryReportController extends Controller
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
             'numbers' => $this->numbers,
         ], 'inventory-operations-report.pdf');
+    }
+
+    public function valuation(Request $request): View
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
+
+        $filters = $request->validate([
+            'as_of' => ['nullable', 'date'],
+            'product_id' => ['nullable', 'integer'],
+            'branch_store_id' => ['nullable', 'integer'],
+        ]);
+        $period = FinancialPeriod::query()
+            ->where('company_id', $context['company_id'])
+            ->findOrFail($context['financial_period_id']);
+        $defaultAsOf = today()->betweenIncluded($period->from_date, $period->to_date)
+            ? today()->toDateString()
+            : $period->to_date->toDateString();
+        $asOf = (string) ($filters['as_of'] ?? $defaultAsOf);
+
+        if ($asOf < $period->from_date->toDateString() || $asOf > $period->to_date->toDateString()) {
+            throw ValidationException::withMessages([
+                'as_of' => __('validation.between.date', [
+                    'attribute' => __('inventory_accounting.valuation_report.as_of'),
+                    'min' => $period->from_date->toDateString(),
+                    'max' => $period->to_date->toDateString(),
+                ]),
+            ]);
+        }
+
+        $products = Product::query()
+            ->where('company_id', $context['company_id'])
+            ->whereIn('item_classification', Product::stockableItemClassifications())
+            ->orderBy('name')
+            ->get(['id', 'doc_num', 'name']);
+        $stores = BranchStore::query()
+            ->where('branch_id', $context['branch_id'])
+            ->orderBy('position')
+            ->orderBy('name')
+            ->get(['id', 'name']);
+        $selectedProduct = filled($filters['product_id'] ?? null)
+            ? $products->firstWhere('id', (int) $filters['product_id'])
+            : null;
+        $selectedStore = filled($filters['branch_store_id'] ?? null)
+            ? $stores->firstWhere('id', (int) $filters['branch_store_id'])
+            : null;
+
+        if ((filled($filters['product_id'] ?? null) && ! $selectedProduct)
+            || (filled($filters['branch_store_id'] ?? null) && ! $selectedStore)) {
+            throw ValidationException::withMessages([
+                'product_id' => __('inventory_accounting.errors.selection_scope'),
+            ]);
+        }
+
+        $comparison = null;
+        $comparisonError = null;
+
+        if ($selectedProduct && $selectedStore) {
+            try {
+                $comparison = $this->valuation->comparisonForStockPosition(
+                    (int) $context['company_id'],
+                    (int) $context['financial_period_id'],
+                    (int) $context['branch_id'],
+                    (int) $selectedStore->getKey(),
+                    (int) $selectedProduct->getKey(),
+                    $asOf,
+                );
+            } catch (DomainException $exception) {
+                $comparisonError = __($exception->getMessage());
+            }
+        }
+
+        return view('modules.inventory.reports.valuation', [
+            'asOf' => $asOf,
+            'period' => $period,
+            'products' => $products,
+            'stores' => $stores,
+            'selectedProduct' => $selectedProduct,
+            'selectedStore' => $selectedStore,
+            'comparison' => $comparison,
+            'comparisonError' => $comparisonError,
+            'numbers' => $this->numbers,
+        ]);
     }
 
     public function stockBalances(StockBalanceInquiryRequest $request): View

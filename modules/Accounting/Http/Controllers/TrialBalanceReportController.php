@@ -9,6 +9,7 @@ use Maatwebsite\Excel\Excel as ExcelFormat;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Exports\TrialBalanceReportExport;
 use Modules\Accounting\Http\Requests\TrialBalanceReportRequest;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Core\Models\Branch;
@@ -47,6 +48,7 @@ class TrialBalanceReportController extends Controller
             'operatingContext' => $this->operatingContext->current($request),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.accounting.reports.trial-balance'),
             'branches' => $this->branches($request),
+            'accountLevels' => $this->accountLevels($context),
         ]);
     }
 
@@ -95,6 +97,10 @@ class TrialBalanceReportController extends Controller
                 'branch_id' => $branch?->getKey(),
                 'cost_center_id' => $costCenterId ? (int) $costCenterId : null,
                 'include_zero' => $request->boolean('include_zero'),
+                'value_mode' => $validated['value_mode'],
+                'totals_basis' => $validated['totals_basis'],
+                'display_mode' => $validated['display_mode'],
+                'level' => isset($validated['level']) ? (int) $validated['level'] : null,
             ]),
             $validated,
         ];
@@ -109,6 +115,24 @@ class TrialBalanceReportController extends Controller
             ->orderBy('name')
             ->get()
             ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return list<int>
+     */
+    private function accountLevels(array $context): array
+    {
+        if (! is_numeric($context['company_id'] ?? null)) {
+            return [1];
+        }
+
+        $maximumLevel = (int) (Account::query()
+            ->withTrashed()
+            ->forCompany((int) $context['company_id'])
+            ->max('level') ?? 1);
+
+        return range(1, max(1, $maximumLevel));
     }
 
     /**
@@ -128,6 +152,10 @@ class TrialBalanceReportController extends Controller
             'branch_doc_num' => $validated['branch_doc_num'] ?? null,
             'cost_center_doc_num' => $validated['cost_center_doc_num'] ?? null,
             'include_zero' => $request->boolean('include_zero'),
+            'value_mode' => $validated['value_mode'],
+            'totals_basis' => $validated['totals_basis'],
+            'display_mode' => $validated['display_mode'],
+            'level' => isset($validated['level']) ? (int) $validated['level'] : null,
         ];
 
         if ($format !== null) {

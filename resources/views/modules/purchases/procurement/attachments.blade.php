@@ -21,7 +21,7 @@
                         <label class="btn btn-outline-primary btn-sm mb-0" for="procurement-document-camera">
                             <span class="fas fa-camera me-1" aria-hidden="true"></span>{{ __('procurement.ui.take_photos') }}
                         </label>
-                        <input
+                        <x-forms.input
                             class="visually-hidden js-procurement-camera-input"
                             id="procurement-document-camera"
                             type="file"
@@ -34,7 +34,7 @@
                             data-uploading-label="{{ __('procurement.ui.uploading_photos') }}"
                             data-uploaded-label="{{ __('procurement.ui.photos_uploaded') }}"
                             data-upload-error-label="{{ __('procurement.ui.photo_upload_failed') }}"
-                        >
+                        />
                     @endcan
                     <button type="button" class="btn btn-falcon-default btn-sm js-procurement-attachment-picker" data-input-name="attachment_file_doc_nums[]" data-remove-label="{{ __('Remove attachment') }}" data-file-picker data-picker-accept="document" data-picker-max="20" data-picker-title="{{ __('Choose attachment') }}" data-picker-collection="{{ $attachmentCollection }}" data-picker-allow-upload="{{ auth()->user()?->can('file_manager.upload') ? 'true' : 'false' }}">
                         <span class="fas fa-paperclip me-1"></span>{{ __('Choose attachment') }}

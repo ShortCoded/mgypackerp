@@ -116,11 +116,11 @@
                     </div>
                     <template data-labor-row-template>
                         <tr data-labor-row>
-                            <td><select class="form-select form-select-sm" name="labor_details[__INDEX__][employee_id]" required><option value="">—</option>@foreach($workers as $worker)<option value="{{ $worker->id }}">{{ $worker->doc_num }} — {{ $worker->full_name ?: $worker->name }}</option>@endforeach</select></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][role]" type="text"></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][planned_hours]" type="text" inputmode="decimal" min="0" step="0.25" data-numeric-input data-numeric-scale="2" data-numeric-min="0" data-numeric-arrow-step="1"></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][actual_hours]" type="text" inputmode="decimal" min="0.01" step="0.25" data-numeric-input data-numeric-scale="2" data-numeric-min="0.01" data-numeric-arrow-step="1" required></td>
-                            <td><input class="form-control form-control-sm" name="labor_details[__INDEX__][notes]" type="text"></td>
+                            <td><x-forms.select class="form-select-sm" name="labor_details[__INDEX__][employee_id]" required><option value="">—</option>@foreach($workers as $worker)<option value="{{ $worker->id }}">{{ $worker->doc_num }} — {{ $worker->full_name ?: $worker->name }}</option>@endforeach</x-forms.select></td>
+                            <td><x-forms.input class="form-control-sm" name="labor_details[__INDEX__][role]" type="text" /></td>
+                            <td><x-forms.numeric-input class="form-control-sm" name="labor_details[__INDEX__][planned_hours]" :scale="2" min="0" step="0.25" arrow-step="1" /></td>
+                            <td><x-forms.numeric-input class="form-control-sm" name="labor_details[__INDEX__][actual_hours]" :scale="2" min="0.01" step="0.25" arrow-step="1" required /></td>
+                            <td><x-forms.input class="form-control-sm" name="labor_details[__INDEX__][notes]" type="text" /></td>
                             <td><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-duplicate-labor-row aria-label="{{ __('production_execution.actions.duplicate_line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-sm btn-outline-danger" type="button" data-remove-labor-row aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></div></td>
                         </tr>
                     </template>

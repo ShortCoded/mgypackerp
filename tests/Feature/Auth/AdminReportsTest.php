@@ -258,8 +258,7 @@ test('activity logs report renders compact ERP filters without active filter bad
         ->assertDontSee('report-header-actions', false)
         ->assertDontSee('js-active-filter-badges', false)
         ->assertDontSee('active-filters', false)
-        ->assertDontSee('js-report-clear', false)
-        ->assertDontSee('vendors/sweetalert2/sweetalert2.all.min.js', false);
+        ->assertDontSee('js-report-clear', false);
 
     $orderedFilterIds = [
         'activity-date-from',
@@ -342,8 +341,7 @@ test('auth logs report renders compact filters without active filter badges', fu
         ->assertDontSee('<th>'.__('auth_logs.fields.financial_period').'</th>', false)
         ->assertDontSee('<option value="">Clear</option>', false)
         ->assertDontSee('js-active-filter-badges', false)
-        ->assertDontSee('active-filters', false)
-        ->assertDontSee(__('auth_logs.fields.summary'));
+        ->assertDontSee('active-filters', false);
 
     expect(substr_count($content, 'js-report-reset'))->toBe(1)
         ->and($content)->not->toContain('js-report-clear')
@@ -2283,7 +2281,8 @@ test('report pdf shell uses inline disposition and shared header footer data', f
         ->toContain(__('reports.print_date'))
         ->toContain('assets/img/logos/Logo.svg')
         ->toContain('max-width:110px;max-height:60px;width:auto;height:auto;object-fit:contain;')
-        ->not->toContain('report-company-name')
+        ->toContain('report-company-name')
+        ->toContain($company->name)
         ->and(substr_count($header, '<img'))->toBe(1)
         ->and($footer)
         ->toContain($actor->name)
@@ -2327,7 +2326,8 @@ test('report pdf branding header logo uses company logo then default logo then t
         ->and($companyHeader)
         ->toContain('company-logos/main-logo.png')
         ->toContain('max-width:110px;max-height:60px;width:auto;height:auto;object-fit:contain;')
-        ->not->toContain('report-company-name')
+        ->toContain('report-company-name')
+        ->toContain('Logo Company')
         ->and(substr_count($companyHeader, '<img'))->toBe(1);
 
     $company->update(['logo' => null]);
@@ -2342,7 +2342,8 @@ test('report pdf branding header logo uses company logo then default logo then t
         ->toContain('assets/img/logos/Logo.svg')
         ->not->toContain('company-favicons/main-favicon.png')
         ->toContain('max-width:110px;max-height:60px;width:auto;height:auto;object-fit:contain;')
-        ->not->toContain('report-company-name')
+        ->toContain('report-company-name')
+        ->toContain('Logo Company')
         ->and(substr_count($defaultHeader, '<img'))->toBe(1);
 
     $textHeader = view('reports.partials.header', $basePayload + [

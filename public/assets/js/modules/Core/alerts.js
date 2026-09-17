@@ -15,7 +15,9 @@
     }
 
     function syncTheme() {
-        document.documentElement.setAttribute('data-swal2-theme', currentTheme());
+        if (document.documentElement && typeof document.documentElement.setAttribute === 'function') {
+            document.documentElement.setAttribute('data-swal2-theme', currentTheme());
+        }
     }
 
     function cancelledResult() {

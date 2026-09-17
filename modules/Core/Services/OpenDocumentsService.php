@@ -109,6 +109,7 @@ class OpenDocumentsService
 
             return [
                 'success' => $summary['opened'] > 0,
+                ...($summary['opened'] === 0 ? ['type' => 'no_changes'] : []),
                 'message' => $messages[0] ?? __('open_documents.messages.none_reopenable'),
                 'messages' => $messages,
                 'summary' => $summary,

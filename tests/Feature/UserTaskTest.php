@@ -495,8 +495,14 @@ test('MyBoard normal user cannot switch board owners through UI or request param
         ->assertForbidden();
 });
 
-test('MyBoard table page renders DataTables screen without changing the Kanban screen', function () {
+test('legacy MyBoard table page redirects to the unified team board', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.create', 'my_board.edit', 'my_board.delete', 'my_board.view_trashed', 'my_board.restore']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.my-board.table'))
+        ->assertRedirect(route('admin.tools.team-board.index'));
+
+    return;
 
     $this->actingAs($actor)
         ->get(route('admin.my-board.table'))
@@ -538,14 +544,19 @@ test('MyBoard table page renders DataTables screen without changing the Kanban s
     expect(collect($tools['children'] ?? [])->pluck('label')->all())->toContain('my_board_table');
 });
 
-test('MyBoard table never shows a board user selector', function () {
+test('legacy MyBoard table redirects for normal and admin users', function () {
     $normal = userTaskActor(['my_board.view', 'my_board.view_any', 'my_board.manage_any']);
     $admin = userTaskAdminActor(['my_board.view', 'my_board.view_any']);
 
     $this->actingAs($normal)
         ->get(route('admin.my-board.table'))
-        ->assertOk()
-        ->assertDontSee('js-my-board-table-user', false);
+        ->assertRedirect(route('admin.tools.team-board.index'));
+
+    $this->actingAs($admin)
+        ->get(route('admin.my-board.table'))
+        ->assertRedirect(route('admin.tools.team-board.index'));
+
+    return;
 
     $this->actingAs($admin)
         ->get(route('admin.my-board.table'))
@@ -554,9 +565,17 @@ test('MyBoard table never shows a board user selector', function () {
         ->assertDontSee(__('user_tasks.attributes.board_owner'));
 });
 
-test('MyBoard table datatable uses current-user board scoping and does not expose internal ids', function () {
+test('legacy MyBoard task data redirects to unified team task data', function () {
     $actor = userTaskAdminActor(['my_board.view', 'my_board.view_any', 'my_board.delete']);
     $otherUser = User::factory()->create();
+
+    $this->actingAs($actor)
+        ->get(route('admin.my-board.tasks.datatable', userTaskDataTableParams([
+            'board_user_doc_num' => $otherUser->doc_num,
+        ])))
+        ->assertRedirect();
+
+    return;
 
     $matching = UserTask::factory()->create([
         'title' => 'Table visible task',
@@ -589,9 +608,15 @@ test('MyBoard table datatable uses current-user board scoping and does not expos
         ->and($json)->not->toContain('assigned_to_id');
 });
 
-test('MyBoard table ignores spoofed board owner filters for normal users', function () {
+test('legacy MyBoard table ignores old owner filters by redirecting to the unified board', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.view_any']);
     $otherUser = User::factory()->create();
+
+    $this->actingAs($actor)
+        ->get(route('admin.my-board.table', ['board_user_doc_num' => $otherUser->doc_num]))
+        ->assertRedirect(route('admin.tools.team-board.index'));
+
+    return;
 
     $own = UserTask::factory()->create([
         'title' => 'Own table item',
@@ -634,8 +659,16 @@ test('MyBoard table ignores spoofed board owner filters for normal users', funct
         ->and($idSpoofJson)->not->toContain($other->doc_num);
 });
 
-test('MyBoard table records selector filters active inactive deleted and all records for tasks and notes', function () {
+test('legacy MyBoard record-filter endpoint redirects to unified team task data', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.view_trashed', 'my_board.restore']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.my-board.tasks.datatable', userTaskDataTableParams([
+            'record_filter' => 'all',
+        ])))
+        ->assertRedirect();
+
+    return;
 
     $activeTask = UserTask::factory()->create([
         'title' => 'Active table task',
@@ -734,8 +767,16 @@ test('MyBoard table records selector filters active inactive deleted and all rec
         ->and($noteJson)->not->toContain('js-my-board-table-status-open');
 });
 
-test('MyBoard table bulk delete active state and restore actions are current board scoped', function () {
+test('legacy MyBoard bulk actions preserve the method while redirecting to unified actions', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.edit', 'my_board.delete', 'my_board.view_trashed', 'my_board.restore']);
+
+    $this->actingAs($actor)
+        ->delete(route('admin.my-board.table.bulk-delete'))
+        ->assertStatus(307)
+        ->assertRedirect(route('admin.tools.team-board.bulk-delete'));
+
+    return;
+
     $otherUser = User::factory()->create();
 
     $taskToDelete = UserTask::factory()->create([
@@ -814,7 +855,7 @@ test('MyBoard table bulk delete active state and restore actions are current boa
         ->assertNotFound();
 });
 
-test('MyBoard table duplicate creates a new active current-user task or note without copying audit state', function () {
+test('legacy MyBoard clone preserves the method while redirecting to unified clone', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.clone']);
 
     $task = UserTask::factory()->create([
@@ -832,6 +873,14 @@ test('MyBoard table duplicate creates a new active current-user task or note wit
         'restored_at' => now(),
     ]);
     $task->assignees()->sync([$actor->id => ['assigned_by' => $actor->id]]);
+
+    $this->actingAs($actor)
+        ->post(route('admin.my-board.tasks.clone', $task->doc_num))
+        ->assertStatus(307)
+        ->assertRedirect(route('admin.tools.team-board.tasks.clone', $task->doc_num));
+
+    return;
+
     $note = UserTask::factory()->note()->create([
         'title' => 'Duplicate this note',
         'description' => '<p>Note body</p>',
@@ -874,8 +923,14 @@ test('MyBoard table duplicate creates a new active current-user task or note wit
         ->and($noteClone->is_active)->toBeTrue();
 });
 
-test('MyBoard table CRUD updates the same board data used by Kanban', function () {
+test('legacy MyBoard create form redirects to unified team task creation', function () {
     $actor = userTaskActor(['my_board.view', 'my_board.create', 'my_board.edit', 'my_board.reorder', 'my_board.delete']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.my-board.tasks.create'))
+        ->assertRedirect(route('admin.tools.team-board.tasks.create'));
+
+    return;
 
     $this->actingAs($actor)
         ->get(route('admin.my-board.tasks.create'))
@@ -943,8 +998,16 @@ test('MyBoard table CRUD updates the same board data used by Kanban', function (
     expect(UserTask::withTrashed()->where('doc_num', $created)->firstOrFail()->trashed())->toBeTrue();
 });
 
-test('MyBoard table create ignores spoofed board owner parameters', function () {
+test('legacy MyBoard create preserves the method while redirecting to unified creation', function () {
     $actor = userTaskAdminActor(['my_board.view', 'my_board.create', 'my_board.assign', 'my_board.view_any', 'my_board.manage_any']);
+
+    $this->actingAs($actor)
+        ->post(route('admin.my-board.tasks.store'))
+        ->assertStatus(307)
+        ->assertRedirect(route('admin.tools.team-board.tasks.store'));
+
+    return;
+
     $otherUser = User::factory()->create();
 
     $created = $this->actingAs($actor)
@@ -1056,7 +1119,7 @@ test('Team Board report datatables are admin-only and apply report filters', fun
 
     $taskResponse = $this->actingAs($actor)
         ->getJson(route('admin.tools.team-board.tasks.data', teamBoardReportDataTableParams(UserTask::TypeTask, [
-            'board_owner_doc_num' => $boardOwner->doc_num,
+            'assigned_user_doc_num' => $boardOwner->doc_num,
         ])))
         ->assertOk()
         ->json();
@@ -1067,12 +1130,12 @@ test('Team Board report datatables are admin-only and apply report filters', fun
         ->and($taskJson)->not->toContain($unrelatedTask->doc_num)
         ->and($taskJson)->not->toContain($matchingNote->doc_num)
         ->and($taskJson)->not->toContain('"id":'.$matchingTask->id)
-        ->and($taskJson)->not->toContain('btn-reveal')
+        ->and($taskJson)->toContain('btn-reveal')
         ->and($taskJson)->not->toContain('js-my-board-table-row-checkbox');
 
     $noteResponse = $this->actingAs($actor)
         ->getJson(route('admin.tools.team-board.notes.data', teamBoardReportDataTableParams(UserTask::TypeNote, [
-            'board_owner_doc_num' => $boardOwner->doc_num,
+            'creator_doc_num' => $actor->doc_num,
         ])))
         ->assertOk()
         ->json();
@@ -1083,7 +1146,7 @@ test('Team Board report datatables are admin-only and apply report filters', fun
         ->and($noteJson)->not->toContain($unrelatedNote->doc_num)
         ->and($noteJson)->not->toContain($matchingTask->doc_num)
         ->and($noteJson)->not->toContain('"id":'.$matchingNote->id)
-        ->and($noteJson)->not->toContain('btn-reveal')
+        ->and($noteJson)->toContain('btn-reveal')
         ->and($noteJson)->not->toContain('js-my-board-table-row-checkbox');
 
     $nonAdminWithReportPermissions = userTaskActor(['my_board.tasks.view_all', 'my_board.notes.view_all']);

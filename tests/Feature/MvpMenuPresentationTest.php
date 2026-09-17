@@ -87,9 +87,7 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         'purchases',
         'inventory',
         'production',
-        'quality',
         'accounting_costing',
-        'maintenance',
         'human_resources',
         'reports',
         'tools',
@@ -102,14 +100,15 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         ->and(collect($menu)->pluck('label')->all())->not->toContain(
             'administration',
             'fixed_assets',
-            'finance',
+            'quality',
+            'maintenance',
             'general_ledger',
             'item_data',
             'planning_production',
         );
 });
 
-test('top navigation keeps quality maintenance inventory and production as separate business domains', function (): void {
+test('top navigation exposes three production departments and nests finance and fixed assets under accounting', function (): void {
     app()->setLocale('en');
 
     $admin = mvpAdminActor();
@@ -120,29 +119,36 @@ test('top navigation keeps quality maintenance inventory and production as separ
     $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
     $production = collect($menu)->firstWhere('label', 'production');
     $inventory = collect($menu)->firstWhere('label', 'inventory');
-    $quality = collect($menu)->firstWhere('label', 'quality');
-    $maintenance = collect($menu)->firstWhere('label', 'maintenance');
+    $productionManagement = collect($production['children'])->firstWhere('label', 'production_management');
+    $quality = collect($production['children'])->firstWhere('label', 'quality');
+    $maintenance = collect($production['children'])->firstWhere('label', 'maintenance');
     $sourceAccounting = collect($sourceMenu)->firstWhere('label', 'accounting_costing');
     $sourceFixedAssets = collect($sourceMenu)->firstWhere('label', 'fixed_assets');
+    $sourceProduction = collect($sourceMenu)->firstWhere('label', 'production');
+    $sourceFinance = collect($sourceMenu)->firstWhere('label', 'finance');
+    $sourceQuality = collect($sourceMenu)->firstWhere('label', 'quality');
+    $sourceMaintenance = collect($sourceMenu)->firstWhere('label', 'maintenance');
     $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
-    $expectedAccountingChildren = [
-        ...collect($sourceAccounting['children'])->pluck('label')->all(),
-        'fixed_assets',
-    ];
+    $finance = collect($accounting['children'])->firstWhere('label', 'finance');
+    $expectedAccountingChildren = ['general_accounting', 'finance', 'fixed_assets', 'cost_accounting', 'costing_operations', 'costing_analysis', 'accounting_costing_reports'];
+    $expectedProductionChildren = ['production_management', 'quality', 'maintenance'];
     $menuDestinations = mvpMenuDestinations($menu);
 
-    expect($topLevelLabels)->not->toContain('fixed_assets')
-        ->and($topLevelLabels)->toContain('inventory', 'production', 'quality', 'maintenance')
+    expect($topLevelLabels)->not->toContain('finance', 'fixed_assets', 'quality', 'maintenance')
+        ->and($topLevelLabels)->toContain('inventory', 'production', 'accounting_costing')
+        ->and($finance)->toBe($sourceFinance)
         ->and($fixedAssets)->toBe($sourceFixedAssets)
+        ->and($quality)->toBe($sourceQuality)
+        ->and($maintenance)->toBe($sourceMaintenance)
         ->and(collect($accounting['children'])->pluck('label')->all())->toBe($expectedAccountingChildren)
-        ->and(collect($production['children'])->pluck('label'))->toContain('production_operations', 'production_reports_operations')
-        ->and(collect($quality['children'])->pluck('label'))->toContain('quality_management')
+        ->and(collect($production['children'])->pluck('label')->all())->toBe($expectedProductionChildren)
+        ->and(collect($productionManagement['children'])->pluck('label')->all())->toBe(collect($sourceProduction['children'])->pluck('label')->all())
         ->and(mvpFindMenuItem($quality['children'], 'production_quality'))->not->toBeNull()
         ->and(mvpFindMenuItem($quality['children'], 'production_reports_quality'))->not->toBeNull()
         ->and(mvpFindMenuItem($inventory['children'], 'production_reports_receipts'))->not->toBeNull()
-        ->and(mvpFindMenuItem($production['children'], 'production_quality'))->toBeNull()
+        ->and(mvpFindMenuItem($productionManagement['children'], 'production_work_orders'))->not->toBeNull()
         ->and(mvpFindMenuItem($production['children'], 'production_reports_receipts'))->toBeNull()
-        ->and(mvpFindMenuItem($production['children'], 'maintenance'))->toBeNull()
+        ->and(mvpFindMenuItem($production['children'], 'maintenance'))->not->toBeNull()
         ->and(array_unique($menuDestinations))->toHaveCount(count($menuDestinations));
 
     $englishTopHtml = view('layouts.partials.menu.top-items', [
@@ -157,9 +163,11 @@ test('top navigation keeps quality maintenance inventory and production as separ
     app()->setLocale('ar');
     $arabicMenu = $menuService->getMenu($admin);
     $arabicAccounting = collect($arabicMenu)->firstWhere('label', 'accounting_costing');
+    $arabicFinance = collect($arabicAccounting['children'])->firstWhere('label', 'finance');
     $arabicFixedAssets = collect($arabicAccounting['children'])->firstWhere('label', 'fixed_assets');
-    $arabicQuality = collect($arabicMenu)->firstWhere('label', 'quality');
-    $arabicMaintenance = collect($arabicMenu)->firstWhere('label', 'maintenance');
+    $arabicProduction = collect($arabicMenu)->firstWhere('label', 'production');
+    $arabicQuality = collect($arabicProduction['children'])->firstWhere('label', 'quality');
+    $arabicMaintenance = collect($arabicProduction['children'])->firstWhere('label', 'maintenance');
     $arabicTopHtml = view('layouts.partials.menu.top-items', [
         'items' => $arabicMenu,
         'menuPath' => [],
@@ -170,15 +178,18 @@ test('top navigation keeps quality maintenance inventory and production as separ
     ])->render();
 
     expect($fixedAssets['text'])->toBe('Fixed Assets')
+        ->and($finance['text'])->toBe('Finance')
+        ->and($productionManagement['text'])->toBe('Production Management')
         ->and($quality['text'])->toBe('Quality')
         ->and($maintenance['text'])->toBe('Maintenance')
-        ->and($englishTopHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Quality', 'Maintenance')
-        ->and($englishVerticalHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Quality', 'Maintenance')
+        ->and($englishTopHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Production Management', 'Finance', 'Quality', 'Maintenance')
+        ->and($englishVerticalHtml)->toContain('Inventory', 'Manufacturing &amp; Production', 'Production Management', 'Finance', 'Quality', 'Maintenance')
+        ->and($arabicFinance['text'])->toBe('المالية')
         ->and($arabicFixedAssets['text'])->toBe('الأصول الثابتة')
         ->and($arabicQuality['text'])->toBe('الجودة')
         ->and($arabicMaintenance['text'])->toBe('الصيانة')
-        ->and($arabicTopHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'الجودة', 'الصيانة')
-        ->and($arabicVerticalHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'الجودة', 'الصيانة');
+        ->and($arabicTopHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'إدارة الإنتاج', 'المالية', 'الجودة', 'الصيانة')
+        ->and($arabicVerticalHtml)->toContain('المخزون', 'التصنيع والإنتاج', 'إدارة الإنتاج', 'المالية', 'الجودة', 'الصيانة');
 
     app()->setLocale('en');
 });
@@ -194,6 +205,7 @@ test('real MVP menu entries keep their existing routes and expanded entries use 
         ->and(mvpFindMenuItem($menu, 'suppliers')['route'])->toBe('admin.purchases.suppliers.index')
         ->and(mvpFindMenuItem($menu, 'cashboxes')['route'])->toBe('admin.finance.cashboxes.index')
         ->and(mvpFindMenuItem($menu, 'bank_accounts')['route'])->toBe('admin.finance.bank-accounts.index')
+        ->and(mvpFindMenuItem($menu, 'period_closing')['route'])->toBe('admin.financial-periods.closing')
         ->and(mvpFindMenuItem($menu, 'fixed_assets_register')['route'])->toBe('admin.fixed-assets.assets.index')
         ->and(mvpFindMenuItem($menu, 'opening_stocks')['route'])->toBe('admin.inventory.opening-stocks.index')
         ->and(mvpFindMenuItem($menu, 'opening_stock_pricings')['route'])->toBe('admin.inventory.opening-stock-pricings.index')
@@ -207,10 +219,9 @@ test('real MVP menu entries keep their existing routes and expanded entries use 
     foreach ([
         'costing_work_order_estimated_cost',
         'production_work_orders',
-        'quality_incoming_material_inspection',
-        'maintenance_maintenance_work_orders',
+        'production_quality',
+        'maintenance_orders',
         'hr_payroll_preparation',
-        'reports_finance_cashbox_balances',
     ] as $label) {
         $item = mvpFindMenuItem($menu, $label);
 
@@ -219,6 +230,18 @@ test('real MVP menu entries keep their existing routes and expanded entries use 
             ->and(Route::has($item['route']))->toBeTrue()
             ->and($item['url'])->not->toBe('#!');
     }
+});
+
+test('finance-only permission remains reachable through accounting without a general-accounting permission', function (): void {
+    $actor = mvpMenuActor(['bank_accounts.view']);
+    $menu = app(MenuService::class)->getMenu($actor);
+    $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
+
+    expect(collect($menu)->pluck('label'))->not->toContain('finance')
+        ->and($accounting)->not->toBeNull()
+        ->and(collect($accounting['children'])->pluck('label')->all())->toBe(['finance'])
+        ->and(mvpFindMenuItem($accounting['children'], 'bank_accounts'))->not->toBeNull()
+        ->and(mvpFindMenuItem($accounting['children'], 'chart_of_accounts'))->toBeNull();
 });
 
 test('former placeholder route aliases render their current UI shell target', function (): void {
@@ -273,21 +296,21 @@ test('HR menu keeps detailed HR screens under its independent domain', function 
         ->and(mvpMenuDestinations([$lookupOnlyHr]))->toHaveCount(2);
 });
 
-test('legacy phase-gated permission still gates its route alias and remains assigned to admin', function (): void {
+test('canonical maintenance permission gates its live route and remains assigned to admin', function (): void {
     $admin = mvpAdminActor();
-    $legacyPermission = 'maintenance.work_orders.view';
+    $permission = 'maintenance.orders.view';
 
-    expect(Permission::query()->where('name', $legacyPermission)->exists())->toBeTrue()
-        ->and(Role::query()->where('name', 'admin')->firstOrFail()->hasPermissionTo($legacyPermission))->toBeTrue();
+    expect(Permission::query()->where('name', $permission)->exists())->toBeTrue()
+        ->and(Role::query()->where('name', 'admin')->firstOrFail()->hasPermissionTo($permission))->toBeTrue();
 
     $this->actingAs($admin)
-        ->get(route('admin.maintenance.work-orders.index'))
+        ->get(route('admin.maintenance.orders.index'))
         ->assertOk();
 
     $unauthorized = User::factory()->create();
 
     $this->actingAs($unauthorized)
-        ->get(route('admin.maintenance.work-orders.index'))
+        ->get(route('admin.maintenance.orders.index'))
         ->assertForbidden();
 });
 
@@ -307,7 +330,11 @@ test('visible menu links resolve to existing routes without duplicate routes or 
             ->and($item['url'])->not->toBe('#!');
 
         $fingerprint = $route.'|'.json_encode($item['route_params'] ?? [], JSON_THROW_ON_ERROR);
-        $normalizedUrl = rtrim((string) parse_url($item['url'], PHP_URL_PATH), '/') ?: '/';
+        $path = rtrim((string) parse_url($item['url'], PHP_URL_PATH), '/') ?: '/';
+        $query = (string) parse_url($item['url'], PHP_URL_QUERY);
+        parse_str($query, $parameters);
+        ksort($parameters);
+        $normalizedUrl = $parameters === [] ? $path : $path.'?'.http_build_query($parameters);
 
         expect($seen)->not->toHaveKey($fingerprint);
         expect($seen)->not->toHaveKey($normalizedUrl);

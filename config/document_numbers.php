@@ -310,6 +310,20 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company',
     ],
+    'cost_overhead_allocation_rules' => [
+        'prefix' => 'OHAR-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
+    'cost_overhead_allocation_runs' => [
+        'prefix' => 'OHARUN-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
     'currencies' => [
         'prefix' => 'CUR-',
         'padding' => 5,

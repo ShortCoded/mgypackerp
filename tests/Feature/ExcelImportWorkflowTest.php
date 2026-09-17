@@ -22,6 +22,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -517,5 +518,5 @@ test('formula cells are rejected at their physical Excel row and produce an erro
         ->assertOk();
     $errorWorkbook = IOFactory::load($errorResponse->baseResponse->getFile()->getPathname());
 
-    expect($errorWorkbook->getSheetByName('Validation Errors'))->not->toBeNull();
+    expect($errorWorkbook->getSheetByName('Validation Errors') instanceof Worksheet)->toBeTrue();
 });

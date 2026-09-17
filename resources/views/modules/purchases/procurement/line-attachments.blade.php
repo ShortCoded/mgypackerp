@@ -55,7 +55,7 @@
                     <label class="btn btn-link btn-sm p-0 text-primary mb-0" for="procurement-line-camera-{{ $index }}">
                         <span class="fas fa-camera me-1" aria-hidden="true"></span>{{ __('procurement.ui.take_photo') }}
                     </label>
-                    <input
+                    <x-forms.input
                         class="visually-hidden js-procurement-camera-input"
                         id="procurement-line-camera-{{ $index }}"
                         type="file"
@@ -68,7 +68,7 @@
                         data-uploading-label="{{ __('procurement.ui.uploading_photos') }}"
                         data-uploaded-label="{{ __('procurement.ui.photos_uploaded') }}"
                         data-upload-error-label="{{ __('procurement.ui.photo_upload_failed') }}"
-                    >
+                    />
                 @endcan
             </div>
             <div class="js-procurement-attachment-inputs"></div>

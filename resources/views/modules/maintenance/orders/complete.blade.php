@@ -84,10 +84,10 @@
 
     <template id="maintenance-labor-template">
         <div class="row g-2 align-items-end mb-2" data-maintenance-labor-row>
-            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.participant_name') }}</label><input class="form-control" data-name="name" required></div>
-            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.discipline') }}</label><select class="form-select" data-name="discipline"><option value="">—</option>@foreach(['electrical', 'mechanical', 'molds', 'other'] as $discipline)<option value="{{ $discipline }}">{{ __('maintenance.disciplines.'.$discipline) }}</option>@endforeach</select></div>
-            <div class="col-md-2"><label class="form-label">{{ __('maintenance.fields.actual_hours') }}</label><input class="form-control" data-name="actual_hours" type="number" min="0.01" step="0.01" required></div>
-            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.notes') }}</label><input class="form-control" data-name="notes"></div>
+            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.participant_name') }}</label><x-forms.input data-name="name" required /></div>
+            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.discipline') }}</label><x-forms.select data-name="discipline"><option value="">—</option>@foreach(['electrical', 'mechanical', 'molds', 'other'] as $discipline)<option value="{{ $discipline }}">{{ __('maintenance.disciplines.'.$discipline) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-2"><label class="form-label">{{ __('maintenance.fields.actual_hours') }}</label><x-forms.input data-name="actual_hours" type="number" min="0.01" step="0.01" required /></div>
+            <div class="col-md-3"><label class="form-label">{{ __('maintenance.fields.notes') }}</label><x-forms.input data-name="notes" /></div>
             <div class="col-md-1"><button class="btn btn-outline-danger w-100" type="button" data-remove-maintenance-labor aria-label="{{ __('common.actions.delete') }}">&times;</button></div>
         </div>
     </template>

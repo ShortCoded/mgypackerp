@@ -52,6 +52,10 @@ class CompanyLocationSelect2Controller extends Controller
             || (bool) $user?->can('customers.edit')
             || (bool) $user?->can('suppliers.view')
             || (bool) $user?->can('suppliers.create')
-            || (bool) $user?->can('suppliers.edit');
+            || (bool) $user?->can('suppliers.edit')
+            || (bool) $user?->can('reports.customers.view')
+            || (bool) $user?->can('reports.suppliers.view')
+            || (bool) $user?->can('reports.sales.sales_orders.view')
+            || (bool) $user?->can('reports.purchases.view');
     }
 }

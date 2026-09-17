@@ -181,7 +181,8 @@ test('Open Document menu appears under Tools with permission', function (): void
     $actor = openDocumentsActor(['tools.open_documents.view']);
     $menu = app(MenuService::class)->getMenu($actor);
     $tools = collect($menu)->firstWhere('label', 'tools');
-    $openDocuments = collect($tools['children'] ?? [])->firstWhere('label', 'open_documents');
+    $filesAndDocuments = collect($tools['children'] ?? [])->firstWhere('label', 'files_documents');
+    $openDocuments = collect($filesAndDocuments['children'] ?? [])->firstWhere('label', 'open_documents');
 
     expect($openDocuments)->not->toBeNull()
         ->and($openDocuments['route'])->toBe('admin.tools.open-documents.index')
@@ -388,6 +389,7 @@ test('Open Document returns no-reopenable message when no documents are eligible
         ])
         ->assertOk()
         ->assertJsonPath('success', false)
+        ->assertJsonPath('type', 'no_changes')
         ->assertJsonPath('message', __('open_documents.messages.none_reopenable'))
         ->assertJsonPath('summary.opened', 0);
 });

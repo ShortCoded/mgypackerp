@@ -334,7 +334,7 @@ test('profile sessions and login activity are scoped to the current user and hid
         'os_name' => 'Linux',
         'device_type' => 'desktop',
         'login_at' => now()->subHour(),
-        'last_seen_at' => now()->subMinutes(10),
+        'last_seen_at' => now()->subMinute(),
         'context' => ['raw_session_secret' => 'session-json-secret'],
     ]);
 
@@ -347,7 +347,7 @@ test('profile sessions and login activity are scoped to the current user and hid
         'os_name' => 'macOS',
         'device_type' => 'desktop',
         'login_at' => now()->subHour(),
-        'last_seen_at' => now()->subMinutes(10),
+        'last_seen_at' => now()->subMinute(),
         'context' => ['raw_session_secret' => 'other-session-json-secret'],
     ]);
 
@@ -380,7 +380,9 @@ test('profile sessions and login activity are scoped to the current user and hid
         'context' => ['raw_auth_secret' => 'other-auth-json-secret'],
     ]);
 
-    $this->actingAs($user)
+    $this->withSession([
+        'auth_presence_session_fingerprints' => ['current-user-session-fingerprint'],
+    ])->actingAs($user)
         ->get(route('profile.show'))
         ->assertOk()
         ->assertSee(__('profile.sections.active_sessions'))

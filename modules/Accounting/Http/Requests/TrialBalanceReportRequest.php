@@ -3,8 +3,10 @@
 namespace Modules\Accounting\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
@@ -31,6 +33,14 @@ class TrialBalanceReportRequest extends FormRequest
                 $this->merge([$field => $dates->normalizeForStorage((string) $this->input($field))]);
             }
         }
+
+        if ($this->boolean('run') || $this->route('trial_balance_export_format')) {
+            $this->merge([
+                'value_mode' => $this->input('value_mode', TrialBalanceQueryService::ValueCombined),
+                'totals_basis' => $this->input('totals_basis', TrialBalanceQueryService::TotalsPeriod),
+                'display_mode' => $this->input('display_mode', TrialBalanceQueryService::DisplayTree),
+            ]);
+        }
     }
 
     /** @return array<string, mixed> */
@@ -47,6 +57,21 @@ class TrialBalanceReportRequest extends FormRequest
             'branch_doc_num' => ['nullable', 'string', 'max:255'],
             'cost_center_doc_num' => ['nullable', 'string', 'max:255'],
             'include_zero' => ['nullable', 'boolean'],
+            'value_mode' => ['required', Rule::in([
+                TrialBalanceQueryService::ValueTotals,
+                TrialBalanceQueryService::ValueBalances,
+                TrialBalanceQueryService::ValueCombined,
+            ])],
+            'totals_basis' => ['required', Rule::in([
+                TrialBalanceQueryService::TotalsPeriod,
+                TrialBalanceQueryService::TotalsCumulative,
+            ])],
+            'display_mode' => ['required', Rule::in([
+                TrialBalanceQueryService::DisplayAggregate,
+                TrialBalanceQueryService::DisplayDetail,
+                TrialBalanceQueryService::DisplayTree,
+            ])],
+            'level' => ['nullable', 'integer', 'min:1', 'max:99'],
         ];
     }
 

@@ -3,9 +3,37 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Accounting\Http\Controllers\AccountController;
 use Modules\Accounting\Http\Controllers\CostCenterController;
+use Modules\Accounting\Http\Controllers\CostingReportController;
+use Modules\Accounting\Http\Controllers\FinancialStatementReportController;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Http\Controllers\LedgerReportController;
+use Modules\Accounting\Http\Controllers\OverheadAllocationController;
 use Modules\Accounting\Http\Controllers\TrialBalanceReportController;
+
+Route::middleware(['auth', 'erp.expanded'])
+    ->prefix('admin/costing')
+    ->as('admin.costing.')
+    ->controller(OverheadAllocationController::class)
+    ->group(function (): void {
+        Route::get('/overhead-allocation-rules', 'rules')
+            ->middleware('can:costing.overhead_allocation_rules.view')
+            ->name('overhead-allocation-rules.index');
+        Route::post('/overhead-allocation-rules', 'storeRule')
+            ->middleware('can:costing.overhead_allocation_rules.create')
+            ->name('overhead-allocation-rules.store');
+        Route::get('/overhead-allocation-run', 'runs')
+            ->middleware('can:costing.overhead_allocation_run.view')
+            ->name('overhead-allocation-run.index');
+        Route::post('/overhead-allocation-run/preview', 'preview')
+            ->middleware('can:costing.overhead_allocation_run.create')
+            ->name('overhead-allocation-run.preview');
+        Route::post('/overhead-allocation-run/{allocationRun}/approve', 'approve')
+            ->middleware('can:costing.overhead_allocation_run.approve')
+            ->name('overhead-allocation-run.approve');
+        Route::post('/overhead-allocation-run/{allocationRun}/reverse', 'reverse')
+            ->middleware('can:costing.overhead_allocation_run.reverse')
+            ->name('overhead-allocation-run.reverse');
+    });
 
 Route::middleware('auth')
     ->prefix('admin/accounting')
@@ -82,6 +110,26 @@ Route::middleware('auth')
         Route::get('/reports/trial-balance', [TrialBalanceReportController::class, 'index'])
             ->middleware('can:reports.trial_balance.view')
             ->name('reports.trial-balance');
+
+        foreach (['excel', 'csv', 'pdf'] as $format) {
+            Route::get("/reports/financial-statements/export/{$format}", [FinancialStatementReportController::class, 'export'])
+                ->defaults('financial_statement_export_format', $format)
+                ->middleware('can:reports.financial_statements.export')
+                ->name("reports.financial-statements.export.{$format}");
+        }
+
+        Route::get('/reports/financial-statements', [FinancialStatementReportController::class, 'index'])
+            ->middleware('can:reports.financial_statements.view')
+            ->name('reports.financial-statements');
+
+        Route::prefix('reports/costing/export')
+            ->as('reports.costing.export.')
+            ->controller(CostingReportController::class)
+            ->group(function (): void {
+                Route::get('/excel', 'excel')->name('excel');
+                Route::get('/csv', 'csv')->name('csv');
+                Route::get('/pdf', 'pdf')->name('pdf');
+            });
 
         Route::prefix('accounts')
             ->name('accounts.')

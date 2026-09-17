@@ -75,6 +75,30 @@
                     @if($filterOptions['customer'])<option value="{{ $filterOptions['customer']->doc_num }}" selected>{{ $filterOptions['customer']->doc_num }} / {{ $filterOptions['customer']->name }}</option>@endif
                 </x-forms.select>
             </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_country" :label="__('fields.common.country')" />
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_country" name="country_doc_num" data-url="{{ route('admin.select2.countries') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true">
+                    @if($filterOptions['country'])<option value="{{ $filterOptions['country']->doc_num }}" selected>{{ $filterOptions['country']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_governorate" :label="__('fields.common.governorate')" />
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_governorate" name="governorate_doc_num" data-url="{{ route('admin.select2.governorates') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true" data-depends-on="#report_country" data-dependent-param="country_doc_num" data-disable-when-dependency-empty="true">
+                    @if($filterOptions['governorate'])<option value="{{ $filterOptions['governorate']->doc_num }}" selected>{{ $filterOptions['governorate']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_city" :label="__('fields.common.city')" />
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_city" name="city_doc_num" data-url="{{ route('admin.select2.cities') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true" data-depends-on="#report_governorate" data-dependent-param="governorate_doc_num" data-disable-when-dependency-empty="true">
+                    @if($filterOptions['city'])<option value="{{ $filterOptions['city']->doc_num }}" selected>{{ $filterOptions['city']->name }}</option>@endif
+                </x-forms.select>
+            </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_area" :label="__('fields.common.area')" />
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="report_area" name="area_doc_num" data-url="{{ route('admin.select2.areas') }}" data-placeholder="{{ __('All') }}" data-allow-clear="true" data-depends-on="#report_city" data-dependent-param="city_doc_num" data-disable-when-dependency-empty="true">
+                    @if($filterOptions['area'])<option value="{{ $filterOptions['area']->doc_num }}" selected>{{ $filterOptions['area']->name }}</option>@endif
+                </x-forms.select>
+            </div>
 
             @if(in_array($reportType, ['products', 'returns', 'fulfillment', 'pricing', 'operational'], true))
                 <div class="col-sm-6 col-xl-3">

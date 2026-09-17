@@ -8,7 +8,7 @@ use Modules\Production\Models\ProductionRun;
 
 class ProductionCostService
 {
-    /** @return array{issued: string, returned: string, waste: string, capitalizable: string, finished_goods: string, wip: string} */
+    /** @return array{issued: string, returned: string, waste: string, allocated_overhead: string, capitalizable: string, finished_goods: string, wip: string} */
     public function runPosition(ProductionRun $run): array
     {
         $issued = $this->documentCost($run, [
@@ -18,16 +18,31 @@ class ProductionCostService
         $returned = $this->documentCost($run, [InventoryDocument::TypeMaterialReturn]);
         $waste = $this->documentCost($run, [InventoryDocument::TypeProductionWaste]);
         $finishedGoods = $this->documentCost($run, [InventoryDocument::TypeProductionReceipt]);
-        $capitalizable = bcsub(bcsub($issued, $returned, 8), $waste, 8);
+        $allocatedOverhead = $this->allocatedOverhead($run);
+        $directMaterialCost = bcsub(bcsub($issued, $returned, 8), $waste, 8);
+        $capitalizable = bcadd($directMaterialCost, $allocatedOverhead, 8);
 
         return [
             'issued' => $issued,
             'returned' => $returned,
             'waste' => $waste,
+            'allocated_overhead' => $allocatedOverhead,
             'capitalizable' => $capitalizable,
             'finished_goods' => $finishedGoods,
             'wip' => bcsub($capitalizable, $finishedGoods, 8),
         ];
+    }
+
+    public function directMaterialCost(ProductionRun $run): string
+    {
+        $issued = $this->documentCost($run, [
+            InventoryDocument::TypeMaterialIssue,
+            InventoryDocument::TypeAdditionalMaterialIssue,
+        ]);
+        $returned = $this->documentCost($run, [InventoryDocument::TypeMaterialReturn]);
+        $waste = $this->documentCost($run, [InventoryDocument::TypeProductionWaste]);
+
+        return bcsub(bcsub($issued, $returned, 8), $waste, 8);
     }
 
     public function receiptCost(ProductionRun $run, string $receiptBaseQuantity): string
@@ -57,6 +72,18 @@ class ProductionCostService
             ->where('inventory_documents.status', InventoryDocument::StatusPosted)
             ->whereNull('inventory_document_lines.deleted_at')
             ->sum('inventory_document_lines.total_cost');
+
+        return bcadd((string) $cost, '0', 8);
+    }
+
+    private function allocatedOverhead(ProductionRun $run): string
+    {
+        $cost = DB::table('cost_overhead_allocation_lines')
+            ->join('cost_overhead_allocation_runs', 'cost_overhead_allocation_runs.id', '=', 'cost_overhead_allocation_lines.allocation_run_id')
+            ->where('cost_overhead_allocation_lines.production_run_id', $run->getKey())
+            ->where('cost_overhead_allocation_runs.company_id', $run->company_id)
+            ->where('cost_overhead_allocation_runs.status', 'posted')
+            ->sum('cost_overhead_allocation_lines.allocated_amount');
 
         return bcadd((string) $cost, '0', 8);
     }

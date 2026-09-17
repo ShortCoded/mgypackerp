@@ -270,7 +270,7 @@ test('egp currency is seeded as the active main currency and duplicate code fail
 
     $this->actingAs($actor)
         ->deleteJson(route('admin.currencies.destroy', $egp->doc_num))
-        ->assertStatus(422)
+        ->assertStatus(409)
         ->assertJsonPath('message', __('currencies.messages.delete_blocked_main'));
 });
 
@@ -313,11 +313,12 @@ test('Currency CRUD index uses the lookup table foundation and lives under finan
     $menu = app(MenuService::class)->getMenu($actor);
     $basicData = collect($menu)->firstWhere('label', 'basic_data');
     $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
-
-    $accountingChildren = collect($accountingCosting['children'] ?? [])->pluck('label')->all();
+    $finance = collect($accountingCosting['children'] ?? [])->firstWhere('label', 'finance');
+    $financeChildren = collect($finance['children'] ?? [])->pluck('label')->all();
 
     expect(collect($basicData['children'] ?? [])->pluck('label')->all())->not->toContain('currencies')
-        ->and($accountingChildren)->toContain('currencies');
+        ->and($finance)->not->toBeNull()
+        ->and($financeChildren)->toContain('currencies');
 });
 
 test('Accounting and costing menu and currency breadcrumbs are localized in Arabic and English', function (): void {
@@ -797,7 +798,6 @@ test('Finance and currency edit forms do not render duplicate save dropdown acti
         ])
         ->assertOk()
         ->json('data.doc_num');
-
     $cashbox = $this->actingAs($actor)
         ->postJson(route('admin.finance.cashboxes.store'), [
             'name' => 'Actions Cashbox',
@@ -826,6 +826,7 @@ test('Finance and currency edit forms do not render duplicate save dropdown acti
         ])
         ->assertOk()
         ->json('data.doc_num');
+    OpeningBalance::query()->where('doc_num', $openingBalance)->firstOrFail()->forceFill(['is_closed' => false])->save();
 
     foreach ([
         route('admin.currencies.edit', $currency->doc_num),
@@ -2022,7 +2023,8 @@ test('OpeningBalance create form uses localized datepicker default currency and 
         ->assertSee('name="currency_doc_num"', false)
         ->assertSee('value="'.$currency->doc_num.'" selected', false)
         ->assertSee('data-main-currency-doc-num="'.$currency->doc_num.'"', false)
-        ->assertSee('class="form-control text-center" id="exchange_rate"', false)
+        ->assertSee('id="exchange_rate"', false)
+        ->assertSee('data-numeric-input', false)
         ->assertSee(__('opening_balances.js.add_line_title'), false)
         ->assertSee(__('opening_balances.js.duplicate_line_title'), false)
         ->assertSee(__('opening_balances.js.delete_line_title'), false)
