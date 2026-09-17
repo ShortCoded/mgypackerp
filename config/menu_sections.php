@@ -427,6 +427,7 @@ return [
         'hr_employee_relations' => null,
         'hr_development' => null,
         'hr_payroll' => null,
+        'hr_payroll_preparation' => 'payroll',
         'hr_requests' => null,
         'reports_finance' => 'finance_reports',
         'reports_sales' => 'sales_reports',

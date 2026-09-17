@@ -122,6 +122,7 @@ return [
     'employee_self_service' => 'الخدمات الذاتية للموظف',
     'hr_employee_attendance' => 'حضور وانصراف الموظفين',
     'hr_requests' => 'طلبات الموارد البشرية',
+    'hr_payroll_preparation' => 'إعداد الرواتب',
     'people_labor' => 'الأفراد والعمالة',
     'hr_settings' => 'إعدادات الموارد البشرية',
     'hr_biometric_devices' => 'أجهزة البصمة',

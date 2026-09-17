@@ -170,7 +170,7 @@ test('payroll preview and posting resolve department defaults before exact split
     ]);
     $runId = DB::table('hr_payroll_runs')->insertGetId([
         'payroll_period_id' => $periodId,
-        'status' => 'draft',
+        'status' => 'approved',
         'created_at' => now(),
         'updated_at' => now(),
     ]);

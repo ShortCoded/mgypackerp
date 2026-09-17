@@ -48,7 +48,12 @@ return [
         $screen('employee-medical-records', 'Employee Medical Records UI', 'واجهة السجلات الطبية للموظفين'),
         $screen('employee-insurance', 'Employee Insurance UI', 'واجهة تأمينات الموظفين'),
         $screen('payroll-periods', 'Payroll Periods', 'فترات الرواتب', 'payroll', 'master'),
-        $screen('payroll-preparation', 'Payroll Preparation', 'إعداد الرواتب', 'payroll'),
+        $screen('payroll-preparation', 'Payroll Preparation', 'إعداد الرواتب', 'payroll', 'document', [
+            'shell_enabled' => false,
+            'menu_visible' => false,
+            'classification' => 'CANONICAL',
+            'actions' => ['view', 'calculate'],
+        ]),
         $screen('payroll-review', 'Payroll Review', 'مراجعة الرواتب', 'payroll'),
         $screen('payroll-approval', 'Payroll Approval', 'اعتماد الرواتب', 'payroll'),
         $screen('payroll-payment', 'Payroll Payment', 'صرف الرواتب', 'payroll'),
