@@ -139,6 +139,20 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'reconciliation_center',
+                'title' => 'Reconciliation Center',
+                'icon' => 'check-double',
+                'route' => 'admin.accounting.reports.reconciliation-center',
+                'permission' => 'reports.account_ledger.view',
+                'keywords' => ['reconciliation', 'subledger', 'general ledger', 'مطابقة', 'فروقات'],
+                'actions' => [
+                    'view' => 'reports.account_ledger.view',
+                    'export' => 'reports.account_ledger.export',
+                ],
+                'active' => ['admin.accounting.reports.reconciliation-center*'],
+                'children' => [],
+            ],
+            [
                 'label' => 'financial_statements',
                 'title' => 'Financial Statements',
                 'icon' => 'file-invoice-dollar',

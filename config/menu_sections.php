@@ -281,6 +281,7 @@ return [
         'account_ledger' => 'accounting_costing_reports',
         'general_journal' => 'accounting_costing_reports',
         'trial_balance' => 'accounting_costing_reports',
+        'reconciliation_center' => 'accounting_costing_reports',
         'financial_statements' => 'accounting_costing_reports',
         'reports_costing_profitability' => 'financial_analysis_reports',
         'reports_costing_allocation_analysis' => 'financial_analysis_reports',

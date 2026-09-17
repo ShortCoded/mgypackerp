@@ -43,6 +43,12 @@ Route::middleware('auth')
         Route::get('/reports/valuation', [InventoryReportController::class, 'valuation'])
             ->middleware('can:inventory.reports.financial')
             ->name('reports.valuation');
+        foreach (['excel', 'csv', 'pdf'] as $format) {
+            Route::get("/reports/valuation/export/{$format}", [InventoryReportController::class, 'valuationExport'])
+                ->defaults('valuation_export_format', $format)
+                ->middleware(['can:inventory.reports.financial', 'can:inventory.reports.export'])
+                ->name("reports.valuation.export.{$format}");
+        }
         Route::get('/stock-balances', [InventoryReportController::class, 'stockBalances'])
             ->middleware('can:inventory.reports.operational')
             ->name('stock-balances.index');
