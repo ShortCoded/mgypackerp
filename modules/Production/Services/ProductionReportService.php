@@ -13,6 +13,8 @@ use Modules\Production\Models\ProductionRun;
 
 class ProductionReportService
 {
+    public function __construct(private readonly ProductionCostService $costs) {}
+
     /**
      * @param  array<string, mixed>  $filters
      * @return array<string, array<string, string|int>|Collection|SupportCollection>
@@ -159,51 +161,12 @@ class ProductionReportService
 
     private function runCosts(Collection $runs): SupportCollection
     {
-        if ($runs->isEmpty()) {
-            return collect();
-        }
+        $positions = $this->costs->positions($runs);
 
-        $costs = DB::table('inventory_document_lines')
-            ->join('inventory_documents', 'inventory_documents.id', '=', 'inventory_document_lines.inventory_document_id')
-            ->whereIn('inventory_documents.production_run_id', $runs->modelKeys())
-            ->where('inventory_documents.status', InventoryDocument::StatusPosted)
-            ->whereNull('inventory_document_lines.deleted_at')
-            ->groupBy('inventory_documents.production_run_id')
-            ->selectRaw(
-                'inventory_documents.production_run_id,
-                coalesce(sum(case when inventory_documents.document_type in (?, ?) then inventory_document_lines.total_cost else 0 end), 0) as issued,
-                coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as returned,
-                coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as waste,
-                coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as finished_goods',
-                [
-                    InventoryDocument::TypeMaterialIssue,
-                    InventoryDocument::TypeAdditionalMaterialIssue,
-                    InventoryDocument::TypeMaterialReturn,
-                    InventoryDocument::TypeProductionWaste,
-                    InventoryDocument::TypeProductionReceipt,
-                ],
-            )
-            ->get()
-            ->keyBy('production_run_id');
-
-        return $runs->map(function (ProductionRun $run) use ($costs): object {
-            $cost = $costs->get($run->getKey());
-            $issued = bcadd((string) ($cost->issued ?? 0), '0', 8);
-            $returned = bcadd((string) ($cost->returned ?? 0), '0', 8);
-            $waste = bcadd((string) ($cost->waste ?? 0), '0', 8);
-            $finishedGoods = bcadd((string) ($cost->finished_goods ?? 0), '0', 8);
-            $capitalizable = bcsub(bcsub($issued, $returned, 8), $waste, 8);
-
-            return (object) [
-                'run' => $run,
-                'issued' => $issued,
-                'returned' => $returned,
-                'waste' => $waste,
-                'capitalizable' => $capitalizable,
-                'finished_goods' => $finishedGoods,
-                'wip' => bcsub($capitalizable, $finishedGoods, 8),
-            ];
-        });
+        return $runs->map(fn (ProductionRun $run): object => (object) [
+            'run' => $run,
+            ...$positions->get($run->getKey()),
+        ]);
     }
 
     private function applyMaterialMetrics(Collection $materials, bool $includeFinancial): void

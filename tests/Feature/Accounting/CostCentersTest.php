@@ -179,10 +179,10 @@ test('cost center permissions are discovered under accounting and costing', func
     $accountingCosting = collect($menu)->firstWhere('label', 'accounting_costing');
     $subgroups = collect($accountingCosting['children'] ?? [])->keyBy('label');
     $generalAccountingChildren = collect($subgroups->get('general_accounting')['children'] ?? [])->pluck('label')->all();
-    $costAccountingChildren = collect($subgroups->get('cost_accounting')['children'] ?? [])->pluck('label')->all();
+    $costingChildren = collect($subgroups->get('costing')['children'] ?? [])->pluck('label')->all();
 
     expect($generalAccountingChildren)->toContain('chart_of_accounts')
-        ->and($costAccountingChildren)->toContain('cost_centers');
+        ->and($costingChildren)->toContain('cost_centers');
 });
 
 test('cost centers index create form and data endpoint use the tree screen without account-only fields', function () {

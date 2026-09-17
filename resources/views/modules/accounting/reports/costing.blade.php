@@ -11,9 +11,13 @@
     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
         <div><h1 class="h4 mb-1">{{ $report['title'] }}</h1><p class="text-600 mb-0">{{ $report['description'] }}</p></div>
         <div class="d-grid d-sm-flex gap-2">
+            @can('reports.costing.'.$report['type'].'.export')
             <a class="btn btn-falcon-success btn-sm" href="{{ route('admin.accounting.reports.costing.export.excel', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('reports.export_excel') }}</a>
             <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.accounting.reports.costing.export.csv', $exportQuery) }}"><span class="fas fa-file-csv me-1"></span>{{ __('reports.export_csv') }}</a>
+            @endcan
+            @can('reports.costing.'.$report['type'].'.print')
             <a target="_blank" class="btn btn-falcon-default btn-sm" href="{{ route('admin.accounting.reports.costing.export.pdf', $exportQuery) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('reports.export_pdf') }}</a>
+            @endcan
         </div>
     </div>
 
@@ -32,10 +36,10 @@
 
     @foreach($report['notices'] as $notice)<div class="alert alert-info py-2"><span class="fas fa-info-circle me-1"></span>{{ $notice }}</div>@endforeach
 
-    @if($report['totals'])<div class="row g-3 mb-3">@foreach($report['totals'] as $key => $value)<div class="col-6 col-md-4 col-xl"><div class="card h-100"><div class="card-body py-2"><div class="text-600 fs-11">{{ __('costing_reports.columns.'.$key) }}</div><strong dir="ltr">{{ $numbers->format($value) }}</strong></div></div></div>@endforeach</div>@endif
+    @if($report['totals'])<div class="row g-3 mb-3">@foreach($report['totals'] as $key => $value)<div class="col-6 col-md-4 col-xl"><div class="card h-100"><div class="card-body py-2"><div class="text-600 fs-11">{{ __('costing_reports.columns.'.$key) }}</div><strong @if(is_numeric($value)) dir="ltr" @endif>{{ is_numeric($value) ? $numbers->format($value) : $value }}</strong></div></div></div>@endforeach</div>@endif
 
     <div class="card"><div class="card-header d-flex justify-content-between"><h2 class="h6 mb-0">{{ $report['title'] }}</h2><span class="badge badge-subtle-secondary">{{ __('costing_reports.results_count', ['count' => $report['rows']->count()]) }}</span></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm table-striped table-hover mb-0">
         <thead><tr>@foreach($report['columns'] as $label)<th class="text-nowrap">{{ $label }}</th>@endforeach</tr></thead>
-        <tbody>@forelse($report['rows'] as $row)<tr>@foreach($report['columns'] as $key => $label)@php($value = $row[$key] ?? '')<td class="{{ in_array($key, $report['numeric_columns'], true) ? 'text-end text-nowrap' : '' }}">@if(in_array($key, ['run', 'work_order'], true) && filled($row['_url'] ?? null))<a href="{{ $row['_url'] }}">{{ $value }}</a>@elseif(in_array($key, $report['numeric_columns'], true) && is_numeric($value))<span dir="ltr">{{ $numbers->format($value) }}</span>@else{{ $value }}@endif</td>@endforeach</tr>@empty<tr><td colspan="{{ count($report['columns']) }}" class="text-center text-600 py-4">{{ __('costing_reports.no_results') }}</td></tr>@endforelse</tbody>
+        <tbody>@forelse($report['rows'] as $row)<tr>@foreach($report['columns'] as $key => $label)@php($value = $row[$key] ?? '')<td class="{{ in_array($key, $report['numeric_columns'], true) ? 'text-end text-nowrap' : '' }}">@if($key === 'allocation_run' && filled($row['_allocation_url'] ?? null))<a href="{{ $row['_allocation_url'] }}">{{ $value }}</a>@elseif($key === 'source_entry' && filled($row['_source_url'] ?? null))<a href="{{ $row['_source_url'] }}">{{ $value }}</a>@elseif(in_array($key, ['run', 'production_run', 'work_order'], true) && filled($row['_url'] ?? null))<a href="{{ $row['_url'] }}">{{ $value }}</a>@elseif(in_array($key, $report['numeric_columns'], true) && is_numeric($value))<span dir="ltr">{{ $numbers->format($value) }}</span>@else{{ $value }}@endif</td>@endforeach</tr>@empty<tr><td colspan="{{ count($report['columns']) }}" class="text-center text-600 py-4">{{ __('costing_reports.no_results') }}</td></tr>@endforelse</tbody>
     </table></div></div></div>
 @endsection

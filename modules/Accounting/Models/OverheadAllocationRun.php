@@ -19,6 +19,8 @@ class OverheadAllocationRun extends Model
 
     public const StatusReversed = 'reversed';
 
+    public const StatusSuperseded = 'superseded';
+
     protected $table = 'cost_overhead_allocation_runs';
 
     protected $guarded = ['id'];
@@ -97,5 +99,17 @@ class OverheadAllocationRun extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(OverheadAllocationLine::class, 'allocation_run_id');
+    }
+
+    public function unusedCapacityCost(): string
+    {
+        return (string) data_get($this->policy_snapshot, 'unused_capacity_cost', '0.0000');
+    }
+
+    public function unusedCapacityReason(): ?string
+    {
+        $reason = data_get($this->policy_snapshot, 'unused_capacity_reason');
+
+        return filled($reason) ? (string) $reason : null;
     }
 }

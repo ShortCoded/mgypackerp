@@ -15,7 +15,21 @@ final class CostingReportExport implements FromCollection, ShouldAutoSize, WithH
 
     public function collection(): Collection
     {
-        return $this->report['rows'];
+        $rows = $this->report['rows']->values();
+        if (($this->report['totals'] ?? []) === []) {
+            return $rows;
+        }
+
+        $total = array_fill_keys(array_keys($this->report['columns']), null);
+        $firstColumn = array_key_first($this->report['columns']);
+        $total[$firstColumn] = __('common.total');
+        foreach ($this->report['totals'] as $key => $value) {
+            if (array_key_exists($key, $total)) {
+                $total[$key] = $value;
+            }
+        }
+
+        return $rows->push($total);
     }
 
     /** @return list<string> */

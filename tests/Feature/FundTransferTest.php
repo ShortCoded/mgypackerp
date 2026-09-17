@@ -366,6 +366,26 @@ test('Finance FundTransfer approve and cancel lock transfers', function (): void
         ->and(FundTransfer::query()->where('doc_num', $cancelledDocNum)->firstOrFail()->status)->toBe(FundTransfer::StatusCancelled);
 });
 
+test('Finance FundTransfer approval cannot race a closed financial period', function (): void {
+    ['company' => $company, 'branch' => $branch, 'period' => $period, 'currency' => $egp] = fundTransferFeatureSeedFoundation();
+    $actor = fundTransferFeatureActor(fundTransferFeaturePermissions());
+    $cashbox = fundTransferFeatureCashbox($company, $branch, [$egp], 'Period Lock Cashbox');
+    $bankAccount = fundTransferFeatureBankAccount($company, $egp, 'Period Lock Bank');
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.fund-transfers.store'), fundTransferFeaturePayload(FundTransfer::HolderCashbox, $cashbox, $egp, FundTransfer::HolderBankAccount, $bankAccount, $egp))
+        ->assertOk()
+        ->json('data.doc_num');
+
+    $period->forceFill(['is_closed' => true])->save();
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.finance.fund-transfers.approve', $docNum))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document']);
+
+    expect(FundTransfer::query()->where('doc_num', $docNum)->firstOrFail()->status)->toBe(FundTransfer::StatusDraft);
+});
+
 test('Finance FundTransfer soft delete restore works for drafts and approved delete is blocked', function (): void {
     ['company' => $company, 'branch' => $branch, 'currency' => $egp] = fundTransferFeatureSeedFoundation();
     $actor = fundTransferFeatureActor(fundTransferFeaturePermissions());

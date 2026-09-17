@@ -130,13 +130,6 @@
         </div>
     </form>
 
-    @if($isView && $record && ! $record->trashed())
-        @if(! $record->is_closed && auth()->user()?->can('financial_periods.close'))
-            <form id="financial-period-close-form" method="POST" action="{{ route('admin.financial-periods.close', $record->doc_num) }}">@csrf</form>
-        @elseif($record->is_closed && auth()->user()?->can('financial_periods.reopen'))
-            <form id="financial-period-reopen-form" method="POST" action="{{ route('admin.financial-periods.reopen', $record->doc_num) }}">@csrf</form>
-        @endif
-    @endif
 @endsection
 
 @push('scripts')
