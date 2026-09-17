@@ -1,6 +1,16 @@
 <?php
 
 $salesReport = static function (string $label, string $title, string $reportType, string $icon = 'chart-bar'): array {
+    $financialAnalysisTypes = [
+        'financial',
+        'period',
+        'customers',
+        'products',
+        'receivables',
+        'collections',
+        'returns',
+    ];
+
     return [
         'label' => $label,
         'title' => $title,
@@ -8,7 +18,7 @@ $salesReport = static function (string $label, string $title, string $reportType
         'route' => 'admin.reports.sales.sales-orders.index',
         'route_params' => ['report' => $reportType],
         'permission' => 'reports.sales.sales_orders.view',
-        'subgroup' => 'sales_cycle_reports',
+        'subgroup' => in_array($reportType, $financialAnalysisTypes, true) ? 'financial_analysis_reports' : 'sales_cycle_reports',
         'actions' => [
             'view' => 'reports.sales.sales_orders.view',
             'export' => 'reports.sales.sales_orders.export',

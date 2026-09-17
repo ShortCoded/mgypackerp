@@ -11,6 +11,7 @@ use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\ErpUi\ErpUiScreenDefinition;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\ErpUi\ErpUiShellOverviewService;
+use Modules\Finance\Http\Controllers\CashboxCountController;
 use Modules\Finance\Http\Controllers\FinanceReportController;
 use Modules\Finance\Services\FinanceReportService;
 
@@ -25,6 +26,11 @@ class ErpUiShellController
     public function index(Request $request): View
     {
         $screen = $this->screen($request);
+
+        if ($screen->key() === 'finance_cashbox_count') {
+            return app(CashboxCountController::class)->index($request);
+        }
+
         $financeReportType = $this->financeReportType($screen);
 
         if ($financeReportType !== null) {
@@ -51,6 +57,11 @@ class ErpUiShellController
     public function data(Request $request): JsonResponse
     {
         $screen = $this->screen($request);
+
+        if ($screen->key() === 'finance_cashbox_count') {
+            return app(CashboxCountController::class)->data($request);
+        }
+
         $financeReportType = $this->financeReportType($screen);
 
         if ($financeReportType !== null) {
@@ -68,7 +79,9 @@ class ErpUiShellController
         $costingReportType = $this->costingReportType($screen);
         if ($costingReportType !== null) {
             $reports = app(CostingReportService::class);
-            $report = $reports->report($reports->filters($request, $costingReportType));
+            $filters = $reports->filters($request, $costingReportType);
+            $filters['type'] = $costingReportType;
+            $report = $reports->report($filters);
 
             return response()->json([
                 'draw' => max(0, $request->integer('draw')),
@@ -136,10 +149,20 @@ class ErpUiShellController
         return match ($screen->key()) {
             'reports_finance_cashbox_balances' => FinanceReportService::CashboxBalances,
             'reports_finance_cashbox_statement' => FinanceReportService::CashboxStatement,
+            'reports_finance_cash_vouchers' => FinanceReportService::CashVouchers,
             'reports_finance_bank_account_balances' => FinanceReportService::BankAccountBalances,
             'reports_finance_bank_account_statement' => FinanceReportService::BankAccountStatement,
+            'reports_finance_bank_reconciliation' => FinanceReportService::BankReconciliation,
             'reports_finance_cheque_transit' => FinanceReportService::DueCheques,
             'reports_finance_treasury_transfers' => FinanceReportService::FundTransfers,
+            'reports_finance_received_cheques' => FinanceReportService::ReceivedCheques,
+            'reports_finance_issued_cheques' => FinanceReportService::IssuedCheques,
+            'reports_finance_cleared_cheques' => FinanceReportService::ClearedCheques,
+            'reports_finance_returned_cheques' => FinanceReportService::ReturnedCheques,
+            'reports_finance_cancelled_cheques' => FinanceReportService::CancelledCheques,
+            'reports_finance_guarantee_cheques' => FinanceReportService::GuaranteeCheques,
+            'reports_finance_advances_allocations' => FinanceReportService::AdvancesAllocations,
+            'reports_finance_unapproved_documents' => FinanceReportService::UnapprovedDocuments,
             'reports_finance_customer_aging' => FinanceReportService::CustomerAging,
             'reports_finance_supplier_aging' => FinanceReportService::SupplierAging,
             default => null,
@@ -154,6 +177,9 @@ class ErpUiShellController
             'reports_costing_estimated_vs_actual' => CostingReportService::EstimatedVsActual,
             'reports_costing_cost_variance' => CostingReportService::CostVariance,
             'reports_costing_profitability' => CostingReportService::Profitability,
+            'reports_costing_work_in_progress' => CostingReportService::WorkInProgress,
+            'reports_costing_finished_goods_cost' => CostingReportService::FinishedGoodsCost,
+            'reports_costing_allocation_analysis' => CostingReportService::AllocationAnalysis,
             default => null,
         };
     }

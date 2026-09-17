@@ -23,21 +23,21 @@
         <div class="row g-3 align-items-end">
             <div class="col-lg-4">
                 <label class="form-label" for="valuation-product">{{ __('inventory_accounting.valuation_report.product') }}</label>
-                <select class="form-select" id="valuation-product" name="product_id" required>
+                <x-forms.select id="valuation-product" name="product_id" required>
                     <option value="">{{ __('inventory_accounting.valuation_report.select') }}</option>
                     @foreach($products as $product)
                         <option value="{{ $product->getKey() }}" @selected($selectedProduct?->is($product))>{{ $product->doc_num }} — {{ $product->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-lg-3">
                 <label class="form-label" for="valuation-store">{{ __('inventory_accounting.valuation_report.store') }}</label>
-                <select class="form-select" id="valuation-store" name="branch_store_id" required>
+                <x-forms.select id="valuation-store" name="branch_store_id" required>
                     <option value="">{{ __('inventory_accounting.valuation_report.select') }}</option>
                     @foreach($stores as $store)
                         <option value="{{ $store->getKey() }}" @selected($selectedStore?->is($store))>{{ $store->name }}</option>
                     @endforeach
-                </select>
+                </x-forms.select>
             </div>
             <div class="col-lg-3">
                 <label class="form-label" for="valuation-as-of">{{ __('inventory_accounting.valuation_report.as_of') }}</label>

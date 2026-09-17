@@ -11,8 +11,8 @@
     </div>
 
     <div class="report-filter-summary">
-        @foreach(['date_from' => 'From date', 'date_to' => 'To date', 'supplier_doc_num' => 'Supplier', 'country_doc_num' => 'Country', 'governorate_doc_num' => 'Governorate', 'city_doc_num' => 'City', 'area_doc_num' => 'Area', 'product_doc_num' => 'Item', 'currency_doc_num' => 'Currency', 'status' => 'Status'] as $key => $label)
-            @if(filled($filters[$key] ?? null))<span>{{ __($label) }}: {{ $filters[$key] }} · </span>@endif
+        @foreach(['date_from' => 'From date', 'date_to' => 'To date', 'supplier_doc_num' => 'Supplier', 'country_doc_num' => 'Country', 'governorate_doc_num' => 'Governorate', 'city_doc_num' => 'City', 'area_doc_num' => 'Area', 'geography_state' => 'procurement.reports.filters.geography_state', 'address_search' => 'procurement.reports.filters.address_search', 'contact_search' => 'procurement.reports.filters.contact_search', 'product_doc_num' => 'Item', 'currency_doc_num' => 'Currency', 'status' => 'Status'] as $key => $label)
+            @if(filled($filters[$key] ?? null))<span>{{ __($label) }}: {{ $key === 'geography_state' ? __('procurement.reports.filters.geography_'.$filters[$key]) : $filters[$key] }} · </span>@endif
         @endforeach
         @if(filled($filters['document_type'] ?? null))<span>{{ __('Balances include all posted supplier movements; the document filter limits the displayed movements.') }}</span>@endif
     </div>

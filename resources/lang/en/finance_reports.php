@@ -17,6 +17,7 @@ return [
         'bank_reconciliation' => ['title' => 'Bank Reconciliation and Clearing Events', 'description' => 'Cheque clearing and reversal events that can be traced to their source and journal entry.'],
         'received_cheques' => ['title' => 'Received Cheques and Collection', 'description' => 'Received cheque lifecycle dates and current actual state.'],
         'issued_cheques' => ['title' => 'Issued Cheques and Settlement', 'description' => 'Issued cheque lifecycle dates and current actual state.'],
+        'cleared_cheques' => ['title' => 'Cleared and Paid Cheques', 'description' => 'Received cheques actually collected and issued cheques actually cleared.'],
         'returned_cheques' => ['title' => 'Returned Cheques', 'description' => 'Received and issued returned cheques with dates and reasons.'],
         'due_cheques' => ['title' => 'Due, Upcoming and Overdue Cheques', 'description' => 'Unsettled cheques classified against the selected as-of date.'],
         'cancelled_cheques' => ['title' => 'Cancelled or Clearing-Reversed Cheques', 'description' => 'Cancelled cheques and actual clearing reversals.'],
@@ -46,7 +47,7 @@ return [
     ],
     'values' => [
         'receipt' => 'Receipt', 'payment' => 'Payment', 'transfer' => 'Transfer', 'transfer_in' => 'Transfer in', 'transfer_out' => 'Transfer out',
-        'customer_receipt' => 'Customer receipt', 'supplier_payment' => 'Supplier payment', 'cheque' => 'Cheque',
+        'customer_receipt' => 'Customer receipt', 'supplier_payment' => 'Supplier payment', 'cheque' => 'Cheque', 'opening_balance' => 'Opening balance',
         'customer' => 'Customer', 'supplier' => 'Supplier', 'received' => 'Received', 'issued' => 'Issued', 'deposited' => 'Deposited',
         'collected' => 'Collected', 'delivered' => 'Delivered', 'cleared' => 'Cleared', 'clearing_reversed' => 'Clearing reversed',
         'returned' => 'Returned', 'cancelled' => 'Cancelled', 'draft' => 'Draft', 'approved' => 'Approved', 'reversed' => 'Reversed',

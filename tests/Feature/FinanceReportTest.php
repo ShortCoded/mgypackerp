@@ -1,12 +1,15 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Modules\Accounting\Models\Account;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Finance\Http\Controllers\FinanceReportController;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\FundTransfer;
@@ -151,3 +154,119 @@ test('legacy finance report route renders the actual unified report and exposes 
         ->assertJsonPath('recordsTotal', 2)
         ->assertJsonFragment(['balance' => '80.0000']);
 });
+
+test('finance reports only retain and render filters that affect their selected mode', function (): void {
+    financeReportFixture($this);
+    $actor = financeReportActor();
+    $request = Request::create('/admin/reports/finance', 'GET', [
+        'type' => FinanceReportService::AdvancesAllocations,
+        'from_date' => '2026-09-01',
+        'as_of_date' => '2026-09-30',
+        'status' => 'draft',
+        'cashbox_doc_num' => 'CASH-9701',
+    ]);
+
+    $filters = app(FinanceReportService::class)->filters($request);
+
+    expect($filters)->toBe([
+        'type' => FinanceReportService::AdvancesAllocations,
+        'from_date' => '2026-09-01',
+    ]);
+
+    $this->actingAs($actor)
+        ->get(route('admin.reports.finance.advances-allocations.index', [
+            'as_of_date' => '2026-09-30',
+            'status' => 'draft',
+        ]))
+        ->assertOk()
+        ->assertDontSee('name="as_of_date"', false)
+        ->assertDontSee('name="status"', false)
+        ->assertDontSee(__('finance_reports.filters.as_of_date').':');
+});
+
+test('named finance report routes lock their report mode and cashbox count opens a live count worksheet', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $permission = Permission::findOrCreate('finance.cashbox_count.view', 'web');
+    $actor->givePermissionTo($permission);
+    expect(Route::getRoutes()->getByName('admin.reports.finance.cashbox-balances.index')?->getActionName())
+        ->toBe(FinanceReportController::class.'@index');
+    $zeroAccount = financeReportAccount($fixture['company'], 9703, '111103', 'Zero Cashbox Account');
+    Cashbox::query()->create([
+        'doc_number' => 9703,
+        'doc_num' => 'CASH-9703',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Zero Cashbox',
+        'branch_id' => $fixture['branch']->getKey(),
+        'account_id' => $zeroAccount->getKey(),
+        'status' => 'active',
+    ]);
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9702,
+        'doc_num' => 'BR-9702',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other Branch',
+        'type' => 'branch',
+        'status' => 'active',
+    ]);
+    $otherAccount = financeReportAccount($fixture['company'], 9704, '111104', 'Other Branch Cashbox Account');
+    Cashbox::query()->create([
+        'doc_number' => 9704,
+        'doc_num' => 'CASH-9704',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other Branch Cashbox',
+        'branch_id' => $otherBranch->getKey(),
+        'account_id' => $otherAccount->getKey(),
+        'status' => 'active',
+    ]);
+
+    $this->actingAs($actor)
+        ->get(route('admin.reports.finance.cashbox-balances.index', [
+            'type' => FinanceReportService::GuaranteeCheques,
+            'as_of_date' => '2026-09-30',
+        ]))
+        ->assertOk()
+        ->assertSee(__('finance_reports.types.cashbox_balances.title'))
+        ->assertSee('name="type"', false)
+        ->assertSee('value="cashbox_balances"', false)
+        ->assertDontSee('value="guarantee_cheques" selected', false)
+        ->assertSee('80');
+
+    $this->actingAs($actor)
+        ->get(route('admin.finance.cashbox-count.index', ['as_of_date' => '2026-09-30']))
+        ->assertOk()
+        ->assertSee(__('cashbox_count.title'))
+        ->assertSee('data-cashbox-count', false)
+        ->assertSee('Main Cashbox')
+        ->assertSee('Zero Cashbox')
+        ->assertDontSee('Other Branch Cashbox')
+        ->assertSee('80');
+
+    $this->actingAs($actor)
+        ->getJson(route('admin.finance.cashbox-count.data', ['as_of_date' => '2026-09-30', 'draw' => 3]))
+        ->assertOk()
+        ->assertJsonPath('draw', 3)
+        ->assertJsonPath('recordsTotal', 3)
+        ->assertJsonFragment(['balance' => '80.0000'])
+        ->assertJsonFragment(['cashbox' => 'CASH-9703 / Zero Cashbox', 'balance' => '0.0000'])
+        ->assertJsonMissing(['cashbox' => 'CASH-9704 / Other Branch Cashbox']);
+});
+
+test('each named finance report honors its own generated permission', function (string $routeName, string $permission, string $titleKey): void {
+    financeReportFixture($this);
+    $actor = User::factory()->create();
+    $actor->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+
+    $this->actingAs($actor)
+        ->get(route($routeName, ['from_date' => '2026-01-01']))
+        ->assertOk()
+        ->assertSee(__($titleKey))
+        ->assertSee('action="'.route($routeName).'"', false);
+})->with([
+    ['admin.reports.finance.cash-vouchers.index', 'reports.finance.cash_vouchers.view', 'finance_reports.types.cash_vouchers.title'],
+    ['admin.reports.finance.bank-reconciliation.index', 'reports.finance.bank_reconciliation.view', 'finance_reports.types.bank_reconciliation.title'],
+    ['admin.reports.finance.received-cheques.index', 'reports.finance.received_cheques.view', 'finance_reports.types.received_cheques.title'],
+    ['admin.reports.finance.cleared-cheques.index', 'reports.finance.cleared_cheques.view', 'finance_reports.types.cleared_cheques.title'],
+    ['admin.reports.finance.advances-allocations.index', 'reports.finance.advances_allocations.view', 'finance_reports.types.advances_allocations.title'],
+    ['admin.reports.finance.unapproved-documents.index', 'reports.finance.unapproved_documents.view', 'finance_reports.types.unapproved_documents.title'],
+]);

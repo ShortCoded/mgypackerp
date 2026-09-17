@@ -4,6 +4,9 @@
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $numericColumns = ['receipt', 'receipts', 'payment', 'payments', 'balance', 'amount', 'amount_base', 'source_amount', 'target_amount', 'exchange_rate', 'allocated', 'unallocated', 'original_amount', 'settled_amount', 'outstanding', 'days_overdue'];
     $exportQuery = request()->query() + ['type' => $report['type']];
+    $indexRoute = request()->route()?->getName() ?? 'admin.reports.finance.index';
+    $isNamedReport = $indexRoute !== 'admin.reports.finance.index';
+    $applicableFilters = \Modules\Finance\Services\FinanceReportService::applicableFilters($report['type']);
 @endphp
 
 @section('title', __('finance_reports.title'))
@@ -24,27 +27,38 @@
     <div class="card mb-3">
         <div class="card-header"><h2 class="h6 mb-0">{{ __('finance_reports.filters_title') }}</h2></div>
         <div class="card-body">
-            <form method="GET" action="{{ route('admin.reports.finance.index') }}" class="row g-3">
-                <div class="col-12 col-md-6 col-xl-4">
-                    <label class="form-label" for="finance-report-type">{{ __('finance_reports.filters.type') }}</label>
-                    <x-forms.select class="form-select js-select2-local" id="finance-report-type" name="type">
-                        @foreach(\Modules\Finance\Services\FinanceReportService::types() as $type)
-                            <option value="{{ $type }}" @selected($report['type'] === $type)>{{ __('finance_reports.types.'.$type.'.title') }}</option>
-                        @endforeach
-                    </x-forms.select>
-                </div>
+            <form method="GET" action="{{ route($indexRoute) }}" class="row g-3">
+                @if($isNamedReport)
+                    <x-forms.input name="type" type="hidden" value="{{ $report['type'] }}" />
+                @else
+                    <div class="col-12 col-md-6 col-xl-4">
+                        <label class="form-label" for="finance-report-type">{{ __('finance_reports.filters.type') }}</label>
+                        <x-forms.select class="form-select js-select2-local" id="finance-report-type" name="type">
+                            @foreach(\Modules\Finance\Services\FinanceReportService::types() as $type)
+                                <option value="{{ $type }}" @selected($report['type'] === $type)>{{ __('finance_reports.types.'.$type.'.title') }}</option>
+                            @endforeach
+                        </x-forms.select>
+                    </div>
+                @endif
+                @if(in_array('from_date', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-2">
                     <label class="form-label" for="finance-report-from">{{ __('finance_reports.filters.from_date') }}</label>
                     <x-forms.input class="form-control" id="finance-report-from" name="from_date" type="date" value="{{ $filters['from_date'] ?? '' }}" />
                 </div>
+                @endif
+                @if(in_array('to_date', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-2">
                     <label class="form-label" for="finance-report-to">{{ __('finance_reports.filters.to_date') }}</label>
                     <x-forms.input class="form-control" id="finance-report-to" name="to_date" type="date" value="{{ $filters['to_date'] ?? '' }}" />
                 </div>
+                @endif
+                @if(in_array('as_of_date', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-2">
                     <label class="form-label" for="finance-report-as-of">{{ __('finance_reports.filters.as_of_date') }}</label>
                     <x-forms.input class="form-control" id="finance-report-as-of" name="as_of_date" type="date" value="{{ $filters['as_of_date'] ?? '' }}" />
                 </div>
+                @endif
+                @if(in_array('status', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-2">
                     <label class="form-label" for="finance-report-status">{{ __('finance_reports.filters.status') }}</label>
                     <x-forms.select class="form-select" id="finance-report-status" name="status">
@@ -54,6 +68,8 @@
                         @endforeach
                     </x-forms.select>
                 </div>
+                @endif
+                @if(in_array('cashbox_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <label class="form-label" for="finance-report-cashbox">{{ __('finance_reports.filters.cashbox_doc_num') }}</label>
                     <x-forms.select class="form-select js-select2-local" id="finance-report-cashbox" name="cashbox_doc_num" data-allow-clear="true">
@@ -63,6 +79,8 @@
                         @endforeach
                     </x-forms.select>
                 </div>
+                @endif
+                @if(in_array('bank_account_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <label class="form-label" for="finance-report-bank">{{ __('finance_reports.filters.bank_account_doc_num') }}</label>
                     <x-forms.select class="form-select js-select2-local" id="finance-report-bank" name="bank_account_doc_num" data-allow-clear="true">
@@ -72,6 +90,8 @@
                         @endforeach
                     </x-forms.select>
                 </div>
+                @endif
+                @if(in_array('currency_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <label class="form-label" for="finance-report-currency">{{ __('finance_reports.filters.currency_doc_num') }}</label>
                     <x-forms.select class="form-select js-select2-local" id="finance-report-currency" name="currency_doc_num" data-allow-clear="true">
@@ -81,9 +101,10 @@
                         @endforeach
                     </x-forms.select>
                 </div>
+                @endif
                 <div class="col-12 d-flex flex-column flex-sm-row gap-2">
                     <button class="btn btn-falcon-primary" type="submit"><span class="fas fa-filter me-1"></span>{{ __('common.actions.apply') }}</button>
-                    <a class="btn btn-falcon-default" href="{{ route('admin.reports.finance.index') }}">{{ __('common.actions.reset') }}</a>
+                    <a class="btn btn-falcon-default" href="{{ route($indexRoute) }}">{{ __('common.actions.reset') }}</a>
                 </div>
             </form>
         </div>

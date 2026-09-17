@@ -1,6 +1,19 @@
 <?php
 
 $procurementReport = static function (string $label, string $title, string $reportType, string $icon = 'chart-bar'): array {
+    $financialAnalysisTypes = [
+        'purchases_by_supplier',
+        'purchases_by_product',
+        'purchases_by_category',
+        'purchases_by_warehouse',
+        'purchases_by_period',
+        'price_history',
+        'outstanding_supplier_invoices',
+        'due_supplier_installments',
+        'supplier_aging',
+        'upcoming_supplier_payments',
+    ];
+
     return [
         'label' => $label,
         'title' => $title,
@@ -8,7 +21,7 @@ $procurementReport = static function (string $label, string $title, string $repo
         'route' => 'admin.purchases.procurement-cycle-report.index',
         'route_params' => ['report_type' => $reportType],
         'permission' => 'reports.purchases.view',
-        'subgroup' => 'purchase_reports',
+        'subgroup' => in_array($reportType, $financialAnalysisTypes, true) ? 'financial_analysis_reports' : 'purchase_reports',
         'actions' => ['view' => 'reports.purchases.view', 'export' => 'reports.purchases.export'],
         'active' => ['admin.purchases.procurement-cycle-report.*'],
         'children' => [],

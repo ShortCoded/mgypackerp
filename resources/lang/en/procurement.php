@@ -112,6 +112,13 @@ return [
             'production_analysis' => 'Production-linked Procurement Analysis',
             'goods_received_not_invoiced' => 'Goods Received Not Invoiced (GRNI)',
         ],
+        'filters' => [
+            'geography_state' => 'Geography data',
+            'geography_specified' => 'Country specified',
+            'geography_unspecified' => 'Unspecified',
+            'address_search' => 'Address search',
+            'contact_search' => 'Phone / contact search',
+        ],
         'metrics' => [
             'opening_balance' => 'Opening balance',
             'debit' => 'Displayed debits',

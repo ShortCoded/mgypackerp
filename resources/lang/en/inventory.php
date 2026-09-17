@@ -95,6 +95,7 @@ return [
             'deleted_not_approvable' => 'A deleted document cannot be approved.',
             'already_approved' => 'The document is already approved.',
             'no_lines_approve' => 'A document without lines cannot be approved.',
+            'history_derived_opening_only' => 'This is not the company\'s first financial period. Opening stock is derived from posted inventory history, so a duplicate manual opening cannot be approved.',
             'approved_not_editable' => 'An approved document cannot be edited.',
             'closed_edit_forbidden' => 'A closed document cannot be edited.',
             'closed_delete_forbidden' => 'A closed document cannot be deleted.',

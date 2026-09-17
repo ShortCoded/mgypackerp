@@ -2282,6 +2282,69 @@ test('OpeningBalance approval posts one protected journal entry and blocks direc
         ->assertJsonValidationErrors(['document']);
 });
 
+test('OpeningBalance later periods reject duplicate manual carry forward', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['opening_balances.create', 'opening_balances.approve']);
+    $company = financeCompany();
+    $branch = financeBranch($company);
+    $firstPeriod = financePeriod($company);
+    financeSelectOperatingContext($company, $branch, $firstPeriod);
+    $currency = financeCurrency('EGP', $company);
+    $debitAccount = Account::query()->forCompany($company->getKey())->eligibleForDirectPosting()->firstOrFail();
+    $creditAccount = Account::query()->forCompany($company->getKey())->eligibleForDirectPosting()->whereKeyNot($debitAccount->getKey())->firstOrFail();
+    $firstOpeningDocNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.opening-balances.store'), [
+            'document_date' => $firstPeriod->from_date->toDateString(),
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => 1,
+            'description' => 'First-period opening',
+            'lines' => [
+                ['account_doc_num' => $debitAccount->doc_num, 'transaction_type' => 'debit', 'amount' => 250],
+                ['account_doc_num' => $creditAccount->doc_num, 'transaction_type' => 'credit', 'amount' => 250],
+            ],
+        ])
+        ->assertOk()
+        ->json('data.doc_num');
+    $this->actingAs($actor)
+        ->postJson(route('admin.finance.opening-balances.approve', $firstOpeningDocNum))
+        ->assertOk();
+    $laterPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 9002,
+        'doc_num' => 'Period-09002',
+        'company_id' => $company->getKey(),
+        'name' => 'FY Test 2',
+        'from_date' => $firstPeriod->to_date->copy()->addDay(),
+        'to_date' => $firstPeriod->to_date->copy()->addYear(),
+        'is_closed' => false,
+    ]);
+    financeSelectOperatingContext($company, $branch, $laterPeriod);
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.finance.opening-balances.store'), [
+            'document_date' => $laterPeriod->from_date->toDateString(),
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => 1,
+            'description' => 'Duplicate later-period opening',
+            'lines' => [
+                ['account_doc_num' => $debitAccount->doc_num, 'transaction_type' => 'debit', 'amount' => 250],
+                ['account_doc_num' => $creditAccount->doc_num, 'transaction_type' => 'credit', 'amount' => 250],
+            ],
+        ])
+        ->assertOk()
+        ->json('data.doc_num');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.finance.opening-balances.approve', $docNum))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document']);
+
+    expect(OpeningBalance::query()
+        ->where('company_id', $company->getKey())
+        ->where('financial_period_id', $laterPeriod->getKey())
+        ->where('doc_num', $docNum)
+        ->firstOrFail()
+        ->approved)->toBeFalse();
+});
+
 test('OpeningBalance bulk approve is permission based and approves scoped draft documents', function (): void {
     seedFinanceFoundation();
     $actor = financeActor(['opening_balances.view', 'opening_balances.create', 'opening_balances.approve']);

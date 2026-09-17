@@ -2,6 +2,7 @@
 
 return [
     'types' => [
+        'general_journal' => 'دفتر اليومية العامة',
         'account_ledger' => 'كشف حساب الأستاذ',
         'customer_statement' => 'كشف حساب عميل',
         'supplier_statement' => 'كشف حساب مورد',
@@ -29,6 +30,7 @@ return [
         'source_type' => 'نوع المصدر',
         'document' => 'المستند',
         'reference' => 'المرجع',
+        'account' => 'الحساب',
         'description' => 'البيان',
         'cost_center' => 'مركز التكلفة',
         'branch' => 'الفرع',
@@ -72,6 +74,7 @@ return [
         'cash_payment_voucher' => 'سند صرف نقدي',
         'cheque' => 'شيك',
         'cheque_payment' => 'سداد بشيك',
+        'other' => 'مصدر مرحّل آخر',
     ],
     'audit' => [
         'generated_by' => 'أُنشئ بواسطة',
@@ -79,6 +82,7 @@ return [
     ],
     'messages' => [
         'posted_source_only' => 'يُحتسب هذا التقرير من سطور القيود المرحلة في شركة وفترة التشغيل الحاليتين.',
+        'general_journal_posted_source_only' => 'يعرض هذا التقرير سطور القيود المرحلة فقط حسب التاريخ المحاسبي وضمن نطاق الشركة والفترة والفرع والحساب ومركز التكلفة المحدد.',
         'partner_posted_source_only' => 'يُحتسب هذا الكشف من كل القيود المرحلة للطرف في شركة التشغيل الحالية ضمن نطاق التاريخ المحدد، مع إظهار رصيد ما قبل الفترة.',
         'no_movements' => 'لا توجد حركات مرحلة تطابق عوامل التصفية المحددة.',
         'operating_context_required' => 'اختر شركة وفترة مالية للتشغيل أولاً.',

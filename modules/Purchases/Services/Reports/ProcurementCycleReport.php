@@ -421,7 +421,7 @@ class ProcurementCycleReport
         };
 
         $geographySupplierDocNums = $this->supplierGeographyDocNums($companyId, $filters);
-        if ($geographySupplierDocNums !== null) {
+        if ($geographySupplierDocNums !== null && $rows->contains(fn (array $row): bool => filled($row['supplier_doc_num'] ?? null))) {
             $rows = $rows->whereIn('supplier_doc_num', $geographySupplierDocNums)->values();
         }
 
@@ -1160,22 +1160,33 @@ class ProcurementCycleReport
      */
     private function supplierGeographyDocNums(int $companyId, array $filters): ?Collection
     {
-        $locationFilters = collect([
+        $dimensionFilters = collect([
             'country' => $filters['country_doc_num'] ?? null,
             'governorate' => $filters['governorate_doc_num'] ?? null,
             'cityLookup' => $filters['city_doc_num'] ?? null,
             'area' => $filters['area_doc_num'] ?? null,
+            'geography_state' => $filters['geography_state'] ?? null,
+            'address_search' => $filters['address_search'] ?? null,
+            'contact_search' => $filters['contact_search'] ?? null,
         ])->filter(fn (mixed $value): bool => filled($value));
 
-        if ($locationFilters->isEmpty()) {
+        if ($dimensionFilters->isEmpty()) {
             return null;
         }
 
         return Supplier::query()->forCompany($companyId)
-            ->when($locationFilters->has('country'), fn ($query) => $query->whereHas('country', fn ($location) => $location->where('doc_num', $locationFilters['country'])))
-            ->when($locationFilters->has('governorate'), fn ($query) => $query->whereHas('governorate', fn ($location) => $location->where('doc_num', $locationFilters['governorate'])))
-            ->when($locationFilters->has('cityLookup'), fn ($query) => $query->whereHas('cityLookup', fn ($location) => $location->where('doc_num', $locationFilters['cityLookup'])))
-            ->when($locationFilters->has('area'), fn ($query) => $query->whereHas('area', fn ($location) => $location->where('doc_num', $locationFilters['area'])))
+            ->when($dimensionFilters->has('country'), fn ($query) => $query->whereHas('country', fn ($location) => $location->where('doc_num', $dimensionFilters['country'])))
+            ->when($dimensionFilters->has('governorate'), fn ($query) => $query->whereHas('governorate', fn ($location) => $location->where('doc_num', $dimensionFilters['governorate'])))
+            ->when($dimensionFilters->has('cityLookup'), fn ($query) => $query->whereHas('cityLookup', fn ($location) => $location->where('doc_num', $dimensionFilters['cityLookup'])))
+            ->when($dimensionFilters->has('area'), fn ($query) => $query->whereHas('area', fn ($location) => $location->where('doc_num', $dimensionFilters['area'])))
+            ->when(($dimensionFilters['geography_state'] ?? null) === 'specified', fn ($query) => $query->whereNotNull('country_id'))
+            ->when(($dimensionFilters['geography_state'] ?? null) === 'unspecified', fn ($query) => $query->whereNull('country_id'))
+            ->when($dimensionFilters['address_search'] ?? null, fn ($query, string $value) => $query->where('address', 'like', "%{$value}%"))
+            ->when($dimensionFilters['contact_search'] ?? null, fn ($query, string $value) => $query->where(fn ($contact) => $contact
+                ->where('phone', 'like', "%{$value}%")
+                ->orWhere('mobile', 'like', "%{$value}%")
+                ->orWhere('email', 'like', "%{$value}%")
+                ->orWhere('contact_person', 'like', "%{$value}%")))
             ->pluck('doc_num');
     }
 

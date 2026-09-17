@@ -139,7 +139,9 @@ class JournalEntryController extends Controller
     public function accounts(Request $request, AccountSelect2Service $select2): JsonResponse
     {
         $this->authorizeSelect2($request);
-        $request->merge(['postable' => true]);
+        if (! $request->boolean('report_scope')) {
+            $request->merge(['postable' => true]);
+        }
 
         return response()->json($select2->accounts($request));
     }
@@ -233,7 +235,9 @@ class JournalEntryController extends Controller
             || (bool) $request->user()?->can('journal_entries.edit')
             || (bool) $request->user()?->can('reports.account_ledger.view')
             || (bool) $request->user()?->can('reports.customer_statement.view')
-            || (bool) $request->user()?->can('reports.supplier_statement.view'),
+            || (bool) $request->user()?->can('reports.supplier_statement.view')
+            || (bool) $request->user()?->can('reports.trial_balance.view')
+            || (bool) $request->user()?->can('reports.financial_statements.view'),
             403,
         );
     }

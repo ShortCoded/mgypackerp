@@ -82,19 +82,22 @@ Route::middleware('auth')
             ->controller(LedgerReportController::class)
             ->group(function (): void {
                 foreach ([
+                    'general-journal' => 'general_journal',
                     'account-ledger' => 'account_ledger',
                     'customer-statement' => 'customer_statement',
                     'supplier-statement' => 'supplier_statement',
                 ] as $slug => $type) {
                     foreach (['excel', 'csv', 'pdf'] as $format) {
+                        $permissionType = $type === 'general_journal' ? 'account_ledger' : $type;
                         Route::get("/{$slug}/export/{$format}", 'export')
                             ->defaults('ledger_report_type', $type)
                             ->defaults('ledger_export_format', $format)
-                            ->middleware("can:reports.{$type}.export")
+                            ->middleware("can:reports.{$permissionType}.export")
                             ->name("{$slug}.export.{$format}");
                     }
                 }
 
+                Route::get('/general-journal', 'generalJournal')->middleware('can:reports.account_ledger.view')->name('general-journal');
                 Route::get('/account-ledger', 'accountLedger')->middleware('can:reports.account_ledger.view')->name('account-ledger');
                 Route::get('/customer-statement', 'customerStatement')->middleware('can:reports.customer_statement.view')->name('customer-statement');
                 Route::get('/supplier-statement', 'supplierStatement')->middleware('can:reports.supplier_statement.view')->name('supplier-statement');

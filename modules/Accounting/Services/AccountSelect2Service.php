@@ -20,7 +20,12 @@ class AccountSelect2Service
     public function accounts(Request $request): array
     {
         $companyId = $this->companies->currentCompanyId($request);
+        $includeHistorical = $request->boolean('include_historical')
+            && ((bool) $request->user()?->can('reports.account_ledger.view')
+                || (bool) $request->user()?->can('reports.trial_balance.view')
+                || (bool) $request->user()?->can('reports.financial_statements.view'));
         $query = Account::query()
+            ->when($includeHistorical, fn ($query) => $query->withTrashed())
             ->leftJoin('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
             ->select(['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.doc_number', 'accounts.parent_id', 'accounts.level', 'accounts.account_type', 'accounts.statement_type', 'accounts.normal_balance', 'account_classifications.code as classification_code', 'account_classifications.name as classification_name', 'account_classifications.name_en as classification_name_en'])
             ->orderByRaw('LENGTH(accounts.account_code), accounts.account_code');
@@ -33,7 +38,7 @@ class AccountSelect2Service
 
         if ($request->boolean('postable')) {
             $query->eligibleForDirectPosting();
-        } else {
+        } elseif (! $includeHistorical) {
             $query->active();
         }
 

@@ -276,15 +276,28 @@ Route::middleware('auth')
         foreach ([
             'cashbox-balances' => FinanceReportService::CashboxBalances,
             'cashbox-statement' => FinanceReportService::CashboxStatement,
+            'cash-vouchers' => FinanceReportService::CashVouchers,
             'bank-account-balances' => FinanceReportService::BankAccountBalances,
             'bank-account-statement' => FinanceReportService::BankAccountStatement,
+            'bank-reconciliation' => FinanceReportService::BankReconciliation,
             'cheque-transit' => FinanceReportService::DueCheques,
             'treasury-transfers' => FinanceReportService::FundTransfers,
+            'received-cheques' => FinanceReportService::ReceivedCheques,
+            'issued-cheques' => FinanceReportService::IssuedCheques,
+            'cleared-cheques' => FinanceReportService::ClearedCheques,
+            'returned-cheques' => FinanceReportService::ReturnedCheques,
+            'cancelled-cheques' => FinanceReportService::CancelledCheques,
+            'guarantee-cheques' => FinanceReportService::GuaranteeCheques,
+            'advances-allocations' => FinanceReportService::AdvancesAllocations,
+            'unapproved-documents' => FinanceReportService::UnapprovedDocuments,
             'customer-aging' => FinanceReportService::CustomerAging,
             'supplier-aging' => FinanceReportService::SupplierAging,
         ] as $slug => $type) {
             Route::get("/{$slug}", 'index')
                 ->defaults('finance_report_type', $type)
                 ->name("{$slug}.index");
+            Route::get("/{$slug}/data", 'data')
+                ->defaults('finance_report_type', $type)
+                ->name("{$slug}.data");
         }
     });

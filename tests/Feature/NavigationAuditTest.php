@@ -326,8 +326,8 @@ test('report-only permissions retain access, hide empty module parents, and acti
         ->and($activePath->slice(0, -1)->every(fn (array $item): bool => $item['open'] === true))->toBeTrue()
         ->and($leaf['permission'])->toBe($permission);
 })->with([
-    'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'sales_cycle_reports', 'sales_report_financial', ['dashboard', 'sales', 'human_resources', 'reports'], ['report' => 'financial']],
-    'purchase report' => ['reports.purchases.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'report_purchase_requests', ['dashboard', 'purchases', 'human_resources'], ['report_type' => 'purchase_requests']],
+    'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'financial_analysis_reports', 'sales_report_financial', ['dashboard', 'sales', 'accounting_costing', 'human_resources', 'reports'], ['report' => 'financial']],
+    'purchase report' => ['reports.purchases.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'report_purchase_requests', ['dashboard', 'purchases', 'accounting_costing', 'human_resources'], ['report_type' => 'purchase_requests']],
     'inventory report' => ['inventory.reports.operational', 'admin.inventory.reports.index', 'inventory_module_reports', 'inventory_operational_reports', ['dashboard', 'inventory', 'human_resources']],
     'production report' => ['production.reports.operational', 'admin.production.reports.index', 'production_reports_operations', 'production_reports_overview', ['dashboard', 'inventory', 'production', 'human_resources']],
     'account ledger' => ['reports.account_ledger.view', 'admin.accounting.reports.account-ledger', 'accounting_costing_reports', 'account_ledger', ['dashboard', 'accounting_costing', 'human_resources']],
@@ -335,6 +335,42 @@ test('report-only permissions retain access, hide empty module parents, and acti
     'supplier statement' => ['reports.supplier_statement.view', 'admin.accounting.reports.supplier-statement', 'purchase_reports', 'supplier_statement', ['dashboard', 'purchases', 'human_resources']],
     'fixed asset report' => ['fixed_assets.reports', 'admin.fixed-assets.reports.index', 'asset_reports', 'fixed_asset_reports', ['dashboard', 'accounting_costing', 'human_resources']],
 ]);
+
+test('financial analysis is a direct accounting group backed only by working report controllers', function (): void {
+    config()->set('erp.phase_mode', 'expanded');
+    app()->setLocale('en');
+    $admin = navigationAuditAdmin();
+    $records = collect(navigationAuditRecords(app(MenuService::class)->getMenu($admin)));
+    $group = $records->firstWhere('stable_path', 'accounting_costing > financial_analysis_reports');
+
+    expect($group)->not->toBeNull()
+        ->and(collect($group['children'])->pluck('label')->all())->toContain(
+            'sales_report_financial',
+            'sales_report_period',
+            'sales_report_customer',
+            'sales_report_product',
+            'sales_report_receivables',
+            'sales_report_collections',
+            'sales_report_returns',
+            'report_purchases_by_supplier',
+            'report_purchases_by_item',
+            'report_purchases_by_period',
+            'report_price_history',
+            'report_supplier_outstanding',
+            'report_due_supplier_installments',
+            'report_supplier_aging',
+            'report_upcoming_supplier_payments',
+            'reports_costing_profitability',
+            'reports_costing_allocation_analysis',
+        );
+
+    foreach ($group['children'] as $child) {
+        $route = app('router')->getRoutes()->getByName($child['route']);
+
+        expect($route)->not->toBeNull()
+            ->and($route->getActionName())->not->toContain('ErpUiScreenController');
+    }
+});
 
 test('navigation search returns only permitted unique destinations and uses canonical localized report paths', function (): void {
     config()->set('erp.phase_mode', 'expanded');

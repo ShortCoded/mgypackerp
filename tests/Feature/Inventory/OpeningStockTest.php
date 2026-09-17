@@ -8,12 +8,14 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
 use Spatie\Permission\Models\Permission;
@@ -717,6 +719,60 @@ test('approval closes confirms quantities without journals and locks later chang
     $this->actingAs($actor)
         ->deleteJson(route('admin.inventory.opening-stocks.destroy', $record->doc_num))
         ->assertStatus(422);
+});
+
+test('later periods reject duplicate manual opening stock', function (): void {
+    $context = openingStockContext($this);
+    $actor = openingStockActor(['inventory.opening_stocks.create', 'inventory.opening_stocks.approve']);
+    $product = openingStockProduct($context['company']);
+    $store = BranchStore::query()->create([
+        'branch_id' => $context['branch']->getKey(),
+        'name' => 'Opening history store',
+        'position' => 1,
+    ]);
+    InventoryTransaction::query()->create([
+        'posting_key' => 'opening-stock-history-'.str()->uuid(),
+        'company_id' => $context['company']->getKey(),
+        'financial_period_id' => $context['period']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'branch_store_id' => $store->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'transaction_date' => $context['period']->from_date,
+        'transaction_type' => 'opening_stock',
+        'product_id' => $product->getKey(),
+        'unit_id' => $product->item_unit_id,
+        'quantity_in' => 1,
+        'quantity_out' => 0,
+        'source_type' => OpeningStock::class,
+        'source_id' => 1,
+        'source_doc_num' => 'OS-HISTORY',
+        'unit_cost' => 1,
+        'total_cost' => 1,
+        'created_by' => $actor->getKey(),
+    ]);
+    $laterPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 9999,
+        'doc_num' => 'Period-09999',
+        'company_id' => $context['company']->getKey(),
+        'name' => 'Later Period',
+        'from_date' => $context['period']->to_date->copy()->addDay(),
+        'to_date' => $context['period']->to_date->copy()->addYear(),
+        'is_closed' => false,
+    ]);
+    openingStockSelectContext($this, $context['company'], $context['branch'], $laterPeriod);
+    $docNum = $this->actingAs($actor)
+        ->postJson(route('admin.inventory.opening-stocks.store'), openingStockPayload($product, [
+            'document_date' => $laterPeriod->from_date->toDateString(),
+        ]))
+        ->assertOk()
+        ->json('data.doc_num');
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.inventory.opening-stocks.approve', $docNum))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['document']);
+
+    expect(OpeningStock::query()->where('doc_num', $docNum)->firstOrFail()->approved)->toBeFalse();
 });
 
 test('editing a reopened document saves it closed again', function (): void {

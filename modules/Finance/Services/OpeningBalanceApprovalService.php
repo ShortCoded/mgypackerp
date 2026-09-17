@@ -5,6 +5,7 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\OpeningBalance;
@@ -117,6 +118,15 @@ class OpeningBalanceApprovalService
 
         if ($record->financialPeriod && $record->financialPeriod->allows_opening_entries === false) {
             throw new DomainException(__('opening_balances.messages.period_disallows_opening_entries'));
+        }
+
+        if ($record->financialPeriod && JournalEntry::query()
+            ->where('company_id', $record->company_id)
+            ->where('status', JournalEntry::StatusPosted)
+            ->where('is_posted', true)
+            ->whereDate('entry_date', '<', $record->financialPeriod->from_date)
+            ->exists()) {
+            throw new DomainException(__('opening_balances.messages.history_derived_opening_only'));
         }
     }
 

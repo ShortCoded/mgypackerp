@@ -31,6 +31,13 @@ class InventoryOpeningStockPostingService
             throw new DomainException(__('Opening inventory cannot be posted to this financial period.'));
         }
 
+        if (InventoryTransaction::query()
+            ->where('company_id', $locked->company_id)
+            ->whereDate('transaction_date', '<', $period->from_date)
+            ->exists()) {
+            throw new DomainException(__('inventory.opening_stocks.messages.history_derived_opening_only'));
+        }
+
         if (! $locked->branch_store_id) {
             return;
         }

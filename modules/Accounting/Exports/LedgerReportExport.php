@@ -21,6 +21,10 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
      */
     public function array(): array
     {
+        if ($this->type === 'general_journal') {
+            return $this->generalJournalRows();
+        }
+
         if ($this->isPartnerStatement()) {
             return $this->partnerStatementRows();
         }
@@ -77,6 +81,12 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
      */
     public function headings(): array
     {
+        if ($this->type === 'general_journal') {
+            return collect(['date', 'document', 'source_type', 'reference', 'account', 'description', 'cost_center', 'branch', 'debit', 'credit'])
+                ->map(fn (string $column): string => __('ledger_reports.columns.'.$column))
+                ->all();
+        }
+
         if ($this->isPartnerStatement()) {
             return [
                 __('ledger_reports.columns.date'),
@@ -174,6 +184,40 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
         ];
 
         return $rows;
+    }
+
+    /** @return list<list<string>> */
+    private function generalJournalRows(): array
+    {
+        $rows = collect($this->result['movements'])->map(fn (array $movement): array => [
+            $movement['entry_date'],
+            $movement['doc_num'],
+            $this->sourceLabel($movement['source_type']),
+            $movement['reference_no'] ?: $movement['source_doc_num'],
+            $movement['account'],
+            $movement['description'],
+            $movement['cost_center'],
+            $movement['branch'],
+            $movement['debit'],
+            $movement['credit'],
+        ])->all();
+        $rows[] = [
+            (string) data_get($this->result, 'filters.to_date'),
+            __('ledger_reports.summary.period'),
+            '', '', '', '', '', '',
+            (string) data_get($this->result, 'totals.debit'),
+            (string) data_get($this->result, 'totals.credit'),
+        ];
+
+        return $rows;
+    }
+
+    private function sourceLabel(mixed $sourceType): string
+    {
+        $source = filled($sourceType) ? (string) $sourceType : 'manual';
+        $key = 'ledger_reports.sources.'.$source;
+
+        return trans()->has($key) ? __($key) : __('ledger_reports.sources.other');
     }
 
     private function isPartnerStatement(): bool

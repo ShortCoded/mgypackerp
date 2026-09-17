@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
@@ -20,6 +21,8 @@ use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Finance\Models\Cashbox;
+use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\OpeningBalance;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
@@ -206,7 +209,7 @@ test('journal and ledger permissions are discovered and menu items are visible',
     $children = collect(require config_path('menu/accounting.php'))->first()['children'] ?? [];
 
     expect(collect($children)->pluck('label')->all())
-        ->toContain('journal_entries', 'account_ledger', 'trial_balance', 'financial_statements', 'customer_statement', 'supplier_statement');
+        ->toContain('journal_entries', 'general_journal', 'account_ledger', 'trial_balance', 'financial_statements', 'customer_statement', 'supplier_statement');
 });
 
 test('manual journal lifecycle is balanced draft to posted and posted entries are immutable', function (): void {
@@ -473,6 +476,45 @@ test('canonical ledger normalizes posted foreign currency amounts to the main cu
         ->and($result['currency']['code'])->toBe($context['currency']->code);
 });
 
+test('general journal reports only posted lines by accounting date with matching exports', function (): void {
+    $context = journalEntryContext();
+    [$debit, $credit] = journalEntryAccounts($context['company']);
+    $actor = journalEntryActor(['journal_entries.view', 'reports.account_ledger.view', 'reports.account_ledger.export']);
+    $posted = journalPostedMovement($context, $debit, $credit, 99120, '2026-04-10', '125.0000', '0.0000');
+    journalPostedMovement($context, $debit, $credit, 99121, '2026-04-11', '999.0000', '0.0000')
+        ->update(['status' => JournalEntry::StatusDraft, 'is_posted' => false]);
+
+    $query = [
+        'run' => 1,
+        'from_date' => '2026-04-01',
+        'to_date' => '2026-04-30',
+        'account_doc_num' => $debit->doc_num,
+    ];
+
+    $response = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.general-journal', $query))
+        ->assertOk()
+        ->assertSee(__('ledger_reports.types.general_journal'))
+        ->assertSee($posted->doc_num)
+        ->assertDontSee('JE-99121')
+        ->assertSee('125');
+
+    expect($response->viewData('result')['totals'])
+        ->toBe(['debit' => '125.0000', 'credit' => '0.0000']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.general-journal.export.csv', $query))
+        ->assertOk()
+        ->assertDownload('general-journal.csv');
+
+    $pdf = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.general-journal.export.pdf', $query))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+});
+
 test('trial balance uses posted journals across periods without double counting hierarchy totals', function (): void {
     $context = journalEntryContext();
     $actor = journalEntryActor([
@@ -594,6 +636,16 @@ test('trial balance uses posted journals across periods without double counting 
     ]);
     expect(collect($withZero['rows'])->pluck('doc_num'))->toContain($zeroAccount->doc_num);
 
+    $accountFiltered = app(TrialBalanceQueryService::class)->report([
+        ...$filters,
+        'account_id' => $group->getKey(),
+        'include_zero' => true,
+    ]);
+    expect(collect($accountFiltered['rows'])->pluck('doc_num'))
+        ->toContain($group->doc_num, $debitAccount->doc_num, $creditAccount->doc_num)
+        ->not->toContain($zeroAccount->doc_num)
+        ->and($accountFiltered['scope_is_partial'])->toBeTrue();
+
     $query = [
         'run' => 1,
         'from_date' => '2026-01-01',
@@ -619,6 +671,30 @@ test('trial balance uses posted journals across periods without double counting 
         ->assertHeader('content-type', 'application/pdf');
 
     expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+
+    $debitAccount->delete();
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.journal-entries.select2.accounts', [
+            'report_scope' => 1,
+            'include_historical' => 1,
+            'q' => 'Trial Balance Debit',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $debitAccount->doc_num);
+
+    $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.account-ledger', [
+            'run' => 1,
+            'all_periods' => 1,
+            'account_doc_num' => $debitAccount->doc_num,
+            'from_date' => '2026-01-01',
+            'to_date' => '2026-12-31',
+        ]))
+        ->assertOk()
+        ->assertSee('Trial Balance Debit');
+
+    expect(JournalEntry::query()->where('doc_number', 99912)->firstOrFail()->lines()->firstOrFail()->account?->doc_num)
+        ->toBe($debitAccount->doc_num);
 });
 
 test('trial balance value and display axes distinguish period totals cumulative totals and balances', function (): void {
@@ -838,6 +914,73 @@ test('trial balance aggregation preserves debit and credit sides while exposing 
         ->and(collect($tree['rows'])->pluck('doc_num'))->toContain($group->doc_num, $debitChild->doc_num, $creditChild->doc_num);
 });
 
+test('trial balance preserves direct parent postings without double counting child activity', function (): void {
+    $context = journalEntryContext();
+    [, $counterpart] = journalEntryAccounts($context['company']);
+    $parent = Account::query()->create([
+        'doc_number' => 99945,
+        'doc_num' => 'ACC-TB-DIRECT-PARENT',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '99945',
+        'name' => 'Direct Posting Parent',
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'level' => 1,
+        'is_group' => true,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $child = Account::query()->create([
+        'doc_number' => 99946,
+        'doc_num' => 'ACC-TB-DIRECT-CHILD',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '99945-1',
+        'name' => 'Direct Posting Child',
+        'parent_id' => $parent->getKey(),
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'level' => 2,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+
+    journalPostedMovement($context, $parent, $counterpart, 99945, '2026-04-10', '50.0000', '0.0000');
+    journalPostedMovement($context, $child, $counterpart, 99946, '2026-04-11', '25.0000', '0.0000');
+
+    $filters = [
+        'company_id' => $context['company']->getKey(),
+        'from_date' => '2026-01-01',
+        'to_date' => '2026-12-31',
+        'branch_id' => null,
+        'cost_center_id' => null,
+        'include_zero' => false,
+        'value_mode' => TrialBalanceQueryService::ValueCombined,
+        'totals_basis' => TrialBalanceQueryService::TotalsPeriod,
+    ];
+    $aggregateAtChildLevel = app(TrialBalanceQueryService::class)->report([
+        ...$filters,
+        'display_mode' => TrialBalanceQueryService::DisplayAggregate,
+        'level' => 2,
+    ]);
+    $rows = collect($aggregateAtChildLevel['rows'])->keyBy('doc_num');
+    $aggregateAtParentLevel = app(TrialBalanceQueryService::class)->report([
+        ...$filters,
+        'display_mode' => TrialBalanceQueryService::DisplayAggregate,
+        'level' => 1,
+    ]);
+
+    expect($rows->get($parent->doc_num))->toMatchArray([
+        'period_debit' => '50.0000',
+        'shows_direct_activity_only' => true,
+    ])->and($rows->get($child->doc_num)['period_debit'])->toBe('25.0000')
+        ->and($aggregateAtChildLevel['totals']['period_debit'])->toBe('75.0000')
+        ->and($aggregateAtChildLevel['totals']['period_credit'])->toBe('75.0000')
+        ->and(collect($aggregateAtParentLevel['rows'])->firstWhere('doc_num', $parent->doc_num)['period_debit'])->toBe('75.0000');
+});
+
 test('financial statements reconcile the required numeric example without duplicating period profit', function (): void {
     $context = journalEntryContext();
     $priorPeriod = FinancialPeriod::query()->create([
@@ -884,7 +1027,37 @@ test('financial statements reconcile the required numeric example without duplic
         ->firstOrFail();
     $priorContext = [...$context, 'period' => $priorPeriod];
 
+    $priorOnlyRevenue = Account::query()->create([
+        'doc_number' => 99954,
+        'doc_num' => 'ACCOUNT-FS-PRIOR-REVENUE',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '99954-R',
+        'name' => 'Prior-only revenue',
+        'level' => 1,
+        'account_type' => Account::TypeRevenue,
+        'statement_type' => Account::StatementIncomeStatement,
+        'normal_balance' => Account::BalanceCredit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $priorOnlyExpense = Account::query()->create([
+        'doc_number' => 99955,
+        'doc_num' => 'ACCOUNT-FS-PRIOR-EXPENSE',
+        'company_id' => $context['company']->getKey(),
+        'account_code' => '99955-E',
+        'name' => 'Prior-only expense',
+        'level' => 1,
+        'account_type' => Account::TypeExpense,
+        'statement_type' => Account::StatementIncomeStatement,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+
     journalPostedMovement($priorContext, $cash, $capital, 99951, '2025-12-31', '10000.0000', '0.0000');
+    journalPostedMovement($priorContext, $priorOnlyExpense, $priorOnlyRevenue, 99954, '2025-11-30', '250.0000', '0.0000');
     journalPostedMovement($context, $cash, $revenue, 99952, '2026-03-01', '3000.0000', '0.0000');
     journalPostedMovement($context, $expense, $cash, 99953, '2026-03-02', '2000.0000', '0.0000');
 
@@ -922,8 +1095,26 @@ test('financial statements reconcile the required numeric example without duplic
     expect($income['summary']['gross_revenue'])->toBe('3000.0000')
         ->and($income['summary']['operating_expenses'])->toBe('2000.0000')
         ->and($income['summary']['period_result'])->toBe('1000.0000')
-        ->and($income['classification_complete'])->toBeTrue()
+        ->and($income['classification_complete'])->toBeFalse()
+        ->and($income['classification_warnings'])->toContain(
+            $priorOnlyRevenue->codeNameLabel(),
+            $priorOnlyExpense->codeNameLabel(),
+        )
         ->and(collect($income['rows'])->firstWhere('key', 'period_result')['comparison_amount'])->toBe('0.0000')
+        ->and(collect($income['rows'])->firstWhere('key', 'account_'.$priorOnlyRevenue->getKey()))->toMatchArray([
+            'amount' => '0.0000',
+            'comparison_amount' => '250.0000',
+            'comparison_only' => true,
+        ])
+        ->and(collect($income['rows'])->firstWhere('key', 'account_'.$priorOnlyExpense->getKey()))->toMatchArray([
+            'amount' => '0.0000',
+            'comparison_amount' => '250.0000',
+            'comparison_only' => true,
+        ])
+        ->and(collect($income['rows'])->search(fn (array $row): bool => $row['key'] === 'unclassified_expense'))
+        ->toBeLessThan(collect($income['rows'])->search(fn (array $row): bool => $row['key'] === 'profit_before_tax'))
+        ->and(collect($income['rows'])->search(fn (array $row): bool => $row['key'] === 'unclassified_revenue'))
+        ->toBeLessThan(collect($income['rows'])->search(fn (array $row): bool => $row['key'] === 'profit_before_tax'))
         ->and($position['summary']['assets'])->toBe('11000.0000')
         ->and($position['summary']['liabilities'])->toBe('0.0000')
         ->and($position['summary']['ledger_equity'])->toBe('10000.0000')
@@ -968,6 +1159,9 @@ test('financial statements reconcile the required numeric example without duplic
         'view_mode' => FinancialStatementQueryService::ViewDetailed,
         'from_date' => '2026-01-01',
         'to_date' => '2026-12-31',
+        'comparison_from_date' => '2025-01-01',
+        'comparison_to_date' => '2025-12-31',
+        'branch_doc_num' => $context['branch']->doc_num,
     ];
 
     $this->actingAs($actor)
@@ -975,6 +1169,10 @@ test('financial statements reconcile the required numeric example without duplic
         ->assertOk()
         ->assertSee(__('financial_statements.types.income_statement'))
         ->assertSee(__('financial_statements.lines.period_result'))
+        ->assertSee('branch_doc_num='.$context['branch']->doc_num, false)
+        ->assertSee('account_doc_num='.$priorOnlyRevenue->doc_num, false)
+        ->assertSee('from_date=2025-01-01', false)
+        ->assertSee('to_date=2025-12-31', false)
         ->assertSee('1,000');
 
     $this->actingAs($actor)
@@ -1223,6 +1421,67 @@ test('financial period closing workspace preserves permission and company bounda
         ->assertNotFound();
 });
 
+test('financial period closing workspace reports a missing overhead allocation schema without crashing', function (): void {
+    $context = journalEntryContext();
+    $viewer = journalEntryActor(['financial_periods.view']);
+
+    Schema::dropIfExists('cost_overhead_allocation_lines');
+    Schema::dropIfExists('cost_overhead_allocation_sources');
+    Schema::dropIfExists('cost_overhead_allocation_runs');
+    Schema::dropIfExists('cost_overhead_allocation_rules');
+
+    $this->actingAs($viewer)
+        ->get(route('admin.financial-periods.closing', ['period' => $context['period']->doc_num]))
+        ->assertOk()
+        ->assertSee(__('financial_periods.closing.checks.overhead_allocation_schema_missing'))
+        ->assertViewHas('preview', fn (array $preview): bool => collect($preview['checks'])
+            ->firstWhere('key', 'overhead_allocation_schema')['status'] === 'blocker');
+});
+
+test('financial period closing workspace enforces the actor financial period scope', function (): void {
+    $context = journalEntryContext();
+    $allowedPeriod = FinancialPeriod::query()->create([
+        'company_id' => $context['company']->getKey(),
+        'doc_number' => 910010,
+        'doc_num' => 'FP-910010',
+        'name' => 'Allowed close period',
+        'from_date' => $context['period']->to_date->copy()->addDay(),
+        'to_date' => $context['period']->to_date->copy()->addYear(),
+        'is_closed' => false,
+    ]);
+    $role = Role::query()->create([
+        'name' => 'restricted-period-closer',
+        'guard_name' => 'web',
+        'doc_number' => 910010,
+        'doc_num' => 'ROLE-910010',
+        'company_access_restricted' => false,
+        'branch_access_restricted' => false,
+        'financial_period_access_restricted' => true,
+    ]);
+    DB::table('role_financial_period_access')->insert([
+        'role_id' => $role->getKey(),
+        'financial_period_id' => $allowedPeriod->getKey(),
+    ]);
+    $actor = journalEntryActor(['financial_periods.view', 'financial_periods.close', 'financial_periods.reopen']);
+    $actor->assignRole($role);
+
+    $this->actingAs($actor)
+        ->get(route('admin.financial-periods.closing', ['period' => $allowedPeriod->doc_num]))
+        ->assertOk()
+        ->assertSee($allowedPeriod->doc_num)
+        ->assertDontSee($context['period']->doc_num);
+
+    $this->actingAs($actor)
+        ->get(route('admin.financial-periods.closing', ['period' => $context['period']->doc_num]))
+        ->assertNotFound();
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.close', $context['period']->doc_num), ['confirm_result_transfer' => 1])
+        ->assertNotFound();
+    $this->actingAs($actor)
+        ->post(route('admin.financial-periods.reopen', $context['period']->doc_num))
+        ->assertNotFound();
+});
+
 test('financial period close rechecks unresolved financial documents after preview', function (): void {
     $context = journalEntryContext();
     $actor = journalEntryActor(['financial_periods.view', 'financial_periods.close']);
@@ -1246,6 +1505,31 @@ test('financial period close rechecks unresolved financial documents after previ
         'is_closed' => false,
         'approved' => false,
     ]);
+    $cashbox = Cashbox::query()->create([
+        'doc_number' => 99991,
+        'doc_num' => 'CASH-99991',
+        'company_id' => $context['company']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'account_id' => Account::query()->forCompany($context['company']->getKey())->eligibleForDirectPosting()->value('id'),
+        'name' => 'Unposted close-test cashbox',
+        'status' => 'active',
+    ]);
+    CashVoucher::query()->create([
+        'doc_number' => 99991,
+        'doc_num' => 'CPV-99991',
+        'company_id' => $context['company']->getKey(),
+        'voucher_type' => CashVoucher::TypePayment,
+        'voucher_date' => $context['period']->from_date,
+        'cashbox_id' => $cashbox->getKey(),
+        'currency_id' => $context['currency']->getKey(),
+        'exchange_rate' => 1,
+        'amount' => 10,
+        'amount_base' => 10,
+        'reason' => 'Approved movement without a posted accounting source',
+        'status' => CashVoucher::StatusApproved,
+        'approved_by' => $actor->getKey(),
+        'approved_at' => now(),
+    ]);
 
     $this->actingAs($actor)
         ->post(route('admin.financial-periods.close', $context['period']->doc_num), [
@@ -1261,9 +1545,12 @@ test('financial period close rechecks unresolved financial documents after previ
         ->assertViewHas('preview', function (array $preview): bool {
             $check = collect($preview['checks'])->firstWhere('key', 'unposted_financial_documents');
 
+            $details = collect($check['details'])->keyBy('label');
+
             return $check['status'] === 'blocker'
-                && $check['count'] === 1
-                && $check['details'][0]['label'] === __('financial_periods.closing.document_types.opening_balances');
+                && $check['count'] === 2
+                && $details->get(__('financial_periods.closing.document_types.opening_balances'))['count'] === 1
+                && $details->get(__('financial_periods.closing.document_types.cash_vouchers'))['count'] === 1;
         });
 
     expect($context['period']->refresh()->is_closed)->toBeFalse()

@@ -21,6 +21,7 @@ class LedgerReportRequest extends FormRequest
         $permission = match ($this->reportType()) {
             'customer_statement' => "reports.customer_statement.{$action}",
             'supplier_statement' => "reports.supplier_statement.{$action}",
+            'general_journal' => "reports.account_ledger.{$action}",
             default => "reports.account_ledger.{$action}",
         };
 
@@ -92,7 +93,7 @@ class LedgerReportRequest extends FormRequest
             }
 
             $checks = [
-                'account_doc_num' => Account::query()->forCompany((int) $companyId),
+                'account_doc_num' => Account::query()->withTrashed()->forCompany((int) $companyId),
                 'customer_doc_num' => Customer::query()->forCompany((int) $companyId)->active(),
                 'supplier_doc_num' => Supplier::query()->forCompany((int) $companyId)->active(),
                 'branch_doc_num' => Branch::query()->where('company_id', (int) $companyId)->active(),
@@ -114,6 +115,7 @@ class LedgerReportRequest extends FormRequest
         }
 
         return match ($this->route()?->getName()) {
+            'admin.accounting.reports.general-journal' => 'general_journal',
             'admin.accounting.reports.customer-statement' => 'customer_statement',
             'admin.accounting.reports.supplier-statement' => 'supplier_statement',
             default => 'account_ledger',

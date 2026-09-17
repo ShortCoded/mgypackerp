@@ -10,7 +10,10 @@
     $subjectUrl = match($type) {
         'customer_statement' => route('admin.accounting.journal-entries.select2.customers'),
         'supplier_statement' => route('admin.accounting.journal-entries.select2.suppliers'),
-        default => route('admin.accounting.journal-entries.select2.accounts'),
+        default => route('admin.accounting.journal-entries.select2.accounts', [
+            'report_scope' => 1,
+            'include_historical' => 1,
+        ]),
     };
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);

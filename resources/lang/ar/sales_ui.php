@@ -79,8 +79,14 @@ return [
     'employee_unresolved' => 'مرجع المستخدم القديم محفوظ. لم يتم تأكيد ربطه بموظف.',
     'reports' => [
         'choose_report' => 'تقارير المبيعات',
+        'operating_context_required' => 'اختر الشركة والفرع والفترة المالية للتشغيل أولًا.',
         'filters' => 'فلاتر التقرير',
         'filters_help' => 'تُطبق الفلاتر داخل الشركة والفرع والفترة المالية النشطة.',
+        'geography_state' => 'البيانات الجغرافية',
+        'geography_specified' => 'الدولة محددة',
+        'geography_unspecified' => 'غير محدد',
+        'address_search' => 'البحث في العنوان',
+        'contact_search' => 'البحث في الهاتف أو جهة الاتصال',
         'no_results' => 'لا توجد سجلات مطابقة للفلاتر المحددة.',
         'types' => [
             'financial' => 'التحليل المالي للمبيعات',

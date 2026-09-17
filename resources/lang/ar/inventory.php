@@ -95,6 +95,7 @@ return [
             'deleted_not_approvable' => 'لا يمكن اعتماد مستند محذوف.',
             'already_approved' => 'المستند معتمد بالفعل.',
             'no_lines_approve' => 'لا يمكن اعتماد مستند بدون بنود.',
+            'history_derived_opening_only' => 'هذه ليست أول فترة مالية للشركة. يُستخرج مخزون أول المدة من تاريخ حركات المخزون المرحلة، لذلك لا يمكن اعتماد افتتاحي يدوي مكرر.',
             'approved_not_editable' => 'لا يمكن تعديل مستند معتمد.',
             'closed_edit_forbidden' => 'لا يمكن تعديل مستند مغلق.',
             'closed_delete_forbidden' => 'لا يمكن حذف مستند مغلق.',

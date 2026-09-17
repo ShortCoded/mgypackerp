@@ -88,12 +88,20 @@ class TrialBalanceReportController extends Controller
                 ->where('doc_num', $validated['cost_center_doc_num'])
                 ->value('id')
             : null;
+        $accountId = $request->filled('account_doc_num')
+            ? Account::query()
+                ->withTrashed()
+                ->forCompany((int) $context['company_id'])
+                ->where('doc_num', $validated['account_doc_num'])
+                ->value('id')
+            : null;
 
         return [
             $this->trialBalance->report([
                 'company_id' => (int) $context['company_id'],
                 'from_date' => $validated['from_date'],
                 'to_date' => $validated['to_date'],
+                'account_id' => $accountId ? (int) $accountId : null,
                 'branch_id' => $branch?->getKey(),
                 'cost_center_id' => $costCenterId ? (int) $costCenterId : null,
                 'include_zero' => $request->boolean('include_zero'),
@@ -149,6 +157,7 @@ class TrialBalanceReportController extends Controller
         $properties = [
             'from_date' => $validated['from_date'],
             'to_date' => $validated['to_date'],
+            'account_doc_num' => $validated['account_doc_num'] ?? null,
             'branch_doc_num' => $validated['branch_doc_num'] ?? null,
             'cost_center_doc_num' => $validated['cost_center_doc_num'] ?? null,
             'include_zero' => $request->boolean('include_zero'),
