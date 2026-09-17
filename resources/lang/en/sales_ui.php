@@ -78,6 +78,15 @@ return [
     'mark_sent' => 'Record as sent',
     'employee_unresolved' => 'The legacy user reference is retained. No employee mapping has been confirmed.',
     'reports' => [
+        'operational' => [
+            'actionable_total' => 'Pending sales actions',
+            'sales_requests' => 'Open sales requests',
+            'remaining_quantity' => 'Remaining quantity',
+            'statuses' => [
+                'draft' => 'Draft', 'submitted' => 'Submitted', 'approved' => 'Approved',
+                'partially_converted' => 'Partially converted',
+            ],
+        ],
         'choose_report' => 'Sales reports',
         'operating_context_required' => 'Select an operating company, branch, and financial period first.',
         'filters' => 'Report filters',
@@ -88,6 +97,12 @@ return [
         'address_search' => 'Address search',
         'contact_search' => 'Phone / contact search',
         'no_results' => 'No records match the selected filters.',
+        'columns' => [
+            'document' => 'Document',
+            'date' => 'Date',
+            'customer' => 'Customer',
+            'status' => 'Status',
+        ],
         'types' => [
             'financial' => 'Sales Financial Analysis',
             'period' => 'Sales by Period',

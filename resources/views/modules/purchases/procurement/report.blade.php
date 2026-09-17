@@ -202,6 +202,15 @@
         </x-admin.report.filter-panel>
 
         @if(filled($filters['document_type'] ?? null))<p class="text-600">{{ __('Balances include all posted supplier movements; the document filter limits the displayed movements.') }}</p>@endif
+        @php
+            $dashboardCountKey = match ($reportType) {
+                \Modules\Purchases\Services\Reports\ProcurementCycleReport::PendingPurchaseRequests => 'pending_purchase_requests',
+                \Modules\Purchases\Services\Reports\ProcurementCycleReport::PendingSourcingActions => 'pending_purchase_sourcing',
+                \Modules\Purchases\Services\Reports\ProcurementCycleReport::OpenPurchaseOrders => 'open_purchase_orders',
+                default => null,
+            };
+        @endphp
+        @if($dashboardCountKey)<span class="d-none" data-report-count="{{ $dashboardCountKey }}">{{ $rows->count() }}</span>@endif
         <div class="row g-2 mb-3">
             @foreach($metrics as $key => $value)
                 <div class="col-6 col-md-4 col-xl">

@@ -28,6 +28,11 @@
         <div class="card-header"><h2 class="h6 mb-0">{{ __('finance_reports.filters_title') }}</h2></div>
         <div class="card-body">
             <form method="GET" action="{{ route($indexRoute) }}" class="row g-3">
+                @foreach(['due_state', 'branch_id', 'financial_period_id'] as $hiddenFilter)
+                    @if(in_array($hiddenFilter, $applicableFilters, true) && filled($filters[$hiddenFilter] ?? null))
+                        <input type="hidden" name="{{ $hiddenFilter }}" value="{{ $filters[$hiddenFilter] }}">
+                    @endif
+                @endforeach
                 @if($isNamedReport)
                     <x-forms.input name="type" type="hidden" value="{{ $report['type'] }}" />
                 @else
@@ -132,6 +137,17 @@
     @endif
 
     <div class="card">
+        @php
+            $dashboardCountKey = match ($report['type']) {
+                \Modules\Finance\Services\FinanceReportService::CustomerAging => ($filters['due_state'] ?? null) === 'due_or_overdue' ? 'due_receivables' : null,
+                \Modules\Finance\Services\FinanceReportService::SupplierAging => ($filters['due_state'] ?? null) === 'due_or_overdue' ? 'due_payables' : null,
+                \Modules\Finance\Services\FinanceReportService::DueCheques => 'due_cheques',
+                \Modules\Finance\Services\FinanceReportService::ReturnedCheques => 'returned_cheques',
+                \Modules\Finance\Services\FinanceReportService::UnapprovedDocuments => 'pending_finance_approvals',
+                default => null,
+            };
+        @endphp
+        @if($dashboardCountKey)<span class="d-none" data-report-count="{{ $dashboardCountKey }}">{{ $report['rows']->count() }}</span>@endif
         <div class="card-header d-flex justify-content-between align-items-center">
             <h2 class="h6 mb-0">{{ $report['title'] }}</h2>
             <span class="badge badge-subtle-secondary">{{ __('finance_reports.results_count', ['count' => $report['rows']->count()]) }}</span>

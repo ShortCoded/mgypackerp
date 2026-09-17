@@ -92,4 +92,14 @@ class MaintenanceRequest extends Model
             ->where($this->getTable().'.financial_period_id', $periodId)
             ->where($this->getTable().'.branch_id', $branchId);
     }
+
+    public function scopeOperationallyOpen(Builder $query): Builder
+    {
+        return $query->where($this->qualifyColumn('status'), self::StatusOpen);
+    }
+
+    public function scopeBreakdowns(Builder $query): Builder
+    {
+        return $query->where($this->qualifyColumn('request_type'), 'breakdown');
+    }
 }

@@ -35,6 +35,7 @@ use Modules\Maintenance\Http\Requests\StoreMaintenanceMaterialRequest;
 use Modules\Maintenance\Http\Requests\StoreMaintenanceRequest;
 use Modules\Maintenance\Http\Requests\StoreMaintenanceWorkOrder;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
+use Modules\Maintenance\Models\MaintenancePlanDue;
 use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Maintenance\Services\MaintenanceMaterialRequestService;
@@ -893,6 +894,7 @@ class MaintenanceController extends Controller
             'discipline' => ['nullable', 'in:electrical,mechanical,molds,other'],
             'test_result' => ['nullable', 'in:passed,failed'],
             'status' => ['nullable', 'in:draft,approved,in_progress,completed,closed,cancelled'],
+            'operational_focus' => ['nullable', 'in:open,breakdown,overdue,planned_due'],
         ]);
 
         $orders = MaintenanceWorkOrder::query()
@@ -905,6 +907,8 @@ class MaintenanceController extends Controller
             ->when($filters['discipline'] ?? null, fn ($query, $value) => $query->where('discipline', $value))
             ->when($filters['test_result'] ?? null, fn ($query, $value) => $query->where('test_result', $value))
             ->when($filters['status'] ?? null, fn ($query, $value) => $query->where('status', $value))
+            ->when(($filters['operational_focus'] ?? null) === 'open', fn ($query) => $query->operationallyOpen())
+            ->when(($filters['operational_focus'] ?? null) === 'overdue', fn ($query) => $query->overdue())
             ->with([
                 'asset', 'mold', 'supplier', 'request', 'maintenancePlanDue.plan',
                 'materialRequests.lines.product', 'materialRequests.issueDocument', 'materialRequests.returnDocument',
@@ -916,7 +920,20 @@ class MaintenanceController extends Controller
             ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
             ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate('reported_at', '>=', $date))
             ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate('reported_at', '<=', $date))
-            ->count();
+            ->when(in_array($filters['operational_focus'] ?? null, ['open', 'breakdown'], true), fn ($query) => $query->operationallyOpen())
+            ->when(($filters['operational_focus'] ?? null) === 'breakdown', fn ($query) => $query->breakdowns())
+            ->with(['asset', 'mold', 'workOrder'])
+            ->latest('reported_at')
+            ->get();
+        $planDues = MaintenancePlanDue::query()
+            ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
+            ->operationallyOpen()
+            ->when(($filters['operational_focus'] ?? null) === 'overdue', fn ($query) => $query->overdue())
+            ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate('due_at', '>=', $date))
+            ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate('due_at', '<=', $date))
+            ->with(['plan.asset', 'plan.mold', 'workOrder'])
+            ->orderBy('due_at')
+            ->get();
         $materialLines = $orders->flatMap(fn (MaintenanceWorkOrder $order) => $order->materialRequests->flatMap->lines);
         $expenses = $orders->flatMap->expenses;
         $expenseTotals = $expenses
@@ -945,10 +962,16 @@ class MaintenanceController extends Controller
             'context' => $context,
             'filters' => $filters,
             'orders' => $orders,
+            'requests' => $requests,
+            'planDues' => $planDues,
             'expenseTotals' => $expenseTotals,
             'canViewFinancial' => (bool) $request->user()?->can('maintenance.reports.financial'),
             'kpis' => [
-                'breakdown_reports' => $requests,
+                'breakdown_reports' => $requests->where('request_type', 'breakdown')->count(),
+                'open_requests' => $requests->where('status', MaintenanceRequest::StatusOpen)->count(),
+                'planned_due' => $planDues->count(),
+                'overdue' => $orders->filter(fn (MaintenanceWorkOrder $order): bool => in_array($order->status, [MaintenanceWorkOrder::StatusDraft, MaintenanceWorkOrder::StatusApproved, MaintenanceWorkOrder::StatusInProgress], true) && $order->planned_end_at?->isPast())->count()
+                    + $planDues->filter(fn (MaintenancePlanDue $due): bool => $due->due_at?->isPast())->count(),
                 'work_orders' => $orders->count(),
                 'open_orders' => $orders->whereIn('status', [
                     MaintenanceWorkOrder::StatusDraft,

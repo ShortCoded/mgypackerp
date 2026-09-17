@@ -137,4 +137,20 @@ class MaintenanceWorkOrder extends Model
             ->where($this->getTable().'.financial_period_id', $periodId)
             ->where($this->getTable().'.branch_id', $branchId);
     }
+
+    public function scopeOperationallyOpen(Builder $query): Builder
+    {
+        return $query->whereIn($this->qualifyColumn('status'), [
+            self::StatusDraft,
+            self::StatusApproved,
+            self::StatusInProgress,
+        ]);
+    }
+
+    public function scopeOverdue(Builder $query): Builder
+    {
+        return $query->operationallyOpen()
+            ->whereNotNull($this->qualifyColumn('planned_end_at'))
+            ->where($this->qualifyColumn('planned_end_at'), '<', now());
+    }
 }

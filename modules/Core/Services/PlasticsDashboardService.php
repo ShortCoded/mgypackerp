@@ -10,10 +10,23 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Models\UserTask;
 use Modules\Core\Services\Reports\ProductDataReport;
+use Modules\Finance\Services\FinanceReportService;
+use Modules\Inventory\Models\InventoryReservation;
+use Modules\Inventory\Services\InventoryReportService;
+use Modules\Maintenance\Models\MaintenancePlanDue;
+use Modules\Maintenance\Models\MaintenanceRequest;
+use Modules\Maintenance\Models\MaintenanceWorkOrder;
+use Modules\Production\Services\ProductionReportService;
+use Modules\Purchases\Services\Reports\ProcurementCycleReport;
+use Modules\Sales\Models\Quotation;
+use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesRequest;
 
 class PlasticsDashboardService
 {
@@ -60,6 +73,10 @@ class PlasticsDashboardService
         private readonly DateFormatService $dates,
         private readonly NumericFormatService $numbers,
         private readonly ScreenDataVisibilityService $visibility,
+        private readonly InventoryReportService $inventoryReports,
+        private readonly ProductionReportService $productionReports,
+        private readonly ProcurementCycleReport $procurementReports,
+        private readonly FinanceReportService $financeReports,
     ) {}
 
     /**
@@ -94,6 +111,7 @@ class PlasticsDashboardService
         $this->appendPurchasing($dashboard, $user, $snapshot, $period);
         $this->appendInventory($dashboard, $user, $snapshot, $period);
         $this->appendSales($dashboard, $user, $snapshot, $period);
+        $this->appendOperationalExceptions($dashboard, $user, $snapshot, $period);
         $this->appendTasks($dashboard, $user);
 
         if ($dashboard['metrics'] === []) {
@@ -527,6 +545,242 @@ class PlasticsDashboardService
 
     /**
      * @param  array<string, mixed>  $dashboard
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $period
+     */
+    private function appendOperationalExceptions(array &$dashboard, User $user, array $context, array $period): void
+    {
+        $items = [];
+        $companyId = (int) $context['company_id'];
+        $periodId = (int) $context['financial_period_id'];
+        $branchId = (int) $context['branch_id'];
+        $asOf = today();
+        if ($asOf->greaterThan($period['to'])) {
+            $asOf = $period['to']->copy()->startOfDay();
+        } elseif ($asOf->lessThan($period['from'])) {
+            $asOf = $period['from']->copy()->startOfDay();
+        }
+        $contextFilters = [
+            'financial_period_id' => $periodId,
+            'branch_id' => $branchId,
+            'as_of' => $asOf->toDateString(),
+        ];
+
+        if ($this->can($user, 'inventory.reports.operational')) {
+            $hasReorderSetup = Product::query()
+                ->where('company_id', $companyId)
+                ->where('status', 'active')
+                ->whereIn('item_classification', Product::stockableItemClassifications())
+                ->where('reorder_point', '>', 0)
+                ->exists();
+            $hasStockStore = BranchStore::query()
+                ->where('branch_id', $branchId)
+                ->whereNull('deleted_at')
+                ->exists();
+
+            if (! $hasStockStore) {
+                $dashboard['limitations'][] = __('dashboard.plastics.limitations.inventory_store_missing');
+            } elseif ($hasReorderSetup) {
+                $balances = $this->inventoryReports->balances($companyId, $contextFilters);
+                $reservations = $this->inventoryReports->reservations($companyId, [
+                    ...$contextFilters,
+                    'status' => InventoryReservation::StatusActive,
+                ]);
+                $lowStock = $this->inventoryReports->lowStockRows($companyId, $branchId, $balances, $reservations, $contextFilters);
+                $items[] = $this->metric(
+                    __('dashboard.plastics.metrics.low_stock.title'),
+                    $lowStock->count(),
+                    __('dashboard.plastics.metrics.low_stock.meta'),
+                    'boxes-stacked',
+                    $lowStock->isNotEmpty() ? 'danger' : 'success',
+                    $this->routeUrl('admin.inventory.reports.index', ['as_of' => $asOf->toDateString(), 'operational_focus' => 'low_stock']),
+                    'low_stock',
+                );
+            } else {
+                $dashboard['limitations'][] = __('dashboard.plastics.limitations.reorder_setup_missing');
+            }
+        }
+
+        if ($this->can($user, 'production.reports.operational')) {
+            $materialShortages = $this->productionReports->materialShortages($companyId, $contextFilters);
+            $remainingOrders = $this->productionReports->remainingOrders($companyId, $contextFilters);
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.material_shortages.title'),
+                $materialShortages->count(),
+                __('dashboard.plastics.metrics.material_shortages.meta'),
+                'triangle-exclamation',
+                $materialShortages->isNotEmpty() ? 'danger' : 'success',
+                $this->routeUrl('admin.production.reports.materials', ['operational_focus' => 'shortage']),
+                'material_shortages',
+            );
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.production_remaining.title'),
+                $remainingOrders->count(),
+                __('dashboard.plastics.metrics.production_remaining.meta'),
+                'industry',
+                $remainingOrders->isNotEmpty() ? 'warning' : 'success',
+                $this->routeUrl('admin.production.reports.orders', ['operational_focus' => 'remaining']),
+                'production_remaining',
+            );
+
+            $qualityFilters = ['financial_period_id' => $periodId, 'branch_id' => $branchId];
+            $pendingQuality = $this->productionReports->qualityExceptions($companyId, [...$qualityFilters, 'operational_focus' => 'pending']);
+            $rejectedQuality = $this->productionReports->qualityExceptions($companyId, [...$qualityFilters, 'operational_focus' => 'rejected']);
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.quality_pending.title'),
+                $pendingQuality->count(),
+                __('dashboard.plastics.metrics.quality_pending.meta'),
+                'clipboard-check',
+                $pendingQuality->isNotEmpty() ? 'warning' : 'success',
+                $this->routeUrl('admin.production.reports.quality', ['operational_focus' => 'pending']),
+                'quality_pending',
+            );
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.quality_rejected.title'),
+                $rejectedQuality->count(),
+                __('dashboard.plastics.metrics.quality_rejected.meta'),
+                'ban',
+                $rejectedQuality->isNotEmpty() ? 'danger' : 'success',
+                $this->routeUrl('admin.production.reports.quality', ['operational_focus' => 'rejected']),
+                'quality_rejected',
+            );
+        }
+
+        if ($this->can($user, 'reports.sales.sales_orders.view')) {
+            $currencyId = Currency::query()
+                ->where('company_id', $companyId)
+                ->where('status', 'active')
+                ->orderByDesc('is_main')
+                ->value('id');
+            if ($currencyId) {
+                $salesRequests = SalesRequest::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)
+                    ->where('branch_id', $branchId)->operationallyOpen()->count();
+                $quotations = Quotation::query()->where('company_id', $companyId)->where('branch_id', $branchId)
+                    ->where('currency_id', $currencyId)->operationallyPending()->count();
+                $salesOrders = SalesOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)
+                    ->where('branch_id', $branchId)->where('currency_id', $currencyId)->operationallyOpen()->count();
+                $salesActions = $salesRequests + $quotations + $salesOrders;
+                $items[] = $this->metric(
+                    __('dashboard.plastics.metrics.pending_sales_actions.title'),
+                    $salesActions,
+                    __('dashboard.plastics.metrics.pending_sales_actions.meta', [
+                        'requests' => $this->formatCount($salesRequests),
+                        'quotations' => $this->formatCount($quotations),
+                        'orders' => $this->formatCount($salesOrders),
+                    ]),
+                    'cart-shopping',
+                    $salesActions > 0 ? 'warning' : 'success',
+                    $this->routeUrl('admin.reports.sales.sales-orders.index', ['report' => 'operational', 'operational_focus' => 'pending_sales_actions']),
+                    'pending_sales_actions',
+                );
+            } else {
+                $dashboard['limitations'][] = __('dashboard.plastics.limitations.sales_currency_missing');
+            }
+        }
+
+        if ($this->can($user, 'reports.purchases.view')) {
+            $purchaseFilters = ['branch_id' => $branchId];
+            $pendingRequests = $this->procurementReports->rows(ProcurementCycleReport::PendingPurchaseRequests, $purchaseFilters, $companyId, $periodId);
+            $pendingSourcing = $this->procurementReports->rows(ProcurementCycleReport::PendingSourcingActions, $purchaseFilters, $companyId, $periodId);
+            $openOrders = $this->procurementReports->rows(ProcurementCycleReport::OpenPurchaseOrders, $purchaseFilters, $companyId, $periodId);
+            $partiallyReceived = $this->procurementReports->rows(ProcurementCycleReport::PartiallyReceivedOrders, $purchaseFilters, $companyId, $periodId);
+            $overdueSupply = $this->procurementReports->rows(ProcurementCycleReport::OverduePoDeliveries, $purchaseFilters, $companyId, $periodId);
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.pending_purchase_requests.title'),
+                $pendingRequests->count(),
+                __('dashboard.plastics.metrics.pending_purchase_requests.meta'),
+                'file-circle-question',
+                $pendingRequests->isNotEmpty() ? 'warning' : 'success',
+                $this->routeUrl('admin.purchases.procurement-cycle-report.index', ['report_type' => ProcurementCycleReport::PendingPurchaseRequests, 'branch_id' => $branchId]),
+                'pending_purchase_requests',
+            );
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.pending_purchase_sourcing.title'),
+                $pendingSourcing->count(),
+                __('dashboard.plastics.metrics.pending_purchase_sourcing.meta'),
+                'scale-balanced',
+                $pendingSourcing->isNotEmpty() ? 'warning' : 'success',
+                $this->routeUrl('admin.purchases.procurement-cycle-report.index', ['report_type' => ProcurementCycleReport::PendingSourcingActions, 'branch_id' => $branchId]),
+                'pending_purchase_sourcing',
+            );
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.open_purchase_orders.title'),
+                $openOrders->count(),
+                __('dashboard.plastics.metrics.open_purchase_orders.meta', [
+                    'partial' => $this->formatCount($partiallyReceived->count()),
+                    'overdue' => $this->formatCount($overdueSupply->count()),
+                ]),
+                'truck-ramp-box',
+                $overdueSupply->isNotEmpty() ? 'danger' : ($openOrders->isNotEmpty() ? 'warning' : 'success'),
+                $this->routeUrl('admin.purchases.procurement-cycle-report.index', ['report_type' => ProcurementCycleReport::OpenPurchaseOrders, 'branch_id' => $branchId]),
+                'open_purchase_orders',
+            );
+        }
+
+        if ($this->can($user, 'maintenance.reports.view')) {
+            $maintenanceContext = fn ($query) => $query->forContext($companyId, $periodId, $branchId);
+            $breakdowns = $maintenanceContext(MaintenanceRequest::query())->operationallyOpen()->breakdowns();
+            $breakdownCount = (clone $breakdowns)->count();
+            $stoppedCount = (clone $breakdowns)->where('is_machine_stopped', true)->count();
+            $overdueOrders = $maintenanceContext(MaintenanceWorkOrder::query())->overdue()->count();
+            $overdueDues = $maintenanceContext(MaintenancePlanDue::query())->overdue()->count();
+            $maintenanceOverdue = $overdueOrders + $overdueDues;
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.maintenance_breakdowns.title'),
+                $breakdownCount,
+                __('dashboard.plastics.metrics.maintenance_breakdowns.meta', ['stopped' => $this->formatCount($stoppedCount)]),
+                'screwdriver-wrench',
+                $stoppedCount > 0 ? 'danger' : ($breakdownCount > 0 ? 'warning' : 'success'),
+                $this->routeUrl('admin.maintenance.reports.index', ['operational_focus' => 'breakdown']),
+                'maintenance_breakdowns',
+            );
+            $items[] = $this->metric(
+                __('dashboard.plastics.metrics.maintenance_overdue.title'),
+                $maintenanceOverdue,
+                __('dashboard.plastics.metrics.maintenance_overdue.meta'),
+                'clock',
+                $maintenanceOverdue > 0 ? 'danger' : 'success',
+                $this->routeUrl('admin.maintenance.reports.index', ['operational_focus' => 'overdue']),
+                'maintenance_overdue',
+            );
+        }
+
+        $financeContext = [
+            'as_of_date' => $asOf->toDateString(),
+            'branch_id' => $branchId,
+            'financial_period_id' => $periodId,
+        ];
+        if ($this->can($user, 'reports.finance.view')) {
+            $filters = [...$financeContext, 'type' => FinanceReportService::UnapprovedDocuments];
+            $rows = $this->financeReports->report($filters)['rows'];
+            $items[] = $this->metric(__('dashboard.plastics.metrics.pending_finance_approvals.title'), $rows->count(), __('dashboard.plastics.metrics.pending_finance_approvals.meta'), 'stamp', $rows->isNotEmpty() ? 'warning' : 'success', $this->routeUrl('admin.reports.finance.index', $filters), 'pending_finance_approvals');
+        }
+        if ($this->canAny($user, ['reports.finance.view', 'reports.finance.customer_aging.view'])) {
+            $filters = [...$financeContext, 'type' => FinanceReportService::CustomerAging, 'due_state' => 'due_or_overdue'];
+            $rows = $this->financeReports->report($filters)['rows'];
+            $items[] = $this->metric(__('dashboard.plastics.metrics.due_receivables.title'), $rows->count(), __('dashboard.plastics.metrics.due_receivables.meta'), 'money-bill-wave', $rows->isNotEmpty() ? 'danger' : 'success', $this->routeUrl('admin.reports.finance.index', $filters), 'due_receivables');
+        }
+        if ($this->canAny($user, ['reports.finance.view', 'reports.finance.supplier_aging.view'])) {
+            $filters = [...$financeContext, 'type' => FinanceReportService::SupplierAging, 'due_state' => 'due_or_overdue'];
+            $rows = $this->financeReports->report($filters)['rows'];
+            $items[] = $this->metric(__('dashboard.plastics.metrics.due_payables.title'), $rows->count(), __('dashboard.plastics.metrics.due_payables.meta'), 'hand-holding-dollar', $rows->isNotEmpty() ? 'danger' : 'success', $this->routeUrl('admin.reports.finance.index', $filters), 'due_payables');
+        }
+        if ($this->canAny($user, ['reports.finance.view', 'reports.finance.cheque_transit.view'])) {
+            $dueFilters = [...$financeContext, 'type' => FinanceReportService::DueCheques, 'to_date' => $asOf->toDateString()];
+            $returnedFilters = [...$financeContext, 'type' => FinanceReportService::ReturnedCheques];
+            $dueCheques = $this->financeReports->report($dueFilters)['rows'];
+            $returnedCheques = $this->financeReports->report($returnedFilters)['rows'];
+            $items[] = $this->metric(__('dashboard.plastics.metrics.due_cheques.title'), $dueCheques->count(), __('dashboard.plastics.metrics.due_cheques.meta'), 'money-check-dollar', $dueCheques->isNotEmpty() ? 'warning' : 'success', $this->routeUrl('admin.reports.finance.index', $dueFilters), 'due_cheques');
+            $items[] = $this->metric(__('dashboard.plastics.metrics.returned_cheques.title'), $returnedCheques->count(), __('dashboard.plastics.metrics.returned_cheques.meta'), 'rotate-left', $returnedCheques->isNotEmpty() ? 'danger' : 'success', $this->routeUrl('admin.reports.finance.index', $returnedFilters), 'returned_cheques');
+        }
+
+        if ($items !== []) {
+            $this->appendMetrics($dashboard, __('dashboard.plastics.sections.operational_exceptions'), $items);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $dashboard
      */
     private function appendTasks(array &$dashboard, User $user): void
     {
@@ -765,7 +1019,7 @@ class PlasticsDashboardService
     /**
      * @return array<string, mixed>
      */
-    private function metric(string $title, int $value, string $meta, string $icon, string $color, ?string $url): array
+    private function metric(string $title, int $value, string $meta, string $icon, string $color, ?string $url, ?string $key = null): array
     {
         return [
             'title' => $title,
@@ -774,6 +1028,7 @@ class PlasticsDashboardService
             'icon' => $icon,
             'color' => $color,
             'url' => $url,
+            'key' => $key,
         ];
     }
 
@@ -855,6 +1110,12 @@ class PlasticsDashboardService
     private function can(User $user, string $permission): bool
     {
         return (bool) $user->can($permission);
+    }
+
+    /** @param list<string> $permissions */
+    private function canAny(User $user, array $permissions): bool
+    {
+        return (bool) $user->canAny($permissions);
     }
 
     private function tableExists(string $table): bool

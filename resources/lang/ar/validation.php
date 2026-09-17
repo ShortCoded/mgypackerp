@@ -15,6 +15,7 @@ return [
     'before_or_equal' => 'حقل :attribute يجب أن يكون تاريخًا قبل أو يساوي :date.',
     'between' => [
         'array' => 'حقل :attribute يجب أن يحتوي على عدد عناصر بين :min و :max.',
+        'date' => 'حقل :attribute يجب أن يكون تاريخًا بين :min و :max.',
         'file' => 'حقل :attribute يجب أن يكون بين :min و :max كيلوبايت.',
         'numeric' => 'حقل :attribute يجب أن يكون بين :min و :max.',
         'string' => 'حقل :attribute يجب أن يكون بين :min و :max حرفًا.',

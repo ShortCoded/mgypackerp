@@ -32,6 +32,7 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Services\SalesCycleReadService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -51,7 +52,7 @@ class SalesCycleReportController extends Controller
         abort_unless($context['company_id'] && $context['financial_period_id'], 422, __('sales_ui.reports.operating_context_required'));
         $companyId = (int) $context['company_id'];
         $periodId = (int) $context['financial_period_id'];
-        $fullReport = $request->routeIs('*.print', '*.export');
+        $fullReport = $request->routeIs('*.print', '*.export') || $request->filled('operational_focus');
         $validated = $request->validate([
             'report' => ['nullable', 'string', Rule::in(self::REPORT_TYPES)],
             'from' => ['nullable', 'date'],
@@ -64,7 +65,7 @@ class SalesCycleReportController extends Controller
             'currency_doc_num', 'warehouse_uuid', 'category_doc_num', 'customer_doc_num', 'product_doc_num', 'sales_person_doc_num', 'branch_doc_num',
             'country_doc_num', 'governorate_doc_num', 'city_doc_num', 'area_doc_num', 'geography_state', 'address_search', 'contact_search',
             'quotation_doc_num', 'order_doc_num', 'invoice_doc_num', 'quotation_status',
-            'order_status', 'overdue_state', 'payment_state', 'return_reason', 'quality_disposition',
+            'order_status', 'overdue_state', 'payment_state', 'return_reason', 'quality_disposition', 'operational_focus',
         ])->mapWithKeys(fn (string $field): array => [$field => $request->string($field)->trim()->toString()])->all();
 
         $reportCurrency = Currency::query()->where('company_id', $companyId)->where('status', 'active')
@@ -207,17 +208,44 @@ class SalesCycleReportController extends Controller
             ->when($salesPersonId, fn ($query) => $query->where('business_employee_id', $salesPersonId))
             ->when($quotationId, fn ($query) => $query->whereKey($quotationId))
             ->when($quotationStatus, fn ($query) => $query->where('status', $quotationStatus))
+            ->when($filters['operational_focus'] === 'pending_sales_actions', fn ($query) => $query->operationallyPending())
             ->when($productId, fn ($query) => $query->whereHas('revisions.lines', fn ($lines) => $lines->where('product_id', $productId)))
             ->when($from, fn ($query) => $query->whereDate('quotation_date', '>=', $from))
             ->when($to, fn ($query) => $query->whereDate('quotation_date', '<=', $to))
             ->latest('quotation_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
-        $openOrders = $applyOrderFilters(SalesOrder::query()->with(['customer', 'lines'])->where('company_id', $companyId)->where('financial_period_id', $periodId))
-            ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit])
+        $openOrdersQuery = $applyOrderFilters(SalesOrder::query()->with(['customer', 'lines'])->where('company_id', $companyId)->where('financial_period_id', $periodId));
+        $filters['operational_focus'] === 'pending_sales_actions'
+            ? $openOrdersQuery->operationallyOpen()
+            : $openOrdersQuery->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit]);
+        $openOrders = $openOrdersQuery
             ->when($from, fn ($query) => $query->whereDate('order_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('order_date', '<=', $to))
             ->withSum('lines as ordered_quantity', 'quantity')->withSum('lines as delivered_quantity', 'delivered_quantity')
             ->withSum('lines as reserved_quantity', 'reserved_quantity')->withSum('lines as produced_quantity', 'produced_quantity')
             ->withSum('lines as production_requested_quantity', 'production_requested_quantity')->orderBy('expected_delivery_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
+
+        $salesRequests = SalesRequest::query()
+            ->where('company_id', $companyId)
+            ->where('financial_period_id', $periodId)
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->when($customerId, fn ($query) => $query->where('customer_id', $customerId))
+            ->when($salesPersonId, fn ($query) => $query->where('business_employee_id', $salesPersonId))
+            ->when($productId, fn ($query) => $query->whereHas('lines', fn ($lineQuery) => $lineQuery->where('product_id', $productId)))
+            ->when($from, fn ($query) => $query->whereDate('request_date', '>=', $from))
+            ->when($to, fn ($query) => $query->whereDate('request_date', '<=', $to))
+            ->operationallyOpen()
+            ->with(['branch', 'customer', 'lines.product', 'lines.unit'])
+            ->latest('request_date')
+            ->when(! $fullReport, fn ($query) => $query->limit(100))
+            ->get()
+            ->each(function (SalesRequest $salesRequest): void {
+                $remaining = $salesRequest->lines->reduce(
+                    fn (string $total, $line): string => bcadd($total, bcsub((string) $line->quantity, (string) $line->converted_quantity, 8), 8),
+                    '0.00000000',
+                );
+                $salesRequest->setAttribute('remaining_quantity', $remaining);
+            });
+        $salesActionCount = $salesRequests->count() + $quotations->count() + $openOrders->count();
 
         $salesByCustomer = $applyInvoiceFilters(CustomerInvoice::query()->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
@@ -385,7 +413,7 @@ class SalesCycleReportController extends Controller
             'area' => $areaId && $areaId > 0 ? HrArea::query()->find($areaId) : null,
         ];
 
-        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response

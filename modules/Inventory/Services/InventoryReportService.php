@@ -49,7 +49,7 @@ class InventoryReportService
             ])->values(),
             'damageAndScrap' => $this->damageAndScrap($companyId, $contextFilters),
             'stockCountVariances' => $this->stockCountVariances($companyId, $contextFilters),
-            'reorder' => $this->reorder($companyId, $branchId, $balances, $reservations, $contextFilters),
+            'reorder' => $this->lowStockRows($companyId, $branchId, $balances, $reservations, $contextFilters),
             'reportTotals' => [
                 'on_hand' => $this->decimalTotal($balances, 'on_hand'),
                 'inventory_value' => $this->decimalTotal($balances, 'inventory_value'),
@@ -319,6 +319,7 @@ class InventoryReportService
             ->when($filters['warehouse_location_id'] ?? null, fn ($query, $locationId) => $query->where('warehouse_location_id', $locationId))
             ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->where('product_id', $productId))
             ->when($filters['stock_status'] ?? null, fn ($query, $status) => $query->where('stock_status', $status))
+            ->when($filters['as_of'] ?? $filters['to'] ?? null, fn ($query, $date) => $query->whereDate('transaction_date', '<=', $date))
             ->with(['product', 'branchStore', 'warehouseLocation'])
             ->groupBy(['company_id', 'branch_store_id', 'warehouse_location_id', 'product_id', 'stock_status', 'batch_lot'])
             ->havingRaw('sum(quantity_in - quantity_out) <> 0')
@@ -420,7 +421,7 @@ class InventoryReportService
     /**
      * @param  array<string, mixed>  $filters
      */
-    private function reorder(
+    public function lowStockRows(
         int $companyId,
         int $branchId,
         Collection $balances,
@@ -439,12 +440,12 @@ class InventoryReportService
             ->whereNotNull('reorder_point')
             ->where('reorder_point', '>', 0)
             ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->whereKey($productId))
+            ->with('unit')
             ->orderBy('doc_num')
             ->get()
             ->keyBy('id');
 
-        $onHand = $balances
-            ->where('stock_status', InventoryTransaction::StatusAvailable)
+        $physical = $balances
             ->groupBy(fn ($row): string => $row->branch_store_id.'|'.$row->product_id)
             ->map(fn (SupportCollection $rows): string => $rows->reduce(
                 fn (string $total, $row): string => bcadd($total, (string) $row->on_hand, 8),
@@ -464,19 +465,31 @@ class InventoryReportService
                 '0.00000000',
             ));
 
-        return $stores->flatMap(function (BranchStore $store) use ($products, $onHand, $reserved, $productionDemand): SupportCollection {
-            return $products->map(function (Product $product) use ($store, $onHand, $reserved, $productionDemand): object {
+        $availableStock = $balances
+            ->where('stock_status', InventoryTransaction::StatusAvailable)
+            ->groupBy(fn ($row): string => $row->branch_store_id.'|'.$row->product_id)
+            ->map(fn (SupportCollection $rows): string => $rows->reduce(
+                fn (string $total, $row): string => bcadd($total, (string) $row->on_hand, 8),
+                '0.00000000',
+            ));
+
+        return $stores->flatMap(function (BranchStore $store) use ($products, $physical, $availableStock, $reserved, $productionDemand): SupportCollection {
+            return $products
+                ->filter(fn (Product $product): bool => $store->classification === 'general' || $store->classification === $product->item_classification)
+                ->map(function (Product $product) use ($store, $physical, $availableStock, $reserved, $productionDemand): object {
                 $key = $store->getKey().'|'.$product->getKey();
-                $onHandQuantity = (string) ($onHand->get($key) ?? '0.00000000');
+                $physicalQuantity = (string) ($physical->get($key) ?? '0.00000000');
+                $availableStockQuantity = (string) ($availableStock->get($key) ?? '0.00000000');
                 $reservedQuantity = (string) ($reserved->get($key) ?? '0.00000000');
-                $availableQuantity = bcsub($onHandQuantity, $reservedQuantity, 8);
+                $availableQuantity = bcsub($availableStockQuantity, $reservedQuantity, 8);
                 $availableQuantity = bccomp($availableQuantity, '0', 8) < 0 ? '0.00000000' : $availableQuantity;
                 $shortage = bcsub((string) $product->reorder_point, $availableQuantity, 8);
 
                 return (object) [
                     'product' => $product,
                     'branchStore' => $store,
-                    'on_hand' => $onHandQuantity,
+                    'physical' => $physicalQuantity,
+                    'on_hand' => $physicalQuantity,
                     'reserved' => $reservedQuantity,
                     'available' => $availableQuantity,
                     'reorder_point' => (string) $product->reorder_point,
@@ -484,7 +497,7 @@ class InventoryReportService
                     'production_demand' => (string) ($productionDemand->get($key) ?? '0.00000000'),
                 ];
             });
-        })->filter(fn (object $row): bool => bccomp($row->shortage, '0', 8) > 0 || bccomp($row->production_demand, '0', 8) > 0)->values();
+        })->filter(fn (object $row): bool => bccomp($row->shortage, '0', 8) > 0)->values();
     }
 
     private function decimalTotal(SupportCollection $rows, string $attribute): string

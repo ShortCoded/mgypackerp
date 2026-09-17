@@ -234,7 +234,7 @@ class ManufacturingInventoryBrowserE2eSeeder extends Seeder
 
             $this->restrictedUser($company, $branch, $period, 996010, 'e2e_warehouse', [
                 'dashboard.view', 'inventory.documents.view', 'inventory.documents.create', 'inventory.documents.transfer',
-                'inventory.reports.operational', 'inventory.stock_counts.view', 'inventory.stock_counts.create', 'inventory.stock_counts.record',
+                'inventory.reports.operational', 'inventory.stock_counts.view', 'inventory.stock_counts.create',
             ]);
             $this->restrictedUser($company, $branch, $period, 996011, 'e2e_planner', [
                 'dashboard.view', 'production.orders.view', 'production.orders.plan', 'production.orders.release',

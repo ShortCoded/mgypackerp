@@ -113,13 +113,13 @@
                 </div>
                 <div class="dashboard-kpi-grid">
                     @foreach ($metrics as $metric)
-                        <div class="card h-100 plastics-dashboard-metric dashboard-kpi-card">
+                        <div class="card h-100 plastics-dashboard-metric dashboard-kpi-card" @if($metric['key']) data-operational-card="{{ $metric['key'] }}" @endif>
                             <div class="card-body d-flex flex-column">
                                 <div class="d-flex justify-content-between gap-3">
                                     <div class="min-w-0">
                                         <p class="mb-1 fw-semibold text-600 dashboard-kpi-category">{{ $metric['category'] }}</p>
                                         <p class="mb-1 small text-600">{{ $metric['title'] }}</p>
-                                        <div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">{{ $metric['value'] }}</div>
+                                        <div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr" @if($metric['key']) data-operational-card-value @endif>{{ $metric['value'] }}</div>
                                         <p class="mb-0 small text-600">{{ $metric['meta'] }}</p>
                                     </div>
                                     <div class="text-{{ $metric['color'] }} plastics-dashboard-icon" aria-hidden="true">

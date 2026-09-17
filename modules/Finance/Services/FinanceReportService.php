@@ -93,20 +93,22 @@ class FinanceReportService
     public static function applicableFilters(string $type): array
     {
         return match ($type) {
-            self::CashboxStatement => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num'],
-            self::CashboxBalances => ['as_of_date', 'cashbox_doc_num', 'currency_doc_num'],
+            self::CashboxStatement => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num', 'branch_id'],
+            self::CashboxBalances => ['as_of_date', 'cashbox_doc_num', 'currency_doc_num', 'branch_id'],
             self::CashVouchers => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num', 'status'],
             self::BankAccountStatement => ['from_date', 'to_date', 'bank_account_doc_num', 'currency_doc_num'],
             self::BankAccountBalances => ['as_of_date', 'bank_account_doc_num', 'currency_doc_num'],
             self::FundTransfers => ['from_date', 'to_date', 'status'],
             self::BankReconciliation => ['from_date', 'to_date', 'bank_account_doc_num'],
-            self::DueCheques => ['to_date', 'as_of_date', 'bank_account_doc_num', 'currency_doc_num'],
+            self::DueCheques => ['to_date', 'as_of_date', 'bank_account_doc_num', 'currency_doc_num', 'due_state'],
             self::ReceivedCheques, self::IssuedCheques, self::ClearedCheques,
             self::ReturnedCheques, self::CancelledCheques => [
                 'from_date', 'to_date', 'as_of_date', 'bank_account_doc_num', 'currency_doc_num',
             ],
             self::AdvancesAllocations, self::UnapprovedDocuments => ['from_date', 'to_date', 'currency_doc_num'],
-            self::CustomerAging, self::SupplierAging => ['as_of_date', 'currency_doc_num'],
+            self::CustomerAging, self::SupplierAging => [
+                'as_of_date', 'currency_doc_num', 'due_state', 'branch_id', 'financial_period_id',
+            ],
             self::GuaranteeCheques => [],
             default => ['as_of_date', 'cashbox_doc_num', 'currency_doc_num'],
         };
@@ -117,7 +119,8 @@ class FinanceReportService
     {
         $filters = $request->only([
             'type', 'from_date', 'to_date', 'as_of_date', 'cashbox_doc_num',
-            'bank_account_doc_num', 'currency_doc_num', 'status',
+            'bank_account_doc_num', 'currency_doc_num', 'status', 'due_state',
+            'branch_id', 'financial_period_id',
         ]);
         $requestedType = filled($defaultType)
             ? (string) $defaultType
@@ -397,7 +400,7 @@ class FinanceReportService
             'collected_cleared_at' => $this->date($cheque->isReceived() ? $cheque->collected_at : $cheque->cleared_at),
             'returned_cancelled_at' => $this->date($cheque->returned_at ?: $cheque->cancelled_at),
             'reason' => $cheque->cancel_reason ?: $cheque->clearing_reversal_reason ?: $cheque->reason,
-        ]);
+        ])->when($filters['due_state'] ?? null, fn (Collection $rows, string $state) => $rows->where('due_state', $state)->values());
 
         return [$this->labels(['date', 'due_date', 'due_state', 'document', 'cheque_number', 'cheque_type', 'party_reference', 'bank_account', 'currency', 'amount', 'status', 'deposited_at', 'collected_cleared_at', 'returned_cancelled_at', 'reason']), $rows, [__('finance_reports.notices.cheque_history_scope')]];
     }
@@ -499,22 +502,51 @@ class FinanceReportService
         $query = $model::query()->where('company_id', $this->companyId())->where('status', $status)->where('remaining_amount', '>', 0)
             ->whereDate($dateColumn, '<=', $asOf)
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)))
-            ->with([$party, 'currency']);
+            ->when($filters['financial_period_id'] ?? null, fn ($invoiceQuery, $periodId) => $invoiceQuery->where('financial_period_id', $periodId))
+            ->when($filters['branch_id'] ?? null, fn ($invoiceQuery, $branchId) => $invoiceQuery->where('branch_id', $branchId))
+            ->with([$party, 'currency', 'paymentSchedules']);
         if ($customers) {
             $query->where('document_type', CustomerInvoice::TypeInvoice);
         }
 
-        $rows = $query->get()->map(function ($invoice) use ($asOf, $party): array {
-            $dueDate = $invoice->due_date ?: $invoice->invoice_date;
-            $days = $dueDate?->diffInDays($asOf, false) ?? 0;
+        $rows = $query->get()->flatMap(function ($invoice) use ($asOf, $party): Collection {
+            $schedules = $invoice->paymentSchedules
+                ->filter(fn ($schedule): bool => bccomp((string) $schedule->outstanding_amount, '0', 4) > 0);
 
-            return [
-                '_url' => route($party === 'customer' ? 'admin.sales.sales-invoices.show' : 'admin.purchases.purchase-invoices.show', $invoice),
-                'party_reference' => $invoice->{$party}?->name, 'document' => $invoice->doc_num,
-                'due_date' => $this->date($dueDate), 'currency' => $invoice->currency?->code,
-                'original_amount' => $invoice->total_amount, 'settled_amount' => bcsub((string) $invoice->total_amount, (string) $invoice->remaining_amount, 4),
-                'outstanding' => $invoice->remaining_amount, 'aging_bucket' => $this->agingBucket($days), 'days_overdue' => max(0, $days),
-            ];
+            if ($schedules->isEmpty()) {
+                $schedules = collect([(object) [
+                    'due_date' => $party === 'customer' ? ($invoice->due_date ?: $invoice->invoice_date) : $invoice->invoice_date,
+                    'amount' => $invoice->total_amount,
+                    'outstanding_amount' => $invoice->remaining_amount,
+                ]]);
+            }
+
+            return $schedules->map(function ($schedule) use ($asOf, $invoice, $party): array {
+                $dueDate = $schedule->due_date;
+                $days = $dueDate?->diffInDays($asOf, false) ?? 0;
+                $dueState = match (true) {
+                    $days > 0 => 'overdue',
+                    $days < 0 => 'upcoming',
+                    default => 'due',
+                };
+
+                return [
+                    '_url' => route($party === 'customer' ? 'admin.sales.sales-invoices.show' : 'admin.purchases.purchase-invoices.show', $invoice),
+                    'party_reference' => $invoice->{$party}?->name, 'document' => $invoice->doc_num,
+                    'due_date' => $this->date($dueDate), 'currency' => $invoice->currency?->code,
+                    'original_amount' => $schedule->amount,
+                    'settled_amount' => bcsub((string) $schedule->amount, (string) $schedule->outstanding_amount, 4),
+                    'outstanding' => $schedule->outstanding_amount,
+                    'aging_bucket' => $this->agingBucket($days), 'days_overdue' => max(0, $days), 'due_state' => $dueState,
+                ];
+            });
+        })->when($filters['due_state'] ?? null, function (Collection $rows, string $state): Collection {
+            return match ($state) {
+                'overdue' => $rows->where('due_state', 'overdue')->values(),
+                'due' => $rows->where('due_state', 'due')->values(),
+                'due_or_overdue' => $rows->whereIn('due_state', ['due', 'overdue'])->values(),
+                default => $rows,
+            };
         });
 
         return [$this->labels(['party_reference', 'document', 'due_date', 'currency', 'original_amount', 'settled_amount', 'outstanding', 'aging_bucket', 'days_overdue']), $rows, [__('finance_reports.notices.aging_current_balance_limit')]];
