@@ -62,6 +62,7 @@ return [
     'journal_entries' => 'Journal Entries',
     'account_ledger' => 'Account Ledger',
     'trial_balance' => 'Trial Balance',
+    'reconciliation_center' => 'Reconciliation Center',
     'financial_statements' => 'Financial Statements',
     'period_closing' => 'Period Closing & Carry Forward',
     'customer_statement' => 'Customer Statement',

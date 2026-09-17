@@ -8,6 +8,7 @@ use Modules\Accounting\Http\Controllers\FinancialStatementReportController;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Http\Controllers\LedgerReportController;
 use Modules\Accounting\Http\Controllers\OverheadAllocationController;
+use Modules\Accounting\Http\Controllers\ReconciliationCenterController;
 use Modules\Accounting\Http\Controllers\TrialBalanceReportController;
 
 Route::middleware(['auth', 'erp.expanded'])
@@ -110,6 +111,17 @@ Route::middleware('auth')
         Route::get('/reports/trial-balance', [TrialBalanceReportController::class, 'index'])
             ->middleware('can:reports.trial_balance.view')
             ->name('reports.trial-balance');
+
+        foreach (['excel', 'csv', 'pdf'] as $format) {
+            Route::get("/reports/reconciliation-center/export/{$format}", [ReconciliationCenterController::class, 'export'])
+                ->defaults('reconciliation_export_format', $format)
+                ->middleware('can:reports.account_ledger.export')
+                ->name("reports.reconciliation-center.export.{$format}");
+        }
+
+        Route::get('/reports/reconciliation-center', [ReconciliationCenterController::class, 'index'])
+            ->middleware('can:reports.account_ledger.view')
+            ->name('reports.reconciliation-center');
 
         foreach (['excel', 'csv', 'pdf'] as $format) {
             Route::get("/reports/financial-statements/export/{$format}", [FinancialStatementReportController::class, 'export'])

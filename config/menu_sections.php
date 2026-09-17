@@ -263,6 +263,7 @@ return [
         'journal_entries' => 'general_accounting',
         'account_ledger' => 'accounting_costing_reports',
         'trial_balance' => 'accounting_costing_reports',
+        'reconciliation_center' => 'accounting_costing_reports',
         'financial_statements' => 'accounting_costing_reports',
         'period_closing' => 'general_accounting',
         'customer_statement' => null,

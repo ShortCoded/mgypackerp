@@ -62,6 +62,7 @@ return [
     'journal_entries' => 'قيود اليومية',
     'account_ledger' => 'كشف حساب الأستاذ',
     'trial_balance' => 'ميزان المراجعة',
+    'reconciliation_center' => 'مركز المطابقات',
     'financial_statements' => 'القوائم المالية',
     'period_closing' => 'إقفال الفترات وترحيل الأرصدة',
     'customer_statement' => 'كشف حساب عميل',

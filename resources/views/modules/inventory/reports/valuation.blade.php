@@ -3,15 +3,22 @@
 @section('title', __('inventory_accounting.valuation_report.title'))
 
 @section('content')
+@php($exportQuery = array_filter(['product_id' => $selectedProduct?->getKey(), 'branch_store_id' => $selectedStore?->getKey(), 'as_of' => $asOf, 'reference_method' => $referenceMethod]))
 <div class="container-fluid">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             <h4 class="mb-1">{{ __('inventory_accounting.valuation_report.title') }}</h4>
             <p class="text-muted mb-0">{{ __('inventory_accounting.valuation_report.description') }}</p>
         </div>
-        <button class="btn btn-outline-secondary d-print-none" type="button" onclick="window.print()">
-            <span class="fas fa-print me-1"></span>{{ __('Print') }}
-        </button>
+        @if($comparison)
+            <div class="btn-group d-print-none">
+                @can('inventory.reports.export')
+                    <a class="btn btn-outline-success" href="{{ route('admin.inventory.reports.valuation.export.excel', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('reports.export_excel') }}</a>
+                    <a class="btn btn-outline-secondary" href="{{ route('admin.inventory.reports.valuation.export.csv', $exportQuery) }}"><span class="fas fa-file-csv me-1"></span>{{ __('reports.export_csv') }}</a>
+                    <a class="btn btn-outline-danger" href="{{ route('admin.inventory.reports.valuation.export.pdf', $exportQuery) }}" target="_blank"><span class="fas fa-file-pdf me-1"></span>{{ __('reports.export_pdf') }}</a>
+                @endcan
+            </div>
+        @endif
     </div>
 
     <div class="alert alert-info" role="status">
@@ -21,7 +28,7 @@
 
     <form class="card card-body mb-3 d-print-none" method="GET" action="{{ route('admin.inventory.reports.valuation') }}">
         <div class="row g-3 align-items-end">
-            <div class="col-lg-4">
+            <div class="col-lg-3">
                 <label class="form-label" for="valuation-product">{{ __('inventory_accounting.valuation_report.product') }}</label>
                 <select class="form-select" id="valuation-product" name="product_id" required>
                     <option value="">{{ __('inventory_accounting.valuation_report.select') }}</option>
@@ -30,7 +37,7 @@
                     @endforeach
                 </select>
             </div>
-            <div class="col-lg-3">
+            <div class="col-lg-2">
                 <label class="form-label" for="valuation-store">{{ __('inventory_accounting.valuation_report.store') }}</label>
                 <select class="form-select" id="valuation-store" name="branch_store_id" required>
                     <option value="">{{ __('inventory_accounting.valuation_report.select') }}</option>
@@ -39,9 +46,17 @@
                     @endforeach
                 </select>
             </div>
-            <div class="col-lg-3">
+            <div class="col-lg-2">
                 <label class="form-label" for="valuation-as-of">{{ __('inventory_accounting.valuation_report.as_of') }}</label>
                 <x-forms.date-input id="valuation-as-of" name="as_of" :value="$asOf" :min="$period->from_date->toDateString()" :max="$period->to_date->toDateString()" required />
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label" for="valuation-reference-method">{{ __('inventory_accounting.valuation_report.reference_method') }}</label>
+                <x-forms.select class="form-select" id="valuation-reference-method" name="reference_method">
+                    @foreach(['moving_average', 'periodic_weighted_average', 'fifo'] as $method)
+                        <option value="{{ $method }}" @selected($referenceMethod === $method)>{{ __('inventory_accounting.valuation_methods.'.$method) }}</option>
+                    @endforeach
+                </x-forms.select>
             </div>
             <div class="col-lg-2">
                 <button class="btn btn-primary w-100" type="submit">{{ __('inventory_accounting.valuation_report.run') }}</button>
@@ -57,9 +72,10 @@
                 'available_quantity' => 'available_quantity',
                 'available_cost' => 'available_cost',
                 'issued_quantity' => 'issued_quantity',
+                'consumed_quantity' => 'consumed_quantity',
                 'ending_quantity' => 'ending_quantity',
             ] as $valueKey => $labelKey)
-                <div class="col-md-6 col-xl-3">
+                <div class="col-md-6 col-xl">
                     <div class="card h-100"><div class="card-body">
                         <div class="text-muted small">{{ __('inventory_accounting.valuation_report.'.$labelKey) }}</div>
                         <div class="fs-4 fw-semibold">{{ $numbers->format($comparison[$valueKey]) }}</div>
@@ -77,6 +93,7 @@
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.issue_cost') }}</th>
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.ending_value') }}</th>
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.ending_unit_cost') }}</th>
+                        <th class="text-end">{{ __('inventory_accounting.valuation_report.difference_vs_reference') }}</th>
                         <th>{{ __('inventory_accounting.valuation_report.classification') }}</th>
                     </tr></thead>
                     <tbody>
@@ -86,6 +103,7 @@
                                 <td class="text-end">{{ $result['issue_cost'] === null ? '—' : $numbers->format($result['issue_cost']) }}</td>
                                 <td class="text-end">{{ $numbers->format($result['ending_value']) }}</td>
                                 <td class="text-end">{{ $numbers->format($result['ending_unit_cost']) }}</td>
+                                <td class="text-end {{ $result['difference_vs_reference'] !== null && bccomp($result['difference_vs_reference'], '0', 8) !== 0 ? 'text-danger fw-semibold' : '' }}">{{ $result['difference_vs_reference'] === null ? '—' : $numbers->format($result['difference_vs_reference']) }}</td>
                                 <td>
                                     @if($result['book_method'])
                                         <span class="badge bg-success">{{ __('inventory_accounting.valuation_report.book_method') }}</span>
@@ -113,6 +131,8 @@
                         <th>{{ __('inventory_accounting.valuation_report.date') }}</th>
                         <th>{{ __('inventory_accounting.valuation_report.document') }}</th>
                         <th>{{ __('inventory_accounting.valuation_report.type') }}</th>
+                        <th>{{ __('inventory_accounting.valuation_report.stock_status') }}</th>
+                        <th>{{ __('inventory_accounting.valuation_report.position') }}</th>
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.quantity_in') }}</th>
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.quantity_out') }}</th>
                         <th class="text-end">{{ __('inventory_accounting.valuation_report.unit_cost') }}</th>
@@ -122,15 +142,17 @@
                         @forelse($comparison['sources'] as $source)
                             <tr>
                                 <td>{{ $source['date'] }}</td>
-                                <td>{{ $source['document'] }}</td>
+                                <td>@if($source['document_url'])<a href="{{ $source['document_url'] }}">{{ $source['document'] }}</a>@else{{ $source['document'] }}@endif</td>
                                 <td>{{ __('inventory.movements.types.'.$source['type']) }}</td>
+                                <td>{{ __('inventory.movements.stock_statuses.'.$source['stock_status']) }}</td>
+                                <td dir="ltr">{{ implode(' / ', array_filter([$source['warehouse_location_id'], $source['batch_lot'], $source['production_run_id']])) ?: '—' }}</td>
                                 <td class="text-end">{{ $numbers->format($source['quantity_in']) }}</td>
                                 <td class="text-end">{{ $numbers->format($source['quantity_out']) }}</td>
                                 <td class="text-end">{{ $numbers->format($source['unit_cost']) }}</td>
                                 <td class="text-end">{{ $numbers->format($source['total_cost']) }}</td>
                             </tr>
                         @empty
-                            <tr><td colspan="7" class="text-center text-muted">{{ __('inventory_accounting.valuation_report.no_sources') }}</td></tr>
+                            <tr><td colspan="9" class="text-center text-muted">{{ __('inventory_accounting.valuation_report.no_sources') }}</td></tr>
                         @endforelse
                     </tbody>
                 </table>

@@ -9,6 +9,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Maatwebsite\Excel\Excel as ExcelFormat;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
@@ -29,6 +30,7 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Exports\InventoryReportExport;
+use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Models\WarehouseLocation;
@@ -89,13 +91,53 @@ class InventoryReportController extends Controller
 
     public function valuation(Request $request): View
     {
+        return view('modules.inventory.reports.valuation', $this->valuationData($request));
+    }
+
+    public function valuationExport(Request $request): BinaryFileResponse|Response
+    {
+        $data = $this->valuationData($request);
+        abort_unless(is_array($data['comparison']), 422, __('inventory_accounting.errors.export_requires_selection'));
+        $format = (string) $request->route('valuation_export_format');
+
+        if ($format === 'pdf') {
+            $context = $this->context->snapshot($request);
+            $company = Company::query()->findOrFail($context['company_id']);
+
+            return $this->pdf->stream('reports.inventory.valuation', [
+                'title' => __('inventory_accounting.valuation_report.title'),
+                'comparison' => $data['comparison'],
+                'product' => $data['selectedProduct'],
+                'store' => $data['selectedStore'],
+                'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+            ], 'inventory-valuation-comparison.pdf', 'L');
+        }
+
+        $writer = $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX;
+        $extension = $format === 'csv' ? 'csv' : 'xlsx';
+
+        return Excel::download(
+            new InventoryValuationComparisonExport($data['comparison']),
+            "inventory-valuation-comparison.{$extension}",
+            $writer,
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function valuationData(Request $request): array
+    {
         $context = $this->context->snapshot($request);
-        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
+        abort_unless(
+            $context['company_id'] && $context['financial_period_id'] && $context['branch_id'],
+            422,
+            __('inventory_accounting.errors.context_required'),
+        );
 
         $filters = $request->validate([
             'as_of' => ['nullable', 'date'],
             'product_id' => ['nullable', 'integer'],
             'branch_store_id' => ['nullable', 'integer'],
+            'reference_method' => ['nullable', 'in:moving_average,periodic_weighted_average,fifo'],
         ]);
         $period = FinancialPeriod::query()
             ->where('company_id', $context['company_id'])
@@ -107,8 +149,7 @@ class InventoryReportController extends Controller
 
         if ($asOf < $period->from_date->toDateString() || $asOf > $period->to_date->toDateString()) {
             throw ValidationException::withMessages([
-                'as_of' => __('validation.between.date', [
-                    'attribute' => __('inventory_accounting.valuation_report.as_of'),
+                'as_of' => __('inventory_accounting.errors.date_range', [
                     'min' => $period->from_date->toDateString(),
                     'max' => $period->to_date->toDateString(),
                 ]),
@@ -141,6 +182,7 @@ class InventoryReportController extends Controller
 
         $comparison = null;
         $comparisonError = null;
+        $referenceMethod = (string) ($filters['reference_method'] ?? InventoryValuationService::Method);
 
         if ($selectedProduct && $selectedStore) {
             try {
@@ -151,14 +193,16 @@ class InventoryReportController extends Controller
                     (int) $selectedStore->getKey(),
                     (int) $selectedProduct->getKey(),
                     $asOf,
+                    $referenceMethod,
                 );
             } catch (DomainException $exception) {
                 $comparisonError = __($exception->getMessage());
             }
         }
 
-        return view('modules.inventory.reports.valuation', [
+        return [
             'asOf' => $asOf,
+            'referenceMethod' => $referenceMethod,
             'period' => $period,
             'products' => $products,
             'stores' => $stores,
@@ -167,7 +211,7 @@ class InventoryReportController extends Controller
             'comparison' => $comparison,
             'comparisonError' => $comparisonError,
             'numbers' => $this->numbers,
-        ]);
+        ];
     }
 
     public function stockBalances(StockBalanceInquiryRequest $request): View
