@@ -47,6 +47,7 @@ use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionMachine;
+use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionMold;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionQualityInspection;
@@ -55,10 +56,12 @@ use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Models\QualityStockHold;
 use Modules\Production\Services\ProductionCycleService;
 use Modules\Production\Services\ProductionMaterialRequestService;
+use Modules\Production\Services\ProductionReportService;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\SalesOrder;
 use Spatie\Permission\Models\Permission;
+use Spatie\Permission\PermissionRegistrar;
 
 /** @return array<string, mixed> */
 function manufacturingInventoryFixture(): array
@@ -115,6 +118,20 @@ function manufacturingInventoryFixture(): array
     $mold->products()->attach($finished);
 
     return compact('user', 'company', 'branch', 'period', 'store', 'unit', 'finished', 'raw', 'machine', 'mold');
+}
+
+function operationalReportCount(string $html, string $key): int
+{
+    preg_match('/data-report-count="'.preg_quote($key, '/').'"[^>]*>\s*([0-9,]+)\s*</', $html, $matches);
+
+    return (int) str_replace(',', '', $matches[1] ?? '0');
+}
+
+function operationalDashboardCount(string $html, string $key): int
+{
+    preg_match('/data-operational-card="'.preg_quote($key, '/').'".*?data-operational-card-value[^>]*>\s*([0-9,]+)\s*</s', $html, $matches);
+
+    return (int) str_replace(',', '', $matches[1] ?? '0');
 }
 
 test('the canonical manufacturing cycle reconciles physical stock, reservations, waste, quality, and partial finished receipts', function () {
@@ -2300,7 +2317,6 @@ test('capability permissions separate warehouse planning quality and cost access
         'inventory.documents.transfer',
         'inventory.reports.operational',
         'inventory.stock_counts.create',
-        'inventory.stock_counts.record',
     ]);
 
     $this->actingAs($operator)->withSession($session)
@@ -3088,3 +3104,168 @@ test('inventory and production screens translate labels without changing status 
     expect((string) data_get($response->json(), 'data.0.status'))
         ->toContain($arabic ? 'مسودة' : 'Draft');
 })->with(['ar', 'en']);
+
+test('operational dashboard cards equal their scoped report counts and exclude terminal and foreign branch records', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['raw']->update(['reorder_point' => '1100']);
+    $fixture['finished']->update(['reorder_point' => null]);
+
+    $otherBranch = Branch::query()->create([
+        ...app(DocumentNumberService::class)->next('branches', Branch::class),
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Foreign Dashboard Branch',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $otherStore = BranchStore::query()->create(['branch_id' => $otherBranch->getKey(), 'name' => 'Foreign Store', 'position' => 1]);
+    InventoryTransaction::query()->create([
+        'posting_key' => 'foreign-dashboard-stock', 'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $otherBranch->getKey(),
+        'branch_store_id' => $otherStore->getKey(), 'stock_status' => InventoryTransaction::StatusAvailable,
+        'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock',
+        'product_id' => $fixture['raw']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity_in' => '5000',
+        'quantity_out' => 0, 'source_type' => 'test', 'source_id' => 2,
+        'source_doc_num' => 'OPEN-FOREIGN', 'unit_cost' => '2', 'total_cost' => '10000',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    $cycle = app(ProductionCycleService::class);
+    $remainingOrder = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '10',
+    ]]);
+    $remainingOrder = $cycle->releaseOrder($remainingOrder);
+    $completedOrder = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '3',
+    ]]);
+    $completedOrder->lines()->update(['received_base_quantity' => '3']);
+    $completedOrder->update(['status' => ProductionOrder::StatusCompleted]);
+    $foreignOrder = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $otherBranch->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '7',
+    ]]);
+    $foreignOrder = $cycle->releaseOrder($foreignOrder);
+
+    $shortageRun = $cycle->createRun($remainingOrder->lines->firstOrFail(), [
+        'planned_quantity' => '1', 'planned_start_at' => now()->addHour(), 'planned_end_at' => now()->addHours(2),
+    ]);
+    $shortageRequirement = $shortageRun->requirements->firstOrFail();
+    foreach ([
+        ['number' => 99191, 'document' => 'PMR-DASH-SHORTAGE', 'status' => ProductionMaterialRequest::StatusShortage],
+        ['number' => 99192, 'document' => 'PMR-DASH-ISSUED', 'status' => ProductionMaterialRequest::StatusIssued],
+    ] as $materialRequestFixture) {
+        $materialRequest = ProductionMaterialRequest::query()->create([
+            'doc_number' => $materialRequestFixture['number'], 'doc_num' => $materialRequestFixture['document'],
+            'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
+            'production_order_id' => $remainingOrder->getKey(), 'production_run_id' => $shortageRun->getKey(),
+            'request_date' => now()->toDateString(), 'status' => $materialRequestFixture['status'],
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+        $materialRequest->lines()->create([
+            'line_number' => 1, 'production_material_requirement_id' => $shortageRequirement->getKey(),
+            'product_id' => $fixture['raw']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
+            'planned_quantity' => '2', 'requested_quantity' => '2', 'shortage_quantity' => '2',
+        ]);
+    }
+
+    foreach ([
+        ['number' => 99201, 'document' => 'QI-DASH-PENDING', 'branch' => $fixture['branch'], 'order' => $remainingOrder, 'status' => ProductionQualityInspection::StatusDraft, 'result' => 'pending'],
+        ['number' => 99202, 'document' => 'QI-DASH-CLOSED', 'branch' => $fixture['branch'], 'order' => $remainingOrder, 'status' => ProductionQualityInspection::StatusApproved, 'result' => 'passed'],
+        ['number' => 99203, 'document' => 'QI-DASH-FOREIGN', 'branch' => $otherBranch, 'order' => $foreignOrder, 'status' => ProductionQualityInspection::StatusDraft, 'result' => 'pending'],
+    ] as $inspection) {
+        ProductionQualityInspection::query()->create([
+            'doc_number' => $inspection['number'], 'doc_num' => $inspection['document'],
+            'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $inspection['branch']->getKey(), 'production_order_id' => $inspection['order']->getKey(),
+            'subject_type' => ProductionQualityInspection::SubjectProduct, 'product_id' => $fixture['finished']->getKey(),
+            'inspection_date' => now()->toDateString(), 'requested_at' => now(), 'sampled_at' => now(),
+            'status' => $inspection['status'], 'result' => $inspection['result'], 'affected_base_quantity' => '1',
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+    }
+
+    $asset = FixedAsset::query()->create([
+        'doc_number' => 99210, 'doc_num' => 'FA-DASH-99210', 'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(), 'period_id' => $fixture['period']->getKey(),
+        'asset_date' => now()->toDateString(), 'asset_name' => 'Dashboard Machine', 'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $foreignAsset = FixedAsset::query()->create([
+        'doc_number' => 99211, 'doc_num' => 'FA-DASH-99211', 'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $otherBranch->getKey(), 'period_id' => $fixture['period']->getKey(),
+        'asset_date' => now()->toDateString(), 'asset_name' => 'Foreign Dashboard Machine', 'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    foreach ([
+        ['number' => 99220, 'document' => 'MR-DASH-OPEN', 'branch' => $fixture['branch'], 'asset' => $asset, 'status' => MaintenanceRequest::StatusOpen],
+        ['number' => 99221, 'document' => 'MR-DASH-CLOSED', 'branch' => $fixture['branch'], 'asset' => $asset, 'status' => MaintenanceRequest::StatusClosed],
+        ['number' => 99222, 'document' => 'MR-DASH-FOREIGN', 'branch' => $otherBranch, 'asset' => $foreignAsset, 'status' => MaintenanceRequest::StatusOpen],
+    ] as $maintenance) {
+        MaintenanceRequest::query()->create([
+            'doc_number' => $maintenance['number'], 'doc_num' => $maintenance['document'],
+            'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $maintenance['branch']->getKey(), 'fixed_asset_id' => $maintenance['asset']->getKey(),
+            'reported_at' => now(), 'request_type' => 'breakdown', 'priority' => 'urgent',
+            'symptoms' => 'Deterministic dashboard fixture', 'is_machine_stopped' => true,
+            'status' => $maintenance['status'], 'created_by' => $fixture['user']->getKey(),
+        ]);
+    }
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $permissions = ['inventory.reports.operational', 'production.reports.operational', 'maintenance.reports.view'];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $session = [
+        'locale' => 'en',
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(), OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(), OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(), OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+
+    $dashboard = $this->actingAs($fixture['user'])->withSession($session)->get(route('dashboard'))->assertOk()->getContent();
+    $inventory = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.inventory.reports.index', ['as_of' => now()->toDateString(), 'operational_focus' => 'low_stock']))->assertOk()->getContent();
+    $production = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.reports.orders', ['operational_focus' => 'remaining']))->assertOk()->getContent();
+    $materials = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.reports.materials', ['operational_focus' => 'shortage']))->assertOk()->getContent();
+    $quality = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.reports.quality', ['operational_focus' => 'pending']))->assertOk()->getContent();
+    $rejectedQuality = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.production.reports.quality', ['operational_focus' => 'rejected']))->assertOk()->getContent();
+    $maintenance = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.maintenance.reports.index', ['operational_focus' => 'breakdown']))->assertOk()->getContent();
+    $overdueMaintenance = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.maintenance.reports.index', ['operational_focus' => 'overdue']))->assertOk()->getContent();
+
+    expect(operationalDashboardCount($dashboard, 'low_stock'))->toBe(1)
+        ->and(operationalDashboardCount($dashboard, 'low_stock'))->toBe(operationalReportCount($inventory, 'low_stock'))
+        ->and(operationalDashboardCount($dashboard, 'production_remaining'))->toBe(1)
+        ->and(operationalDashboardCount($dashboard, 'production_remaining'))->toBe(operationalReportCount($production, 'production_remaining'))
+        ->and(operationalDashboardCount($dashboard, 'material_shortages'))->toBe(1)
+        ->and(operationalDashboardCount($dashboard, 'material_shortages'))->toBe(operationalReportCount($materials, 'material_shortages'))
+        ->and(operationalDashboardCount($dashboard, 'quality_pending'))->toBe(1)
+        ->and(operationalDashboardCount($dashboard, 'quality_pending'))->toBe(operationalReportCount($quality, 'quality_pending'))
+        ->and(operationalDashboardCount($dashboard, 'quality_rejected'))->toBe(0)
+        ->and(operationalDashboardCount($dashboard, 'quality_rejected'))->toBe(operationalReportCount($rejectedQuality, 'quality_rejected'))
+        ->and(operationalDashboardCount($dashboard, 'maintenance_breakdowns'))->toBe(1)
+        ->and(operationalDashboardCount($dashboard, 'maintenance_breakdowns'))->toBe(operationalReportCount($maintenance, 'maintenance_breakdowns'))
+        ->and(operationalDashboardCount($dashboard, 'maintenance_overdue'))->toBe(0)
+        ->and(operationalDashboardCount($dashboard, 'maintenance_overdue'))->toBe(operationalReportCount($overdueMaintenance, 'maintenance_overdue'));
+
+    $limited = User::factory()->create(['locale' => 'ar']);
+    $limited->givePermissionTo('inventory.reports.operational');
+    $arabicDashboard = $this->actingAs($limited)->withSession([...$session, 'locale' => 'ar'])->get(route('dashboard'))
+        ->assertOk()
+        ->assertSee(__('dashboard.plastics.metrics.low_stock.title'))
+        ->getContent();
+    expect($arabicDashboard)->toContain('data-operational-card="low_stock"')
+        ->not->toContain('data-operational-card="production_remaining"');
+
+    expect(app(ProductionReportService::class)->remainingOrders($fixture['company']->getKey(), [
+        'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
+    ])->pluck('doc_num')->all())->toBe([$remainingOrder->doc_num]);
+});

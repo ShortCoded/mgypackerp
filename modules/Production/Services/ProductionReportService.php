@@ -7,6 +7,8 @@ use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\Models\ProductionMaterialRequirement;
+use Modules\Production\Models\ProductionMaterialRequest;
+use Modules\Production\Models\ProductionMaterialRequestLine;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
@@ -31,18 +33,35 @@ class ProductionReportService
         ];
         $runs = $this->runs($companyId, $contextFilters);
         $runs->each(function (ProductionRun $run): void {
+            $recorded = bcadd(
+                bcadd((string) $run->good_base_quantity, (string) $run->rejected_base_quantity, 8),
+                bcadd((string) $run->rework_base_quantity, (string) $run->scrap_base_quantity, 8),
+                8,
+            );
+            $remaining = bcsub((string) $run->planned_base_quantity, $recorded, 8);
+            $receiptRemaining = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
+
+            $run->setAttribute('recorded_base_quantity', $recorded);
+            $run->setAttribute('remaining_base_quantity', bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000');
+            $run->setAttribute('receipt_remaining_base_quantity', bccomp($receiptRemaining, '0', 8) > 0 ? $receiptRemaining : '0.00000000');
             $run->setAttribute('yield_percent', bccomp((string) $run->planned_base_quantity, '0', 8) > 0
                 ? bcmul(bcdiv((string) $run->good_base_quantity, (string) $run->planned_base_quantity, 8), '100', 4)
                 : '0.0000');
         });
         $materials = $this->materialReconciliation($companyId, $filters['production_run_id'] ?? null, $contextFilters);
         $this->applyMaterialMetrics($materials, $includeFinancial);
+        $allQualityInspections = $this->qualityInspections($companyId, $contextFilters);
+        $qualityInspections = ($filters['operational_focus'] ?? null)
+            ? $this->filterQualityExceptions($allQualityInspections, (string) $filters['operational_focus'])
+            : $allQualityInspections;
 
         return [
             'orders' => $this->orders($companyId, $contextFilters),
             'runs' => $runs,
             'materials' => $materials,
-            'qualityInspections' => $this->qualityInspections($companyId, $contextFilters),
+            'materialShortages' => $this->materialShortages($companyId, $contextFilters),
+            'qualityInspections' => $qualityInspections,
+            'qualitySummary' => $this->qualitySummary($allQualityInspections),
             'finishedGoodsReceipts' => $this->finishedGoodsReceipts($companyId, $contextFilters),
             'kpis' => $this->keyPerformanceIndicators($companyId, $contextFilters),
             'runCosts' => $includeFinancial ? $this->runCosts($runs) : collect(),
@@ -52,16 +71,115 @@ class ProductionReportService
     /** @param array<string, mixed> $filters */
     public function orders(int $companyId, array $filters = []): Collection
     {
-        return ProductionOrder::query()
+        $orders = ProductionOrder::query()
             ->where('company_id', $companyId)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('production_order_date', '>=', $from))
             ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('production_order_date', '<=', $to))
-            ->with(['salesOrder', 'lines.product', 'runs'])
+            ->with(['branch', 'salesOrder', 'lines.product.unit', 'lines.unit', 'runs'])
             ->orderByDesc('production_order_date')
             ->get();
+
+        $orders->each(function (ProductionOrder $order): void {
+            $planned = $order->lines->reduce(
+                fn (string $total, $line): string => bcadd($total, (string) $line->base_quantity, 8),
+                '0.00000000',
+            );
+            $received = $order->lines->reduce(
+                fn (string $total, $line): string => bcadd($total, (string) $line->received_base_quantity, 8),
+                '0.00000000',
+            );
+            $remaining = bcsub($planned, $received, 8);
+
+            $order->setAttribute('planned_base_quantity', $planned);
+            $order->setAttribute('received_base_quantity', $received);
+            $order->setAttribute('remaining_base_quantity', bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000');
+        });
+
+        if (($filters['operational_focus'] ?? null) === 'remaining') {
+            return $orders
+                ->whereIn('status', [
+                    ProductionOrder::StatusPlanned,
+                    ProductionOrder::StatusReleased,
+                    ProductionOrder::StatusInProgress,
+                    ProductionOrder::StatusPartiallyCompleted,
+                ])
+                ->filter(fn (ProductionOrder $order): bool => bccomp((string) $order->remaining_base_quantity, '0', 8) > 0)
+                ->values();
+        }
+
+        return $orders;
+    }
+
+    /** @param array<string, mixed> $filters */
+    public function remainingOrders(int $companyId, array $filters = []): Collection
+    {
+        return $this->orders($companyId, [...$filters, 'operational_focus' => 'remaining']);
+    }
+
+    /** @param array<string, mixed> $filters */
+    public function materialShortages(int $companyId, array $filters = []): Collection
+    {
+        return ProductionMaterialRequestLine::query()
+            ->where('shortage_quantity', '>', 0)
+            ->whereHas('request', function ($query) use ($companyId, $filters): void {
+                $query->where('company_id', $companyId)
+                    ->whereIn('status', [ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued])
+                    ->when($filters['financial_period_id'] ?? null, fn ($requestQuery, $periodId) => $requestQuery->where('financial_period_id', $periodId))
+                    ->when($filters['branch_id'] ?? null, fn ($requestQuery, $branchId) => $requestQuery->where('branch_id', $branchId))
+                    ->when($filters['from'] ?? null, fn ($requestQuery, $from) => $requestQuery->whereDate('request_date', '>=', $from))
+                    ->when($filters['to'] ?? null, fn ($requestQuery, $to) => $requestQuery->whereDate('request_date', '<=', $to));
+            })
+            ->with(['request.run', 'request.order', 'request.store', 'product', 'unit'])
+            ->orderBy('production_material_request_id')
+            ->orderBy('line_number')
+            ->get();
+    }
+
+    /** @param array<string, mixed> $filters */
+    public function qualityExceptions(int $companyId, array $filters = []): Collection
+    {
+        $focus = $filters['operational_focus'] ?? null;
+        $rows = $this->qualityInspections($companyId, $filters);
+
+        return $this->filterQualityExceptions($rows, is_string($focus) ? $focus : null);
+    }
+
+    /** @return array<string, int|string> */
+    public function qualitySummary(Collection $rows): array
+    {
+        $quantity = fn (Collection $inspections): string => $inspections->reduce(
+            fn (string $total, ProductionQualityInspection $inspection): string => bcadd($total, (string) ($inspection->affected_base_quantity ?? 0), 8),
+            '0.00000000',
+        );
+        $pending = $this->filterQualityExceptions($rows, 'pending');
+        $rejected = $this->filterQualityExceptions($rows, 'rejected');
+        $accepted = $rows->filter(fn (ProductionQualityInspection $inspection): bool => in_array($inspection->result, ['passed', 'conditional'], true));
+
+        return [
+            'pending' => $pending->count(),
+            'accepted_quantity' => $quantity($accepted),
+            'rejected_quantity' => $quantity($rejected),
+            'on_hold' => $this->filterQualityExceptions($rows, 'on_hold')->count(),
+            'reinspections' => $rows->where('reinspection_number', '>', 0)->count(),
+        ];
+    }
+
+    private function filterQualityExceptions(Collection $rows, ?string $focus): Collection
+    {
+        return match ($focus) {
+            'pending' => $rows->whereIn('status', [
+                ProductionQualityInspection::StatusDraft,
+                ProductionQualityInspection::StatusReceived,
+                ProductionQualityInspection::StatusInProgress,
+                ProductionQualityInspection::StatusSubmitted,
+            ])->values(),
+            'rejected' => $rows->filter(fn (ProductionQualityInspection $inspection): bool => $inspection->status === ProductionQualityInspection::StatusRejected || $inspection->result === 'failed')->values(),
+            'on_hold' => $rows->filter(fn (ProductionQualityInspection $inspection): bool => $inspection->disposition === 'hold')->values(),
+            default => $rows,
+        };
     }
 
     /** @param array<string, mixed> $filters */

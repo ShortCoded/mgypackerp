@@ -117,6 +117,8 @@ class ProcurementCycleReport
 
     public const RfqQuotationStatus = 'rfq_quotation_status';
 
+    public const PendingSourcingActions = 'pending_sourcing_actions';
+
     public const OrderedVsReceived = 'ordered_vs_received';
 
     public const OverduePoDeliveries = 'overdue_po_deliveries';
@@ -359,6 +361,7 @@ class ProcurementCycleReport
             self::OpenRequirements,
             self::RequestedVsOrdered,
             self::RfqQuotationStatus,
+            self::PendingSourcingActions,
             self::PurchaseOrderStatus,
             self::OrderedVsReceived,
             self::OverduePoDeliveries,
@@ -401,6 +404,7 @@ class ProcurementCycleReport
             self::OpenRequirements => $this->openRequirements($companyId, $financialPeriodId),
             self::RequestedVsOrdered => $this->requestedVsOrdered($companyId, $financialPeriodId),
             self::RfqQuotationStatus => $this->rfqQuotationStatus($companyId, $financialPeriodId),
+            self::PendingSourcingActions => $this->rfqQuotationStatus($companyId, $financialPeriodId)->where('action_pending', true)->values(),
             self::PurchaseOrderStatus, self::OrderedVsReceived => $this->purchaseOrderStatus($companyId, $financialPeriodId),
             self::PurchasesBySupplier, self::PurchasesByProduct, self::PurchasesByPeriod, self::PurchasesByCategory, self::PurchasesByWarehouse => $this->invoicePurchases($companyId, $financialPeriodId),
             self::PriceHistory => $this->invoicePurchases($companyId, $financialPeriodId, true),
@@ -432,7 +436,7 @@ class ProcurementCycleReport
         $rows = $this->applyFilters($rows, $filters);
         $documentTarget = match ($type) {
             self::PurchaseRequests, self::PendingPurchaseRequests, self::RequestedVsOrdered, self::OpenRequirements, self::ProductionAnalysis => ['admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view'],
-            self::RfqQuotationStatus => ['admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view'],
+            self::RfqQuotationStatus, self::PendingSourcingActions => ['admin.purchases.request-for-quotations.show', 'purchases.request_for_quotations.view'],
             self::PurchaseOrderStatus, self::OpenPurchaseOrders, self::PartiallyReceivedOrders, self::OrderedVsReceived, self::ReceivedVsInvoiced, self::OverduePoDeliveries, self::DeliverySchedule => ['admin.purchases.purchase-orders.show', 'purchase_orders.view'],
             self::SupplyOrders => ['admin.purchases.supply-orders.show', 'purchases.supply_orders.view'],
             self::PurchaseReceipts, self::SupplierDeliveries, self::GoodsReceivedNotInvoiced => ['admin.purchases.goods-receipt-notes.show', 'purchases.goods_receipt_notes.view'],
@@ -585,6 +589,14 @@ class ProcurementCycleReport
             self::SupplierStatement => ['supplier' => 'Supplier', 'date' => 'Date', 'document_type' => 'Document type', 'document' => 'Document', 'reference' => 'Reference', 'description' => 'Description', 'debit' => 'Debit', 'credit' => 'Credit', 'balance' => 'Running balance', 'currency' => 'Currency'],
             self::PurchaseLedger => [...$base, 'supplier' => 'Supplier', 'purchase_order' => 'Purchase Order', 'receipt' => 'Receipt', 'taxable' => 'Taxable value', 'discount' => 'Discount', 'tax' => 'Tax', 'amount' => 'Invoice total', 'returned_value' => 'Returned value', 'net_purchases' => 'Net purchases', 'paid' => 'Paid', 'outstanding' => 'Remaining', 'currency' => 'Currency'],
             self::PurchaseRequests, self::PendingPurchaseRequests, self::RequestedVsOrdered => [...$base, ...$item, 'requested' => 'Requested', 'approved' => 'Approved', 'ordered' => 'Ordered', 'draft_order_quantity' => 'Quantity in draft orders', 'remaining_to_order' => 'Remaining to order'],
+            self::RfqQuotationStatus, self::PendingSourcingActions => [...$base,
+                'requisition' => __('procurement.reports.columns.requisition'),
+                'invited_suppliers' => __('procurement.reports.columns.invited_suppliers'),
+                'submitted_responses' => __('procurement.reports.columns.submitted_responses'),
+                'selection_status' => __('procurement.reports.columns.selection_status'),
+                'action_stage' => __('procurement.reports.columns.action_stage'),
+                'outstanding' => __('procurement.reports.columns.remaining_actions'),
+            ],
             self::OrderedVsReceived, self::OpenPurchaseOrders, self::PartiallyReceivedOrders, self::ReceivedVsInvoiced => [...$base, 'supplier' => 'Supplier', ...$item, 'ordered' => 'Ordered', 'received' => 'Received', 'returned' => 'Returned', 'net_received' => 'Net received', 'invoiced' => 'Invoiced', 'remaining' => 'Remaining to receive', 'remaining_to_invoice' => 'Remaining to invoice'],
             self::PurchaseReceipts, self::SupplierDeliveries, self::ReceiptQualityStatus => [...$base, 'supplier' => 'Supplier', 'purchase_order' => 'Purchase Order', ...$item, 'quantity' => 'Received', 'accepted' => 'Accepted', 'rejected' => 'Rejected'],
             self::PurchaseInvoices => [...$base, 'supplier' => 'Supplier', 'purchase_order' => 'Purchase Order', 'amount' => 'Invoice total', 'paid' => 'Paid', 'outstanding' => 'Remaining', 'currency' => 'Currency', 'payment_status' => 'Payment status'],
@@ -753,20 +765,45 @@ class ProcurementCycleReport
     /** @return Collection<int, array<string, mixed>> */
     private function rfqQuotationStatus(int $companyId, int $periodId): Collection
     {
-        return RequestForQuotation::query()->with(['requisition.branch', 'suppliers', 'quotations', 'lines'])
+        return RequestForQuotation::query()->with(['requisition.branch', 'suppliers', 'quotations', 'supplierSelections', 'lines'])
             ->where('company_id', $companyId)->where('financial_period_id', $periodId)->get()
-            ->map(fn (RequestForQuotation $rfq): array => $this->row([
-                'date' => $rfq->issue_date?->toDateString(),
-                'document' => $rfq->doc_num,
-                'status' => $rfq->status,
-                'supplier' => $rfq->suppliers->pluck('name')->join(', '),
-                'requisition' => $rfq->requisition?->doc_num,
-                'branch_id' => $rfq->branch_id,
-                'branch' => $rfq->requisition?->branch?->name,
-                'quantity' => $rfq->lines->sum('quantity'),
-                'outstanding' => max(0, $rfq->suppliers->count() - $rfq->quotations->count()),
-                'overdue' => $rfq->quotation_due_date?->isPast() && $rfq->quotations->count() < $rfq->suppliers->count(),
-            ]));
+            ->map(function (RequestForQuotation $rfq): array {
+                $submittedResponses = $rfq->quotations->where('status', 'submitted')->count();
+                $invitedSuppliers = $rfq->suppliers->count();
+                $latestSelection = $rfq->supplierSelections->sortByDesc('id')->first();
+                $hasDraftSelection = $rfq->supplierSelections->contains('status', 'draft');
+                $actionStage = match (true) {
+                    $rfq->status === 'draft' => 'issue_rfq',
+                    $rfq->status !== 'issued' => 'complete',
+                    $submittedResponses < $invitedSuppliers => 'awaiting_quotations',
+                    $latestSelection === null => 'select_supplier',
+                    $hasDraftSelection => 'approve_selection',
+                    default => 'complete',
+                };
+                $remainingActions = match ($actionStage) {
+                    'awaiting_quotations' => max(0, $invitedSuppliers - $submittedResponses),
+                    'complete' => 0,
+                    default => 1,
+                };
+
+                return $this->row([
+                    'date' => $rfq->issue_date?->toDateString(),
+                    'document' => $rfq->doc_num,
+                    'status' => $rfq->status,
+                    'supplier' => $rfq->suppliers->pluck('name')->join(', '),
+                    'requisition' => $rfq->requisition?->doc_num,
+                    'branch_id' => $rfq->branch_id,
+                    'branch' => $rfq->requisition?->branch?->name,
+                    'quantity' => $rfq->lines->sum('quantity'),
+                    'invited_suppliers' => $invitedSuppliers,
+                    'submitted_responses' => $submittedResponses,
+                    'selection_status' => $latestSelection?->status,
+                    'action_stage' => __('procurement.reports.action_stages.'.$actionStage),
+                    'action_pending' => $actionStage !== 'complete',
+                    'outstanding' => $remainingActions,
+                    'overdue' => $rfq->quotation_due_date?->isPast() && $actionStage === 'awaiting_quotations',
+                ]);
+            });
     }
 
     /** @return Collection<int, array<string, mixed>> */
@@ -774,7 +811,7 @@ class ProcurementCycleReport
     {
         $cutoff = FinancialPeriod::query()->where('company_id', $companyId)->findOrFail($periodId)->to_date->toDateString();
         $statuses = [];
-        $lines = PurchaseOrderLine::query()->withQuantityProgress($cutoff)->with(['purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress($cutoff)->with('product'), 'purchaseOrder.supplier', 'purchaseOrder.branch', 'purchaseOrder.currency', 'purchaseOrder.branchStore', 'product', 'requisitionLine.requisition'])
+        $lines = PurchaseOrderLine::query()->withQuantityProgress($cutoff)->with(['purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress($cutoff)->with('product'), 'purchaseOrder.supplier', 'purchaseOrder.branch', 'purchaseOrder.currency', 'purchaseOrder.branchStore', 'product', 'unit', 'requisitionLine.requisition'])
             ->where('company_id', $companyId)->when($carryForward, fn ($query) => $query->whereHas('purchaseOrder', fn ($query) => $query->whereDate('document_date', '<=', $cutoff)), fn ($query) => $query->where('financial_period_id', $periodId))->get();
 
         return $lines->map(function (PurchaseOrderLine $line) use (&$statuses): array {
@@ -798,10 +835,12 @@ class ProcurementCycleReport
                 'production_order' => $line->requisitionLine?->source_type === 'production_order' ? $line->requisitionLine?->source_doc_num : null,
                 'work_order' => $line->requisitionLine?->source_type === 'work_order' ? $line->requisitionLine?->source_doc_num : null,
                 'quantity' => $line->ordered_quantity,
+                'unit' => $line->unit?->name,
                 'amount' => $line->total_after_tax, 'currency' => $line->purchaseOrder?->currency?->doc_num,
                 'outstanding' => $progress['remaining'],
                 ...$progress,
-                'overdue' => $progress['remaining'] > 0 && $line->required_delivery_date?->isPast(),
+                'overdue' => $progress['remaining'] > 0
+                    && ($line->required_delivery_date ?? $line->purchaseOrder?->expected_delivery_date)?->isPast(),
             ]);
         });
     }
@@ -1193,6 +1232,8 @@ class ProcurementCycleReport
             'received_quantity' => 0, 'invoiced_quantity' => 0, 'returned_quantity' => 0,
             'remaining_quantity' => 0, 'provisional_unit_value' => 0,
             'remaining_grni_value' => 0, 'currency' => null, 'age_days' => 0,
+            'invited_suppliers' => 0, 'submitted_responses' => 0, 'selection_status' => null,
+            'action_stage' => null, 'action_pending' => false,
             ...$values,
         ];
     }

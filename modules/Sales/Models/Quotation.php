@@ -118,6 +118,16 @@ class Quotation extends Model
         return 'doc_num';
     }
 
+    public function scopeOperationallyPending(Builder $query): Builder
+    {
+        return $query->whereIn($this->qualifyColumn('status'), [
+            self::StatusDraft,
+            self::StatusSent,
+            self::StatusUnderReview,
+            self::StatusAccepted,
+        ]);
+    }
+
     public function resolveRouteBinding($value, $field = null): ?self
     {
         return $this->companyScopedRouteQuery($value, $field)->first();

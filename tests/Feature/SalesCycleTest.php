@@ -40,6 +40,16 @@ use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
 
+function salesOperationalCount(string $html, string $attribute, string $key): int
+{
+    $pattern = $attribute === 'data-operational-card'
+        ? '/data-operational-card="'.preg_quote($key, '/').'".*?data-operational-card-value[^>]*>\s*([0-9,]+)\s*</s'
+        : '/data-report-count="'.preg_quote($key, '/').'"[^>]*>\s*([0-9,]+)\s*</';
+    preg_match($pattern, $html, $matches);
+
+    return (int) str_replace(',', '', $matches[1] ?? '0');
+}
+
 test('sales reservations and deliveries preserve warehouse batch positions', function () {
     $fixture = salesCycleFixture();
     $opening = InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->firstOrFail();
@@ -1408,6 +1418,17 @@ test('sales reports separate operational fulfillment financial aging and product
         ->assertSee($order->doc_num)
         ->assertSee($invoice->doc_num)
         ->assertSee($fixture['customer']->name);
+
+    $dashboardHtml = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('dashboard'))->assertOk()->getContent();
+    $operationalHtml = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', [
+            'report' => 'operational',
+            'operational_focus' => 'pending_sales_actions',
+        ]))->assertOk()->getContent();
+    expect(salesOperationalCount($dashboardHtml, 'data-operational-card', 'pending_sales_actions'))->toBe(1)
+        ->and(salesOperationalCount($dashboardHtml, 'data-operational-card', 'pending_sales_actions'))
+        ->toBe(salesOperationalCount($operationalHtml, 'data-report-count', 'pending_sales_actions'));
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.reports.sales.sales-orders.index', [

@@ -693,6 +693,8 @@ return [
         ],
     ],
     'reports' => [
+        'day_count' => ':count day|:count days',
         'gl_reconciliation_unavailable' => 'General Ledger reconciliation is unavailable until every required classification has exactly one active postable account in the chart of accounts.',
+        'no_reorder_shortages' => 'No reorder shortages match the selected filters.',
     ],
 ];

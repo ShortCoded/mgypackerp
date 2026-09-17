@@ -1026,7 +1026,7 @@ class ProcurementWorkflowController extends Controller
         $rows = $this->procurementReport->rows($reportType, $filters, $context['company_id'], $context['financial_period_id']);
         $metrics = [
             'matching_rows' => $rows->count(),
-            'quantity' => $rows->sum(fn (array $row): float => (float) $row['quantity']),
+            ...($rows->pluck('unit')->filter()->unique()->count() <= 1 ? ['quantity' => $rows->sum(fn (array $row): float => (float) $row['quantity'])] : []),
             ...($showPrices && $rows->pluck('currency')->filter()->unique()->count() <= 1 ? ['amount' => $rows->sum(fn (array $row): float => (float) $row['amount'])] : []),
             ...($showPrices && $rows->pluck('currency')->filter()->unique()->count() <= 1 ? ['outstanding' => $rows->sum(fn (array $row): float => (float) $row['outstanding'])] : []),
             'overdue' => $rows->where('overdue', true)->count(),

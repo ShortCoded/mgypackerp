@@ -83,7 +83,6 @@ class AppServiceProvider extends ServiceProvider
             $permissionClass::deleted($flushEffectivePermissions);
         }
 
-        View::addNamespace('modules', app_path('Modules'));
         View::composer('layouts.app', AppLayoutComposer::class);
         View::composer('layouts.auth', AuthLayoutComposer::class);
         $screenDataVisibilityScopes->register();

@@ -54,6 +54,16 @@ use Symfony\Component\Process\Process;
 
 require_once __DIR__.'/../ProcurementSupport.php';
 
+function procurementOperationalCount(string $html, string $attribute, string $key): int
+{
+    $pattern = $attribute === 'data-operational-card'
+        ? '/data-operational-card="'.preg_quote($key, '/').'".*?data-operational-card-value[^>]*>\s*([0-9,]+)\s*</s'
+        : '/data-report-count="'.preg_quote($key, '/').'"[^>]*>\s*([0-9,]+)\s*</';
+    preg_match($pattern, $html, $matches);
+
+    return (int) str_replace(',', '', $matches[1] ?? '0');
+}
+
 function procurementAccountByClassification(Company $company, string $classificationCode): Account
 {
     return Account::query()
@@ -184,6 +194,8 @@ test('purchasable classifications and production demand lineage are explicit', f
 test('split sourcing, receiving, quality, matching, and returns preserve line capacity', function () {
     Storage::fake('public');
     $fixture = procurementFixture();
+    Permission::findOrCreate('reports.purchases.view', 'web');
+    $fixture['user']->givePermissionTo('reports.purchases.view');
     $attachment = procurementDocumentAttachment($fixture['company']);
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111001', 'Procurement Supplier Payable');
@@ -207,6 +219,30 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'lines' => [['requisition_line_public_id' => $requirementLine->public_id, 'quantity' => 10]],
     ]);
     $rfq = $sourcing->issueRequestForQuotation($rfq);
+    $operationalSourcingReport = app(ProcurementCycleReport::class);
+    $pendingSourcingRows = $operationalSourcingReport->rows(
+        ProcurementCycleReport::PendingSourcingActions,
+        ['branch_id' => $fixture['branch']->getKey()],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    );
+    expect($pendingSourcingRows)->toHaveCount(1)
+        ->and($pendingSourcingRows->first()['action_stage'])->toBe(__('procurement.reports.action_stages.awaiting_quotations'))
+        ->and($pendingSourcingRows->first()['outstanding'])->toBe(2);
+    $dashboardHtml = $this->actingAs($fixture['user'])->get(route('dashboard'))->assertOk()->getContent();
+    $sourcingReportHtml = $this->actingAs($fixture['user'])->get(route('admin.purchases.procurement-cycle-report.index', [
+        'report_type' => ProcurementCycleReport::PendingSourcingActions,
+        'branch_id' => $fixture['branch']->getKey(),
+    ]))->assertOk()->getContent();
+    $requestsReportHtml = $this->actingAs($fixture['user'])->get(route('admin.purchases.procurement-cycle-report.index', [
+        'report_type' => ProcurementCycleReport::PendingPurchaseRequests,
+        'branch_id' => $fixture['branch']->getKey(),
+    ]))->assertOk()->getContent();
+    expect(procurementOperationalCount($dashboardHtml, 'data-operational-card', 'pending_purchase_sourcing'))->toBe(1)
+        ->and(procurementOperationalCount($dashboardHtml, 'data-operational-card', 'pending_purchase_sourcing'))
+        ->toBe(procurementOperationalCount($sourcingReportHtml, 'data-report-count', 'pending_purchase_sourcing'))
+        ->and(procurementOperationalCount($dashboardHtml, 'data-operational-card', 'pending_purchase_requests'))
+        ->toBe(procurementOperationalCount($requestsReportHtml, 'data-report-count', 'pending_purchase_requests'));
     $rfqLine = $rfq->lines->first();
     $quotations = collect([
         [$fixture['firstSupplier'], 2],
@@ -221,6 +257,12 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
 
         return $sourcing->submitSupplierQuotation($quotation);
     });
+    expect($operationalSourcingReport->rows(
+        ProcurementCycleReport::PendingSourcingActions,
+        ['branch_id' => $fixture['branch']->getKey()],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    )->first()['action_stage'])->toBe(__('procurement.reports.action_stages.select_supplier'));
     $selection = $sourcing->createSupplierSelection($rfq->fresh(), [
         'selection_date' => now()->toDateString(), 'selection_reason' => 'Split award for supply continuity.',
         'lines' => [
@@ -228,13 +270,25 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
             ['quotation_line_public_id' => $quotations->last()->lines->first()->public_id, 'selected_quantity' => 4],
         ],
     ]);
+    expect($operationalSourcingReport->rows(
+        ProcurementCycleReport::PendingSourcingActions,
+        ['branch_id' => $fixture['branch']->getKey()],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    )->first()['action_stage'])->toBe(__('procurement.reports.action_stages.approve_selection'));
     $orders = $sourcing->approveSelection($selection);
 
     expect($orders)->toHaveCount(2)
         ->and($requisition->fresh()->status)->toBe('approved')
         ->and($orders->sum(fn (PurchaseOrder $order): float => (float) $order->total_ordered_quantity))->toBe(10.0)
         ->and($orders->every(fn (PurchaseOrder $order): bool => $order->exchange_rate === '1.250000'))->toBeTrue()
-        ->and($quotations->first()->attachmentUsages()->where('archive_file_id', $attachment->getKey())->exists())->toBeTrue();
+        ->and($quotations->first()->attachmentUsages()->where('archive_file_id', $attachment->getKey())->exists())->toBeTrue()
+        ->and($operationalSourcingReport->rows(
+            ProcurementCycleReport::PendingSourcingActions,
+            ['branch_id' => $fixture['branch']->getKey()],
+            $fixture['company']->getKey(),
+            $fixture['period']->getKey(),
+        ))->toBeEmpty();
 
     $firstOrder = $orders->firstWhere('supplier_id', $fixture['firstSupplier']->getKey());
     expect($firstOrder->lines->first()->discount_amount)->toBe('1.2000')
@@ -243,6 +297,14 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and($firstOrder->freight_amount)->toBe('3.0000')
         ->and($firstOrder->total_amount)->toBe('14.8800');
     $firstOrder = app(PurchaseOrderService::class)->approve($firstOrder);
+    $dashboardHtml = $this->actingAs($fixture['user'])->get(route('dashboard'))->assertOk()->getContent();
+    $openOrdersReportHtml = $this->actingAs($fixture['user'])->get(route('admin.purchases.procurement-cycle-report.index', [
+        'report_type' => ProcurementCycleReport::OpenPurchaseOrders,
+        'branch_id' => $fixture['branch']->getKey(),
+    ]))->assertOk()->getContent();
+    expect(procurementOperationalCount($dashboardHtml, 'data-operational-card', 'open_purchase_orders'))->toBe(1)
+        ->and(procurementOperationalCount($dashboardHtml, 'data-operational-card', 'open_purchase_orders'))
+        ->toBe(procurementOperationalCount($openOrdersReportHtml, 'data-report-count', 'open_purchase_orders'));
     $changeRequest = $settlement->requestPurchaseOrderChange($firstOrder, [
         'request_date' => now()->toDateString(),
         'requested_values' => ['notes' => 'Approved delivery coordination note.'],
@@ -1642,6 +1704,7 @@ test('procurement reports filter, print, and export without leaking confidential
         'open_requirements',
         'requested_vs_ordered',
         'rfq_quotation_status',
+        'pending_sourcing_actions',
         'purchase_order_status',
         'ordered_vs_received',
         'overdue_po_deliveries',

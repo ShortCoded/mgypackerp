@@ -88,6 +88,17 @@ class SalesOrder extends Model
         return $query->where($this->qualifyColumn('company_id'), $companyId);
     }
 
+    public function scopeOperationallyOpen(Builder $query): Builder
+    {
+        return $query->whereIn($this->qualifyColumn('status'), [
+            self::StatusPendingApproval,
+            self::StatusHeldCredit,
+            self::StatusApproved,
+            self::StatusPartiallyFulfilled,
+            self::StatusReopened,
+        ]);
+    }
+
     public function isEditable(): bool
     {
         return in_array($this->status, [self::StatusDraft, self::StatusReopened], true);

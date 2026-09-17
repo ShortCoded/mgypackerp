@@ -95,6 +95,7 @@ return [
             'open_requirements' => 'احتياجات الشراء المفتوحة',
             'requested_vs_ordered' => 'المطلوب مقابل المطلوب شراؤه',
             'rfq_quotation_status' => 'حالة طلبات وعروض الأسعار',
+            'pending_sourcing_actions' => 'إجراءات طلبات وعروض الأسعار واختيار المورد المعلقة',
             'purchase_order_status' => 'حالة أوامر الشراء',
             'ordered_vs_received' => 'المطلوب شراؤه مقابل المستلم',
             'overdue_po_deliveries' => 'توريدات أوامر الشراء المتأخرة',
@@ -122,6 +123,15 @@ return [
             'amount' => 'المبلغ',
             'outstanding' => 'المتبقي',
             'overdue' => 'المتأخر',
+        ],
+        'columns' => [
+            'requisition' => 'طلب الشراء', 'invited_suppliers' => 'الموردون المدعوون',
+            'submitted_responses' => 'العروض المقدمة', 'selection_status' => 'حالة اختيار المورد',
+            'action_stage' => 'الإجراء التالي', 'remaining_actions' => 'الإجراءات المتبقية',
+        ],
+        'action_stages' => [
+            'issue_rfq' => 'إرسال طلب عرض السعر', 'awaiting_quotations' => 'انتظار عروض الموردين',
+            'select_supplier' => 'اختيار المورد', 'approve_selection' => 'اعتماد اختيار المورد', 'complete' => 'مكتمل',
         ],
     ],
     'fields' => [

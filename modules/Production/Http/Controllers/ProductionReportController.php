@@ -83,7 +83,7 @@ class ProductionReportController extends Controller
             $context['financial_period_id'],
             $context['branch_id'],
             [
-                ...$request->only(['status', 'from', 'to']),
+                ...$request->only(['status', 'from', 'to', 'operational_focus']),
                 'production_run_id' => $request->integer('production_run_id') ?: null,
             ],
             false,

@@ -78,10 +78,25 @@ return [
     'mark_sent' => 'تسجيل كمُرسل',
     'employee_unresolved' => 'مرجع المستخدم القديم محفوظ. لم يتم تأكيد ربطه بموظف.',
     'reports' => [
+        'operational' => [
+            'actionable_total' => 'إجراءات المبيعات المعلقة',
+            'sales_requests' => 'طلبات المبيعات المفتوحة',
+            'remaining_quantity' => 'الكمية المتبقية',
+            'statuses' => [
+                'draft' => 'مسودة', 'submitted' => 'مقدم', 'approved' => 'معتمد',
+                'partially_converted' => 'محول جزئيًا',
+            ],
+        ],
         'choose_report' => 'تقارير المبيعات',
         'filters' => 'فلاتر التقرير',
         'filters_help' => 'تُطبق الفلاتر داخل الشركة والفرع والفترة المالية النشطة.',
         'no_results' => 'لا توجد سجلات مطابقة للفلاتر المحددة.',
+        'columns' => [
+            'document' => 'المستند',
+            'date' => 'التاريخ',
+            'customer' => 'العميل',
+            'status' => 'الحالة',
+        ],
         'types' => [
             'financial' => 'التحليل المالي للمبيعات',
             'period' => 'المبيعات خلال الفترة',

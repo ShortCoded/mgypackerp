@@ -95,6 +95,7 @@ return [
             'open_requirements' => 'Open Purchase Requirements',
             'requested_vs_ordered' => 'Requested vs Ordered',
             'rfq_quotation_status' => 'RFQ / Quotation Status',
+            'pending_sourcing_actions' => 'Pending RFQ / Quotation / Selection Actions',
             'purchase_order_status' => 'Purchase Order Status',
             'ordered_vs_received' => 'Ordered vs Received',
             'overdue_po_deliveries' => 'Overdue PO Deliveries',
@@ -122,6 +123,15 @@ return [
             'amount' => 'Amount',
             'outstanding' => 'Outstanding',
             'overdue' => 'Overdue',
+        ],
+        'columns' => [
+            'requisition' => 'Purchase Requisition', 'invited_suppliers' => 'Invited Suppliers',
+            'submitted_responses' => 'Submitted Responses', 'selection_status' => 'Selection Status',
+            'action_stage' => 'Next Action', 'remaining_actions' => 'Remaining Actions',
+        ],
+        'action_stages' => [
+            'issue_rfq' => 'Issue RFQ', 'awaiting_quotations' => 'Await Supplier Quotations',
+            'select_supplier' => 'Select Supplier', 'approve_selection' => 'Approve Supplier Selection', 'complete' => 'Complete',
         ],
     ],
     'fields' => [

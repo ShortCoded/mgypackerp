@@ -79,7 +79,7 @@
 
 @if(in_array($reportType, ['fulfillment', 'operational'], true) && $openOrders->isNotEmpty())
 <h3>{{ __('Invoice to Delivery Fulfillment') }}</h3>
-<table class="report-table"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Invoiced') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@foreach($openOrders as $order)<tr><td>{{ $order->doc_num }}</td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ $numbers->format($order->ordered_quantity) }}</td><td>{{ $numbers->format($order->lines->sum('invoiced_quantity')) }}</td><td>{{ $numbers->format($order->delivered_quantity) }}</td><td>{{ $numbers->format(max(0, (float) $order->lines->sum('invoiced_quantity') - (float) $order->delivered_quantity)) }}</td></tr>@endforeach</tbody></table>
+<table class="report-table"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Invoiced') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@foreach($openOrders as $order)<tr><td>{{ $order->doc_num }}</td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ $numbers->format($order->ordered_quantity) }}</td><td>{{ $numbers->format($order->lines->sum('invoiced_quantity')) }}</td><td>{{ $numbers->format($order->delivered_quantity) }}</td><td>{{ $numbers->format(max(0, (float) $order->ordered_quantity - (float) $order->delivered_quantity)) }}</td></tr>@endforeach</tbody></table>
 @endif
 
 @if($reportType === 'returns' && $returns->isNotEmpty())

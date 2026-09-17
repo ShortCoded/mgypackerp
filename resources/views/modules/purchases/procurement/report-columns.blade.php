@@ -6,7 +6,7 @@
         <tr>@foreach($reportColumns as $key => $label)
             @php($value = $row[$key] ?? null)
             <td @if(is_numeric($value)) class="text-end" dir="ltr" @endif>
-                @if(in_array($key, ['status', 'payment_status']) && filled($value))
+                @if(in_array($key, ['status', 'payment_status', 'selection_status']) && filled($value))
                     {{ __('procurement.statuses.'.$value) }}
                 @elseif($key === 'document' && filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission'] ?? 'reports.purchases.view'))
                     <a href="{{ $row['document_url'] }}">{{ $value }}</a>

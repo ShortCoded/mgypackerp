@@ -32,11 +32,33 @@
     </form>
 
     <div class="row g-3 mb-3">
+        <span class="d-none" data-report-count="maintenance_breakdowns">{{ $kpis['breakdown_reports'] }}</span>
+        <span class="d-none" data-report-count="maintenance_overdue">{{ $kpis['overdue'] }}</span>
         @foreach($kpis as $key => $value)
             <div class="col-6 col-lg-3 col-xxl">
                 <div class="card h-100"><div class="card-body"><div class="text-600 small">{{ __('maintenance.reports.kpis.'.$key) }}</div><div class="fs-5 fw-bold mt-1">{{ $value }}</div></div></div>
             </div>
         @endforeach
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.requests_table') }}</h5></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead><tr><th>{{ __('maintenance.fields.document') }}</th><th>{{ __('maintenance.fields.reported_at') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.request_type') }}</th><th>{{ __('maintenance.fields.priority') }}</th><th>{{ __('maintenance.fields.is_machine_stopped') }}</th><th>{{ __('maintenance.fields.status') }}</th></tr></thead>
+                <tbody>@forelse($requests as $maintenanceRequest)<tr><td><a href="{{ route('admin.maintenance.requests.show', $maintenanceRequest) }}">{{ $maintenanceRequest->doc_num }}</a></td><td>{{ $maintenanceRequest->reported_at?->format('Y-m-d H:i') }}</td><td>{{ $maintenanceRequest->asset?->asset_name ?: $maintenanceRequest->mold?->name ?: '—' }}</td><td>{{ __('maintenance.request_types.'.$maintenanceRequest->request_type) }}</td><td>{{ __('maintenance.priorities.'.$maintenanceRequest->priority) }}</td><td>{{ $maintenanceRequest->is_machine_stopped ? __('Yes') : __('No') }}</td><td>{{ __('maintenance.statuses.'.$maintenanceRequest->status) }}</td></tr>@empty<tr><td colspan="7" class="text-center text-muted py-4">{{ __('maintenance.reports.no_requests') }}</td></tr>@endforelse</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.plan_due_table') }}</h5></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead><tr><th>{{ __('maintenance.fields.source_plan') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.due_at') }}</th><th>{{ __('maintenance.fields.status') }}</th></tr></thead>
+                <tbody>@forelse($planDues as $due)<tr><td>{{ $due->plan?->doc_num }} — {{ $due->plan?->name }}</td><td>{{ $due->plan?->asset?->asset_name ?: $due->plan?->mold?->name ?: '—' }}</td><td class="{{ $due->due_at?->isPast() ? 'text-danger fw-bold' : '' }}">{{ $due->due_at?->format('Y-m-d H:i') }}</td><td>{{ __('maintenance.statuses.'.$due->status) }}</td></tr>@empty<tr><td colspan="4" class="text-center text-muted py-4">{{ __('maintenance.reports.no_plan_dues') }}</td></tr>@endforelse</tbody>
+            </table>
+        </div>
     </div>
 
     <div class="card mb-3">

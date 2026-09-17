@@ -2,6 +2,7 @@
 
 namespace Modules\Sales\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -25,6 +26,13 @@ class SalesRequest extends Model
     protected function casts(): array
     {
         return ['request_date' => 'date', 'required_delivery_date' => 'date', 'exchange_rate' => 'decimal:6', 'status_history' => 'array', 'print_identity_snapshot' => 'array', 'submitted_at' => 'datetime', 'approved_at' => 'datetime', 'rejected_at' => 'datetime', 'cancelled_at' => 'datetime', 'closed_at' => 'datetime'];
+    }
+
+    public function scopeOperationallyOpen(Builder $query): Builder
+    {
+        return $query
+            ->whereIn($this->qualifyColumn('status'), ['draft', 'submitted', 'approved', 'partially_converted'])
+            ->whereHas('lines', fn (Builder $lineQuery) => $lineQuery->whereColumn('converted_quantity', '<', 'quantity'));
     }
 
     public function salesEmployee(): BelongsTo
