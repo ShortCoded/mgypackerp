@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Modules\Finance\Http\Controllers\BankAccountController;
 use Modules\Finance\Http\Controllers\CashboxController;
+use Modules\Finance\Http\Controllers\CashboxCountController;
 use Modules\Finance\Http\Controllers\CashPaymentVoucherController;
 use Modules\Finance\Http\Controllers\CashReceiptVoucherController;
 use Modules\Finance\Http\Controllers\ChequeController;
@@ -20,6 +21,16 @@ Route::middleware('auth')
         Route::get('/select2/accounts', fn (Request $request, FinanceSelect2Service $select2) => response()->json($select2->accounts($request)))
             ->middleware('can:accounts.view')
             ->name('select2.accounts');
+
+        Route::prefix('cashbox-count')->name('cashbox-count.')->controller(CashboxCountController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:finance.cashbox_count.view')->name('index');
+            Route::get('/data', 'data')->middleware('can:finance.cashbox_count.view')->name('data');
+            Route::post('/', 'store')->middleware('can:finance.cashbox_count.create')->name('store');
+            Route::get('/{cashboxCount}/print', 'print')->middleware('can:finance.cashbox_count.print')->name('print');
+            Route::post('/{cashboxCount}/reopen', 'reopen')->middleware('can:finance.cashbox_count.reopen')->name('reopen');
+            Route::put('/{cashboxCount}', 'update')->middleware('can:finance.cashbox_count.edit')->name('update');
+            Route::get('/{cashboxCount}', 'show')->middleware('can:finance.cashbox_count.view')->name('show');
+        });
 
         Route::get('/select2/cash-voucher-cashboxes', function (Request $request, FinanceSelect2Service $select2) {
             abort_unless(
@@ -287,7 +298,6 @@ Route::middleware('auth')
             'cleared-cheques' => FinanceReportService::ClearedCheques,
             'returned-cheques' => FinanceReportService::ReturnedCheques,
             'cancelled-cheques' => FinanceReportService::CancelledCheques,
-            'guarantee-cheques' => FinanceReportService::GuaranteeCheques,
             'advances-allocations' => FinanceReportService::AdvancesAllocations,
             'unapproved-documents' => FinanceReportService::UnapprovedDocuments,
             'customer-aging' => FinanceReportService::CustomerAging,

@@ -222,6 +222,8 @@ return [
     'treasury_banks' => 'الخزينة والبنوك',
     'finance_reports' => 'تقارير المالية',
     'financial_analysis_reports' => 'تقارير التحليلات المالية',
+    'expense_analysis' => 'تحليل المصروفات',
+    'financial_ratios' => 'النسب المالية',
     'costing_reports' => 'تقارير التكاليف',
     'cost_accounting' => 'محاسبة التكاليف',
     'costing_operations' => 'عمليات التكاليف',

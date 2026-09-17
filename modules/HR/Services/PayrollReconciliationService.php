@@ -7,9 +7,46 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
+use Modules\Accounting\Models\JournalEntry;
 
 final class PayrollReconciliationService
 {
+    /**
+     * @return array{
+     *     mapping_configured: bool,
+     *     source_available: bool,
+     *     payable_opening: string,
+     *     payable_ending: string,
+     *     gl_opening: string,
+     *     gl_ending: string,
+     *     settlement_opening: string,
+     *     settlement_ending: string,
+     *     cash_bank_opening: string,
+     *     cash_bank_ending: string
+     * }
+     */
+    public function forScope(int $companyId, ?int $branchId, string $openingDate, string $asOf): array
+    {
+        $payableAccount = $this->payrollPayableAccount($companyId);
+
+        return [
+            'mapping_configured' => $payableAccount instanceof Account,
+            'source_available' => $this->hasScopeEvidence($companyId, $branchId, $asOf),
+            'payable_opening' => $this->subledgerBalanceAt($companyId, $branchId, $openingDate),
+            'payable_ending' => $this->subledgerBalanceAt($companyId, $branchId, $asOf),
+            'gl_opening' => $payableAccount instanceof Account
+                ? $this->glPayableBalance($companyId, $branchId, $openingDate, (int) $payableAccount->getKey())
+                : '0.0000',
+            'gl_ending' => $payableAccount instanceof Account
+                ? $this->glPayableBalance($companyId, $branchId, $asOf, (int) $payableAccount->getKey())
+                : '0.0000',
+            'settlement_opening' => $this->settlementsAt($companyId, $branchId, $openingDate),
+            'settlement_ending' => $this->settlementsAt($companyId, $branchId, $asOf),
+            'cash_bank_opening' => $this->cashEffectForScope($companyId, $branchId, $openingDate),
+            'cash_bank_ending' => $this->cashEffectForScope($companyId, $branchId, $asOf),
+        ];
+    }
+
     /**
      * @return array{
      *     run: object,
@@ -150,6 +187,31 @@ final class PayrollReconciliationService
         return bcsub($payroll, $payments, 4);
     }
 
+    private function subledgerBalanceAt(int $companyId, ?int $branchId, string $asOf): string
+    {
+        $payroll = $this->money(DB::table('hr_payslips as payslip')
+            ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
+            ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
+            ->where('period.company_id', $companyId)
+            ->where('run.status', 'posted')
+            ->whereDate('period.period_end', '<=', $asOf)
+            ->when($branchId !== null, fn ($query) => $query->where('payslip.branch_id', $branchId))
+            ->sum('payslip.net_amount'));
+
+        return bcsub($payroll, $this->settlementsAt($companyId, $branchId, $asOf), 4);
+    }
+
+    private function settlementsAt(int $companyId, ?int $branchId, string $asOf): string
+    {
+        return $this->money(DB::table('hr_payroll_payments')
+            ->where('company_id', $companyId)
+            ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereNotNull('approved_at')
+            ->whereDate('approved_at', '<=', $asOf)
+            ->where(fn ($query) => $query->whereNull('cancelled_at')->orWhereDate('cancelled_at', '>', $asOf))
+            ->sum('amount'));
+    }
+
     private function periodPayroll(int $companyId, ?int $branchId, string $periodStart, string $asOf): string
     {
         return $this->money(DB::table('hr_payslips as payslip')
@@ -215,6 +277,42 @@ final class PayrollReconciliationService
             ->first();
 
         return $this->money($row?->balance ?? 0);
+    }
+
+    private function cashEffectForScope(int $companyId, ?int $branchId, string $asOf): string
+    {
+        $row = DB::table('hr_payroll_payments as payment')
+            ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+            ->join('cashboxes as cashbox', 'cashbox.id', '=', 'voucher.cashbox_id')
+            ->join('journal_entries as journal', function ($join): void {
+                $join->on('journal.source_id', '=', 'payment.id')
+                    ->whereIn('journal.source_type', ['hr_payroll_payment', 'hr_payroll_payment_reversal']);
+            })
+            ->join('journal_entry_lines as line', function ($join): void {
+                $join->on('line.journal_entry_id', '=', 'journal.id')
+                    ->on('line.account_id', '=', 'cashbox.account_id');
+            })
+            ->where('payment.company_id', $companyId)
+            ->when($branchId !== null, fn ($query) => $query->where('payment.branch_id', $branchId))
+            ->whereDate('journal.entry_date', '<=', $asOf)
+            ->where('journal.status', JournalEntry::StatusPosted)
+            ->where('journal.is_posted', true)
+            ->selectRaw('COALESCE(SUM(line.credit_amount - line.debit_amount), 0) as balance')
+            ->first();
+
+        return $this->money($row?->balance ?? 0);
+    }
+
+    private function hasScopeEvidence(int $companyId, ?int $branchId, string $asOf): bool
+    {
+        return DB::table('hr_payslips as payslip')
+            ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
+            ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
+            ->where('period.company_id', $companyId)
+            ->where('run.status', 'posted')
+            ->whereDate('period.period_end', '<=', $asOf)
+            ->when($branchId !== null, fn ($query) => $query->where('payslip.branch_id', $branchId))
+            ->exists();
     }
 
     private function payments(int $payrollRunId, string $asOf): \Illuminate\Support\Collection

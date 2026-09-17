@@ -463,7 +463,8 @@ class ProcurementCycleReport
                         'category' => $first['category'], 'warehouse' => $group->pluck('warehouse')->filter()->unique()->join(' / '),
                         'branch' => $group->pluck('branch')->filter()->unique()->join(' / '), 'month' => $first['month'],
                         'currency' => $first['currency'], 'unit' => $first['unit'],
-                        'quantity' => $group->sum('quantity'), 'amount' => $group->sum('amount'),
+                        'quantity' => $group->sum(fn (array $row): float => (float) ($row['net_quantity'] ?? $row['quantity'])),
+                        'amount' => $group->sum('amount'),
                     ]);
                 })->values();
         }
@@ -1055,6 +1056,11 @@ class ProcurementCycleReport
             $invoice = $line->purchaseInvoice;
             $base = (float) $invoice->lines->sum('total_before_tax');
             $discount = $base > 0 ? (float) $invoice->header_discount_amount * (float) $line->total_before_tax / $base : 0;
+            $quantity = (float) $line->quantity;
+            $returnedQuantity = (float) ($returns[$line->id] ?? 0);
+            $netQuantity = max(0, $quantity - $returnedQuantity);
+            $lineNetValue = (float) $line->total_before_tax - $discount;
+            $netUnitPrice = $quantity > 0 ? $lineNetValue / $quantity : 0;
 
             return $this->row([
                 'date' => $invoice->invoice_date?->toDateString(), 'month' => $invoice->invoice_date?->format('Y-m'),
@@ -1067,10 +1073,10 @@ class ProcurementCycleReport
                 'branch_id' => $invoice->branch_id, 'branch' => $invoice->branch?->name,
                 'warehouse_uuid' => $invoice->purchaseOrder?->branchStore?->public_uuid, 'warehouse' => $invoice->purchaseOrder?->branchStore?->name,
                 'purchase_order' => $invoice->purchaseOrder?->doc_num, 'quantity' => $line->quantity,
-                'amount' => (float) $line->total_before_tax - $discount, 'unit_price' => $line->unit_price,
+                'amount' => $netUnitPrice * $netQuantity, 'unit_price' => $line->unit_price,
                 'discount' => (float) $line->discount_amount + $discount, 'tax' => $line->tax_amount,
-                'net_price' => (float) $line->quantity > 0 ? ((float) $line->total_before_tax - $discount) / (float) $line->quantity : 0,
-                'returned' => (float) ($returns[$line->id] ?? 0), 'net_quantity' => max(0, (float) $line->quantity - (float) ($returns[$line->id] ?? 0)),
+                'net_price' => $netUnitPrice,
+                'returned' => $returnedQuantity, 'net_quantity' => $netQuantity,
                 'exchange_rate' => $invoice->exchange_rate, 'currency' => $invoice->currency?->doc_num,
             ]);
         });

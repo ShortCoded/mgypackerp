@@ -345,6 +345,13 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company',
     ],
+    'cashbox_counts' => [
+        'prefix' => 'CCNT-',
+        'padding' => 5,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
     'cash_receipt_vouchers' => [
         'prefix' => 'CRV-',
         'padding' => 5,

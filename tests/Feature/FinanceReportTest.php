@@ -12,6 +12,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Http\Controllers\FinanceReportController;
 use Modules\Finance\Models\Cashbox;
+use Modules\Finance\Models\CashboxCount;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\FundTransfer;
 use Modules\Finance\Models\Cheque;
@@ -152,7 +153,7 @@ test('finance cashbox reports reconcile approved vouchers and both transfer legs
         ->not->toContain('CRV-9702-DRAFT');
 });
 
-test('legacy finance report route renders the actual unified report and exposes evidence based unsupported states', function (): void {
+test('legacy finance report route renders the actual unified report and unsupported guarantee navigation is absent', function (): void {
     financeReportFixture($this);
     $actor = financeReportActor();
 
@@ -164,10 +165,8 @@ test('legacy finance report route renders the actual unified report and exposes 
         ->assertDontSee('CRV-9702-DRAFT')
         ->assertSee(route('admin.reports.finance.export.excel'), false);
 
-    $this->actingAs($actor)
-        ->get(route('admin.reports.finance.index', ['type' => FinanceReportService::GuaranteeCheques]))
-        ->assertOk()
-        ->assertSee(__('finance_reports.notices.guarantee_cheques_unsupported'));
+    expect(Route::has('admin.reports.finance.guarantee-cheques.index'))->toBeFalse()
+        ->and(FinanceReportService::types())->not->toContain('guarantee_cheques');
 
     $this->actingAs($actor)
         ->getJson(route('admin.reports.finance.cashbox-balances.data', ['as_of_date' => '2026-09-30']))
@@ -243,7 +242,7 @@ test('named finance report routes lock their report mode and cashbox count opens
 
     $this->actingAs($actor)
         ->get(route('admin.reports.finance.cashbox-balances.index', [
-            'type' => FinanceReportService::GuaranteeCheques,
+            'type' => 'guarantee_cheques',
             'as_of_date' => '2026-09-30',
         ]))
         ->assertOk()
@@ -438,4 +437,50 @@ test('financial exception cards reuse scoped aging and cheque reports without te
         ->and(financeDashboardCount($dashboard, 'returned_cheques'))->toBe(financeReportCount($returnedChequesReport, 'returned_cheques'));
 
     Carbon::setTestNow();
+});
+
+test('cashbox count persists historical snapshots supports equal variance reopen update print and scope isolation', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    foreach (['view', 'create', 'edit', 'reopen', 'print'] as $action) {
+        $actor->givePermissionTo(Permission::findOrCreate("finance.cashbox_count.{$action}", 'web'));
+    }
+
+    $this->actingAs($actor)->post(route('admin.finance.cashbox-count.store'), [
+        'count_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'actual_amount' => '80.0000',
+        'notes' => 'Equal count',
+    ])->assertRedirect();
+
+    $equal = CashboxCount::query()->where('notes', 'Equal count')->firstOrFail();
+    expect($equal->book_balance)->toBe('80.0000')->and($equal->variance)->toBe('0.0000');
+    $this->actingAs($actor)->get(route('admin.finance.cashbox-count.show', $equal))->assertOk()->assertSee('Equal count');
+    $this->actingAs($actor)->get(route('admin.finance.cashbox-count.print', $equal))->assertOk()->assertSee($equal->doc_num);
+    $this->actingAs($actor)->post(route('admin.finance.cashbox-count.reopen', $equal))->assertRedirect();
+    $this->actingAs($actor)->put(route('admin.finance.cashbox-count.update', $equal), [
+        'actual_amount' => '75.0000', 'notes' => 'Variance count',
+    ])->assertRedirect();
+    expect($equal->refresh()->status)->toBe(CashboxCount::StatusSaved)
+        ->and($equal->variance)->toBe('-5.0000')
+        ->and($equal->book_balance)->toBe('80.0000');
+
+    $otherCompany = Company::query()->create([
+        'doc_number' => 9750, 'doc_num' => 'COMP-9750', 'name' => 'Other Count Company', 'status' => 'active', 'is_main' => false,
+    ]);
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9750, 'doc_num' => 'BR-9750', 'company_id' => $otherCompany->getKey(), 'name' => 'Other Count Branch', 'type' => 'branch', 'status' => 'active',
+    ]);
+    $otherCurrency = Currency::query()->create([
+        'doc_number' => 9750, 'doc_num' => 'CUR-9750', 'company_id' => $otherCompany->getKey(), 'name' => 'Other Count Currency', 'name_en' => 'Other Count Currency', 'code' => 'OCC', 'minor_unit_name' => 'Unit', 'minor_unit_factor' => 100, 'is_main' => true, 'status' => 'active',
+    ]);
+    $otherAccount = financeReportAccount($otherCompany, 9750, '111975', 'Other Count Cash');
+    $otherCashbox = Cashbox::query()->create([
+        'doc_number' => 9750, 'doc_num' => 'CASH-9750', 'company_id' => $otherCompany->getKey(), 'branch_id' => $otherBranch->getKey(), 'account_id' => $otherAccount->getKey(), 'name' => 'Other Count Cashbox', 'status' => 'active',
+    ]);
+    $otherCount = CashboxCount::query()->create([
+        'doc_number' => 1, 'doc_num' => 'CCNT-9750', 'company_id' => $otherCompany->getKey(), 'branch_id' => $otherBranch->getKey(), 'cashbox_id' => $otherCashbox->getKey(), 'currency_id' => $otherCurrency->getKey(), 'count_date' => '2026-09-30', 'book_balance' => 0, 'actual_amount' => 0, 'variance' => 0, 'status' => CashboxCount::StatusSaved,
+    ]);
+    $this->actingAs($actor)->get('/admin/finance/cashbox-count/'.$otherCount->doc_num)->assertNotFound();
 });

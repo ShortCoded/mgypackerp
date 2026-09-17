@@ -222,6 +222,8 @@ return [
     'treasury_banks' => 'Treasury & Banks',
     'finance_reports' => 'Finance Reports',
     'financial_analysis_reports' => 'Financial Analytics Reports',
+    'expense_analysis' => 'Expense Analysis',
+    'financial_ratios' => 'Financial Ratios',
     'costing_reports' => 'Costing Reports',
     'cost_accounting' => 'Cost Accounting',
     'costing_operations' => 'Costing Operations',

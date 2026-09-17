@@ -14,6 +14,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\FixedAssets\Services\FixedAssetReportService;
+use Modules\HR\Services\PayrollReconciliationService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Throwable;
@@ -48,6 +49,7 @@ final class ReconciliationCenterService
         private readonly ReconciliationComparisonService $comparisons,
         private readonly PostingAccountResolver $accounts,
         private readonly FixedAssetReportService $fixedAssetReports,
+        private readonly PayrollReconciliationService $payrollReconciliations,
     ) {}
 
     /** @return list<string> */
@@ -88,7 +90,7 @@ final class ReconciliationCenterService
             self::Inventory => fn (): array => $this->inventoryReconciliation($companyId, $branchId, $openingDate, $toDate),
             self::FixedAssets => fn (): array => $this->fixedAssetReconciliation($companyId, $branchId, $openingDate, $toDate),
             self::PayrollPayable => fn (): array => $this->payrollPayableReconciliation($companyId, $branchId, $openingDate, $toDate),
-            self::PayrollSettlement => fn (): array => $this->unavailablePayrollSettlement(),
+            self::PayrollSettlement => fn (): array => $this->payrollSettlementReconciliation($companyId, $branchId, $openingDate, $toDate),
             self::CostCenters => fn (): array => $this->costCenterReconciliation($companyId, $financialPeriodId, $branchId, $openingDate, $toDate),
             self::Production => fn (): array => $this->productionReconciliation($companyId, $branchId, $openingDate, $toDate),
             self::FinancialStatements => fn (): array => $this->financialStatementReconciliation($companyId, $branchId, $openingDate, $toDate),
@@ -363,28 +365,15 @@ final class ReconciliationCenterService
             return $this->comparisons->compare(self::PayrollPayable, __('reconciliation_center.types.'.self::PayrollPayable), [], sourceAvailable: false);
         }
 
-        $payableAccounts = Account::query()
-            ->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->where('accounts.company_id', $companyId)
-            ->where('account_classifications.code', 'payroll_payable')
-            ->where('accounts.is_postable', true)
-            ->pluck('accounts.id')
-            ->map(fn (mixed $id): int => (int) $id)
-            ->all();
-        $mappingConfigured = count($payableAccounts) === 1;
-        $accountId = $mappingConfigured ? $payableAccounts[0] : null;
-        $openingSource = $this->payrollSourceAt($companyId, $openingDate);
-        $endingSource = $this->payrollSourceAt($companyId, $toDate);
-        $openingGl = $accountId === null ? collect() : $this->glBalances($companyId, $branchId, $openingDate, [$accountId], creditNormal: true);
-        $endingGl = $accountId === null ? collect() : $this->glBalances($companyId, $branchId, $toDate, [$accountId], creditNormal: true);
+        $scope = $this->payrollReconciliations->forScope($companyId, $branchId, $openingDate, $toDate);
         $row = $this->balanceRow(
             'payroll_payable',
             __('reconciliation_center.rows.payroll_payable'),
-            $openingSource,
-            $endingSource,
-            (string) ($openingGl["none:{$accountId}"] ?? '0'),
-            (string) ($endingGl["none:{$accountId}"] ?? '0'),
-            $accountId,
+            $scope['payable_opening'],
+            $scope['payable_ending'],
+            $scope['gl_opening'],
+            $scope['gl_ending'],
+            null,
             $openingDate,
             $toDate,
         );
@@ -392,20 +381,38 @@ final class ReconciliationCenterService
         return $this->comparisons->compare(
             self::PayrollPayable,
             __('reconciliation_center.types.'.self::PayrollPayable),
-            $this->hasEvidence([$openingSource, $endingSource, $row['gl_opening'], $row['gl_ending']]) ? [$row] : [],
-            $mappingConfigured,
-            $this->hasEvidence([$openingSource, $endingSource, $row['gl_opening'], $row['gl_ending']]),
+            $scope['source_available'] ? [$row] : [],
+            $scope['mapping_configured'],
+            $scope['source_available'],
         );
     }
 
-    private function unavailablePayrollSettlement(): array
+    private function payrollSettlementReconciliation(int $companyId, int $branchId, string $openingDate, string $toDate): array
     {
+        if (! Schema::hasTable('hr_payroll_payments')) {
+            return $this->comparisons->compare(self::PayrollSettlement, __('reconciliation_center.types.'.self::PayrollSettlement), [], sourceAvailable: false);
+        }
+
+        $scope = $this->payrollReconciliations->forScope($companyId, $branchId, $openingDate, $toDate);
+        $row = $this->balanceRow(
+            'payroll_settlement',
+            __('reconciliation_center.rows.payroll_settlement'),
+            $scope['settlement_opening'],
+            $scope['settlement_ending'],
+            $scope['cash_bank_opening'],
+            $scope['cash_bank_ending'],
+            null,
+            $openingDate,
+            $toDate,
+        );
+        $hasSettlementEvidence = $this->hasEvidence([$scope['settlement_opening'], $scope['settlement_ending']]);
+
         return $this->comparisons->compare(
             self::PayrollSettlement,
             __('reconciliation_center.types.'.self::PayrollSettlement),
-            [],
-            applicable: false,
-            notes: [__('reconciliation_center.notes.payroll_settlement_unavailable')],
+            $hasSettlementEvidence ? [$row] : [],
+            sourceAvailable: $hasSettlementEvidence,
+            notes: [__('reconciliation_center.notes.payroll_settlement_source')],
         );
     }
 
@@ -788,21 +795,6 @@ final class ReconciliationCenterService
             });
 
         return $balances;
-    }
-
-    private function payrollSourceAt(int $companyId, string $cutoff): string
-    {
-        $value = DB::table('hr_payslip_items as item')
-            ->join('hr_payslips as payslip', 'payslip.id', '=', 'item.payslip_id')
-            ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
-            ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
-            ->where('period.company_id', $companyId)
-            ->where('run.status', 'posted')
-            ->where('item.direction', 'earning')
-            ->whereDate('period.period_end', '<=', $cutoff)
-            ->sum('item.amount');
-
-        return bcadd((string) $value, '0', 4);
     }
 
     /** @return array{eligible: string, accounted: string} */

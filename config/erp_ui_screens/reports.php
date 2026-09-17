@@ -41,7 +41,6 @@ return [
         $financeScreen('returned-cheques', 'Returned and Rejected Cheques', 'الشيكات المرتدة والمرفوضة'),
         $financeScreen('cancelled-cheques', 'Cancelled Cheques', 'الشيكات الملغاة'),
         $financeScreen('cheque-transit', 'Due and Upcoming Cheques', 'الشيكات المستحقة والقادمة'),
-        $financeScreen('guarantee-cheques', 'Guarantee Cheques', 'شيكات الضمان'),
         $financeScreen('advances-allocations', 'Allocations and Unallocated Payments', 'التخصيصات والمدفوعات غير المخصصة'),
         $financeScreen('unapproved-documents', 'Unapproved Financial Documents', 'المستندات المالية غير المعتمدة'),
         $financeScreen('customer-aging', 'Customer Aging', 'أعمار ديون العملاء'),

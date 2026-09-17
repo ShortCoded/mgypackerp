@@ -104,7 +104,6 @@ class FinanceReportController extends Controller
             FinanceReportService::ReturnedCheques => 'reports.finance.returned_cheques',
             FinanceReportService::DueCheques => 'reports.finance.cheque_transit',
             FinanceReportService::CancelledCheques => 'reports.finance.cancelled_cheques',
-            FinanceReportService::GuaranteeCheques => 'reports.finance.guarantee_cheques',
             FinanceReportService::AdvancesAllocations => 'reports.finance.advances_allocations',
             FinanceReportService::UnapprovedDocuments => 'reports.finance.unapproved_documents',
             FinanceReportService::CustomerAging => 'reports.finance.customer_aging',

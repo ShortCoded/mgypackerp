@@ -49,8 +49,6 @@ class FinanceReportService
 
     public const CancelledCheques = 'cancelled_cheques';
 
-    public const GuaranteeCheques = 'guarantee_cheques';
-
     public const AdvancesAllocations = 'advances_allocations';
 
     public const UnapprovedDocuments = 'unapproved_documents';
@@ -81,7 +79,6 @@ class FinanceReportService
             self::ReturnedCheques,
             self::DueCheques,
             self::CancelledCheques,
-            self::GuaranteeCheques,
             self::AdvancesAllocations,
             self::UnapprovedDocuments,
             self::CustomerAging,
@@ -109,7 +106,6 @@ class FinanceReportService
             self::CustomerAging, self::SupplierAging => [
                 'as_of_date', 'currency_doc_num', 'due_state', 'branch_id', 'financial_period_id',
             ],
-            self::GuaranteeCheques => [],
             default => ['as_of_date', 'cashbox_doc_num', 'currency_doc_num'],
         };
     }
@@ -159,7 +155,7 @@ class FinanceReportService
             self::FundTransfers => $this->fundTransfers($filters),
             self::BankReconciliation => $this->bankReconciliation($filters),
             self::ReceivedCheques, self::IssuedCheques, self::ClearedCheques, self::ReturnedCheques,
-            self::DueCheques, self::CancelledCheques, self::GuaranteeCheques => $this->cheques($filters),
+            self::DueCheques, self::CancelledCheques => $this->cheques($filters),
             self::AdvancesAllocations => $this->advancesAllocations($filters),
             self::UnapprovedDocuments => $this->unapprovedDocuments($filters),
             self::CustomerAging => $this->aging($filters, true),
@@ -209,6 +205,8 @@ class FinanceReportService
 
                 return [
                     '_balance_key' => $first['_balance_key'],
+                    '_cashbox_id' => $first['_cashbox_id'],
+                    '_currency_id' => $first['_currency_id'],
                     'cashbox' => $first['cashbox'], 'branch' => $first['branch'], 'currency' => $first['currency'],
                     'receipts' => $this->sum($movements, 'receipt'), 'payments' => $this->sum($movements, 'payment'),
                     'balance' => $this->net($movements), 'as_of_date' => $asOf,
@@ -244,6 +242,8 @@ class FinanceReportService
                 $key = $cashbox->getKey().':'.$currency->getKey();
                 $rows->put($key, $rows->get($key, [
                     '_balance_key' => $key,
+                    '_cashbox_id' => $cashbox->getKey(),
+                    '_currency_id' => $currency->getKey(),
                     'cashbox' => trim(implode(' / ', array_filter([$cashbox->doc_num, $cashbox->name]))),
                     'branch' => $cashbox->branch?->name,
                     'currency' => $currency->code,
@@ -356,10 +356,6 @@ class FinanceReportService
     private function cheques(array $filters): array
     {
         $type = $filters['type'];
-
-        if ($type === self::GuaranteeCheques) {
-            return [$this->labels(['date', 'document', 'cheque_number', 'cheque_type', 'party_reference', 'bank_account', 'currency', 'amount', 'status']), collect(), [__('finance_reports.notices.guarantee_cheques_unsupported')]];
-        }
 
         $query = Cheque::query()->where('company_id', $this->companyId())->with(['bankAccount', 'currency'])
             ->when($filters['bank_account_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('bankAccount', fn ($query) => $query->where('doc_num', $value)))
@@ -717,6 +713,7 @@ class FinanceReportService
     {
         return [
             '_url' => $url, '_date' => $this->storageDate($date), '_balance_key' => $cashbox?->getKey().':'.$currencyId,
+            '_cashbox_id' => $cashbox?->getKey(), '_currency_id' => $currencyId,
             'date' => $this->date($date), 'cashbox' => trim(implode(' / ', array_filter([$cashbox?->doc_num, $cashbox?->name]))),
             'branch' => $cashbox?->branch?->name, 'currency' => $currencyCode, 'document' => $document,
             'movement' => $movement, 'party_reference' => $reference, 'status' => $this->value($status),

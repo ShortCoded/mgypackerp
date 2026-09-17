@@ -142,7 +142,7 @@ test('top navigation exposes three production departments and nests finance and 
         ->and($quality)->toBe($sourceQuality)
         ->and($maintenance)->toBe($sourceMaintenance)
         ->and(collect($accounting['children'])->pluck('label')->all())->toBe($expectedAccountingChildren)
-        ->and(collect($generalAccountingReports['children'] ?? [])->pluck('label')->all())->toBe(['general_journal', 'account_ledger', 'trial_balance', 'financial_statements'])
+        ->and(collect($generalAccountingReports['children'] ?? [])->pluck('label')->all())->toBe(['general_journal', 'account_ledger', 'trial_balance', 'financial_statements', 'reconciliation_center'])
         ->and(collect($production['children'])->pluck('label')->all())->toBe($expectedProductionChildren)
         ->and(collect($productionManagement['children'])->pluck('label')->all())->toBe(collect($sourceProduction['children'])->pluck('label')->all())
         ->and(mvpFindMenuItem($quality['children'], 'production_quality'))->not->toBeNull()

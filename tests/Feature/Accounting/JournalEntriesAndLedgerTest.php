@@ -10,6 +10,7 @@ use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\FinancialStatementQueryService;
+use Modules\Accounting\Services\FinancialAnalyticsReportService;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
@@ -1207,6 +1208,70 @@ test('financial statements reconcile the required numeric example without duplic
         ->get(route('admin.accounting.reports.financial-statements.export.pdf', $cashFlowQuery))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+});
+
+test('expense analysis and financial ratios use posted journals with filters drilldown comparison and safe unavailable states', function (): void {
+    $context = journalEntryContext();
+    $cash = Account::query()->forCompany($context['company']->getKey())->where('account_code', '1111')->firstOrFail();
+    $inventory = Account::query()->forCompany($context['company']->getKey())->where('account_code', '1131')->firstOrFail();
+    $payable = Account::query()->forCompany($context['company']->getKey())->where('account_code', '2111')->firstOrFail();
+    $capital = Account::query()->forCompany($context['company']->getKey())->where('account_code', '31')->firstOrFail();
+    $revenue = Account::query()->forCompany($context['company']->getKey())->where('account_code', '411')->firstOrFail();
+    $costOfSales = Account::query()->forCompany($context['company']->getKey())->where('account_code', '511')->firstOrFail();
+    $expense = Account::query()->forCompany($context['company']->getKey())->where('account_code', '521')->firstOrFail();
+    $costCenter = CostCenter::query()->create([
+        'company_id' => $context['company']->getKey(), 'doc_number' => 99801, 'doc_num' => 'CC-99801',
+        'cost_center_code' => '99801', 'name' => 'Analytics Cost Center', 'is_group' => false, 'status' => 'active',
+    ]);
+
+    journalPostedMovement($context, $inventory, $capital, 99801, '2025-12-31', '800.0000', '0.0000');
+    journalPostedMovement($context, $cash, $payable, 99802, '2026-01-01', '500.0000', '0.0000');
+    journalPostedMovement($context, $cash, $revenue, 99803, '2026-04-01', '1000.0000', '0.0000');
+    journalPostedMovement($context, $costOfSales, $inventory, 99804, '2026-04-02', '400.0000', '0.0000');
+    $expenseEntry = journalPostedMovement($context, $expense, $cash, 99805, '2026-04-03', '100.0000', '0.0000');
+    $expenseEntry->lines()->where('account_id', $expense->getKey())->update(['cost_center_id' => $costCenter->getKey()]);
+
+    $service = app(FinancialAnalyticsReportService::class);
+    $base = [
+        'company_id' => $context['company']->getKey(), 'financial_period_id' => $context['period']->getKey(),
+        'branch_id' => $context['branch']->getKey(), 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+        'comparison_from_date' => '2025-01-01', 'comparison_to_date' => '2025-12-31',
+    ];
+    $detail = $service->report([...$base, 'type' => FinancialAnalyticsReportService::ExpenseAnalysis, 'view_mode' => 'detail']);
+    $filtered = $service->report([...$base, 'type' => FinancialAnalyticsReportService::ExpenseAnalysis, 'view_mode' => 'summary', 'account_doc_num' => $expense->doc_num, 'cost_center_doc_num' => $costCenter->doc_num]);
+    $ratios = $service->report([...$base, 'type' => FinancialAnalyticsReportService::FinancialRatios, 'view_mode' => 'summary']);
+
+    expect($detail['totals']['amount_base'])->toBe('500.0000')
+        ->and($detail['rows']->pluck('journal')->all())->toContain('JE-99804', 'JE-99805')
+        ->and($filtered['totals']['amount_base'])->toBe('100.0000')
+        ->and($filtered['rows'])->toHaveCount(1)
+        ->and($filtered['comparison_total'])->toBe('0.0000')
+        ->and($ratios['rows']->firstWhere('ratio', __('financial_analytics.ratios.current_ratio'))['value'])->not->toBe(__('financial_analytics.values.not_calculable'))
+        ->and($ratios['rows']->firstWhere('ratio', __('financial_analytics.ratios.gross_profit_margin'))['value'])->toBe('60.00%')
+        ->and($ratios['rows']->firstWhere('ratio', __('financial_analytics.ratios.net_profit_margin'))['value'])->toBe('50.00%')
+        ->and($ratios['rows']->firstWhere('ratio', __('financial_analytics.ratios.inventory_turnover'))['value'])->toBe('0.666666');
+
+    $actor = journalEntryActor([
+        'reports.financial_analytics.expense_analysis.view', 'reports.financial_analytics.expense_analysis.export',
+        'reports.financial_analytics.financial_ratios.view', 'reports.financial_analytics.financial_ratios.export',
+        'journal_entries.view',
+    ]);
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.index', [
+        'from_date' => '2026-01-01', 'to_date' => '2026-12-31', 'view_mode' => 'detail',
+    ]))->assertOk()->assertSee('JE-99805')->assertSee(route('admin.accounting.journal-entries.show', 'JE-99805'), false);
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.financial-ratios.index', [
+        'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+    ]))->assertOk()->assertSee(__('financial_analytics.ratios.current_ratio'));
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.export', [
+        'financial_analytics_format' => 'csv', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+    ]))->assertOk();
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.export', [
+        'financial_analytics_format' => 'excel', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+    ]))->assertOk();
+    $pdf = $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.export', [
+        'financial_analytics_format' => 'pdf', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+    ]))->assertOk()->assertHeader('content-type', 'application/pdf');
+    expect(str_starts_with($pdf->getContent(), '%PDF-'))->toBeTrue();
 });
 
 test('financial period close transfers the result once and controlled reopen reverses it', function (): void {

@@ -9,6 +9,8 @@ use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\AccountClassificationRegistry;
+use Modules\Accounting\Services\ReconciliationCenterService;
+use Modules\Accounting\Services\ReconciliationComparisonService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
@@ -378,6 +380,23 @@ test('payroll calculation approval finance payment and both reconciliations are 
             ->where('journal.source_type', 'hr_payroll_payment')
             ->where('line.account_id', $fixture['cash_account']->getKey())
             ->sum('line.credit_amount'))->toBe(4000.0);
+
+    $center = app(ReconciliationCenterService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        '2026-09-01',
+        '2026-09-30',
+    );
+    $centerResults = collect($center['results'])->keyBy('key');
+
+    expect($centerResults[ReconciliationCenterService::PayrollPayable]['status'])->toBe(ReconciliationComparisonService::Matched)
+        ->and($centerResults[ReconciliationCenterService::PayrollSettlement]['status'])->toBe(ReconciliationComparisonService::Matched)
+        ->and($centerResults[ReconciliationCenterService::PayrollSettlement]['rows'][0])->toMatchArray([
+            'source_ending' => '4000.0000',
+            'gl_ending' => '4000.0000',
+            'ending_difference' => '0.0000',
+        ]);
 
     $finalDraft = app(PayrollPaymentService::class)->createCashPayment($runId, $fixture['company']->getKey(), [
         ...$paymentPayload,

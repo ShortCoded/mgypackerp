@@ -60,6 +60,7 @@ return [
     ],
     'rows' => [
         'payroll_payable' => 'Accrued payroll payable',
+        'payroll_settlement' => 'Approved payroll settlements',
         'overhead_allocation' => 'Eligible overhead ↔ allocated plus unallocated',
         'wip' => 'Work in process',
         'finished_goods' => 'Finished goods',
@@ -69,7 +70,7 @@ return [
     ],
     'notes' => [
         'bank_statement_unavailable' => 'No external bank-statement source exists in this ERP, so this check cannot be asserted as matched.',
-        'payroll_settlement_unavailable' => 'The current payroll workflow posts payroll liabilities but has no dedicated settlement source to compare with cash or bank.',
+        'payroll_settlement_source' => 'Approved payroll payments are reconciled to their posted cash or bank journal effect.',
         'fixed_assets_unavailable' => 'The fixed-asset reconciliation source is unavailable for the selected scope.',
         'inventory_source' => 'Operational inventory value is derived from immutable inventory transactions as of each cutoff.',
         'cost_center_invariant' => 'Eligible overhead must equal allocated plus unallocated overhead for posted allocation runs.',

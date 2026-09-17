@@ -34,7 +34,11 @@ return [
         $screen('transfer-receipt', 'Transfer Receipt', 'استلام التحويل', 'treasury'),
         $screen('bank-reconciliation', 'Bank Reconciliation', 'تسوية البنك', 'reconciliation'),
         $screen('bank-reconciliation-lines', 'Bank Reconciliation Lines', 'سطور تسوية البنك', 'reconciliation'),
-        $screen('cashbox-count', 'Cashbox Count', 'جرد الخزينة', 'reconciliation'),
+        $screen('cashbox-count', 'Cashbox Count', 'جرد الخزينة', 'reconciliation', 'document', [
+            'classification' => 'WORKING_REAL_SCREEN',
+            'actions' => ['view', 'create', 'edit', 'reopen', 'print'],
+            'modes' => ['index', 'data'],
+        ]),
         $screen('cashbox-closing', 'Cashbox Closing', 'إغلاق الخزينة', 'reconciliation'),
         $screen('daily-treasury-closing', 'Daily Treasury Closing', 'الإغلاق اليومي للخزينة', 'reconciliation'),
         $screen('customer-advances', 'Customer Advances', 'دفعات العملاء المقدمة', 'collections'),

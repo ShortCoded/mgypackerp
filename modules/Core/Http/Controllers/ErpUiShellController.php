@@ -160,7 +160,6 @@ class ErpUiShellController
             'reports_finance_cleared_cheques' => FinanceReportService::ClearedCheques,
             'reports_finance_returned_cheques' => FinanceReportService::ReturnedCheques,
             'reports_finance_cancelled_cheques' => FinanceReportService::CancelledCheques,
-            'reports_finance_guarantee_cheques' => FinanceReportService::GuaranteeCheques,
             'reports_finance_advances_allocations' => FinanceReportService::AdvancesAllocations,
             'reports_finance_unapproved_documents' => FinanceReportService::UnapprovedDocuments,
             'reports_finance_customer_aging' => FinanceReportService::CustomerAging,

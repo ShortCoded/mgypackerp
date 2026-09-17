@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Accounting\Http\Controllers\AccountController;
 use Modules\Accounting\Http\Controllers\CostCenterController;
 use Modules\Accounting\Http\Controllers\CostingReportController;
+use Modules\Accounting\Http\Controllers\FinancialAnalyticsReportController;
 use Modules\Accounting\Http\Controllers\FinancialStatementReportController;
 use Modules\Accounting\Http\Controllers\JournalEntryController;
 use Modules\Accounting\Http\Controllers\LedgerReportController;
@@ -136,6 +137,21 @@ Route::middleware('auth')
         Route::get('/reports/financial-statements', [FinancialStatementReportController::class, 'index'])
             ->middleware('can:reports.financial_statements.view')
             ->name('reports.financial-statements');
+
+        foreach ([
+            'expense-analysis' => 'expense_analysis',
+            'financial-ratios' => 'financial_ratios',
+        ] as $slug => $type) {
+            Route::get("/reports/financial-analytics/{$slug}", [FinancialAnalyticsReportController::class, 'index'])
+                ->defaults('financial_analytics_type', $type)
+                ->middleware("can:reports.financial_analytics.{$type}.view")
+                ->name("reports.financial-analytics.{$slug}.index");
+            Route::get("/reports/financial-analytics/{$slug}/export/{financial_analytics_format}", [FinancialAnalyticsReportController::class, 'export'])
+                ->defaults('financial_analytics_type', $type)
+                ->whereIn('financial_analytics_format', ['excel', 'csv', 'pdf'])
+                ->middleware("can:reports.financial_analytics.{$type}.export")
+                ->name("reports.financial-analytics.{$slug}.export");
+        }
 
         Route::prefix('reports/costing/export')
             ->as('reports.costing.export.')

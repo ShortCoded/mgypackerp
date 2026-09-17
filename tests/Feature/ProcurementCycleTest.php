@@ -424,6 +424,17 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         'branch_store_id' => $fixture['store']->getKey(),
         'product_id' => $fixture['raw']->getKey(),
     ])->firstOrFail();
+    $purchaseAnalysisRows = app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::PurchasesBySupplier,
+        [
+            'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'branch_id' => $fixture['branch']->getKey(),
+            'currency_doc_num' => $fixture['currency']->doc_num,
+        ],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    );
     expect(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('quantity_out'))->toBe('2.00000000')
         ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('unit_cost'))->toBe('2.25000000')
         ->and((float) $returnedBalance->on_hand)->toBe(3.0)
@@ -431,6 +442,9 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and($return->journal_entry_id)->not->toBeNull()
         ->and($invoice->fresh()->credited_amount)->toBe('3.9600')
         ->and($invoice->fresh()->remaining_amount)->toBe('8.9400')
+        ->and($purchaseAnalysisRows)->toHaveCount(1)
+        ->and((float) $purchaseAnalysisRows->sole()['quantity'])->toBe(3.0)
+        ->and((float) $purchaseAnalysisRows->sole()['amount'])->toBe(5.4)
         ->and(fn () => $settlement->createPurchaseReturn([
             'purchase_order_doc_num' => $firstOrder->doc_num, 'return_date' => now()->toDateString(),
             'reason_code' => 'latent_defect',
