@@ -130,7 +130,8 @@ test('top navigation exposes three production departments and nests finance and 
     $sourceMaintenance = collect($sourceMenu)->firstWhere('label', 'maintenance');
     $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
     $finance = collect($accounting['children'])->firstWhere('label', 'finance');
-    $expectedAccountingChildren = ['general_accounting', 'finance', 'fixed_assets', 'cost_accounting', 'costing_operations', 'costing_analysis', 'accounting_costing_reports'];
+    $generalAccountingReports = collect($accounting['children'])->firstWhere('label', 'accounting_costing_reports');
+    $expectedAccountingChildren = ['general_accounting', 'accounting_costing_reports', 'finance', 'fixed_assets', 'costing', 'costing_reports', 'financial_analysis_reports'];
     $expectedProductionChildren = ['production_management', 'quality', 'maintenance'];
     $menuDestinations = mvpMenuDestinations($menu);
 
@@ -141,6 +142,7 @@ test('top navigation exposes three production departments and nests finance and 
         ->and($quality)->toBe($sourceQuality)
         ->and($maintenance)->toBe($sourceMaintenance)
         ->and(collect($accounting['children'])->pluck('label')->all())->toBe($expectedAccountingChildren)
+        ->and(collect($generalAccountingReports['children'] ?? [])->pluck('label')->all())->toBe(['general_journal', 'account_ledger', 'trial_balance', 'financial_statements'])
         ->and(collect($production['children'])->pluck('label')->all())->toBe($expectedProductionChildren)
         ->and(collect($productionManagement['children'])->pluck('label')->all())->toBe(collect($sourceProduction['children'])->pluck('label')->all())
         ->and(mvpFindMenuItem($quality['children'], 'production_quality'))->not->toBeNull()

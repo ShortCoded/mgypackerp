@@ -9,6 +9,17 @@
     $statementType = request('statement_type', \Modules\Accounting\Services\FinancialStatementQueryService::IncomeStatement);
     $viewMode = request('view_mode', \Modules\Accounting\Services\FinancialStatementQueryService::ViewSummary);
     $hasComparison = filled(request('comparison_from_date')) && filled(request('comparison_to_date'));
+    $comparisonFromDate = request('comparison_from_date');
+    $comparisonToDate = request('comparison_to_date');
+    $ledgerFilters = static fn (array $row): array => array_filter([
+        'run' => 1,
+        'all_periods' => 1,
+        'account_doc_num' => $row['account_doc_num'],
+        'from_date' => ($row['comparison_only'] ?? false) ? $comparisonFromDate : $fromDate,
+        'to_date' => ($row['comparison_only'] ?? false) ? $comparisonToDate : $toDate,
+        'branch_doc_num' => request('branch_doc_num'),
+        'cost_center_doc_num' => request('cost_center_doc_num'),
+    ], static fn (mixed $value): bool => $value !== null && $value !== '');
     $hasFilters = request()->boolean('run') || $errors->any();
     $exportOptions = $result ? [
         ['label' => __('reports.export_excel'), 'url' => route('admin.accounting.reports.financial-statements.export.excel', request()->query()), 'icon' => 'file-excel', 'permission' => 'reports.financial_statements.export'],
@@ -154,7 +165,7 @@
                                         <td class="{{ $row['row_type'] === 'account' ? 'ps-4' : '' }}">
                                             @php($label = $row['label'] ?? __('financial_statements.lines.'.$row['label_key']))
                                             @if(isset($row['account_doc_num']) && auth()->user()?->can('reports.account_ledger.view'))
-                                                <a href="{{ route('admin.accounting.reports.account-ledger', ['run' => 1, 'all_periods' => 1, 'account_doc_num' => $row['account_doc_num'], 'from_date' => $fromDate, 'to_date' => $toDate]) }}">{{ $label }}</a>
+                                                <a href="{{ route('admin.accounting.reports.account-ledger', $ledgerFilters($row)) }}">{{ $label }}</a>
                                             @else
                                                 {{ $label }}
                                             @endif
@@ -203,7 +214,7 @@
                                         <tr>
                                             <td>
                                                 @can('reports.account_ledger.view')
-                                                    <a href="{{ route('admin.accounting.reports.account-ledger', ['run' => 1, 'all_periods' => 1, 'account_doc_num' => $component['account_doc_num'], 'from_date' => $fromDate, 'to_date' => $toDate]) }}">{{ $component['label'] }}</a>
+                                                    <a href="{{ route('admin.accounting.reports.account-ledger', $ledgerFilters(['account_doc_num' => $component['account_doc_num']])) }}">{{ $component['label'] }}</a>
                                                 @else
                                                     {{ $component['label'] }}
                                                 @endcan

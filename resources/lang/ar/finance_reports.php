@@ -17,6 +17,7 @@ return [
         'bank_reconciliation' => ['title' => 'المطابقة البنكية وأحداث التسوية', 'description' => 'أحداث تسوية الشيكات وعكسها القابلة للتتبع إلى المستند والقيد.'],
         'received_cheques' => ['title' => 'الشيكات الواردة والتحصيل', 'description' => 'تواريخ دورة الشيك الوارد وحالته الفعلية الحالية.'],
         'issued_cheques' => ['title' => 'الشيكات الصادرة والصرف', 'description' => 'تواريخ دورة الشيك الصادر وحالته الفعلية الحالية.'],
+        'cleared_cheques' => ['title' => 'الشيكات المحصلة والمصروفة', 'description' => 'الشيكات الواردة المحصلة فعليًا والشيكات الصادرة التي تمت تسويتها فعليًا.'],
         'returned_cheques' => ['title' => 'الشيكات المرتدة والمرفوضة', 'description' => 'الشيكات الواردة والصادرة المرتدة مع التاريخ والسبب.'],
         'due_cheques' => ['title' => 'الشيكات المستحقة والقادمة والمتأخرة', 'description' => 'الشيكات غير المسواة مصنفة وفق تاريخ «كما في».'],
         'cancelled_cheques' => ['title' => 'الشيكات الملغاة أو المعكوسة', 'description' => 'الشيكات الملغاة وحالات عكس التسوية المسجلة فعليًا.'],
@@ -46,7 +47,7 @@ return [
     ],
     'values' => [
         'receipt' => 'قبض', 'payment' => 'صرف', 'transfer' => 'تحويل', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر',
-        'customer_receipt' => 'تحصيل عميل', 'supplier_payment' => 'سداد مورد', 'cheque' => 'شيك',
+        'customer_receipt' => 'تحصيل عميل', 'supplier_payment' => 'سداد مورد', 'cheque' => 'شيك', 'opening_balance' => 'رصيد افتتاحي',
         'customer' => 'عميل', 'supplier' => 'مورد', 'received' => 'مستلم', 'issued' => 'محرر', 'deposited' => 'مودع',
         'collected' => 'محصل', 'delivered' => 'مسلم', 'cleared' => 'مصروف / مسوى', 'clearing_reversed' => 'عكس التسوية',
         'returned' => 'مرتد', 'cancelled' => 'ملغي', 'draft' => 'مسودة', 'approved' => 'معتمد', 'reversed' => 'معكوس',

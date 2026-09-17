@@ -93,6 +93,22 @@
                 </x-forms.select>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-geography-state">{{ __('procurement.reports.filters.geography_state') }}</label>
+                <x-forms.select class="{{ $selectClass }}" id="procurement-geography-state" name="geography_state">
+                    <option value="">{{ __('All') }}</option>
+                    <option value="specified" @selected(($filters['geography_state'] ?? '') === 'specified')>{{ __('procurement.reports.filters.geography_specified') }}</option>
+                    <option value="unspecified" @selected(($filters['geography_state'] ?? '') === 'unspecified')>{{ __('procurement.reports.filters.geography_unspecified') }}</option>
+                </x-forms.select>
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-address-search">{{ __('procurement.reports.filters.address_search') }}</label>
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-address-search" name="address_search" value="{{ $filters['address_search'] ?? '' }}" />
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
+                <label class="form-label mb-1" for="procurement-contact-search">{{ __('procurement.reports.filters.contact_search') }}</label>
+                <x-forms.input class="{{ $fieldClass }}" id="procurement-contact-search" name="contact_search" value="{{ $filters['contact_search'] ?? '' }}" />
+            </div>
+            <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-product">{{ __('Item') }}</label>
                 <x-forms.select class="{{ $selectClass }} js-select2-ajax" data-url="{{ route('admin.purchases.select2.products') }}" data-allow-clear="true" data-placeholder="{{ __('All') }}" id="procurement-product" name="product_doc_num">
                     <option value="">{{ __('All') }}</option>

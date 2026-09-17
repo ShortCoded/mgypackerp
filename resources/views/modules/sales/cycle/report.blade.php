@@ -99,6 +99,22 @@
                     @if($filterOptions['area'])<option value="{{ $filterOptions['area']->doc_num }}" selected>{{ $filterOptions['area']->name }}</option>@endif
                 </x-forms.select>
             </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_geography_state" :label="__('sales_ui.reports.geography_state')" />
+                <x-forms.select class="form-select form-select-sm js-report-filter-control" id="report_geography_state" name="geography_state">
+                    <option value="">{{ __('All') }}</option>
+                    <option value="specified" @selected($filters['geography_state'] === 'specified')>{{ __('sales_ui.reports.geography_specified') }}</option>
+                    <option value="unspecified" @selected($filters['geography_state'] === 'unspecified')>{{ __('sales_ui.reports.geography_unspecified') }}</option>
+                </x-forms.select>
+            </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_address_search" :label="__('sales_ui.reports.address_search')" />
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="report_address_search" name="address_search" value="{{ $filters['address_search'] }}" />
+            </div>
+            <div class="col-sm-6 col-xl-3">
+                <x-forms.label for="report_contact_search" :label="__('sales_ui.reports.contact_search')" />
+                <x-forms.input class="form-control form-control-sm js-report-filter-control" id="report_contact_search" name="contact_search" value="{{ $filters['contact_search'] }}" />
+            </div>
 
             @if(in_array($reportType, ['products', 'returns', 'fulfillment', 'pricing', 'operational'], true))
                 <div class="col-sm-6 col-xl-3">

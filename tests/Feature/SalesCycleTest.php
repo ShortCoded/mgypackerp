@@ -36,6 +36,7 @@ use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesReturnService;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
@@ -1460,6 +1461,82 @@ test('sales reports filter every customer based section by normalized geography'
     $this->actingAs($fixture['user'])->withSession($session)
         ->getJson(route('admin.select2.countries'))
         ->assertOk();
+});
+
+test('sales analysis keeps filtered browser drilldown and export totals consistent without contact multiplication', function (): void {
+    $fixture = salesCycleFixture();
+    foreach (['reports.sales.sales_orders.view', 'reports.sales.sales_orders.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+
+    $country = HrCountry::query()->create(['doc_number' => 98911, 'doc_num' => 'Country-98911', 'name' => 'Acceptance Country']);
+    $governorate = HrGovernorate::query()->create(['doc_number' => 98911, 'doc_num' => 'Governorate-98911', 'name' => 'Acceptance Governorate', 'country_id' => $country->id]);
+    $city = HrCity::query()->create(['doc_number' => 98911, 'doc_num' => 'City-98911', 'name' => 'Acceptance City', 'governorate_id' => $governorate->id]);
+    $area = HrArea::query()->create(['doc_number' => 98911, 'doc_num' => 'Area-98911', 'name' => 'Acceptance Area', 'city_id' => $city->id]);
+    $fixture['customer']->update([
+        'phone' => '02-1000000',
+        'mobile' => '01000000000',
+        'address' => 'Primary acceptance address / alternate delivery address',
+        'country_id' => $country->id,
+        'governorate_id' => $governorate->id,
+        'city_id' => $city->id,
+        'area_id' => $area->id,
+        'country' => 'Legacy country label',
+        'governorate' => 'Legacy governorate label',
+        'city' => 'Legacy city label',
+    ]);
+    $invoice = salesPostedServiceInvoice($fixture, '100', '5', '2');
+    $filters = [
+        'report' => 'operational',
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'product_doc_num' => $fixture['service']->doc_num,
+        'country_doc_num' => $country->doc_num,
+        'governorate_doc_num' => $governorate->doc_num,
+        'city_doc_num' => $city->doc_num,
+        'area_doc_num' => $area->doc_num,
+        'address_search' => 'alternate delivery',
+        'contact_search' => '01000000000',
+        'from' => now()->subDay()->toDateString(),
+        'to' => now()->addDay()->toDateString(),
+    ];
+    $session = salesCycleSession($fixture);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', $filters))
+        ->assertOk()
+        ->assertSee(route('admin.sales.sales-invoices.show', $invoice), false)
+        ->assertSee($invoice->doc_num)
+        ->assertSee($fixture['customer']->name)
+        ->assertSee($fixture['service']->name);
+
+    $export = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.export', ['format' => 'xlsx', ...$filters]))
+        ->assertOk()
+        ->assertDownload();
+    $workbook = IOFactory::load($export->baseResponse->getFile()->getPathname());
+    $summary = $workbook->getSheetByName(__('sales_ui.reports.export.sheets.summary'));
+    $ledger = $workbook->getSheetByName(__('sales_ui.reports.export.sheets.ledger'));
+
+    expect($summary)->not->toBeNull()
+        ->and((int) $summary->getCell('B2')->getValue())->toBe(1)
+        ->and((float) $summary->getCell('B3')->getValue())->toBe(105.0)
+        ->and($ledger)->not->toBeNull()
+        ->and($ledger->getHighestDataRow())->toBe(2)
+        ->and($ledger->getCell('C2')->getValue())->toBe($invoice->doc_num)
+        ->and((float) $ledger->getCell('J2')->getValue())->toBe(105.0);
+
+    $fixture['customer']->update(['country_id' => null]);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'invoices', 'geography_state' => 'unspecified']))
+        ->assertOk()
+        ->assertSee($invoice->doc_num)
+        ->assertSee('name="address_search"', false)
+        ->assertSee('name="contact_search"', false);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'invoices', 'geography_state' => 'specified']))
+        ->assertOk()
+        ->assertDontSee($invoice->doc_num);
 });
 
 test('sales screens and validation follow language changes while retaining document data', function (): void {

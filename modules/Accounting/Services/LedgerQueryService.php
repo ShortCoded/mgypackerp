@@ -35,6 +35,7 @@ class LedgerQueryService
     public function accountLedger(array $filters): array
     {
         $account = Account::query()
+            ->withTrashed()
             ->whereKey($filters['account_id'])
             ->where('company_id', $filters['company_id'])
             ->firstOrFail();
@@ -57,6 +58,110 @@ class LedgerQueryService
             ->get($this->movementColumns());
 
         return $this->result($account, $filters, $openingRows, $movementRows);
+    }
+
+    /**
+     * @param  array{
+     *     company_id: int,
+     *     financial_period_id: int,
+     *     from_date: string,
+     *     to_date: string,
+     *     all_periods?: bool,
+     *     account_id?: int|null,
+     *     branch_id?: int|null,
+     *     cost_center_id?: int|null
+     * }  $filters
+     * @return array<string, mixed>
+     */
+    public function generalJournal(array $filters): array
+    {
+        $rows = DB::table('journal_entry_lines')
+            ->join('journal_entries', 'journal_entries.id', '=', 'journal_entry_lines.journal_entry_id')
+            ->join('accounts', 'accounts.id', '=', 'journal_entry_lines.account_id')
+            ->leftJoin('cost_centers', 'cost_centers.id', '=', 'journal_entry_lines.cost_center_id')
+            ->leftJoin('branches', 'branches.id', '=', 'journal_entry_lines.branch_id')
+            ->whereNull('journal_entries.deleted_at')
+            ->where('journal_entries.company_id', $filters['company_id'])
+            ->when(! ($filters['all_periods'] ?? false), fn (Builder $query): Builder => $query->where('journal_entries.financial_period_id', $filters['financial_period_id']))
+            ->where('journal_entries.status', JournalEntry::StatusPosted)
+            ->where('journal_entries.is_posted', true)
+            ->whereDate('journal_entries.entry_date', '>=', $filters['from_date'])
+            ->whereDate('journal_entries.entry_date', '<=', $filters['to_date'])
+            ->when($filters['account_id'] ?? null, fn (Builder $query, int $accountId): Builder => $query->where('journal_entry_lines.account_id', $accountId))
+            ->when($filters['branch_id'] ?? null, fn (Builder $query, int $branchId): Builder => $query->where(function (Builder $query) use ($branchId): void {
+                $query->where('journal_entry_lines.branch_id', $branchId)
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->whereNull('journal_entry_lines.branch_id')
+                            ->where('journal_entries.branch_id', $branchId);
+                    });
+            }))
+            ->when($filters['cost_center_id'] ?? null, fn (Builder $query, int $costCenterId): Builder => $query->where('journal_entry_lines.cost_center_id', $costCenterId))
+            ->orderBy('journal_entries.entry_date')
+            ->orderBy('journal_entries.doc_number')
+            ->orderBy('journal_entry_lines.line_no')
+            ->orderBy('journal_entry_lines.id')
+            ->get([
+                'journal_entries.entry_date',
+                'journal_entries.doc_num',
+                'journal_entries.reference_no',
+                'journal_entries.source_type',
+                'journal_entries.source_doc_num',
+                'journal_entries.exchange_rate',
+                'journal_entries.description as entry_description',
+                'journal_entry_lines.line_no',
+                'journal_entry_lines.description as line_description',
+                'journal_entry_lines.debit_amount',
+                'journal_entry_lines.credit_amount',
+                'accounts.doc_num as account_doc_num',
+                'accounts.account_code',
+                'accounts.name as account_name',
+                'accounts.name_en as account_name_en',
+                'cost_centers.doc_num as cost_center_doc_num',
+                'cost_centers.name as cost_center_name',
+                'branches.doc_num as branch_doc_num',
+                'branches.name as branch_name',
+            ]);
+
+        $totalDebit = '0.0000';
+        $totalCredit = '0.0000';
+        $movements = $rows->map(function (object $row) use (&$totalDebit, &$totalCredit): array {
+            $debit = $this->baseAmount($row->debit_amount, $row->exchange_rate);
+            $credit = $this->baseAmount($row->credit_amount, $row->exchange_rate);
+            $totalDebit = bcadd($totalDebit, $debit, 4);
+            $totalCredit = bcadd($totalCredit, $credit, 4);
+            $accountName = app()->getLocale() === 'en' && filled($row->account_name_en)
+                ? $row->account_name_en
+                : $row->account_name;
+
+            return [
+                'entry_date' => CarbonImmutable::parse($row->entry_date)->toDateString(),
+                'doc_num' => (string) $row->doc_num,
+                'reference_no' => $row->reference_no,
+                'source_type' => $row->source_type,
+                'source_doc_num' => $row->source_doc_num,
+                'line_no' => (int) $row->line_no,
+                'account_doc_num' => (string) $row->account_doc_num,
+                'account' => trim(implode(' / ', array_filter([$row->account_code, $accountName]))),
+                'description' => $row->line_description ?: $row->entry_description,
+                'cost_center' => trim(implode(' / ', array_filter([$row->cost_center_doc_num, $row->cost_center_name]))),
+                'branch' => trim(implode(' / ', array_filter([$row->branch_doc_num, $row->branch_name]))),
+                'debit' => $debit,
+                'credit' => $credit,
+            ];
+        })->all();
+
+        return [
+            'currency' => Currency::query()
+                ->forCompany($filters['company_id'])
+                ->active()
+                ->where('is_main', true)
+                ->first(['doc_num', 'code', 'name'])?->only(['doc_num', 'code', 'name']),
+            'filters' => $filters,
+            'totals' => ['debit' => $totalDebit, 'credit' => $totalCredit],
+            'movements' => $movements,
+            'generated_at' => now(),
+            'generated_by' => auth()->user()?->name,
+        ];
     }
 
     /**

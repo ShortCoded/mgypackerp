@@ -5,6 +5,7 @@ namespace Modules\Accounting\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Core\Models\FinancialPeriod;
@@ -22,7 +23,7 @@ class TrialBalanceReportRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        foreach (['branch_doc_num', 'cost_center_doc_num'] as $field) {
+        foreach (['account_doc_num', 'branch_doc_num', 'cost_center_doc_num'] as $field) {
             $value = trim((string) $this->input($field));
             $this->merge([$field => $value === '' ? null : $value]);
         }
@@ -54,6 +55,7 @@ class TrialBalanceReportRequest extends FormRequest
             'run' => ['required', 'boolean'],
             'from_date' => ['required', 'date_format:Y-m-d'],
             'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+            'account_doc_num' => ['nullable', 'string', 'max:255'],
             'branch_doc_num' => ['nullable', 'string', 'max:255'],
             'cost_center_doc_num' => ['nullable', 'string', 'max:255'],
             'include_zero' => ['nullable', 'boolean'],
@@ -109,6 +111,14 @@ class TrialBalanceReportRequest extends FormRequest
                 ->where('branches.doc_num', $this->input('branch_doc_num'))
                 ->exists()) {
                 $validator->errors()->add('branch_doc_num', __('trial_balance.messages.filter_invalid'));
+            }
+
+            if ($this->filled('account_doc_num') && ! Account::query()
+                ->withTrashed()
+                ->forCompany((int) $companyId)
+                ->where('doc_num', $this->input('account_doc_num'))
+                ->exists()) {
+                $validator->errors()->add('account_doc_num', __('trial_balance.messages.filter_invalid'));
             }
 
             if ($this->filled('cost_center_doc_num') && ! CostCenter::query()

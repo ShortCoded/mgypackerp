@@ -48,7 +48,7 @@ class SalesCycleReportController extends Controller
     public function index(Request $request): View
     {
         $context = $this->context->snapshot($request);
-        abort_unless($context['company_id'] && $context['financial_period_id'], 422, 'Operating context is required.');
+        abort_unless($context['company_id'] && $context['financial_period_id'], 422, __('sales_ui.reports.operating_context_required'));
         $companyId = (int) $context['company_id'];
         $periodId = (int) $context['financial_period_id'];
         $fullReport = $request->routeIs('*.print', '*.export');
@@ -62,7 +62,7 @@ class SalesCycleReportController extends Controller
         $to = $request->date('to');
         $filters = collect([
             'currency_doc_num', 'warehouse_uuid', 'category_doc_num', 'customer_doc_num', 'product_doc_num', 'sales_person_doc_num', 'branch_doc_num',
-            'country_doc_num', 'governorate_doc_num', 'city_doc_num', 'area_doc_num',
+            'country_doc_num', 'governorate_doc_num', 'city_doc_num', 'area_doc_num', 'geography_state', 'address_search', 'contact_search',
             'quotation_doc_num', 'order_doc_num', 'invoice_doc_num', 'quotation_status',
             'order_status', 'overdue_state', 'payment_state', 'return_reason', 'quality_disposition',
         ])->mapWithKeys(fn (string $field): array => [$field => $request->string($field)->trim()->toString()])->all();
@@ -80,13 +80,22 @@ class SalesCycleReportController extends Controller
         $governorateId = $this->contextId(HrGovernorate::query(), $filters['governorate_doc_num']);
         $cityId = $this->contextId(HrCity::query(), $filters['city_doc_num']);
         $areaId = $this->contextId(HrArea::query(), $filters['area_doc_num']);
-        $hasGeographyFilter = (bool) ($countryId || $governorateId || $cityId || $areaId);
+        $geographyState = in_array($filters['geography_state'], ['specified', 'unspecified'], true) ? $filters['geography_state'] : null;
+        $hasGeographyFilter = (bool) ($countryId || $governorateId || $cityId || $areaId || $geographyState || $filters['address_search'] || $filters['contact_search']);
         $geographyCustomerIds = $hasGeographyFilter
             ? Customer::query()->forCompany($companyId)
                 ->when($countryId, fn (Builder $query) => $query->where('country_id', $countryId))
                 ->when($governorateId, fn (Builder $query) => $query->where('governorate_id', $governorateId))
                 ->when($cityId, fn (Builder $query) => $query->where('city_id', $cityId))
                 ->when($areaId, fn (Builder $query) => $query->where('area_id', $areaId))
+                ->when($geographyState === 'specified', fn (Builder $query) => $query->whereNotNull('country_id'))
+                ->when($geographyState === 'unspecified', fn (Builder $query) => $query->whereNull('country_id'))
+                ->when($filters['address_search'], fn (Builder $query, string $value) => $query->where('address', 'like', "%{$value}%"))
+                ->when($filters['contact_search'], fn (Builder $query, string $value) => $query->where(fn (Builder $contact) => $contact
+                    ->where('phone', 'like', "%{$value}%")
+                    ->orWhere('mobile', 'like', "%{$value}%")
+                    ->orWhere('email', 'like', "%{$value}%")
+                    ->orWhere('contact_person', 'like', "%{$value}%")))
                 ->pluck('id')
             : null;
         $productId = $this->contextId(Product::query()->where('company_id', $companyId), $filters['product_doc_num']);

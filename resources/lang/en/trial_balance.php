@@ -9,6 +9,7 @@ return [
     'filters' => [
         'from_date' => 'From date',
         'to_date' => 'To date',
+        'account' => 'Account or account group',
         'branch' => 'Branch',
         'cost_center' => 'Cost center',
         'include_zero' => 'Include accounts with no balance or movement',

@@ -112,6 +112,13 @@ return [
             'production_analysis' => 'تحليل المشتريات المرتبطة بالإنتاج',
             'goods_received_not_invoiced' => 'بضاعة مستلمة غير مفوترة (GRNI)',
         ],
+        'filters' => [
+            'geography_state' => 'البيانات الجغرافية',
+            'geography_specified' => 'الدولة محددة',
+            'geography_unspecified' => 'غير محدد',
+            'address_search' => 'البحث في العنوان',
+            'contact_search' => 'البحث في الهاتف أو جهة الاتصال',
+        ],
         'metrics' => [
             'opening_balance' => 'الرصيد الافتتاحي',
             'debit' => 'الحركات المدينة المعروضة',

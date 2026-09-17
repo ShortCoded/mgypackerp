@@ -952,7 +952,7 @@ class SalesCycleController extends Controller
     private function requiredContext(Request $request): array
     {
         $context = $this->context->snapshot($request);
-        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Operating context is required.');
+        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, __('sales_ui.reports.operating_context_required'));
 
         return ['company_id' => (int) $context['company_id'], 'financial_period_id' => (int) $context['financial_period_id'], 'branch_id' => (int) $context['branch_id']];
     }

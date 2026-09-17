@@ -79,8 +79,14 @@ return [
     'employee_unresolved' => 'The legacy user reference is retained. No employee mapping has been confirmed.',
     'reports' => [
         'choose_report' => 'Sales reports',
+        'operating_context_required' => 'Select an operating company, branch, and financial period first.',
         'filters' => 'Report filters',
         'filters_help' => 'Filters are applied within the active company, branch, and financial period.',
+        'geography_state' => 'Geography data',
+        'geography_specified' => 'Country specified',
+        'geography_unspecified' => 'Unspecified',
+        'address_search' => 'Address search',
+        'contact_search' => 'Phone / contact search',
         'no_results' => 'No records match the selected filters.',
         'types' => [
             'financial' => 'Sales Financial Analysis',

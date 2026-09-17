@@ -1033,9 +1033,52 @@ class FinancialStatementQueryService
      */
     private function mergeComparison(array $current, array $comparison): array
     {
+        $currentRows = collect($current['rows'])->keyBy('key');
         $comparisonRows = collect($comparison['rows'])->keyBy('key');
-        $current['rows'] = array_map(function (array $row) use ($comparisonRows): array {
-            $comparisonRow = $comparisonRows->get($row['key']);
+        $keys = $currentRows->keys()->values();
+        $comparisonKeys = $comparisonRows->keys()->values();
+
+        foreach ($comparisonKeys as $comparisonIndex => $key) {
+            if ($currentRows->has($key)) {
+                continue;
+            }
+
+            $nextSharedKey = $comparisonKeys
+                ->slice($comparisonIndex + 1)
+                ->first(fn (string $candidate): bool => $currentRows->has($candidate));
+
+            if (is_string($nextSharedKey)) {
+                $insertionIndex = $keys->search($nextSharedKey, true);
+                $keys->splice($insertionIndex === false ? $keys->count() : $insertionIndex, 0, [$key]);
+
+                continue;
+            }
+
+            $previousKey = $comparisonKeys
+                ->slice(0, $comparisonIndex)
+                ->reverse()
+                ->first(fn (string $candidate): bool => $keys->containsStrict($candidate));
+            $insertionIndex = is_string($previousKey) ? $keys->search($previousKey, true) : false;
+            $keys->splice($insertionIndex === false ? $keys->count() : $insertionIndex + 1, 0, [$key]);
+        }
+
+        $current['rows'] = $keys->map(function (string $key) use ($currentRows, $comparisonRows): array {
+            $row = $currentRows->get($key);
+            $comparisonRow = $comparisonRows->get($key);
+
+            if (! is_array($row) && is_array($comparisonRow)) {
+                $row = [
+                    ...$comparisonRow,
+                    'amount' => '0.0000',
+                    'comparison_only' => true,
+                ];
+
+                foreach (['opening', 'increases', 'decreases', 'period_result'] as $column) {
+                    if (array_key_exists($column, $comparisonRow)) {
+                        $row[$column] = '0.0000';
+                    }
+                }
+            }
 
             return [
                 ...$row,
@@ -1047,7 +1090,11 @@ class FinancialStatementQueryService
                     'comparison_period_result' => is_array($comparisonRow) ? ($comparisonRow['period_result'] ?? null) : null,
                 ] : []),
             ];
-        }, $current['rows']);
+        })->all();
+        $current['classification_warnings'] = array_values(array_unique([
+            ...($current['classification_warnings'] ?? []),
+            ...($comparison['classification_warnings'] ?? []),
+        ]));
 
         return $current;
     }

@@ -9,6 +9,10 @@ $screen = static fn (string $domain, string $slug, string $en, string $ar): arra
     'profile' => 'report',
     'kind' => 'report',
 ];
+$financeScreen = static fn (string $slug, string $en, string $ar): array => [
+    ...$screen('finance', $slug, $en, $ar),
+    'shell_enabled' => false,
+];
 
 return [
     'module' => 'reports',
@@ -24,14 +28,24 @@ return [
         'costing' => ['title' => ['en' => 'Costing Reports', 'ar' => 'تقارير التكاليف'], 'icon' => 'calculator', 'order' => 80],
     ],
     'screens' => [
-        $screen('finance', 'cashbox-balances', 'Cashbox Balances', 'أرصدة الخزائن'),
-        $screen('finance', 'cashbox-statement', 'Cashbox Statement', 'كشف حساب الخزينة'),
-        $screen('finance', 'bank-account-balances', 'Bank Account Balances', 'أرصدة الحسابات البنكية'),
-        $screen('finance', 'bank-account-statement', 'Bank Account Statement', 'كشف الحساب البنكي'),
-        $screen('finance', 'cheque-transit', 'Cheque Transit', 'الشيكات بالطريق'),
-        $screen('finance', 'treasury-transfers', 'Treasury Transfers', 'تحويلات الخزينة'),
-        $screen('finance', 'customer-aging', 'Customer Aging', 'أعمار ديون العملاء'),
-        $screen('finance', 'supplier-aging', 'Supplier Aging', 'أعمار ديون الموردين'),
+        $financeScreen('cashbox-balances', 'Cashbox Balances', 'أرصدة الخزائن'),
+        $financeScreen('cashbox-statement', 'Cashbox Statement', 'كشف حساب الخزينة'),
+        $financeScreen('cash-vouchers', 'Receipt and Payment Vouchers', 'سندات القبض والصرف'),
+        $financeScreen('bank-account-balances', 'Bank Account Balances', 'أرصدة الحسابات البنكية'),
+        $financeScreen('bank-account-statement', 'Bank Account Statement', 'كشف الحساب البنكي'),
+        $financeScreen('bank-reconciliation', 'Bank Reconciliation', 'المطابقة البنكية'),
+        $financeScreen('treasury-transfers', 'Treasury Transfers', 'تحويلات الخزينة'),
+        $financeScreen('received-cheques', 'Incoming Cheques', 'الشيكات الواردة'),
+        $financeScreen('issued-cheques', 'Outgoing Cheques', 'الشيكات الصادرة'),
+        $financeScreen('cleared-cheques', 'Cleared and Paid Cheques', 'الشيكات المحصلة والمصروفة'),
+        $financeScreen('returned-cheques', 'Returned and Rejected Cheques', 'الشيكات المرتدة والمرفوضة'),
+        $financeScreen('cancelled-cheques', 'Cancelled Cheques', 'الشيكات الملغاة'),
+        $financeScreen('cheque-transit', 'Due and Upcoming Cheques', 'الشيكات المستحقة والقادمة'),
+        $financeScreen('guarantee-cheques', 'Guarantee Cheques', 'شيكات الضمان'),
+        $financeScreen('advances-allocations', 'Allocations and Unallocated Payments', 'التخصيصات والمدفوعات غير المخصصة'),
+        $financeScreen('unapproved-documents', 'Unapproved Financial Documents', 'المستندات المالية غير المعتمدة'),
+        $financeScreen('customer-aging', 'Customer Aging', 'أعمار ديون العملاء'),
+        $financeScreen('supplier-aging', 'Supplier Aging', 'أعمار ديون الموردين'),
         [...$screen('sales', 'sales-orders', 'Sales Orders', 'أوامر البيع'), 'shell_enabled' => false],
         [...$screen('purchases', 'purchases-by-supplier', 'Purchases by Supplier', 'المشتريات حسب المورد'), 'menu_visible' => false, 'shell_enabled' => false],
         [...$screen('purchases', 'purchase-orders', 'Purchase Orders', 'أوامر الشراء'), 'menu_visible' => false, 'shell_enabled' => false],
@@ -43,5 +57,8 @@ return [
         $screen('costing', 'estimated-vs-actual', 'Estimated vs Actual', 'التقديري مقابل الفعلي'),
         $screen('costing', 'cost-variance', 'Cost Variance', 'انحراف التكلفة'),
         $screen('costing', 'profitability', 'Profitability', 'الربحية'),
+        $screen('costing', 'work-in-progress', 'Work in Progress', 'الإنتاج تحت التشغيل'),
+        $screen('costing', 'finished-goods-cost', 'Finished Goods Cost', 'تكلفة الإنتاج التام'),
+        $screen('costing', 'allocation-analysis', 'Allocation Analysis', 'تحليل التحميل'),
     ],
 ];

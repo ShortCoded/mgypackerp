@@ -97,6 +97,20 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'general_journal',
+                'title' => 'General Journal',
+                'icon' => 'book',
+                'route' => 'admin.accounting.reports.general-journal',
+                'permission' => 'reports.account_ledger.view',
+                'keywords' => ['general journal', 'posted journal report', 'دفتر اليومية العامة', 'اليومية العامة'],
+                'actions' => [
+                    'view' => 'reports.account_ledger.view',
+                    'export' => 'reports.account_ledger.export',
+                ],
+                'active' => ['admin.accounting.reports.general-journal*'],
+                'children' => [],
+            ],
+            [
                 'label' => 'account_ledger',
                 'title' => 'Account Ledger',
                 'icon' => 'list-alt',

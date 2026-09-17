@@ -49,6 +49,13 @@
                 <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                 @error('to_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
+            <div class="col-sm-6 col-xl-4">
+                <x-forms.label for="account_doc_num" :label="__('trial_balance.filters.account')" />
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="account_doc_num" name="account_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.accounts', ['report_scope' => 1, 'include_historical' => 1, 'hierarchy' => 1]) }}" data-placeholder="{{ __('trial_balance.filters.all') }}" data-allow-clear="true">
+                    @if(request('account_doc_num'))<option value="{{ request('account_doc_num') }}" selected>{{ request('account_doc_num') }}</option>@endif
+                </x-forms.select>
+                @error('account_doc_num')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+            </div>
             <div class="col-sm-6 col-xl-2">
                 <x-forms.label for="value_mode" :label="__('trial_balance.filters.value_mode')" :required="true" />
                 <x-forms.select class="form-select form-select-sm js-report-filter-control" id="value_mode" name="value_mode" required>

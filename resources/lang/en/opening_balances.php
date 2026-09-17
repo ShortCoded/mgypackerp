@@ -85,6 +85,7 @@ return [
         'duplicate_line' => 'The same account and dimensions can appear once only in the same document.',
         'period_closed' => 'Financial period must be open.',
         'period_disallows_opening_entries' => 'The current financial period does not allow opening entries.',
+        'history_derived_opening_only' => 'This is not the company’s first financial period. Opening balances are derived from posted history, so a duplicate manual opening cannot be approved.',
         'currency_inactive' => 'Currency must be active.',
         'document_locked' => 'This document is closed, approved, cancelled, or linked to a journal entry and cannot be edited.',
         'document_delete_blocked' => 'Only open draft opening balances can be deleted.',

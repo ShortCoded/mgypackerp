@@ -35,6 +35,7 @@ class TrialBalanceQueryService
      *     company_id: int,
      *     from_date: string,
      *     to_date: string,
+     *     account_id?: int|null,
      *     branch_id?: int|null,
      *     cost_center_id?: int|null,
      *     include_zero?: bool,
@@ -90,11 +91,42 @@ class TrialBalanceQueryService
             'level' => $selectedLevel,
         ];
 
-        $direct = $this->directBalances($filters, $accounts->modelKeys());
         $children = $accounts
             ->groupBy(fn (Account $account): int => (int) ($account->parent_id ?? 0))
             ->map(fn (Collection $children): array => $children->pluck('id')->map(fn (mixed $id): int => (int) $id)->all())
             ->all();
+        $visibleAccountIds = null;
+        $movementAccountIds = $accounts->modelKeys();
+
+        if (isset($filters['account_id'])) {
+            $selectedAccountId = (int) $filters['account_id'];
+            $subtree = [$selectedAccountId => true];
+            $pending = [$selectedAccountId];
+
+            while ($pending !== []) {
+                $parentId = array_pop($pending);
+
+                foreach ($children[$parentId] ?? [] as $childId) {
+                    if (! isset($subtree[$childId])) {
+                        $subtree[$childId] = true;
+                        $pending[] = $childId;
+                    }
+                }
+            }
+
+            $movementAccountIds = array_keys($subtree);
+            $visibleAccountIds = $subtree;
+            $accountsById = $accounts->keyBy(fn (Account $account): int => (int) $account->getKey());
+            $ancestor = $accountsById->get($selectedAccountId)?->parent_id;
+
+            while ($ancestor !== null) {
+                $ancestorId = (int) $ancestor;
+                $visibleAccountIds[$ancestorId] = true;
+                $ancestor = $accountsById->get($ancestorId)?->parent_id;
+            }
+        }
+
+        $direct = $this->directBalances($filters, $movementAccountIds);
         $aggregates = [];
         $visiting = [];
 
@@ -104,9 +136,19 @@ class TrialBalanceQueryService
 
         $includeZero = (bool) ($filters['include_zero'] ?? false);
         $rows = $accounts
-            ->map(function (Account $account) use ($aggregates, $children, $direct, $displayMode): array {
+            ->when(
+                $visibleAccountIds !== null,
+                fn (Collection $accounts): Collection => $accounts->filter(
+                    fn (Account $account): bool => isset($visibleAccountIds[(int) $account->getKey()])
+                ),
+            )
+            ->map(function (Account $account) use ($aggregates, $children, $direct, $displayMode, $selectedLevel): array {
                 $accountId = (int) $account->getKey();
-                $balance = $displayMode === self::DisplayDetail
+                $hasDirectActivity = isset($direct[$accountId]) && $this->hasAnyActivity($direct[$accountId]);
+                $showsDirectAncestor = $displayMode === self::DisplayAggregate
+                    && (int) $account->level < $selectedLevel
+                    && $hasDirectActivity;
+                $balance = $displayMode === self::DisplayDetail || $showsDirectAncestor
                     ? ($direct[$accountId] ?? $this->emptyBalance())
                     : ($aggregates[$accountId] ?? $this->emptyBalance());
 
@@ -122,7 +164,8 @@ class TrialBalanceQueryService
                     'is_postable' => (bool) $account->is_postable,
                     'is_inactive' => $account->status !== 'active' || $account->trashed(),
                     ...$balance,
-                    'has_direct_activity' => isset($direct[$accountId]) && $this->hasAnyActivity($direct[$accountId]),
+                    'has_direct_activity' => $hasDirectActivity,
+                    'shows_direct_activity_only' => $showsDirectAncestor,
                 ];
             })
             ->when(
@@ -130,6 +173,7 @@ class TrialBalanceQueryService
                 fn (Collection $rows): Collection => $rows->filter(
                     fn (array $row): bool => $row['level'] === $selectedLevel
                         || ($row['level'] < $selectedLevel && ! $row['has_children'])
+                        || $row['shows_direct_activity_only']
                 ),
             )
             ->when(
@@ -148,7 +192,9 @@ class TrialBalanceQueryService
             ->all();
 
         $totals = $this->totals($direct);
-        $scopeIsPartial = ($filters['branch_id'] ?? null) !== null || ($filters['cost_center_id'] ?? null) !== null;
+        $scopeIsPartial = ($filters['account_id'] ?? null) !== null
+            || ($filters['branch_id'] ?? null) !== null
+            || ($filters['cost_center_id'] ?? null) !== null;
         $isBalanced = bccomp($totals['opening_debit'], $totals['opening_credit'], 4) === 0
             && bccomp($totals['period_debit'], $totals['period_credit'], 4) === 0
             && bccomp($totals['cumulative_debit'], $totals['cumulative_credit'], 4) === 0

@@ -1605,7 +1605,14 @@ test('procurement reports filter, print, and export without leaking confidential
     $governorate = HrGovernorate::query()->create(['doc_number' => 98911, 'doc_num' => 'Governorate-98911', 'name' => 'Supplier Report Governorate', 'country_id' => $country->id]);
     $city = HrCity::query()->create(['doc_number' => 98911, 'doc_num' => 'City-98911', 'name' => 'Supplier Report City', 'governorate_id' => $governorate->id]);
     $area = HrArea::query()->create(['doc_number' => 98911, 'doc_num' => 'Area-98911', 'name' => 'Supplier Report Area', 'city_id' => $city->id]);
-    $fixture['firstSupplier']->update(['country_id' => $country->id, 'governorate_id' => $governorate->id, 'city_id' => $city->id, 'area_id' => $area->id]);
+    $fixture['firstSupplier']->update([
+        'phone' => '02-555-REPORT',
+        'address' => 'Supplier acceptance district',
+        'country_id' => $country->id,
+        'governorate_id' => $governorate->id,
+        'city_id' => $city->id,
+        'area_id' => $area->id,
+    ]);
     $invoice = PurchaseInvoice::query()->create([
         'doc_number' => 9601,
         'doc_num' => 'PINV-REPORT-PROC',
@@ -1619,6 +1626,7 @@ test('procurement reports filter, print, and export without leaking confidential
         'remaining_amount' => 125,
         'status' => PurchaseInvoice::StatusApproved,
     ]);
+    $requisition = procurementManualRequisition($fixture);
     $report = app(ProcurementCycleReport::class);
     $filters = [
         'report_type' => ProcurementCycleReport::SupplierPayables,
@@ -1677,6 +1685,29 @@ test('procurement reports filter, print, and export without leaking confidential
             $fixture['period']->getKey(),
         ))->toBeEmpty();
 
+    expect($report->rows(
+        ProcurementCycleReport::SupplierPayables,
+        ['address_search' => 'acceptance district', 'contact_search' => '555-REPORT'],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    ))->toHaveCount(1);
+
+    $unfilteredRequests = $report->rows(
+        ProcurementCycleReport::PurchaseRequests,
+        [],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    );
+    $geographyFilteredRequests = $report->rows(
+        ProcurementCycleReport::PurchaseRequests,
+        ['area_doc_num' => $area->doc_num],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    );
+    expect($unfilteredRequests)->not->toBeEmpty()
+        ->and($unfilteredRequests->pluck('document'))->toContain($requisition->doc_num)
+        ->and($geographyFilteredRequests->pluck('document')->all())->toBe($unfilteredRequests->pluck('document')->all());
+
     $query = ['report_type' => ProcurementCycleReport::SupplierPayables];
     $this->get(route('admin.purchases.procurement-cycle-report.index', $query))->assertForbidden();
     $fixture['user']->givePermissionTo('purchases.prices.view');
@@ -1686,6 +1717,8 @@ test('procurement reports filter, print, and export without leaking confidential
         ->assertSee($invoice->doc_num)
         ->assertSee('name="country_doc_num"', false)
         ->assertSee('name="area_doc_num"', false)
+        ->assertSee('name="address_search"', false)
+        ->assertSee('name="contact_search"', false)
         ->assertSee('name="production_order_doc_num"', false)
         ->assertSee('name="work_order_reference"', false)
         ->assertDontSee(route('admin.purchases.procurement-cycle-report.export.excel', $query), false);
