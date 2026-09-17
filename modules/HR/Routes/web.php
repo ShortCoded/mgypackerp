@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Support\Facades\Route;
 use Modules\HR\Http\Controllers\EmployeeSelfServiceController;
 use Modules\HR\Http\Controllers\HrAllowanceController;
@@ -32,6 +33,7 @@ use Modules\HR\Http\Controllers\HrSocialInsurancePolicyController;
 use Modules\HR\Http\Controllers\HrSpecializationController;
 use Modules\HR\Http\Controllers\HrUniversityController;
 use Modules\HR\Http\Controllers\PayrollCostPreviewController;
+use Modules\HR\Http\Controllers\PayrollController;
 use Modules\HR\Http\Controllers\Select2\HrSelect2Controller;
 
 Route::middleware('auth')
@@ -61,6 +63,21 @@ Route::middleware('auth')
             Route::patch('/{employeeRequest}/review', 'review')->middleware('can:hr.hr_requests.manage')->name('review');
         });
 
+        Route::get('/payroll-preparation', [PayrollController::class, 'index'])
+            ->middleware('can:hr.payroll_preparation.view')
+            ->name('payroll-preparation.index');
+        Route::prefix('payroll-runs')->name('payroll-runs.')->controller(PayrollController::class)->group(function (): void {
+            Route::post('/calculate', 'calculate')->middleware('can:hr.payroll_preparation.calculate')->name('calculate');
+            Route::post('/{payrollRun}/review', 'review')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.review')->name('review');
+            Route::post('/{payrollRun}/approve', 'approve')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.approve')->name('approve');
+            Route::post('/{payrollRun}/payments', 'storePayment')->whereNumber('payrollRun')->middleware([
+                'can:hr.payroll_payment.create',
+                'can:cash_payment_vouchers.create',
+                IdempotentDocumentSubmission::class,
+            ])->name('payments.store');
+            Route::get('/{payrollRun}/reconciliation', 'reconcile')->whereNumber('payrollRun')->middleware('can:hr.payroll_reconciliation.view')->name('reconciliation');
+        });
+
         Route::get('/select2/lookups/{resource}', [HrSelect2Controller::class, 'lookup'])
             ->name('select2.lookups');
         Route::get('/select2/foundation/{resource}', [HrSelect2Controller::class, 'foundation'])
@@ -69,7 +86,7 @@ Route::middleware('auth')
             ->name('select2.employees');
         Route::get('/payroll-runs/{payrollRun}/cost-preview', PayrollCostPreviewController::class)
             ->whereNumber('payrollRun')
-            ->middleware('can:hr.employees.view')
+            ->middleware('can:hr.payroll_preparation.view')
             ->name('payroll-runs.cost-preview');
         Route::post('/select2/inline/lookups/{resource}', [HrSelect2InlineController::class, 'storeLookup'])
             ->name('select2.inline.lookups.store');

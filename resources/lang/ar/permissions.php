@@ -81,6 +81,15 @@ $hrAttendanceAndRequestPermissionLabels = [
     'hr.hr_requests.manage' => 'مراجعة طلبات الموارد البشرية والموافقة عليها أو رفضها',
 ];
 
+$hrPayrollPermissionLabels = [
+    'hr.payroll_preparation.view' => 'عرض إعداد الرواتب',
+    'hr.payroll_preparation.calculate' => 'احتساب الرواتب',
+    'hr.payroll_approval.review' => 'إرسال الرواتب للمراجعة',
+    'hr.payroll_approval.approve' => 'اعتماد وترحيل الرواتب',
+    'hr.payroll_payment.create' => 'إنشاء دفعة رواتب',
+    'hr.payroll_reconciliation.view' => 'عرض تسوية الرواتب',
+];
+
 $costCenterPermissionLabels = [];
 
 foreach (['cost_centers' => ['مراكز التكلفة', 'مركز تكلفة']] as $prefix => [$plural, $singular]) {
@@ -377,6 +386,7 @@ return [
     ...$hrOrgStructurePermissionExtras,
     ...$hrEmployeePermissionLabels,
     ...$hrAttendanceAndRequestPermissionLabels,
+    ...$hrPayrollPermissionLabels,
     ...$costCenterPermissionLabels,
     ...$customerPermissionLabels,
     ...$quotationPermissionLabels,

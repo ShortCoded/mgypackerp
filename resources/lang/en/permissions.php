@@ -81,6 +81,15 @@ $hrAttendanceAndRequestPermissionLabels = [
     'hr.hr_requests.manage' => 'Review, Approve, or Reject HR Requests',
 ];
 
+$hrPayrollPermissionLabels = [
+    'hr.payroll_preparation.view' => 'View Payroll Preparation',
+    'hr.payroll_preparation.calculate' => 'Calculate Payroll',
+    'hr.payroll_approval.review' => 'Submit Payroll for Review',
+    'hr.payroll_approval.approve' => 'Approve and Post Payroll',
+    'hr.payroll_payment.create' => 'Create Payroll Payment',
+    'hr.payroll_reconciliation.view' => 'View Payroll Reconciliation',
+];
+
 $costCenterPermissionLabels = [];
 
 foreach (['cost_centers' => ['Cost Centers', 'Cost Center']] as $prefix => [$plural, $singular]) {
@@ -377,6 +386,7 @@ return [
     ...$hrOrgStructurePermissionExtras,
     ...$hrEmployeePermissionLabels,
     ...$hrAttendanceAndRequestPermissionLabels,
+    ...$hrPayrollPermissionLabels,
     ...$costCenterPermissionLabels,
     ...$customerPermissionLabels,
     ...$quotationPermissionLabels,

@@ -123,6 +123,7 @@ return [
     'employee_self_service' => 'Employee Self Service',
     'hr_employee_attendance' => 'Employee Attendance',
     'hr_requests' => 'HR Requests',
+    'hr_payroll_preparation' => 'Payroll Preparation',
     'people_labor' => 'People & Labor',
     'hr_settings' => 'HR Settings',
     'hr_biometric_devices' => 'Attendance Devices',

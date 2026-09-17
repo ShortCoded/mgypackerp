@@ -113,6 +113,10 @@ final class PayrollCostAllocationService
         $errors = [];
 
         foreach ($items as $item) {
+            if ($item->direction !== 'earning') {
+                continue;
+            }
+
             $allocations = $stored->get($item->payslip_item_id, collect());
 
             if ($allocations->isEmpty()) {
@@ -157,10 +161,19 @@ final class PayrollCostAllocationService
             $run = $this->payrollRun($payrollRunId, lock: true);
 
             if ($run->status === 'posted') {
-                return (int) DB::table('hr_payroll_postings')->where('payroll_run_id', $payrollRunId)->value('journal_entry_id');
+                $journalEntryId = DB::table('hr_payroll_postings')->where('payroll_run_id', $payrollRunId)->value('journal_entry_id');
+                if ($journalEntryId === null) {
+                    throw new DomainException(__('hr_payroll.messages.posting_reference_missing'));
+                }
+
+                return (int) $journalEntryId;
             }
 
-            foreach ($this->runItems($payrollRunId) as $item) {
+            if ($run->status !== 'approved') {
+                throw new DomainException(__('hr_payroll.messages.approval_required_before_posting'));
+            }
+
+            foreach ($this->runItems($payrollRunId)->where('direction', 'earning') as $item) {
                 if (! DB::table('hr_payroll_cost_allocations')->where('payslip_item_id', $item->payslip_item_id)->exists()) {
                     $proposal = $this->proposedAllocation($item);
                     $this->syncAllocations((int) $item->payslip_item_id, [[
@@ -187,22 +200,44 @@ final class PayrollCostAllocationService
                 'account_id' => $line['account_id'],
                 'debit_amount' => $line['amount'],
                 'credit_amount' => '0.0000',
-                'description' => 'Payroll cost: '.$line['payroll_item'],
+                'description' => __('hr_payroll.journal.payroll_cost', ['item' => $line['payroll_item']]),
                 'employee_id' => $line['employee_id'],
                 'department_id' => $line['department_id'],
                 'cost_center_id' => $line['cost_center_id'],
                 'branch_id' => $line['branch_id'],
             ])->all();
+            $deductionLines = $this->deductionLines($payrollRunId, (int) $run->company_id);
+            foreach ($deductionLines as $deductionLine) {
+                $lines[] = $deductionLine;
+            }
+
             $payableClassification = AccountClassification::query()->where('code', 'payroll_payable')->firstOrFail();
             $payable = $this->accountForCompanyClassification((int) $run->company_id, $payableClassification);
 
-            foreach ($expenseLines->groupBy(fn (array $line): string => (string) ($line['branch_id'] ?? 'none')) as $branchLines) {
+            $branches = $expenseLines->pluck('branch_id')->merge(collect($deductionLines)->pluck('branch_id'))->unique()->values();
+            foreach ($branches as $branchId) {
+                $gross = $expenseLines
+                    ->where('branch_id', $branchId)
+                    ->reduce(fn (string $total, array $line): string => bcadd($total, $line['amount'], 4), '0.0000');
+                $deductions = collect($deductionLines)
+                    ->where('branch_id', $branchId)
+                    ->reduce(fn (string $total, array $line): string => bcadd($total, (string) $line['credit_amount'], 4), '0.0000');
+                $net = bcsub($gross, $deductions, 4);
+
+                if (bccomp($net, '0.0000', 4) < 0) {
+                    throw new DomainException(__('hr_payroll.messages.negative_branch_payable'));
+                }
+
+                if (bccomp($net, '0.0000', 4) === 0) {
+                    continue;
+                }
+
                 $lines[] = [
                     'account_id' => $payable->getKey(),
                     'debit_amount' => '0.0000',
-                    'credit_amount' => $branchLines->reduce(fn (string $total, array $line): string => bcadd($total, $line['amount'], 4), '0.0000'),
-                    'description' => 'Payroll payable',
-                    'branch_id' => $branchLines->first()['branch_id'],
+                    'credit_amount' => $net,
+                    'description' => __('hr_payroll.journal.payroll_payable'),
+                    'branch_id' => $branchId,
                 ];
             }
 
@@ -219,7 +254,8 @@ final class PayrollCostAllocationService
                 'financial_period_id' => $financialPeriod->getKey(),
                 'currency_id' => $currency->getKey(),
                 'exchange_rate' => 1,
-                'description' => 'Payroll run #'.$payrollRunId,
+                'branch_id' => $run->branch_id,
+                'description' => __('hr_payroll.journal.run_description', ['run' => $payrollRunId]),
                 'source_type' => 'hr_payroll_run',
                 'source_id' => $payrollRunId,
                 'source_doc_num' => 'PAYRUN-'.$payrollRunId,
@@ -237,6 +273,8 @@ final class PayrollCostAllocationService
                 ],
             );
             DB::table('hr_payroll_runs')->where('id', $payrollRunId)->update(['status' => 'posted', 'posted_at' => now(), 'updated_at' => now()]);
+            DB::table('hr_payslips')->where('payroll_run_id', $payrollRunId)->update(['status' => 'posted', 'updated_at' => now()]);
+            DB::table('hr_payroll_run_employees')->where('payroll_run_id', $payrollRunId)->update(['status' => 'posted', 'updated_at' => now()]);
 
             return (int) $journal->getKey();
         });
@@ -297,6 +335,58 @@ final class PayrollCostAllocationService
             ?? throw new DomainException(__('No active posting account is mapped to classification :classification.', ['classification' => $classification->code]));
     }
 
+    /**
+     * @return list<array{account_id: int, debit_amount: string, credit_amount: string, description: string, employee_id: int, branch_id: int|null}>
+     */
+    private function deductionLines(int $payrollRunId, int $companyId): array
+    {
+        return $this->runItems($payrollRunId)
+            ->where('direction', 'deduction')
+            ->map(function (object $item) use ($companyId): array {
+                if ($item->account_classification_id === null && $item->account_id === null) {
+                    throw new DomainException(__('hr_payroll.messages.deduction_account_mapping_missing', [
+                        'item' => $item->payroll_item_code,
+                    ]));
+                }
+
+                $classification = $item->account_classification_id === null
+                    ? null
+                    : AccountClassification::query()->whereKey($item->account_classification_id)->where('status', 'active')->first();
+                $account = $item->account_id === null
+                    ? null
+                    : Account::query()->forCompany($companyId)->eligibleForDirectPosting()->whereKey($item->account_id)->first();
+
+                if (! $account instanceof Account && $classification instanceof AccountClassification) {
+                    $account = $this->accountForCompanyClassification($companyId, $classification);
+                }
+
+                if (! $account instanceof Account
+                    || ($classification instanceof AccountClassification
+                        && (int) $account->account_classification_id !== (int) $classification->getKey())) {
+                    throw new DomainException(__('hr_payroll.messages.deduction_account_mapping_missing', [
+                        'item' => $item->payroll_item_code,
+                    ]));
+                }
+
+                if ($item->source_type === 'salary_advance'
+                    && $classification?->code !== 'employee_advances'
+                    && $account->classification?->code !== 'employee_advances') {
+                    throw new DomainException(__('hr_payroll.messages.advance_account_mapping_invalid'));
+                }
+
+                return [
+                    'account_id' => (int) $account->getKey(),
+                    'debit_amount' => '0.0000',
+                    'credit_amount' => number_format((float) $item->amount, 4, '.', ''),
+                    'description' => __('hr_payroll.journal.deduction', ['item' => $item->payroll_item_name ?: $item->payroll_item_code]),
+                    'employee_id' => (int) $item->employee_id,
+                    'branch_id' => $item->branch_id === null ? null : (int) $item->branch_id,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     private function payslipItem(int $payslipItemId, bool $lock = false): object
     {
         return DB::table('hr_payslip_items as item')
@@ -318,7 +408,7 @@ final class PayrollCostAllocationService
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->where('run.id', $payrollRunId)
             ->when($lock, fn ($query) => $query->lockForUpdate())
-            ->first(['run.id', 'run.status', 'period.company_id', 'period.period_start', 'period.period_end'])
+            ->first(['run.id', 'run.status', 'run.branch_id', 'period.company_id', 'period.period_start', 'period.period_end'])
             ?? throw new DomainException(__('Payroll run not found.'));
     }
 
@@ -336,9 +426,10 @@ final class PayrollCostAllocationService
             ->orderBy('item.id')
             ->get([
                 'item.id as payslip_item_id', 'item.amount', 'item.direction', 'employee.id as employee_id',
-                'employee.full_name as employee_name', 'employee.branch_id', 'employee.department_id',
+                'payslip.employee_name', DB::raw('COALESCE(payslip.branch_id, employee.branch_id) as branch_id'),
+                DB::raw('COALESCE(payslip.department_id, employee.department_id) as department_id'),
                 'period.company_id', 'payroll_item.code as payroll_item_code', 'payroll_item.name as payroll_item_name',
-                'payroll_item.account_classification_id', 'payroll_item.account_id',
+                'payroll_item.account_classification_id', 'payroll_item.account_id', 'item.source_type', 'item.source_id',
             ]);
     }
 

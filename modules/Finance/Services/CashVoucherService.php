@@ -19,6 +19,7 @@ use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierPaymentPostingService;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Services\CustomerReceiptSettlementService;
+use Modules\HR\Services\PayrollPaymentService;
 
 class CashVoucherService
 {
@@ -173,6 +174,11 @@ class CashVoucherService
                 ->findOrFail($record->getKey());
 
             $this->assertOwnedByCurrentScreen($locked, $voucherType, $companyId);
+
+            if ($locked->isApproved()) {
+                return $locked;
+            }
+
             $this->assertApprovable($locked);
             $this->assertNotLinkedToClosedPurchaseInvoice($locked);
             $this->financialPeriods->resolveOpenForPostingDate(
@@ -188,6 +194,7 @@ class CashVoucherService
                 'updated_by' => auth()->id(),
             ])->save();
             $this->postSupplierPayment($locked);
+            app(PayrollPaymentService::class)->postApprovedVoucher($locked);
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
@@ -227,6 +234,7 @@ class CashVoucherService
             if ($receipt) {
                 app(CustomerReceiptSettlementService::class)->reverse($receipt, $reason);
             }
+            app(PayrollPaymentService::class)->reverseCancelledVoucher($locked);
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
