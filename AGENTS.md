@@ -17,6 +17,15 @@
 - Start with one writer. Do not overlap writers on the same files. After each delegation, Codex must inspect the diff for scope drift and run the relevant tests on the integrated working tree. Tool completion or an agent claim is not proof of correctness.
 - If delegation is unavailable or fails, report the exact limitation and continue safe in-scope work directly; do not claim OpenCode wrote changes it did not produce.
 
+# Local Agent Infrastructure v1
+
+- Before delegating, the orchestrator must classify the task and follow `docs/ai/AGENT_OPERATING_MODEL.md`, `docs/ai/MODEL_ROUTING.md`, and `docs/ai/EXECUTION_BUDGETS.md`. Model routing is the orchestrator's deterministic responsibility; do not create a model-router agent.
+- Use only the approved explorer, worker, deep_worker, reviewer, critical_reviewer, and qa roles. Keep one writer unless independent file boundaries are proven, and never let a subagent delegate again.
+- Read the minimum relevant context. Start with `docs/erp/INDEX.md`, use `CODEX_PROJECT_CONTEXT.md` only for the historical sections it identifies, then pass concise evidence and file references forward so downstream agents do not repeat discovery.
+- Critical financial, inventory, migration, security, concurrency, idempotency, and tenant-scope work is T3 regardless of apparent size and requires an independent critical review plus targeted regression or reconciliation evidence.
+- Do not bypass an exhausted step budget by respawning the same role. A new invocation needs new evidence, narrower scope, an explicit tier escalation, or a distinct independent review purpose.
+- Git pushes, production deployments, destructive database operations, and broad secret or environment-file access must never happen automatically.
+
 === foundation rules ===
 
 # Laravel Boost Guidelines

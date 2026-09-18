@@ -1,42 +1,132 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/muse-spark-1.3-contributor-free",
+  "default_agent": "orchestrator",
   "mcp": {
-    "laravel-boost": {
-      "type": "local",
-      "command": [
-        "php",
-        "artisan",
-        "boost:mcp"
-      ],
-      "enabled": true,
-      "timeout": 30000
+    "servers": {
+      "laravel-boost": {
+        "type": "local",
+        "command": [
+          "php",
+          "artisan",
+          "boost:mcp"
+        ],
+        "disabled": false,
+        "timeout": {
+          "catalog": 30000,
+          "execution": 30000
+        }
+      }
     }
   },
-  "permission": {
-    "edit": "ask",
-    "bash": "ask",
-    "skill": {
-      "*": "allow"
+  "permissions": [
+    {
+      "action": "read",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "*.env",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.env.*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.env.example",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "edit",
+      "resource": "*.env*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git status *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git diff *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git log *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git push *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*deploy*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:fresh *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:reset *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan db:wipe *",
+      "effect": "deny"
+    },
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "skill",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "subagent",
+      "resource": "*",
+      "effect": "deny"
     }
-  },
-  "instructions": [
-    "AGENTS.md",
-    "CODEX_PROJECT_CONTEXT.md"
   ],
-  "skills": {
-    "paths": [
-      ".agents/skills",
-      ".opencode/skills"
-    ]
-  },
+  "skills": [
+    ".agents/skills"
+  ],
   "watcher": {
     "ignore": [
       "vendor/**",
       "node_modules/**",
+      ".opencode/node_modules/**",
       "storage/framework/**",
       "storage/logs/**",
       "public/build/**",
       ".git/**"
     ]
+  },
+  "tool_output": {
+    "max_lines": 800,
+    "max_bytes": 50000
   }
 }

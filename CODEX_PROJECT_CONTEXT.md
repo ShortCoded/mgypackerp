@@ -1,11 +1,13 @@
 # CODEX_PROJECT_CONTEXT.md
 
-Last context rewrite: 2026-05-13
-Project root from latest read-only scan: `/mnt/Data/ShortCoded/Projects/EgyptianFurniture/ERP`
+Last historical context rewrite: 2026-05-13
+Historical project root from that scan: `/mnt/Data/ShortCoded/Projects/EgyptianFurniture/ERP`
 
-This is the only canonical project context for future Codex work.
+This file preserves the architectural and domain context captured by the 2026-05-13 scan. Its path, version, route-count, dirty-worktree, and module-inventory facts are historical and must not be treated as current runtime truth.
 
-Codex must read this file first before changing the project. For normal bug fixes or small UI changes, inspect only the directly relevant files. Do not perform a full project scan unless the user explicitly asks for a context rewrite, architecture audit, or project-wide standard update.
+For current work, start with `docs/erp/INDEX.md`. It defines the minimum authoritative sources and the commands used to establish current path and runtime facts. The current repository root is the output of `pwd -P`; package versions come from the installed runtime and lockfiles.
+
+Future agents must start with `docs/erp/INDEX.md` and open only the relevant portions of this historical context when the index routes them here. For normal bug fixes or small UI changes, inspect only the directly relevant files. Do not perform a full project scan unless the user explicitly asks for a context rewrite, architecture audit, or project-wide standard update.
 
 If this file and the actual code disagree, trust the code. Fix the implementation if the task requires it, and update this file only when the task changes a real convention, architecture rule, route surface, permission model, or feature contract.
 
@@ -13,9 +15,9 @@ Do not use old context backups, historical prompt libraries, archived notes, or 
 
 ---
 
-## 1. Current Scan Baseline
+## 1. Historical Scan Baseline (2026-05-13)
 
-Latest read-only scan facts:
+The following facts describe the 2026-05-13 scan only. Revalidate any fact needed by the task:
 
 - Git branch: `main`.
 - Project root: `/mnt/Data/ShortCoded/Projects/EgyptianFurniture/ERP`.
@@ -176,7 +178,7 @@ Notes:
 
 For every future task:
 
-1. Read this file first.
+1. Read `docs/erp/INDEX.md` first and use it to select only the relevant context from this file.
 2. Inspect the actual relevant files before changing code.
 3. The actual code wins over documentation.
 4. Do not scan the whole project for small tasks.
