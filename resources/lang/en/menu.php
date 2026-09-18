@@ -23,6 +23,7 @@ return [
     'report_purchase_ledger' => 'Purchase Ledger',
     'report_open_requirements' => 'Open Purchase Requirements',
     'report_rfq_quotation_status' => 'RFQ / Quotation Status',
+    'report_pending_sourcing_actions' => 'Pending RFQ / Quotation / Selection Actions',
     'report_purchase_order_status' => 'Purchase Order Status',
     'report_overdue_po_deliveries' => 'Overdue PO Deliveries',
     'report_delivery_schedule' => 'Delivery Schedule',

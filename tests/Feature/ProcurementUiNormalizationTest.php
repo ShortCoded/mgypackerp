@@ -93,16 +93,16 @@ test('dashboard purchase request count follows the same branch visibility as the
         'status' => PurchaseRequisition::StatusSubmitted,
     ]);
 
-    $this->get(route('dashboard'))->assertOk()->assertSeeInOrder([
-        __('dashboard.plastics.metrics.purchase_requisitions.title'),
-        '<div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">1</div>',
-    ], false);
+    $factoryDashboard = $this->get(route('dashboard'))->assertOk();
+    expect($factoryDashboard->getContent())->toMatch(
+        '/'.preg_quote(__('dashboard.plastics.metrics.purchase_requisitions.title'), '/').'.*?plastics-dashboard-metric-value[^>]*>\s*1\s*</s',
+    );
 
     procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
-    $this->get(route('dashboard'))->assertOk()->assertSeeInOrder([
-        __('dashboard.plastics.metrics.purchase_requisitions.title'),
-        '<div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">2</div>',
-    ], false);
+    $administrativeDashboard = $this->get(route('dashboard'))->assertOk();
+    expect($administrativeDashboard->getContent())->toMatch(
+        '/'.preg_quote(__('dashboard.plastics.metrics.purchase_requisitions.title'), '/').'.*?plastics-dashboard-metric-value[^>]*>\s*2\s*</s',
+    );
 });
 
 test('administrative branches manage legacy purchasing documents while factory branches remain read only', function (): void {
@@ -926,6 +926,7 @@ test('purchase reports menu exposes every implemented procurement report', funct
     $reportItems = collect($purchasesMenu[0]['children'])->firstWhere('label', 'purchase_reports')['children'];
     $exposedTypes = collect($reportItems)->pluck('route_params.report_type')->filter()->values()->all();
     $dedicatedTypes = [ProcurementCycleReport::SupplierStatement];
+    app()->setLocale('en');
 
     expect(array_values(array_diff(ProcurementCycleReport::types(), [...$exposedTypes, ...$dedicatedTypes])))->toBe([])
         ->and($exposedTypes)->toContain(
@@ -934,7 +935,11 @@ test('purchase reports menu exposes every implemented procurement report', funct
             ProcurementCycleReport::QcRejection,
             ProcurementCycleReport::DueSupplierInstallments,
             ProcurementCycleReport::ProductionAnalysis,
-        );
+        )
+        ->and(__('menu.report_pending_sourcing_actions'))->toBe('Pending RFQ / Quotation / Selection Actions');
+
+    app()->setLocale('ar');
+    expect(__('menu.report_pending_sourcing_actions'))->toBe('إجراءات طلبات وعروض الأسعار واختيار المورد المعلقة');
 });
 
 test('supplier payment form compiles all fields and Arabic labels', function (): void {

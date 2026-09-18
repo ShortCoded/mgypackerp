@@ -253,18 +253,22 @@ test('sales navigation is one ordered journey with canonical statement and colle
     $reportLabels = collect($sales['children'])->firstWhere('label', 'sales_cycle_reports')['children'] ?? [];
     expect(collect($reportLabels)->pluck('label')->all())->toBe([
         'customer_statement',
-        'sales_report_financial',
-        'sales_report_period',
-        'sales_report_customer',
-        'sales_report_product',
         'sales_report_invoices',
-        'sales_report_receivables',
-        'sales_report_collections',
-        'sales_report_returns',
         'sales_report_quotations',
         'sales_report_fulfillment',
         'sales_report_pricing',
         'sales_report_operational',
+    ]);
+    $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
+    $financialAnalysisLabels = collect($accounting['children'])->firstWhere('label', 'financial_analysis_reports')['children'] ?? [];
+    expect(collect($financialAnalysisLabels)->pluck('label')->all())->toBe([
+        'sales_report_financial',
+        'sales_report_period',
+        'sales_report_customer',
+        'sales_report_product',
+        'sales_report_receivables',
+        'sales_report_collections',
+        'sales_report_returns',
     ]);
 });
 

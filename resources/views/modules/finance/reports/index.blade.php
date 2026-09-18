@@ -30,7 +30,7 @@
             <form method="GET" action="{{ route($indexRoute) }}" class="row g-3">
                 @foreach(['due_state', 'branch_id', 'financial_period_id'] as $hiddenFilter)
                     @if(in_array($hiddenFilter, $applicableFilters, true) && filled($filters[$hiddenFilter] ?? null))
-                        <input type="hidden" name="{{ $hiddenFilter }}" value="{{ $filters[$hiddenFilter] }}">
+                        <x-forms.input type="hidden" name="{{ $hiddenFilter }}" value="{{ $filters[$hiddenFilter] }}" />
                     @endif
                 @endforeach
                 @if($isNamedReport)

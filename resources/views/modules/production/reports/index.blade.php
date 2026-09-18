@@ -30,7 +30,7 @@
             </div>
             <div class="card-body py-3">
                 <form method="GET" action="{{ route($sectionRoutes[$section]) }}" class="row g-3 align-items-end">
-                    @if(request('operational_focus'))<input type="hidden" name="operational_focus" value="{{ request('operational_focus') }}">@endif
+                    @if(request('operational_focus'))<x-forms.input type="hidden" name="operational_focus" value="{{ request('operational_focus') }}" />@endif
                     <div class="col-md-3"><x-forms.label for="production-report-from" :label="__('production_execution.reports.filters.from')" /><x-forms.date-input id="production-report-from" name="from" :value="request('from')" /></div>
                     <div class="col-md-3"><x-forms.label for="production-report-to" :label="__('production_execution.reports.filters.to')" /><x-forms.date-input id="production-report-to" name="to" :value="request('to')" /></div>
                     <div class="col-md-3">

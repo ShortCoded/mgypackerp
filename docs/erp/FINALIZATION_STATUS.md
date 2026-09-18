@@ -1,6 +1,6 @@
 # ERP Finalization Status
 
-Wave 0 status as of 2026-09-19. `VERIFIED` means the relevant execution path and effects were evidenced; the presence of routes, screens, services, or tests alone is not sufficient.
+Wave 0 status with the Wave 0.6 stabilization gate as of 2026-09-19. `VERIFIED` means the relevant execution path and effects were evidenced; the presence of routes, screens, services, or tests alone is not sufficient.
 
 ## Baseline Verification
 
@@ -10,11 +10,13 @@ Wave 0 status as of 2026-09-19. `VERIFIED` means the relevant execution path and
 | Runtime | PHP 8.5.10; Laravel 12.61.0; Composer 2.10.1; Node 22.23.1; pnpm 12.4.1 |
 | Database/runtime drivers | PostgreSQL; database queue/cache/session; local debug enabled |
 | Routes/modules | 1,988 non-vendor routes; 11 live top-level modules; Quality is inside Production |
-| Migrations | BLOCKED: five migrations pending in the inspected database; production state not inferred |
+| Migrations | VERIFIED IN SANDBOX: five remain pending on protected `mgypack`; all five applied successfully to isolated clone `mgypack_wave0_baseline` |
 | Scheduling | Presence cleanup, due notifications, and bounded database queue worker scheduled each minute |
 | Focused PHP tests | VERIFIED: 51 passed, 842 assertions, 61.52 seconds |
-| Full PHP/frontend/browser tests | UNVERIFIED |
-| Production frontend build | BLOCKED: pnpm ignored unapproved esbuild build scripts |
+| Full backend tests | VERIFIED: 1,986 passed, 2 skipped, 37,120 assertions; Pest 1,103.68 seconds |
+| Default backend test command | VERIFIED: exact `composer test` completed in 18:27.94 with test-only memory and script-local timeout configuration |
+| Frontend/static tests | NOT APPLICABLE: no JS test, lint, or static-analysis script is configured |
+| Production frontend build | VERIFIED: esbuild 0.27.7 narrowly approved project-locally; Vite 7.3.2 build passed |
 
 Focused passing command:
 
@@ -40,9 +42,30 @@ php artisan test --compact tests/Feature/SalesPriceListTest.php tests/Feature/Ac
 | Notifications | PARTIAL | PARTIAL | NOT APPLICABLE | NOT APPLICABLE | UNVERIFIED | UNVERIFIED | PARTIAL | 0 |
 | Reports / print / export | NEEDS FIX | UNVERIFIED | NEEDS FIX | NEEDS FIX | PARTIAL | NEEDS FIX | PARTIAL | 0 |
 | Closing / carry-forward | PARTIAL | UNVERIFIED | UNVERIFIED | UNVERIFIED | PARTIAL | UNVERIFIED | PARTIAL | 0 |
-| Production release readiness | BLOCKED | BLOCKED | BLOCKED | BLOCKED | UNVERIFIED | BLOCKED | BLOCKED | 3 |
+| Production release readiness | BLOCKED | BLOCKED | BLOCKED | BLOCKED | UNVERIFIED | BLOCKED | PARTIAL | 1 |
 
-Total release blockers: **5**.
+The Production release readiness blocker count is now **1** (valuable/production-target schema parity). Total release blockers: **3**.
+
+## Wave 0.6 Readiness Gate
+
+**READY FOR WAVE 1**
+
+- The frontend blocker is resolved by the package-specific `allowBuilds.esbuild: true` setting. `pnpm rebuild esbuild` and `pnpm run build` passed without dependency or lockfile changes.
+- Test isolation is verified: `APP_ENV=testing`, SQLite `:memory:`, empty `DB_URL`, array cache/session, sync queue, isolated `/tmp` caches, and a hard `RefreshDatabase` guard against persistent databases.
+- Exact `composer test` passed 1,986 tests with 2 skipped and 37,120 assertions. PHPUnit supplies the spawned test process 512 MiB; Composer's timeout is disabled only for this script.
+- The six Wave 0.5 failures were repaired without changing T3 business logic: four form/view/navigation roots, one stale constructor test, and two brittle dashboard markup assertions whose visibility/count semantics already passed.
+- The protected `mgypack` database was read-only throughout and still has all five migrations pending. The isolated clone `mgypack_wave0_baseline` applied all five successfully with row/schema reconciliation.
+- **WAVE 1 DOES NOT DEPEND ON PENDING MIGRATIONS**: none changes Price List/Sales schema, and source product indexes already match the target definitions.
+
+Migration sandbox matrix:
+
+| Migration | Effect | Data mutation / rollback | Risk | Wave 1 dependency |
+| --- | --- | --- | --- | --- |
+| Auth users active uniqueness | Replaces five partial active unique indexes | No DML; empty `down()` | T3 | No |
+| Core product active uniqueness | Replaces six indexes with three company-scoped partial indexes | No DML; empty `down()` | T3 | No direct dependency; target definitions already on source |
+| Cost overhead allocation | Creates four accounting/production costing tables | Additive; `down()` drops later data | T3 | No |
+| HR payroll financial chain | Alters seven tables and creates two financial tables | No explicit backfill; structural rollback loses new data/columns | T3 | No |
+| Finance cashbox counts | Creates one treasury table | Additive; `down()` drops later data | T3 | No |
 
 ## Evidence-Based Domain Notes
 
@@ -69,12 +92,11 @@ Total release blockers: **5**.
 
 ## Unverified or Environment-Blocked
 
-- Full Pest, frontend unit, browser, and end-to-end suites.
-- Production frontend bundle in the current pnpm approval environment.
-- Production database migration status; only the inspected local target is known.
+- Frontend unit/lint/static suites are not configured; browser/end-to-end execution was not part of the configured package scripts.
+- Production database migration status. Sandbox success does not replace populated-production preflight, backup/restore rehearsal, or migration authorization.
 - Live reconciliation datasets for supplier bank payment, inventory valuation, COGS, fixed assets, payroll, and closing.
 - Exhaustive sensitive-route authorization and audit-actor coverage.
 - Every queued side effect created inside a database transaction.
 - Runtime browser proof for customer/supplier statement initial Select2 choices and every financial account picker.
 
-Wave 0 changed only `docs/erp/FINALIZATION_BACKLOG.md` and `docs/erp/FINALIZATION_STATUS.md`. No ERP business code, tests, migrations, configuration, dependencies, data, or agent infrastructure were changed.
+Wave 0.6 changed only development/test runner configuration, the six bounded baseline UI/test surfaces, `pnpm-workspace.yaml`, and these finalization documents. No migration file, dependency version, lockfile, T3 business logic, Price List Wave 1 feature, production configuration, or source `mgypack` data/schema was changed. The five migrations were applied only to `mgypack_wave0_baseline`.

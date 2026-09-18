@@ -4,14 +4,14 @@ Authoritative Wave 0 audit backlog. Evidence was collected from the live checkou
 
 ## Baseline
 
-- Repository: `main`, one commit ahead of `origin/main`; working tree was clean before Wave 0.
+- Repository: `main`, two commits ahead of `origin/main`; Wave 0.5/0.6 changes remain uncommitted for review.
 - Runtime: PHP 8.5.10, Laravel 12.61.0, Composer 2.10.1, Node 22.23.1, pnpm 12.4.1.
 - Environment: local; PostgreSQL; database-backed queue/cache/session; 1,988 non-vendor routes.
 - Live modules: Accounting, Auth, Core, Finance, FixedAssets, HR, Inventory, Maintenance, Production, Purchases, Sales. Quality is implemented inside Production.
 - Scheduler: minute jobs for presence cleanup, due-notification dispatch, and bounded database queue work.
-- Tests: 148 Feature PHP files, 23 Unit PHP files, and 18 browser/frontend files. The focused Wave 0 command passed 51 tests (842 assertions) in 61.52 seconds. A full suite was not completed.
-- Build: `pnpm run build` is environment-blocked by `ERR_PNPM_IGNORED_BUILDS` for `esbuild@0.27.7`; no dependency approval was changed.
-- Schema: this inspected database has five pending migrations. This is a target-schema gate, not proof that production has the same state.
+- Tests: the authoritative Wave 0.6 `composer test` run passed 1,986 tests with 2 skipped and 37,120 assertions in 1,103.68 seconds (18:27.94 wall time). Test isolation remains SQLite `:memory:`.
+- Build: the narrow project-local esbuild approval is active; `pnpm run build` passes with Vite 7.3.2.
+- Schema: the valuable source `mgypack` still has five pending migrations and was not modified. All five were validated successfully on the isolated clone `mgypack_wave0_baseline`.
 
 ## Sources of Truth and Reusable Infrastructure
 
@@ -202,35 +202,35 @@ Wave 9 owns reconciliation acceptance for ACC-001, PUR-001, INV-001, COST-001, P
 - Missing validation: all preflight blockers, atomic close, retry/idempotency, locked-period mutation rejection, currency/branch/company isolation, carry-forward equality, and rollback/recovery.
 - Finalization: Wave 11 after Waves 1–10 reconciliation findings are resolved.
 
-### TEST-001 — Complete regression outcome is unavailable
+### TEST-001 — Complete regression baseline stabilized
 
-- Domain/workflow/current state: test/release evidence; **BLOCKED**.
-- Evidence: targeted Wave 0 command passed 51 tests/842 assertions, but earlier parallel commands did not return summaries and the full Pest/frontend/browser suites were not completed.
-- Risk/severity: T0 audit gap / **blocker** for release, not a business-code defect.
-- Likely components: all test suites and CI-equivalent commands.
-- Missing validation: full PHP suite, frontend unit/browser suites, selected end-to-end workflows, skipped-test accounting, and clean post-test diff.
-- Finalization: Wave 11 after targeted wave tests pass.
+- Domain/workflow/current state: test/release evidence; **VERIFIED RESOLVED** in Wave 0.6.
+- Evidence: `phpunit.xml` sets test-only memory to 512 MiB and Composer disables its process timeout only for the `test` script. Exact unmodified `composer test` completed: 1,986 passed, 2 skipped, 37,120 assertions; Pest 1,103.68 seconds, wall 18:27.94.
+- Risk/severity: T0/T1 baseline infrastructure and bounded UI regression repair / resolved.
+- Repairs: shared hidden form-control markup; stale eight-dependency dashboard test construction; semantic dashboard metric assertions preserving scope/count invariants; missing pending-sourcing report menu entry and translations; stale Sales-versus-Accounting report-group expectation.
+- Existing validation: all affected files passed targeted suites before the complete suite. The two skipped tests remain explicitly reported by Pest, not hidden.
+- Finalization: retain as baseline evidence for Wave 11; no open blocker remains under this finding.
 
 ## Wave 12 — Production Release Readiness
 
 ### REL-001 — Inspected database is behind the repository schema
 
 - Domain/workflow/current state: deployment/schema parity; **BLOCKED**.
-- Evidence: five pending migrations: users active unique indexes, products active unique indexes, overhead allocation tables, HR payroll financial chain, and cashbox counts.
+- Evidence: five pending migrations remain on the valuable source `mgypack`: users active unique indexes, products active unique indexes, overhead allocation tables, HR payroll financial chain, and cashbox counts. Wave 0.6 cloned the source read-only into `mgypack_wave0_baseline` and applied all five successfully as batch 32. Across 322 common tables, source and sandbox retained the same 69,010-row aggregate and identical per-table count hash. The source remained at 256 migration rows with all five pending; the sandbox has 261.
 - Risk/severity: T3 operational work / **blocker**. This is an environment gate, not evidence that production is behind or that migration code is defective.
-- Dependencies: duplicate/data preflight, backup/restore, staging rehearsal, Waves 4/7/11.
+- Dependencies: owner confirmation that the database is disposable/non-production, writer-free window, verified snapshot/restore, duplicate/data preflight, staging rehearsal, Waves 4/7/11.
 - Likely components: the five `2026_09_17_*` migrations and related reconciliation tests.
-- Missing validation: production-target status, migration review, duplicate counts, rollback/recovery, post-migration constraints/counts and financial reconciliation.
+- Missing validation: production-target status and populated-payroll behavior. Two index reconciliations have empty `down()` methods; snapshot restore, not blanket rollback, is the recovery plan. The sandbox source had no payroll rows, so a populated target requires fresh duplicate/backfill preflight and restore rehearsal.
+- Wave 1 dependency: **WAVE 1 DOES NOT DEPEND ON PENDING MIGRATIONS**. None changes Price List/Sales schema; the product target indexes already existed identically on the source. SAL-003 will require its own future migration.
 - Finalization: Wave 12 only under separately authorized release/migration procedures.
 
-### REL-002 — Production frontend build is environment-blocked
+### REL-002 — Production frontend build-script approval resolved
 
-- Domain/workflow/current state: release artifact build; **BLOCKED**.
-- Evidence: `pnpm run build` fails with `ERR_PNPM_IGNORED_BUILDS` because the esbuild build script is not approved in this environment.
-- Risk/severity: T0 environment/release gap / **blocker**.
-- Dependencies: authorized dependency/build policy; no package changes are authorized by this audit.
-- Missing validation: successful reproducible production build and generated artifact smoke test.
-- Finalization: Wave 12; resolve through approved environment/dependency governance.
+- Domain/workflow/current state: release artifact build; **VERIFIED RESOLVED** in Wave 0.5.
+- Evidence: `pnpm-workspace.yaml` now explicitly allows only `esbuild`; `pnpm rebuild esbuild` completed its 0.27.7 postinstall and `pnpm run build` completed with Vite 7.3.2, 54 transformed modules, and generated manifest/CSS/JS assets.
+- Risk/severity: T0 / low. No dependency version or lockfile change occurred.
+- Remaining validation: repeat the same build in CI/release infrastructure. No JS test, lint, or static-analysis script is configured in `package.json`.
+- Finalization: no business implementation required; retain the narrow project-local allowlist.
 
 Queue note: the global database queue has `after_commit=false`, but current inspected queued flows opt into after-commit individually. This is a governance hazard, not a confirmed defect or blocker. Wave 12 must inventory every `ShouldQueue` dispatch created inside transactions and prove rollback creates no external side effect before considering any global timing change.
 
@@ -257,6 +257,6 @@ No K-item is classified `VERIFIED ALREADY CORRECT`; runtime/code/test evidence w
 ## Release Gate Summary
 
 - Material findings: 20.
-- Severity blockers: 5 (`ACC-001`, `MAINT-001`, `TEST-001`, `REL-001`, `REL-002`).
+- Severity blockers: 3 (`ACC-001`, `MAINT-001`, `REL-001`). `REL-001` remains a production-release schema gate but is not a Wave 1 dependency.
 - T3 findings: 11 (`SAL-003`, `PUR-001`, `INV-001`, `COST-001`, `ACC-001`, `PROD-001`, `MAINT-001`, `FA-001`, `SEC-001`, `CLOSE-001`, `REL-001`).
-- Do not start Wave 1 until this Wave 0 backlog is accepted. Each implementation wave must apply `docs/erp/DEFINITION_OF_DONE.md`, preserve the named sources of truth, and stop before deployment or destructive data work unless separately authorized.
+- Wave 0.6 establishes a reliable baseline for Wave 1. Each implementation wave must apply `docs/erp/DEFINITION_OF_DONE.md`, preserve the named sources of truth, and stop before deployment or destructive data work unless separately authorized.

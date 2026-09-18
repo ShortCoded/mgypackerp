@@ -12,6 +12,10 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\PlasticsDashboardService;
 use Modules\Core\Services\ScreenDataVisibilityService;
+use Modules\Finance\Services\FinanceReportService;
+use Modules\Inventory\Services\InventoryReportService;
+use Modules\Production\Services\ProductionReportService;
+use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 
 test('authenticated layout uses one directional theme and one user stylesheet', function () {
     $response = $this->withSession(['locale' => 'en'])
@@ -214,6 +218,10 @@ test('dashboard product master data stays within its query budget', function () 
         Mockery::mock(DateFormatService::class),
         new NumericFormatService,
         $visibility,
+        Mockery::mock(InventoryReportService::class),
+        Mockery::mock(ProductionReportService::class),
+        Mockery::mock(ProcurementCycleReport::class),
+        Mockery::mock(FinanceReportService::class),
     );
     $dashboard = [
         'metrics' => [],

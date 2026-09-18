@@ -143,7 +143,7 @@
                                 <div class="card-body">
                                     <form id="payroll-payment-form" class="row g-2 align-items-end" data-url="{{ route('admin.hr.payroll-runs.payments.store', $selected['run']->id) }}">
                                         @csrf
-                                        <input type="hidden" name="idempotency_key" value="{{ $paymentIdempotencyKey }}">
+                                        <x-forms.input type="hidden" name="idempotency_key" value="{{ $paymentIdempotencyKey }}" />
                                         <div class="col-12 col-md-4">
                                             <x-forms.label for="payroll_cashbox" :label="__('hr_payroll.labels.cashbox')" :required="true" />
                                             <x-forms.select class="form-select" id="payroll_cashbox" name="cashbox_doc_num" required>

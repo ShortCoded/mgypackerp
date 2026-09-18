@@ -18,6 +18,7 @@
         </include>
     </source>
     <php>
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>
         <env name="APP_CONFIG_CACHE" value="/tmp/mgypack-erp-testing-config.php" force="true"/>
         <env name="APP_ROUTES_CACHE" value="/tmp/mgypack-erp-testing-routes.php" force="true"/>

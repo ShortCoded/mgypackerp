@@ -191,6 +191,7 @@ return [
                     $procurementReport('report_pending_purchase_requests', 'Pending Purchase Requests', 'pending_purchase_requests'),
                     $procurementReport('report_requested_vs_ordered', 'Requested vs Ordered', 'requested_vs_ordered'),
                     $procurementReport('report_rfq_quotation_status', 'RFQ / Quotation Status', 'rfq_quotation_status'),
+                    $procurementReport('report_pending_sourcing_actions', 'Pending RFQ / Quotation / Selection Actions', 'pending_sourcing_actions'),
                     $procurementReport('report_open_purchase_orders', 'Open Purchase Orders', 'open_purchase_orders'),
                     $procurementReport('report_purchase_order_status', 'Purchase Order Status', 'purchase_order_status'),
                     $procurementReport('report_partially_received_orders', 'Partially Received Orders', 'partially_received_orders'),

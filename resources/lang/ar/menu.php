@@ -23,6 +23,7 @@ return [
     'report_purchase_ledger' => 'دفتر المشتريات',
     'report_open_requirements' => 'احتياجات الشراء المفتوحة',
     'report_rfq_quotation_status' => 'حالة طلبات وعروض الأسعار',
+    'report_pending_sourcing_actions' => 'إجراءات طلبات وعروض الأسعار واختيار المورد المعلقة',
     'report_purchase_order_status' => 'حالة أوامر الشراء',
     'report_overdue_po_deliveries' => 'توريدات أوامر الشراء المتأخرة',
     'report_delivery_schedule' => 'جدول التوريد',

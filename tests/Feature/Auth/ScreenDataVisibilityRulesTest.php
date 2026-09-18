@@ -165,14 +165,14 @@ test('customer visibility rule restricts totals search select2 and direct routes
         ->assertOk()
         ->assertJsonPath('recordsTotal', 10);
 
-    $this->actingAs($actor)
+    $dashboard = $this->actingAs($actor)
         ->withSession($context['session'])
         ->get(route('dashboard'))
-        ->assertOk()
-        ->assertSeeInOrder([
-            __('dashboard.plastics.metrics.customers.title'),
-            '<div class="mb-1 fw-semibold text-900 plastics-dashboard-metric-value dt-number-value" dir="ltr">10</div>',
-        ], false);
+        ->assertOk();
+
+    expect($dashboard->getContent())->toMatch(
+        '/'.preg_quote(__('dashboard.plastics.metrics.customers.title'), '/').'.*?plastics-dashboard-metric-value[^>]*>\s*10\s*</s',
+    );
 
     $this->actingAs($actor)
         ->withSession($context['session'])
