@@ -9,8 +9,8 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
-use Modules\Accounting\Services\FinancialStatementQueryService;
 use Modules\Accounting\Services\FinancialAnalyticsReportService;
+use Modules\Accounting\Services\FinancialStatementQueryService;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
@@ -1861,6 +1861,7 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->assertOk()
         ->assertSee('Supplier A')
         ->assertSee('js-select2-ajax js-report-filter-control', false)
+        ->assertSee('data-minimum-input-length="0"', false)
         ->assertSee(__('ledger_reports.messages.partner_posted_source_only'))
         ->assertSee(__('ledger_reports.summary.prior'))
         ->assertSee(__('ledger_reports.summary.prior_details'))
@@ -1875,6 +1876,50 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->assertDontSee($supplierAccountA->codeNameLabel());
 
     expect($page->getContent())->toContain('data-url="'.route('admin.accounting.journal-entries.select2.suppliers').'"');
+
+    Supplier::query()->create([
+        'doc_number' => 99303,
+        'doc_num' => 'SUP-99303',
+        'company_id' => $context['company']->getKey(),
+        'name' => 'Inactive Supplier',
+        'status' => 'inactive',
+    ]);
+    $otherCompany = Company::query()->create([
+        'doc_number' => 99303,
+        'doc_num' => 'COMP-99303',
+        'name' => 'Other Supplier Company',
+        'status' => 'active',
+    ]);
+    Supplier::query()->create([
+        'doc_number' => 99304,
+        'doc_num' => 'SUP-99304',
+        'company_id' => $otherCompany->getKey(),
+        'name' => 'Other Company Supplier',
+        'status' => 'active',
+    ]);
+    config(['select2.pagination.per_page' => 1]);
+
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.journal-entries.select2.suppliers'))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $supplierA->doc_num)
+        ->assertJsonPath('pagination.more', true)
+        ->assertJsonMissing(['id' => 'SUP-99303'])
+        ->assertJsonMissing(['id' => 'SUP-99304']);
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.journal-entries.select2.suppliers', ['page' => 2]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', 'SUP-99302')
+        ->assertJsonPath('pagination.more', false);
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.journal-entries.select2.suppliers', ['q' => 'Supplier B']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', 'SUP-99302')
+        ->assertJsonPath('pagination.more', false);
+    $this->actingAs(User::factory()->create())
+        ->getJson(route('admin.accounting.journal-entries.select2.suppliers'))
+        ->assertForbidden();
+    $this->actingAs($actor);
 
     $this->get(route('admin.accounting.reports.supplier-statement.export.excel', $filters))
         ->assertOk()

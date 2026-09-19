@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'title' => 'Price Lists', 'create' => 'Create Price List', 'automatic_code' => 'Generated automatically',
+    'title' => 'Price Lists', 'create' => 'Create Price List', 'clone' => 'Clone Price List', 'clone_from' => 'Clone :document', 'automatic_code' => 'Generated automatically',
     'help' => 'Define general or customer-specific sales prices and the allowed discount limits.',
     'form_help' => 'Prices use the product base unit and are converted automatically for equivalent units in sales documents.',
     'search' => 'Search by code or customer', 'empty' => 'No price lists found.',
@@ -10,6 +10,7 @@ return [
     'general' => 'General price list', 'open_ended' => 'Open-ended', 'customer_help' => 'Leave customer empty to make this a general list.',
     'valid_until_help' => 'Optional; leave empty for an open-ended list.', 'base_unit_help' => 'Prices and fixed discount limits are per base unit.',
     'add_item' => 'Add item', 'no_discount' => 'No discount', 'percentage' => 'Percentage', 'fixed' => 'Fixed value',
+    'actions' => ['clone' => 'Clone', 'increase' => 'Increase by percentage'],
     'select_all' => 'Select all visible price lists', 'bulk_action' => 'Bulk action for price lists',
     'fields' => [
         'code' => 'Code', 'date' => 'Date', 'customer' => 'Customer (optional)', 'currency' => 'Currency',
@@ -20,10 +21,15 @@ return [
     'validation' => [
         'customer' => 'The customer is not valid for the operating company.', 'currency' => 'The currency is not valid for the operating company.',
         'product' => 'The product is not sales eligible for the operating company.', 'percentage' => 'The allowed discount percentage cannot exceed 100%.',
+        'increase_percentage' => 'Enter a positive percentage with no more than four decimal places.',
+        'increase_percentage_max' => 'The percentage may not exceed 1000%.',
     ],
     'messages' => [
         'created' => 'Price list created.', 'updated' => 'Price list updated.', 'deleted' => 'Price list deleted.',
         'restored' => 'Price list restored.', 'restore_not_allowed' => 'The price list is not deleted.',
+        'increased' => 'Price list prices increased.', 'no_lines_to_increase' => 'The price list has no prices to increase.',
+        'increase_title' => 'Increase all prices?', 'increase_text' => 'Enter the percentage for :document. Every price in this list will be changed.',
+        'increase_placeholder' => 'Percentage (for example, 5)', 'increase_confirm_yes' => 'Increase all prices',
         'bulk_deleted' => ':count price lists deleted.',
         'delete_confirm_title' => 'Delete price list?', 'delete_confirm_text' => 'The list will move to trash and can be restored later.', 'delete_confirm_yes' => 'Yes, delete',
         'bulk_delete_confirm_title' => 'Delete selected price lists?', 'bulk_delete_confirm_text' => ':count price lists will move to trash.', 'bulk_delete_confirm_yes' => 'Yes, delete selected',

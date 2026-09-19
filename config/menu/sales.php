@@ -89,6 +89,7 @@ return [
                 'actions' => [
                     'view' => 'price_lists.view',
                     'create' => 'price_lists.create',
+                    'clone' => 'price_lists.clone',
                     'edit' => 'price_lists.edit',
                     'delete' => 'price_lists.delete',
                     'view_trashed' => 'price_lists.view_trashed',

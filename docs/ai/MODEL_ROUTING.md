@@ -45,10 +45,10 @@ These identifiers were validated in the local pilot. Refresh the tool inventory 
 | --- | --- | --- | --- |
 | `orchestrator` | `gpt-5.6-sol`, medium | `opencode/muse-spark-1.3-contributor-free#medium` | Standard strong |
 | `explorer` | `gpt-5.6-terra`, medium | `opencode/ling-3.0-flash-fin-free` (no variants exposed) | Efficient |
-| `worker` | `gpt-5.6-sol`, medium | `opencode/muse-spark-1.3-contributor-free#medium` | Reliable coding |
-| `deep_worker` | `gpt-5.6-sol`, high | `opencode/muse-spark-1.3-contributor-free#high` | Deep |
-| `reviewer` | `gpt-5.6-terra`, high | `opencode/muse-spark-1.3-contributor-free#high` | Strong independent review |
-| `critical_reviewer` | `gpt-5.6-sol`, high | `opencode/muse-spark-1.3-contributor-free#high` | Strong independent review |
+| `worker` | `gpt-5.6-sol`, medium | `opencode/mimo-v2.5-free` (no variants exposed) | Reliable coding |
+| `deep_worker` | `gpt-5.6-sol`, high | `opencode/mimo-v2.5-free` (no variants exposed) | Deep |
+| `reviewer` | `gpt-5.6-terra`, high | `opencode/mimo-v2.5-free` (no variants exposed) | Strong independent review |
+| `critical_reviewer` | `gpt-5.6-sol`, high | `opencode/mimo-v2.5-free` (no variants exposed) | Strong independent review |
 | `qa` | `gpt-5.6-terra`, medium | `opencode/ling-3.0-flash-fin-free` (no variants exposed) | Efficient verification |
 
 Review independence requires a fresh context and a review-only purpose. A different model family is preferred when its verified capability is appropriate, but independence must not be faked with an unverified model or variant.

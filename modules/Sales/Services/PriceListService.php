@@ -16,6 +16,7 @@ class PriceListService
     public function __construct(
         private readonly DocumentNumberService $documents,
         private readonly CrudAuditService $audit,
+        private readonly SalesAmountService $amounts,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -84,6 +85,31 @@ class PriceListService
             $this->audit->restore($record, auth()->id());
 
             return $record->refresh();
+        });
+    }
+
+    public function increaseByPercentage(PriceList $record, string $percentage, int $companyId): PriceList
+    {
+        abort_unless((int) $record->company_id === $companyId, 404);
+
+        return DB::transaction(function () use ($record, $percentage, $companyId): PriceList {
+            $locked = PriceList::query()->forCompany($companyId)->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
+            $lines = $locked->lines()->lockForUpdate()->get();
+
+            if ($lines->isEmpty()) {
+                throw new DomainException(__('price_lists.messages.no_lines_to_increase'));
+            }
+
+            $multiplier = $this->amounts->add(1, $this->amounts->multiply($percentage, '0.01', 8), 8);
+
+            foreach ($lines as $line) {
+                $newPrice = $this->amounts->round($this->amounts->multiply($line->unit_price, $multiplier, 8));
+                $line->forceFill(['unit_price' => $newPrice])->save();
+            }
+
+            $this->audit->touchUpdateAudit($locked);
+
+            return $locked->refresh()->load(['customer', 'currency', 'lines.product']);
         });
     }
 

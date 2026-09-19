@@ -2,6 +2,9 @@
   "$schema": "https://opencode.ai/config.json",
   "model": "opencode/muse-spark-1.3-contributor-free",
   "default_agent": "orchestrator",
+  "plugins": [
+    "-opencode.provider.vllm"
+  ],
   "mcp": {
     "servers": {
       "laravel-boost": {
@@ -10,12 +13,7 @@
           "php",
           "artisan",
           "boost:mcp"
-        ],
-        "disabled": false,
-        "timeout": {
-          "catalog": 30000,
-          "execution": 30000
-        }
+        ]
       }
     }
   },
@@ -99,6 +97,61 @@
       "action": "external_directory",
       "resource": "*",
       "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git push *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "git reset --hard *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "git clean *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "rm -rf *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*deploy*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:fresh *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:reset *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:refresh *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan migrate:rollback *",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "php artisan db:wipe *",
+      "effect": "deny"
     },
     {
       "action": "skill",

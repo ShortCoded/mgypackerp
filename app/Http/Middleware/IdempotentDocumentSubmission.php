@@ -4,6 +4,8 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Services\OperatingContextService;
@@ -16,10 +18,15 @@ class IdempotentDocumentSubmission
      *
      * @param  Closure(Request): (Response)  $next
      */
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string $mode = 'optional'): Response
     {
         $token = $request->input('_submission_token', $request->header('Idempotency-Key'));
-        if (! $request->isMethod('POST') || ! $token) {
+        if (! $request->isMethod('POST')) {
+            return $next($request);
+        }
+        if (! $token) {
+            abort_if($mode === 'required', 422, __('The document submission token is invalid.'));
+
             return $next($request);
         }
         abort_unless(is_string($token) && Str::isUuid($token), 422, __('The document submission token is invalid.'));
@@ -30,8 +37,13 @@ class IdempotentDocumentSubmission
         abort_unless($context['company_id'] && $request->user(), 403);
         $identity = ['company_id' => $context['company_id'], 'user_id' => $request->user()->getKey(),
             'operation' => (string) $request->route()?->getName(), 'token' => $token];
-        $hash = hash('sha256', json_encode([$request->path(), $context['branch_id'], $context['financial_period_id'],
-            $request->except(['_token', '_submission_token'])], JSON_THROW_ON_ERROR));
+        $hash = hash('sha256', json_encode($this->canonicalize([
+            'path' => $request->path(),
+            'branch_id' => $context['branch_id'],
+            'financial_period_id' => $context['financial_period_id'],
+            'input' => Arr::except($request->input(), ['_token', '_submission_token']),
+            'files' => $request->allFiles(),
+        ]), JSON_THROW_ON_ERROR));
 
         return DB::transaction(function () use ($identity, $hash, $request, $next): Response {
             DB::table('document_submissions')->insertOrIgnore([...$identity, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now()]);
@@ -54,5 +66,32 @@ class IdempotentDocumentSubmission
 
             return $response;
         }, 3);
+    }
+
+    private function canonicalize(mixed $value): mixed
+    {
+        if ($value instanceof UploadedFile) {
+            $path = $value->getRealPath();
+
+            return [
+                'original_name' => $value->getClientOriginalName(),
+                'client_mime_type' => $value->getClientMimeType(),
+                'size' => $value->getSize(),
+                'upload_error' => $value->getError(),
+                'content_sha256' => is_string($path) && is_file($path) && is_readable($path)
+                    ? hash_file('sha256', $path)
+                    : null,
+            ];
+        }
+
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map(fn (mixed $item): mixed => $this->canonicalize($item), $value);
     }
 }

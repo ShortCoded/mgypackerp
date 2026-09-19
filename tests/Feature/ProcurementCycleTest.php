@@ -27,6 +27,7 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
+use Modules\Finance\Services\FinanceReportService;
 use Modules\HR\Models\HrArea;
 use Modules\HR\Models\HrCity;
 use Modules\HR\Models\HrCountry;
@@ -1025,19 +1026,113 @@ test('bank and issued cheque supplier payments use canonical finance records and
         'allocations' => [['purchase_invoice_doc_num' => $invoice->doc_num, 'amount' => 4]],
     ]);
     $bankPayment = $settlement->approveSupplierPayment($bankPayment);
+    $repeatedApproval = $settlement->approveSupplierPayment($bankPayment);
     $bankJournal = $bankPayment->journalEntry()->with('lines')->firstOrFail();
-
+    $ledgerFilters = [
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'from_date' => $fixture['period']->from_date->toDateString(),
+        'to_date' => $fixture['period']->to_date->toDateString(),
+    ];
+    $supplierLedger = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $supplierAccount->getKey()]);
+    $bankLedger = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $bankAccountGl->getKey()]);
+    $bankStatement = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'from_date' => now()->startOfMonth()->toDateString(),
+        'to_date' => now()->endOfMonth()->toDateString(),
+        'bank_account_doc_num' => $bankAccount->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ]);
     expect($bankPayment->status)->toBe(SupplierPaymentContext::StatusApproved)
+        ->and($repeatedApproval->journal_entry_id)->toBe($bankJournal->getKey())
+        ->and(JournalEntry::query()->where('source_type', 'supplier_payment')->where('source_id', $bankPayment->getKey())->count())->toBe(1)
         ->and($bankPayment->cash_voucher_id)->toBeNull()
         ->and($bankPayment->bank_account_id)->toBe($bankAccount->getKey())
-        ->and((float) $bankJournal->lines->sum('debit_amount'))->toBe(4.0)
-        ->and((float) $bankJournal->lines->sum('credit_amount'))->toBe(4.0)
+        ->and($bankJournal->source_type)->toBe('supplier_payment')
+        ->and($bankJournal->source_id)->toBe($bankPayment->getKey())
+        ->and($bankJournal->source_doc_num)->toBe($bankPayment->doc_num)
+        ->and($bankJournal->company_id)->toBe($fixture['company']->getKey())
+        ->and($bankJournal->financial_period_id)->toBe($fixture['period']->getKey())
+        ->and($bankJournal->branch_id)->toBe($fixture['branch']->getKey())
+        ->and($bankJournal->currency_id)->toBe($fixture['currency']->getKey())
+        ->and($bankJournal->entry_date->toDateString())->toBe(now()->toDateString())
+        ->and($bankJournal->lines)->toHaveCount(2)
+        ->and($bankJournal->lines->firstWhere('account_id', $supplierAccount->getKey())?->debit_amount)->toBe('4.0000')
+        ->and($bankJournal->lines->firstWhere('account_id', $supplierAccount->getKey())?->supplier_id)->toBe($fixture['firstSupplier']->getKey())
+        ->and($bankJournal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->credit_amount)->toBe('4.0000')
         ->and($bankJournal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->bank_account_id)->toBe($bankAccount->getKey())
+        ->and($supplierLedger['period'])->toBe(['debit' => '4.0000', 'credit' => '0.0000'])
+        ->and($bankLedger['period'])->toBe(['debit' => '0.0000', 'credit' => '4.0000'])
+        ->and($bankStatement['rows'])->toHaveCount(1)
+        ->and($bankStatement['rows']->first()['document'])->toBe($bankPayment->doc_num)
+        ->and($bankStatement['rows']->first()['receipt'])->toBe('0.0000')
+        ->and($bankStatement['rows']->first()['payment'])->toBe('4.0000')
+        ->and(app(FinanceReportService::class)->report([
+            'type' => FinanceReportService::BankAccountStatement,
+            'from_date' => now()->addDay()->toDateString(),
+            'to_date' => now()->addDay()->toDateString(),
+            'bank_account_doc_num' => $bankAccount->doc_num,
+        ])['rows'])->toBeEmpty()
+        ->and(app(FinanceReportService::class)->report([
+            'type' => FinanceReportService::BankAccountStatement,
+            'from_date' => now()->startOfMonth()->toDateString(),
+            'to_date' => now()->endOfMonth()->toDateString(),
+            'bank_account_doc_num' => 'BANK-OUT-OF-SCOPE',
+        ])['rows'])->toBeEmpty()
+        ->and(app(FinanceReportService::class)->report([
+            'type' => FinanceReportService::BankAccountStatement,
+            'from_date' => now()->startOfMonth()->toDateString(),
+            'to_date' => now()->endOfMonth()->toDateString(),
+            'currency_doc_num' => 'CUR-OUT-OF-SCOPE',
+        ])['rows'])->toBeEmpty()
         ->and($invoice->fresh()->paid_amount)->toBe('4.0000');
 
     $settlement->cancelSupplierPayment($bankPayment, 'Bank payment recalled.');
+    $settlement->cancelSupplierPayment($bankPayment, 'Duplicate cancellation request.');
+    $bankReversal = JournalEntry::query()->with('lines')
+        ->where('source_type', 'supplier_payment_reversal')
+        ->where('source_id', $bankPayment->getKey())
+        ->sole();
+    $supplierLedger = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $supplierAccount->getKey()]);
+    $bankLedger = app(LedgerQueryService::class)->accountLedger([...$ledgerFilters, 'account_id' => $bankAccountGl->getKey()]);
+    $bankStatement = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'from_date' => now()->startOfMonth()->toDateString(),
+        'to_date' => now()->endOfMonth()->toDateString(),
+        'bank_account_doc_num' => $bankAccount->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ]);
+    $bankBalances = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountBalances,
+        'as_of_date' => now()->endOfMonth()->toDateString(),
+        'bank_account_doc_num' => $bankAccount->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ]);
+
     expect($bankPayment->fresh()->status)->toBe(SupplierPaymentContext::StatusCancelled)
-        ->and($bankJournal->fresh()->reversed_entry_id)->not->toBeNull()
+        ->and($bankJournal->fresh()->reversed_entry_id)->toBe($bankReversal->getKey())
+        ->and(JournalEntry::query()->where('source_type', 'supplier_payment_reversal')->where('source_id', $bankPayment->getKey())->count())->toBe(1)
+        ->and($bankReversal->source_doc_num)->toBe($bankPayment->doc_num)
+        ->and($bankReversal->company_id)->toBe($bankJournal->company_id)
+        ->and($bankReversal->branch_id)->toBe($bankJournal->branch_id)
+        ->and($bankReversal->currency_id)->toBe($bankJournal->currency_id)
+        ->and($bankReversal->lines)->toHaveCount(2)
+        ->and($bankReversal->lines->firstWhere('account_id', $supplierAccount->getKey())?->credit_amount)->toBe('4.0000')
+        ->and($bankReversal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->debit_amount)->toBe('4.0000')
+        ->and($bankReversal->lines->firstWhere('account_id', $bankAccountGl->getKey())?->bank_account_id)->toBe($bankAccount->getKey())
+        ->and($supplierLedger['period'])->toBe(['debit' => '4.0000', 'credit' => '4.0000'])
+        ->and($supplierLedger['ending'])->toBe(['debit' => '0.0000', 'credit' => '0.0000'])
+        ->and($bankLedger['period'])->toBe(['debit' => '4.0000', 'credit' => '4.0000'])
+        ->and($bankLedger['ending'])->toBe(['debit' => '0.0000', 'credit' => '0.0000'])
+        ->and($bankStatement['rows'])->toHaveCount(2)
+        ->and($bankStatement['rows']->pluck('document')->all())->toBe([$bankPayment->doc_num, $bankPayment->doc_num])
+        ->and($bankStatement['rows']->sum(fn (array $row): float => (float) $row['receipt']))->toBe(4.0)
+        ->and($bankStatement['rows']->sum(fn (array $row): float => (float) $row['payment']))->toBe(4.0)
+        ->and($bankStatement['rows']->last()['balance'])->toBe('0.0000')
+        ->and($bankBalances['rows'])->toHaveCount(1)
+        ->and($bankBalances['rows']->first()['receipts'])->toBe('4.0000')
+        ->and($bankBalances['rows']->first()['payments'])->toBe('4.0000')
+        ->and($bankBalances['rows']->first()['balance'])->toBe('0.0000')
         ->and($invoice->fresh()->paid_amount)->toBe('0.0000');
 
     $chequePayment = $settlement->createSupplierPayment([
@@ -1133,6 +1228,64 @@ test('bank and issued cheque supplier payments use canonical finance records and
         ->assertHeader('content-type', 'application/pdf')
         ->assertHeader('content-disposition');
     expect(str_starts_with($chequePdf->getContent(), '%PDF-'))->toBeTrue();
+
+    $orphanJournal = JournalEntry::query()->create([
+        ...app(DocumentNumberService::class)->next('journal_entries', JournalEntry::class),
+        'entry_date' => now()->toDateString(),
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => 1,
+        'description' => 'Legacy orphan supplier payment',
+        'source_type' => 'supplier_payment',
+        'source_id' => 999999,
+        'source_doc_num' => null,
+        'status' => JournalEntry::StatusPosted,
+        'is_system_generated' => true,
+        'is_posted' => true,
+        'posted_at' => now(),
+        'approved' => true,
+        'approved_at' => now(),
+    ]);
+    $orphanJournal->lines()->createMany([[
+        'line_no' => 1,
+        'account_id' => $supplierAccount->getKey(),
+        'debit_amount' => 2,
+        'credit_amount' => 0,
+        'supplier_id' => $fixture['firstSupplier']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [
+        'line_no' => 2,
+        'account_id' => $bankAccountGl->getKey(),
+        'debit_amount' => 0,
+        'credit_amount' => 2,
+        'supplier_id' => $fixture['firstSupplier']->getKey(),
+        'bank_account_id' => $bankAccount->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ]]);
+    $bankAccount->delete();
+    $fixture['currency']->delete();
+
+    $historicalBankStatement = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'from_date' => now()->startOfMonth()->toDateString(),
+        'to_date' => now()->endOfMonth()->toDateString(),
+        'bank_account_doc_num' => $bankAccount->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ]);
+    $orphanRow = $historicalBankStatement['rows']->firstWhere('document', $orphanJournal->doc_num);
+    $filterOptions = app(FinanceReportService::class)->filterOptions();
+
+    expect($historicalBankStatement['rows']->pluck('document')->all())
+        ->toContain($bankPayment->doc_num, $orphanJournal->doc_num)
+        ->and($historicalBankStatement['rows']->first()['bank_account'])->toContain($bankAccount->doc_num)
+        ->and($historicalBankStatement['rows']->first()['currency'])->toBe($fixture['currency']->code)
+        ->and($orphanRow)->not->toBeNull()
+        ->and($orphanRow['_url'])->toBe('')
+        ->and($orphanRow['payment'])->toBe('2.0000')
+        ->and($filterOptions['bank_accounts']->pluck('doc_num'))->not->toContain($bankAccount->doc_num)
+        ->and($filterOptions['currencies']->pluck('doc_num'))->not->toContain($fixture['currency']->doc_num);
 });
 
 test('freight discount tax posting, invoice reversal, and period locks are exact', function () {

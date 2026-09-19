@@ -69,7 +69,7 @@ Migration sandbox matrix:
 
 ## Evidence-Based Domain Notes
 
-- **Sales:** pricing snapshots and centralized resolution exist. Clone, percentage adjustment, print-only semantics, and Price List outputs are absent. Sales report totals and document signatures are incomplete.
+- **Sales:** pricing snapshots and centralized resolution exist. Wave 1A added verified Price List clone and transactional percentage adjustment with scoped authorization, locking, audit, rollback, decimal rounding, and snapshot-invariance coverage. Print-only semantics and Price List outputs remain absent; Sales report totals and document signatures remain incomplete.
 - **Purchases:** bank supplier-payment posting/reversal exists through the canonical journal path. Exact supplier statement, bank statement, AP and GL equality remains unverified.
 - **Inventory:** posted inventory transactions are the quantity ledger and posted line cost is book cost. The aggregate monetary valuation/reporting requirement remains incomplete; do not substitute selling price or method simulations.
 - **Accounts & Costing:** generic approved cash vouchers are visible in cashbox reporting without a canonical journal, producing a confirmed dual truth and a period-close blocker.

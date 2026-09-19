@@ -1,13 +1,19 @@
 <?php
 
+use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\PriceList;
+use Modules\Sales\Models\PriceListLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\PriceListPricingService;
+use Modules\Sales\Services\PriceListService;
+use Modules\Sales\Services\SalesAmountService;
 use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/../SalesCycleSupport.php';
@@ -43,6 +49,20 @@ function priceListDataTableQuery(string $trashFilter = 'active'): array
         'order' => [['column' => 1, 'dir' => 'desc']],
         'columns' => array_map(fn (array $column): array => [...$column, 'search' => ['value' => '', 'regex' => 'false']], $columns),
         'trash_filter' => $trashFilter,
+    ];
+}
+
+/** @return array<string, mixed> */
+function priceListStorePayload(array $fixture, array $lines): array
+{
+    return [
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'price_list_date' => '2026-09-19',
+        'valid_from' => '2026-09-19',
+        'valid_until' => '2026-12-31',
+        'notes' => 'Wave 1A price list',
+        'lines' => $lines,
     ];
 }
 
@@ -222,7 +242,7 @@ test('price list permissions are seeded for admin and expose the screen without 
     $this->seed(PermissionSeeder::class);
 
     $admin = Role::query()->where('name', 'admin')->where('guard_name', 'web')->firstOrFail();
-    foreach (['price_lists.view', 'price_lists.create', 'price_lists.edit', 'price_lists.delete', 'price_lists.view_trashed', 'price_lists.restore'] as $permission) {
+    foreach (['price_lists.view', 'price_lists.create', 'price_lists.clone', 'price_lists.edit', 'price_lists.delete', 'price_lists.view_trashed', 'price_lists.restore'] as $permission) {
         expect(Permission::query()->where('name', $permission)->where('guard_name', 'web')->exists())->toBeTrue()
             ->and($admin->hasPermissionTo($permission))->toBeTrue();
     }
@@ -361,4 +381,167 @@ test('price list create and edit forms expose and honor the standard save destin
     $payload['submit_action'] = 'save_new';
     $this->post(route('admin.sales.price-lists.store'), $payload)
         ->assertRedirect(route('admin.sales.price-lists.create'));
+});
+
+test('price list clone copies business data and ordered lines into an independent new document', function (): void {
+    $fixture = salesCycleFixture();
+    foreach (['price_lists.view', 'price_lists.create', 'price_lists.clone'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $sourceCreator = User::factory()->create();
+    $source = createSalesPriceList($fixture, $fixture['customer']->getKey(), [
+        ['product' => $fixture['finished'], 'price' => '10.0050', 'discount_type' => 'percentage', 'discount_value' => '7.5'],
+        ['product' => $fixture['service'], 'price' => '20', 'discount_type' => 'fixed', 'discount_value' => '2'],
+    ], '2026-09-01');
+    $source->forceFill(['valid_until' => '2026-12-31', 'notes' => 'Source notes', 'created_by' => $sourceCreator->getKey()])->save();
+    $sourceSnapshot = $source->fresh()->toArray();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $this->get(route('admin.sales.price-lists.clone', $source))
+        ->assertOk()
+        ->assertSee(__('price_lists.clone_from', ['document' => $source->doc_num]))
+        ->assertSee(__('price_lists.automatic_code'))
+        ->assertSee('10.0050');
+
+    $payload = priceListStorePayload($fixture, [
+        ['product_doc_num' => $fixture['finished']->doc_num, 'unit_price' => '10.0050', 'allowed_discount_type' => 'percentage', 'allowed_discount_value' => '7.5'],
+        ['product_doc_num' => $fixture['service']->doc_num, 'unit_price' => '20', 'allowed_discount_type' => 'fixed', 'allowed_discount_value' => '2'],
+    ]);
+    $payload['price_list_date'] = '2026-09-01';
+    $payload['valid_from'] = '2026-09-01';
+    $payload['notes'] = 'Source notes';
+    $this->post(route('admin.sales.price-lists.store'), $payload)->assertRedirect();
+
+    $clone = PriceList::query()->whereKeyNot($source->getKey())->sole();
+    expect($clone->getKey())->not->toBe($source->getKey())
+        ->and($clone->doc_num)->not->toBe($source->doc_num)
+        ->and($clone->company_id)->toBe($source->company_id)
+        ->and($clone->customer_id)->toBe($source->customer_id)
+        ->and($clone->currency_id)->toBe($source->currency_id)
+        ->and($clone->price_list_date->toDateString())->toBe($source->price_list_date->toDateString())
+        ->and($clone->valid_from->toDateString())->toBe($source->valid_from->toDateString())
+        ->and($clone->valid_until->toDateString())->toBe($source->valid_until->toDateString())
+        ->and($clone->notes)->toBe($source->notes)
+        ->and($clone->created_by)->toBe($fixture['user']->getKey())
+        ->and($clone->updated_by)->toBeNull()
+        ->and($clone->lines->pluck('product_id')->all())->toBe([$fixture['finished']->getKey(), $fixture['service']->getKey()])
+        ->and($clone->lines->pluck('unit_price')->all())->toBe(['10.0050', '20.0000'])
+        ->and($clone->lines->pluck('allowed_discount_value')->all())->toBe(['7.5000', '2.0000'])
+        ->and($source->fresh()->toArray())->toBe($sourceSnapshot);
+
+    $clone->lines()->firstOrFail()->update(['unit_price' => '99']);
+    expect($source->lines()->firstOrFail()->unit_price)->toBe('10.0050');
+});
+
+test('price list clone is authorized company scoped and create rollback is atomic', function (): void {
+    $fixture = salesCycleFixture();
+    $source = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    Permission::findOrCreate('price_lists.clone', 'web');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $this->get(route('admin.sales.price-lists.clone', $source))->assertForbidden();
+    $fixture['user']->givePermissionTo('price_lists.clone');
+    $otherCompanySession = [...salesCycleSession($fixture), OperatingContextService::CompanyIdKey => 999999];
+    $this->withSession($otherCompanySession)->get(route('admin.sales.price-lists.clone', $source))->assertNotFound();
+
+    $beforeLists = PriceList::query()->count();
+    $beforeLines = PriceListLine::query()->count();
+    $payload = priceListStorePayload($fixture, [
+        ['product_doc_num' => $fixture['finished']->doc_num, 'unit_price' => '10', 'allowed_discount_type' => null, 'allowed_discount_value' => 0],
+        ['product_doc_num' => 'missing-product', 'unit_price' => '20', 'allowed_discount_type' => null, 'allowed_discount_value' => 0],
+    ]);
+
+    expect(fn () => app(PriceListService::class)->create($payload, $fixture['company']->getKey()))
+        ->toThrow(ModelNotFoundException::class);
+    expect(PriceList::query()->count())->toBe($beforeLists)
+        ->and(PriceListLine::query()->count())->toBe($beforeLines);
+});
+
+test('price list percentage increase uses canonical four decimal rounding and updates audit only', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('price_lists.edit', 'web');
+    $fixture['user']->givePermissionTo('price_lists.edit');
+    $list = createSalesPriceList($fixture, null, [
+        ['product' => $fixture['finished'], 'price' => '10.0050', 'discount_type' => 'percentage', 'discount_value' => '7.5'],
+        ['product' => $fixture['service'], 'price' => '20', 'discount_type' => 'fixed', 'discount_value' => '2'],
+    ]);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '5'])
+        ->assertOk()->assertJsonPath('success', true);
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.5053', '21.0000'])
+        ->and($list->lines->pluck('allowed_discount_value')->all())->toBe(['7.5000', '2.0000'])
+        ->and($list->fresh()->updated_by)->toBe($fixture['user']->getKey());
+
+    $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '2.5'])->assertOk();
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.7679', '21.5250']);
+});
+
+test('price list percentage validation authorization scope and empty-list rules are enforced', function (string $percentage): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('price_lists.edit', 'web');
+    $list = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => $percentage])->assertForbidden();
+    $fixture['user']->givePermissionTo('price_lists.edit');
+    $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => $percentage])
+        ->assertUnprocessable()->assertJsonValidationErrors('percentage');
+
+    $otherCompanySession = [...salesCycleSession($fixture), OperatingContextService::CompanyIdKey => 999999];
+    $this->withSession($otherCompanySession)
+        ->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '5'])->assertNotFound();
+
+    $empty = PriceList::query()->create([
+        'doc_number' => 999, 'doc_num' => 'PL-EMPTY', 'company_id' => $fixture['company']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(), 'price_list_date' => '2026-09-19', 'valid_from' => '2026-09-19',
+    ]);
+    $this->withSession(salesCycleSession($fixture))
+        ->postJson(route('admin.sales.price-lists.increase-by-percentage', $empty), ['percentage' => '5'])
+        ->assertUnprocessable()->assertJsonPath('message', __('price_lists.messages.no_lines_to_increase'));
+})->with(['zero' => '0', 'negative' => '-1', 'malformed' => 'five', 'too precise' => '1.00001', 'out of range' => '1000.0001']);
+
+test('price list percentage increase rolls back all lines when a later line fails', function (): void {
+    $fixture = salesCycleFixture();
+    $list = createSalesPriceList($fixture, null, [
+        ['product' => $fixture['finished'], 'price' => '10'],
+        ['product' => $fixture['service'], 'price' => '20'],
+    ]);
+    $amounts = Mockery::mock(SalesAmountService::class)->makePartial();
+    $calls = 0;
+    $amounts->shouldReceive('multiply')->andReturnUsing(function ($left, $right, int $scale = 4) use (&$calls): string {
+        $calls++;
+        if ($calls === 3) {
+            throw new RuntimeException('Injected second-line failure');
+        }
+
+        return bcmul((string) $left, (string) $right, $scale);
+    });
+    app()->instance(SalesAmountService::class, $amounts);
+
+    expect(fn () => app(PriceListService::class)->increaseByPercentage($list, '5', $fixture['company']->getKey()))
+        ->toThrow(RuntimeException::class, 'Injected second-line failure');
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.0000', '20.0000'])
+        ->and($list->fresh()->updated_by)->toBeNull();
+});
+
+test('price list percentage increase does not reprice an existing invoice snapshot', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('price_lists.edit', 'web');
+    $fixture['user']->givePermissionTo('price_lists.edit');
+    $list = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '25']]);
+    $invoice = app(CustomerInvoiceService::class)->createDirect([
+        'company_id' => $fixture['company']->id, 'financial_period_id' => $fixture['period']->id, 'branch_id' => $fixture['branch']->id,
+        'customer_doc_num' => $fixture['customer']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'invoice_date' => now()->toDateString(), 'due_date' => now()->toDateString(), 'exchange_rate' => 1,
+        'lines' => [['product_doc_num' => $fixture['finished']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => 1, 'unit_price' => 999, 'discount_amount' => 0, 'tax_amount' => 0]],
+    ]);
+    $snapshotLine = $invoice->lines->sole();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
+        ->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '10'])->assertOk();
+
+    expect($list->fresh()->lines->sole()->unit_price)->toBe('27.5000')
+        ->and($snapshotLine->fresh()->unit_price)->toBe('25.0000')
+        ->and($snapshotLine->price_list_line_id)->toBe($list->lines()->sole()->getKey());
 });

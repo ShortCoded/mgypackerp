@@ -22,10 +22,13 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
-  - action: laravel_boost_search_docs
+  - action: execute
     resource: "*"
     effect: allow
-  - action: laravel_boost_application_info
+  - action: laravel-boost_search-docs
+    resource: "*"
+    effect: allow
+  - action: laravel-boost_application-info
     resource: "*"
     effect: allow
   - action: shell

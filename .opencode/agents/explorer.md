@@ -34,22 +34,25 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
-  - action: laravel_boost_search_docs
+  - action: execute
     resource: "*"
     effect: allow
-  - action: laravel_boost_application_info
+  - action: laravel-boost_search-docs
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_schema
+  - action: laravel-boost_application-info
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_query
+  - action: laravel-boost_database-schema
     resource: "*"
     effect: allow
-  - action: laravel_boost_browser_logs
+  - action: laravel-boost_database-query
     resource: "*"
     effect: allow
-  - action: laravel_boost_get_absolute_url
+  - action: laravel-boost_browser-logs
+    resource: "*"
+    effect: allow
+  - action: laravel-boost_get-absolute-url
     resource: "*"
     effect: allow
   - action: shell

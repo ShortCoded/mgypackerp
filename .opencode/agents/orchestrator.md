@@ -26,7 +26,7 @@ permissions:
     effect: allow
   - action: shell
     resource: "*"
-    effect: ask
+    effect: allow
   - action: shell
     resource: "git status *"
     effect: allow
@@ -41,6 +41,30 @@ permissions:
     effect: deny
   - action: shell
     resource: "*deploy*"
+    effect: deny
+  - action: shell
+    resource: "git reset --hard *"
+    effect: deny
+  - action: shell
+    resource: "git clean *"
+    effect: deny
+  - action: shell
+    resource: "rm -rf *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:fresh *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:reset *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:refresh *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:rollback *"
+    effect: deny
+  - action: shell
+    resource: "php artisan db:wipe *"
     effect: deny
 ---
 

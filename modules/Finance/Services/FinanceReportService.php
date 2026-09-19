@@ -5,6 +5,7 @@ namespace Modules\Finance\Services;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -664,14 +665,53 @@ class FinanceReportService
                 $rows->push($this->bankMovementRow($receipt->bankAccount, $receipt->currency_id, $receipt->currency?->code, $receipt->receipt_date, $receipt->doc_num, $this->value('customer_receipt'), $receipt->customer?->name ?? '', $receipt->status, (string) $receipt->amount, '0.0000', route('admin.sales.customer-receipts.show', $receipt)));
             });
 
-        SupplierPaymentContext::query()->where('company_id', $companyId)->where('status', SupplierPaymentContext::StatusApproved)
-            ->whereNotNull('bank_account_id')->whereNull('cheque_id')->whereDate('payment_date', '<=', $through)
-            ->with(['bankAccount', 'currency', 'supplier'])->get()->each(function (SupplierPaymentContext $payment) use ($bankDocNum, $currencyDocNum, $rows): void {
-                if (($bankDocNum && $payment->bankAccount?->doc_num !== $bankDocNum) || ($currencyDocNum && $payment->currency?->doc_num !== $currencyDocNum)) {
+        $supplierPaymentBankAccounts = BankAccount::withTrashed()->where('company_id', $companyId)->get()->keyBy('id');
+        $supplierPaymentEntries = JournalEntry::query()
+            ->where('company_id', $companyId)
+            ->where('status', JournalEntry::StatusPosted)
+            ->where('is_posted', true)
+            ->whereIn('source_type', ['supplier_payment', 'supplier_payment_reversal'])
+            ->whereDate('entry_date', '<=', $through)
+            ->whereHas('lines', fn ($query) => $query->whereIn('bank_account_id', $supplierPaymentBankAccounts->keys()))
+            ->with([
+                'currency' => fn ($query) => $query->withTrashed(),
+                'lines' => fn ($query) => $query->whereIn('bank_account_id', $supplierPaymentBankAccounts->keys()),
+            ])
+            ->orderBy('entry_date')
+            ->orderBy('id')
+            ->get();
+        $supplierPayments = SupplierPaymentContext::query()
+            ->where('company_id', $companyId)
+            ->whereKey($supplierPaymentEntries->pluck('source_id')->filter()->unique())
+            ->with('supplier')
+            ->get()
+            ->keyBy('id');
+
+        $supplierPaymentEntries->each(function (JournalEntry $entry) use ($supplierPaymentBankAccounts, $bankDocNum, $currencyDocNum, $rows, $supplierPayments): void {
+            $payment = $supplierPayments->get($entry->source_id);
+            $entry->lines->each(function ($line) use ($entry, $payment, $supplierPaymentBankAccounts, $bankDocNum, $currencyDocNum, $rows): void {
+                $bank = $supplierPaymentBankAccounts->get($line->bank_account_id);
+                if (! $bank || ($bankDocNum && $bank->doc_num !== $bankDocNum) || ($currencyDocNum && $entry->currency?->doc_num !== $currencyDocNum)) {
                     return;
                 }
-                $rows->push($this->bankMovementRow($payment->bankAccount, $payment->currency_id, $payment->currency?->code, $payment->payment_date, $payment->doc_num, $this->value('supplier_payment'), $payment->supplier?->name ?? '', $payment->status, '0.0000', (string) $payment->amount, route('admin.purchases.supplier-payments.show', $payment)));
+
+                $isReversal = $entry->source_type === 'supplier_payment_reversal';
+                $paymentRouteKey = $payment?->doc_num ?? $entry->source_doc_num;
+                $rows->push($this->bankMovementRow(
+                    $bank,
+                    $entry->currency_id,
+                    $entry->currency?->code,
+                    $entry->entry_date,
+                    $entry->source_doc_num ?? $entry->doc_num,
+                    $isReversal ? $this->value('supplier_payment').' / '.$this->value('reversed') : $this->value('supplier_payment'),
+                    $payment?->supplier?->name ?? '',
+                    $isReversal ? 'reversed' : ($entry->reversed_entry_id !== null ? 'cancelled' : 'approved'),
+                    (string) $line->debit_amount,
+                    (string) $line->credit_amount,
+                    filled($paymentRouteKey) ? route('admin.purchases.supplier-payments.show', $paymentRouteKey) : '',
+                ));
             });
+        });
 
         Cheque::query()->where('company_id', $companyId)->whereNotNull('bank_account_id')->with(['bankAccount', 'currency'])->get()
             ->each(function (Cheque $cheque) use ($bankDocNum, $currencyDocNum, $through, $rows): void {

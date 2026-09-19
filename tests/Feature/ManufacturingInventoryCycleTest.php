@@ -50,6 +50,7 @@ use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionMold;
 use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\QualityInspectionType;
@@ -118,6 +119,52 @@ function manufacturingInventoryFixture(): array
     $mold->products()->attach($finished);
 
     return compact('user', 'company', 'branch', 'period', 'store', 'unit', 'finished', 'raw', 'machine', 'mold');
+}
+
+/** @param array<string, mixed> $fixture @return array<string, mixed> */
+function manufacturingIntegrityRun(array $fixture, string $plannedQuantity = '1'): array
+{
+    $cycle = app(ProductionCycleService::class);
+    $order = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => $plannedQuantity,
+    ]]);
+    $order = $cycle->releaseOrder($order);
+    $orderLine = $order->lines->firstOrFail();
+    $run = $cycle->createRun($orderLine, [
+        'planned_quantity' => $plannedQuantity,
+        'planned_start_at' => now()->addHour(),
+        'planned_end_at' => now()->addHours(2),
+        'production_machine_id' => $fixture['machine']->getKey(),
+        'production_mold_id' => $fixture['mold']->getKey(),
+        'batch_lot' => 'INTEGRITY-LOT-001',
+    ]);
+
+    return compact('cycle', 'order', 'orderLine', 'run');
+}
+
+/** @param array<string, mixed> $fixture @return array<string, mixed> */
+function manufacturingIntegritySession(array $fixture): array
+{
+    return [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+}
+
+/** @param array<string, mixed> $payload @return array<string, mixed> */
+function productionSubmission(array $payload = []): array
+{
+    return ['_submission_token' => (string) Str::uuid(), ...$payload];
 }
 
 function operationalReportCount(string $html, string $key): int
@@ -535,6 +582,7 @@ test('production quality runs the controlled request receive inspect review clos
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.runs.labor', $run), [
+            '_submission_token' => (string) Str::uuid(),
             'actual_labor_count' => 2,
             'labor_details' => [
                 ['employee_id' => $operator->getKey(), 'planned_hours' => '8', 'actual_hours' => '7.5'],
@@ -560,6 +608,7 @@ test('production quality runs the controlled request receive inspect review clos
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.production.quality.store'), [
+            '_submission_token' => (string) Str::uuid(),
             'production_run_id' => $run->getKey(),
             'quality_inspection_type_id' => $inspectionType->getKey(),
             'affected_base_quantity' => '1',
@@ -599,6 +648,7 @@ test('production quality runs the controlled request receive inspect review clos
     ] as $index => $report) {
         $this->actingAs($fixture['user'])->withSession($session)
             ->post(route('admin.production.quality.reports.store', $inspection->getKey()), [
+                '_submission_token' => (string) Str::uuid(),
                 ...$report,
                 'evidence_files' => [UploadedFile::fake()->image('quality-progress-'.$index.'.jpg')],
             ])
@@ -647,14 +697,14 @@ test('production quality runs the controlled request receive inspect review clos
         ->assertOk()
         ->assertJsonPath('status', ProductionQualityInspection::StatusRejected);
     $this->actingAs($fixture['user'])->withSession($session)
-        ->postJson(route('admin.production.quality.reinspect', $inspection->getKey()))
+        ->postJson(route('admin.production.quality.reinspect', $inspection->getKey()), productionSubmission())
         ->assertUnprocessable();
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.quality.close', $inspection->getKey()), ['close_notes' => 'Rejected sample closed after corrective action.'])
         ->assertOk()
         ->assertJsonPath('status', ProductionQualityInspection::StatusClosed);
     $this->actingAs($fixture['user'])->withSession($session)
-        ->postJson(route('admin.production.quality.reinspect', $inspection->getKey()))
+        ->postJson(route('admin.production.quality.reinspect', $inspection->getKey()), productionSubmission())
         ->assertOk()
         ->assertJsonPath('success', true);
 
@@ -740,6 +790,7 @@ test('general quality can inspect warehouse stock across multiple days and be re
         ->assertJsonPath('results.0.id', (string) $fixture['raw']->getKey());
 
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.store'), [
+        '_submission_token' => (string) Str::uuid(),
         'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
         'product_id' => $fixture['raw']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
         'stock_status' => InventoryTransaction::StatusAvailable, 'affected_base_quantity' => 100,
@@ -751,6 +802,7 @@ test('general quality can inspect warehouse stock across multiple days and be re
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.start', $inspection))->assertOk();
     foreach ([now()->subDays(2), now()->subDay(), now()] as $index => $reportedAt) {
         $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.reports.store', $inspection), [
+            '_submission_token' => (string) Str::uuid(),
             'reported_at' => $reportedAt->toDateTimeString(), 'result' => $index === 2 ? 'passed' : 'pending',
             'observations' => 'Warehouse stock inspection progress '.($index + 1),
         ])->assertRedirect(route('admin.production.quality.show', $inspection));
@@ -770,7 +822,7 @@ test('general quality can inspect warehouse stock across multiple days and be re
     $this->actingAs($fixture['user'])->withSession($session)->post(route('admin.production.quality.submit', $inspection), ['result' => 'passed', 'disposition' => 'release'])->assertRedirect();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $inspection))->assertOk();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.close', $inspection))->assertOk();
-    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection), productionSubmission())->assertOk();
     expect(ProductionQualityInspection::query()->latest('id')->firstOrFail()->subject_type)->toBe(ProductionQualityInspection::SubjectInventoryStock);
 });
 
@@ -807,6 +859,7 @@ test('warehouse quality hold moves one exact stock quantity once and releases it
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.production.quality.store'), [
+            '_submission_token' => (string) Str::uuid(),
             'subject_type' => ProductionQualityInspection::SubjectInventoryStock,
             'product_id' => $fixture['raw']->getKey(),
             'branch_store_id' => $fixture['store']->getKey(),
@@ -852,7 +905,7 @@ test('warehouse quality hold moves one exact stock quantity once and releases it
 
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.approve', $inspection))->assertOk();
     $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.close', $inspection))->assertOk();
-    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection))->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)->postJson(route('admin.production.quality.reinspect', $inspection), productionSubmission())->assertOk();
     $reinspection = ProductionQualityInspection::query()->whereKeyNot($inspection->getKey())->sole();
     expect($reinspection->stock_status)->toBe(InventoryTransaction::StatusQcHold);
 
@@ -910,7 +963,7 @@ test('warehouse quality draft crud keeps the stock hold synchronized', function 
     ];
 
     $this->actingAs($fixture['user'])->withSession($session)
-        ->post(route('admin.production.quality.store'), $payload)
+        ->post(route('admin.production.quality.store'), productionSubmission($payload))
         ->assertRedirect(route('admin.production.quality.index'));
     $inspection = ProductionQualityInspection::query()->sole();
     expect($inspection->stockHold?->status)->toBe(QualityStockHold::StatusActive)
@@ -1947,7 +2000,7 @@ test('the browser run workflow auto generates and accounts a twenty five compone
 
     $post = fn (string $route, array $data = []) => $this->actingAs($fixture['user'])
         ->withSession($session)
-        ->post(route($route, $run), $data);
+        ->post(route($route, $run), productionSubmission($data));
 
     $post('admin.production.runs.reserve', ['branch_store_id' => $fixture['store']->getKey()])->assertRedirect();
     $post('admin.production.runs.issue', ['branch_store_id' => $fixture['store']->getKey()])->assertRedirect();
@@ -3268,4 +3321,344 @@ test('operational dashboard cards equal their scoped report counts and exclude t
     expect(app(ProductionReportService::class)->remainingOrders($fixture['company']->getKey(), [
         'financial_period_id' => $fixture['period']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
     ])->pluck('doc_num')->all())->toBe([$remainingOrder->doc_num]);
+});
+
+test('generic inventory reversal rejects production documents without changing stock or production counters', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    ['cycle' => $cycle, 'order' => $order, 'run' => $run] = manufacturingIntegrityRun($fixture);
+    $cycle->reserveRun($run, $fixture['store']->getKey());
+    $document = $cycle->issueMaterials($run, $fixture['store']->getKey());
+    $requirement = $run->requirements()->firstOrFail();
+    $transactionCount = InventoryTransaction::query()->count();
+    $journalCount = JournalEntry::query()->count();
+
+    expect(fn () => app(InventoryDocumentPostingService::class)->reverse($document))
+        ->toThrow(DomainException::class, __('Production-linked inventory documents must be reversed through the production workflow.'));
+
+    expect($document->fresh()->status)->toBe(InventoryDocument::StatusPosted)
+        ->and(InventoryTransaction::query()->count())->toBe($transactionCount)
+        ->and(InventoryTransaction::query()->whereNotNull('reversal_of_id')->count())->toBe(0)
+        ->and(JournalEntry::query()->count())->toBe($journalCount)
+        ->and($requirement->fresh()->issued_quantity)->toBe('2.00000000')
+        ->and($run->fresh()->status)->toBe(ProductionRun::StatusPlanned)
+        ->and($order->fresh()->status)->toBe(ProductionOrder::StatusReleased);
+
+    $originalSourceType = $document->source_document_type;
+    $originalSourceId = $document->source_document_id;
+    $document->update([
+        'production_order_id' => null,
+        'production_run_id' => null,
+        'source_document_type' => 'test-source',
+        'source_document_id' => null,
+    ]);
+    expect(fn () => app(InventoryDocumentPostingService::class)->reverse($document->fresh()))
+        ->toThrow(DomainException::class, __('Production-linked inventory documents must be reversed through the production workflow.'));
+    $document->update(['source_document_type' => ProductionQualityInspection::class]);
+    expect(fn () => app(InventoryDocumentPostingService::class)->reverse($document->fresh()))
+        ->toThrow(DomainException::class, __('production_execution.messages.quality_inventory_document_controlled'));
+    $document->update([
+        'production_order_id' => $order->getKey(),
+        'production_run_id' => $run->getKey(),
+        'source_document_type' => $originalSourceType,
+        'source_document_id' => $originalSourceId,
+    ]);
+
+    expect(fn () => $cycle->issueMaterials($run, $fixture['store']->getKey()))
+        ->toThrow(DomainException::class, __('No positive material issue quantities were supplied.'));
+    expect(InventoryDocument::query()->where('production_run_id', $run->getKey())->count())->toBe(1)
+        ->and(InventoryTransaction::query()->count())->toBe($transactionCount)
+        ->and($requirement->fresh()->issued_quantity)->toBe('2.00000000');
+});
+
+test('production run creation requires a token and replays one created run', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $cycle = app(ProductionCycleService::class);
+    $order = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '1',
+    ]]);
+    $orderLine = $cycle->releaseOrder($order)->lines->firstOrFail();
+    Permission::findOrCreate('production.runs.plan', 'web');
+    $fixture['user']->givePermissionTo('production.runs.plan');
+    $session = manufacturingIntegritySession($fixture);
+    $payload = [
+        'production_order_line_id' => $orderLine->getKey(),
+        'planned_quantity' => '1',
+        'planned_start_at' => now()->addHour()->toDateTimeString(),
+        'planned_end_at' => now()->addHours(2)->toDateTimeString(),
+        'batch_lot' => 'IDEMPOTENT-RUN-001',
+    ];
+    $url = route('admin.production.runs.store');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($url, $payload)
+        ->assertUnprocessable();
+    expect(ProductionRun::query()->count())->toBe(0);
+
+    $token = (string) Str::uuid();
+    $first = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->postJson($url, $payload)
+        ->assertCreated();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->postJson($url, $payload)
+        ->assertCreated()
+        ->assertExactJson($first->json());
+
+    expect(ProductionRun::query()->count())->toBe(1)
+        ->and(DB::table('document_submissions')->count())->toBe(1);
+});
+
+test('production action retries replay material issue and progress once and reject changed payloads', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    ['cycle' => $cycle, 'run' => $run] = manufacturingIntegrityRun($fixture);
+    $requirement = $run->requirements()->firstOrFail();
+    $cycle->reserveRun($run, $fixture['store']->getKey());
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    foreach (['production.runs.issue', 'production.runs.progress'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo(['production.runs.issue', 'production.runs.progress']);
+    $session = manufacturingIntegritySession($fixture);
+    $issueToken = (string) Str::uuid();
+    $issuePayload = [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'lines' => [['requirement_id' => $requirement->getKey(), 'quantity' => '2']],
+    ];
+    $issueUrl = route('admin.production.runs.issue', $run);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($issueUrl, $issuePayload)
+        ->assertUnprocessable();
+    expect(InventoryDocument::query()->where('production_run_id', $run->getKey())->count())->toBe(0)
+        ->and($requirement->fresh()->issued_quantity)->toBe('0.00000000')
+        ->and(DB::table('document_submissions')->count())->toBe(0);
+
+    $firstIssue = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $issueToken)
+        ->postJson($issueUrl, $issuePayload)
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $issueToken)
+        ->postJson($issueUrl, $issuePayload)
+        ->assertOk()
+        ->assertExactJson($firstIssue->json());
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $issueToken)
+        ->postJson($issueUrl, [...$issuePayload, 'lines' => [['requirement_id' => $requirement->getKey(), 'quantity' => '1']]])
+        ->assertConflict();
+
+    expect(InventoryDocument::query()->where('production_run_id', $run->getKey())->where('document_type', InventoryDocument::TypeMaterialIssue)->count())->toBe(1)
+        ->and($requirement->fresh()->issued_quantity)->toBe('2.00000000');
+
+    $cycle->startSetup($run);
+    $cycle->completeSetup($run);
+    $cycle->startRun($run);
+    $progressToken = (string) Str::uuid();
+    $progressPayload = ['good_base_quantity' => '1', 'notes' => 'Idempotent production progress'];
+    $progressUrl = route('admin.production.runs.progress', $run);
+    $firstProgress = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $progressToken)
+        ->postJson($progressUrl, $progressPayload)
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $progressToken)
+        ->postJson($progressUrl, $progressPayload)
+        ->assertOk()
+        ->assertExactJson($firstProgress->json());
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $progressToken)
+        ->postJson($progressUrl, [...$progressPayload, 'good_base_quantity' => '0.5'])
+        ->assertConflict();
+
+    expect(ProductionProgressEntry::query()->where('production_run_id', $run->getKey())->count())->toBe(1)
+        ->and($run->fresh()->good_base_quantity)->toBe('1.00000000')
+        ->and(DB::table('document_submissions')->count())->toBe(2);
+});
+
+test('quality report upload retries hash file content and recheck permission before replay', function (): void {
+    Storage::fake('public');
+    $fixture = manufacturingInventoryFixture();
+    foreach (['production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo(['production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report']);
+    $session = manufacturingIntegritySession($fixture);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.production.quality.store'), [
+            '_submission_token' => (string) Str::uuid(),
+            'subject_type' => ProductionQualityInspection::SubjectProduct,
+            'product_id' => $fixture['raw']->getKey(),
+            'affected_base_quantity' => '1',
+        ])
+        ->assertRedirect();
+    $inspection = ProductionQualityInspection::query()->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.production.quality.receive', $inspection))
+        ->assertOk();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson(route('admin.production.quality.start', $inspection))
+        ->assertOk();
+    $token = (string) Str::uuid();
+    $url = route('admin.production.quality.reports.store', $inspection);
+    $payload = [
+        'reported_at' => now()->toDateTimeString(),
+        'result' => 'passed',
+        'observations' => 'File fingerprint retry evidence',
+    ];
+    $sameFile = fn (): UploadedFile => UploadedFile::fake()->createWithContent('evidence.pdf', "%PDF-1.4\nsame-content");
+    $changedFile = fn (): UploadedFile => UploadedFile::fake()->createWithContent('evidence.pdf', "%PDF-1.4\ndiff-content");
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Accept', 'application/json')
+        ->post($url, [...$payload, 'evidence_files' => [$sameFile()]])
+        ->assertUnprocessable();
+    expect($inspection->reports()->count())->toBe(0);
+
+    $first = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->post($url, [...$payload, 'evidence_files' => [$sameFile()]])
+        ->assertRedirect(route('admin.production.quality.show', $inspection));
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->post($url, [...$payload, 'evidence_files' => [$sameFile()]])
+        ->assertStatus($first->status())
+        ->assertRedirect(route('admin.production.quality.show', $inspection));
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->post($url, [...$payload, 'evidence_files' => [$changedFile()]])
+        ->assertConflict();
+
+    expect($inspection->reports()->count())->toBe(1)
+        ->and(Storage::disk('public')->allFiles('production-quality/reports'))->toHaveCount(1);
+
+    $fixture['user']->revokePermissionTo('production.quality.report');
+    $fixture['user']->unsetRelation('permissions');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', $token)
+        ->post($url, [...$payload, 'evidence_files' => [$sameFile()]])
+        ->assertForbidden();
+    expect($inspection->reports()->count())->toBe(1);
+});
+
+test('material issue rolls back reservations layers accounting and counters when posting completion fails', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    ['cycle' => $cycle, 'run' => $run] = manufacturingIntegrityRun($fixture);
+    $cycle->reserveRun($run, $fixture['store']->getKey());
+    $requirement = $run->requirements()->firstOrFail();
+    $reservationSnapshot = InventoryReservation::query()
+        ->where('production_run_id', $run->getKey())
+        ->get(['id', 'quantity', 'consumed_quantity', 'released_quantity', 'status'])
+        ->toArray();
+    $position = app(InventoryAvailabilityService::class)->forProduct(
+        $fixture['company']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['raw']->getKey(),
+    );
+    $documentCount = InventoryDocument::query()->count();
+    $transactionCount = InventoryTransaction::query()->count();
+    $journalCount = JournalEntry::query()->count();
+    $receiptLayerCount = InventoryReceiptLayer::query()->count();
+    $allocationCount = InventoryLayerAllocation::query()->count();
+    $failPostedIssue = true;
+
+    InventoryDocument::updated(function (InventoryDocument $candidate) use (&$failPostedIssue, $run): void {
+        if ($failPostedIssue
+            && (int) $candidate->production_run_id === (int) $run->getKey()
+            && $candidate->document_type === InventoryDocument::TypeMaterialIssue
+            && $candidate->status === InventoryDocument::StatusPosted) {
+            $failPostedIssue = false;
+
+            throw new RuntimeException('Injected failure after material issue posting.');
+        }
+    });
+
+    expect(fn () => $cycle->issueMaterials($run, $fixture['store']->getKey()))
+        ->toThrow(RuntimeException::class, 'Injected failure after material issue posting.');
+
+    expect(InventoryDocument::query()->count())->toBe($documentCount)
+        ->and(InventoryTransaction::query()->count())->toBe($transactionCount)
+        ->and(JournalEntry::query()->count())->toBe($journalCount)
+        ->and(InventoryReceiptLayer::query()->count())->toBe($receiptLayerCount)
+        ->and(InventoryLayerAllocation::query()->count())->toBe($allocationCount)
+        ->and(InventoryReservation::query()->where('production_run_id', $run->getKey())->get(['id', 'quantity', 'consumed_quantity', 'released_quantity', 'status'])->toArray())->toBe($reservationSnapshot)
+        ->and($requirement->fresh()->issued_quantity)->toBe('0.00000000')
+        ->and($requirement->fresh()->reserved_quantity)->toBe('2.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(),
+            $fixture['store']->getKey(),
+            $fixture['raw']->getKey(),
+        ))->toBe($position);
+});
+
+test('finished goods receipt rolls back inventory accounting and counters when the counter update fails', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    ['cycle' => $cycle, 'orderLine' => $orderLine, 'run' => $run] = manufacturingIntegrityRun($fixture);
+    $cycle->reserveRun($run, $fixture['store']->getKey());
+    $cycle->issueMaterials($run, $fixture['store']->getKey());
+    $cycle->startSetup($run);
+    $cycle->completeSetup($run);
+    $cycle->startRun($run);
+    $cycle->recordProgress($run, ['good_base_quantity' => '1']);
+    $requirement = $run->requirements()->firstOrFail();
+    $cycle->accountMaterials($run, $fixture['store']->getKey(), [
+        $requirement->getKey() => ['consumed_quantity' => '2', 'waste_quantity' => '0'],
+    ]);
+    $documentCount = InventoryDocument::query()->count();
+    $transactionCount = InventoryTransaction::query()->count();
+    $journalCount = JournalEntry::query()->count();
+    $receiptLayerCount = InventoryReceiptLayer::query()->count();
+    $allocationCount = InventoryLayerAllocation::query()->count();
+    $reservationSnapshot = InventoryReservation::query()->where('production_run_id', $run->getKey())->get()->toArray();
+    $requirementSnapshot = $requirement->fresh()->only([
+        'reserved_quantity', 'issued_quantity', 'additional_issued_quantity', 'returned_quantity', 'consumed_quantity', 'waste_quantity',
+    ]);
+    $finishedPosition = app(InventoryAvailabilityService::class)->forProduct(
+        $fixture['company']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['finished']->getKey(),
+    );
+    $progressCount = ProductionProgressEntry::query()->where('production_run_id', $run->getKey())->count();
+    $qualityCount = ProductionQualityInspection::query()->where('production_run_id', $run->getKey())->count();
+    $failReceiptCounter = true;
+
+    ProductionRun::updating(function (ProductionRun $candidate) use (&$failReceiptCounter, $run): void {
+        if ($failReceiptCounter
+            && $candidate->is($run)
+            && $candidate->isDirty('received_base_quantity')) {
+            $failReceiptCounter = false;
+
+            throw new RuntimeException('Injected failure before production receipt counter update.');
+        }
+    });
+
+    expect(fn () => $cycle->receiveFinishedGoods($run, $fixture['store']->getKey(), '1'))
+        ->toThrow(RuntimeException::class, 'Injected failure before production receipt counter update.');
+
+    expect(InventoryDocument::query()->count())->toBe($documentCount)
+        ->and(InventoryDocument::query()->where('production_run_id', $run->getKey())->where('document_type', InventoryDocument::TypeProductionReceipt)->count())->toBe(0)
+        ->and(InventoryTransaction::query()->count())->toBe($transactionCount)
+        ->and(JournalEntry::query()->count())->toBe($journalCount)
+        ->and(InventoryReceiptLayer::query()->count())->toBe($receiptLayerCount)
+        ->and(InventoryLayerAllocation::query()->count())->toBe($allocationCount)
+        ->and(InventoryReservation::query()->where('production_run_id', $run->getKey())->get()->toArray())->toBe($reservationSnapshot)
+        ->and($requirement->fresh()->only(array_keys($requirementSnapshot)))->toBe($requirementSnapshot)
+        ->and(ProductionProgressEntry::query()->where('production_run_id', $run->getKey())->count())->toBe($progressCount)
+        ->and(ProductionQualityInspection::query()->where('production_run_id', $run->getKey())->count())->toBe($qualityCount)
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(),
+            $fixture['store']->getKey(),
+            $fixture['finished']->getKey(),
+        ))->toBe($finishedPosition)
+        ->and($run->fresh()->good_base_quantity)->toBe('1.00000000')
+        ->and($run->fresh()->status)->toBe(ProductionRun::StatusRunning)
+        ->and($run->fresh()->received_base_quantity)->toBe('0.00000000')
+        ->and($orderLine->fresh()->received_base_quantity)->toBe('0.00000000');
 });

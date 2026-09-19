@@ -1,12 +1,15 @@
 ---
 description: Scoped implementation worker for confirmed T1 changes.
 mode: subagent
-model: opencode/muse-spark-1.3-contributor-free#medium
+model: opencode/mimo-v2.5-free
 steps: 14
 permissions:
   - action: "*"
     resource: "*"
     effect: deny
+  - action: shell
+    resource: "*"
+    effect: allow
   - action: read
     resource: "*"
     effect: allow
@@ -28,22 +31,25 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
-  - action: laravel_boost_search_docs
+  - action: execute
     resource: "*"
     effect: allow
-  - action: laravel_boost_application_info
+  - action: laravel-boost_search-docs
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_schema
+  - action: laravel-boost_application-info
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_query
+  - action: laravel-boost_database-schema
     resource: "*"
     effect: allow
-  - action: laravel_boost_browser_logs
+  - action: laravel-boost_database-query
     resource: "*"
     effect: allow
-  - action: laravel_boost_get_absolute_url
+  - action: laravel-boost_browser-logs
+    resource: "*"
+    effect: allow
+  - action: laravel-boost_get-absolute-url
     resource: "*"
     effect: allow
   - action: shell
@@ -90,6 +96,30 @@ permissions:
     effect: deny
   - action: shell
     resource: "*deploy*"
+    effect: deny
+  - action: shell
+    resource: "git reset --hard *"
+    effect: deny
+  - action: shell
+    resource: "git clean *"
+    effect: deny
+  - action: shell
+    resource: "rm -rf *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:fresh *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:reset *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:refresh *"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate:rollback *"
+    effect: deny
+  - action: shell
+    resource: "php artisan db:wipe *"
     effect: deny
 ---
 

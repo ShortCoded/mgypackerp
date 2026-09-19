@@ -78,12 +78,14 @@ class FixedAssetService
         private readonly ArchiveFileUsageService $fileUsages,
         private readonly NumericFormatService $numbers,
         private readonly AccountCodeAllocator $accountCodes,
+        private readonly FixedAssetPurchaseIntegrationService $purchaseIntegration,
     ) {}
 
     public function create(array $data): array
     {
         return $this->accountCodes->transaction(function () use ($data): array {
             $companyId = $this->companies->requireCompanyId();
+            $this->purchaseIntegration->assertAssetPayload($data);
             $parentAccount = $this->parentAccount($data);
             $linkedAccount = $this->accounts->createOrUpdateLinkedAccount(BusinessPartnerAccountService::FixedAsset, null, $parentAccount, $this->linkedAccountData($data))['account'];
             $values = $this->values($data, $companyId, $linkedAccount, $parentAccount);
@@ -112,8 +114,11 @@ class FixedAssetService
     public function update(FixedAsset $record, array $data): array
     {
         return $this->accountCodes->transaction(function () use ($record, $data): array {
+            $companyId = $this->companies->requireCompanyId();
+            app(FixedAssetAccessService::class)->assertAsset($record);
+            $this->purchaseIntegration->assertAssetPayload($data, $record);
             $record = FixedAsset::query()
-                ->forCompany($this->companies->requireCompanyId())
+                ->forCompany($companyId)
                 ->whereKey($record->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -335,8 +340,15 @@ class FixedAssetService
     public function restore(FixedAsset $record): FixedAsset
     {
         return DB::transaction(function () use ($record): FixedAsset {
+            $companyId = $this->companies->requireCompanyId();
             $record = FixedAsset::withTrashed()
-                ->forCompany($this->companies->requireCompanyId())
+                ->forCompany($companyId)
+                ->whereKey($record->getKey())
+                ->firstOrFail();
+            $this->purchaseIntegration->assertRestorableAsset($record);
+
+            $record = FixedAsset::withTrashed()
+                ->forCompany($companyId)
                 ->whereKey($record->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();

@@ -38,6 +38,26 @@
     return $('meta[name="csrf-token"]').attr('content');
   }
 
+  function submissionToken(element) {
+    if (!element.dataset.submissionToken) {
+      element.dataset.submissionToken = window.crypto.randomUUID();
+    }
+
+    return element.dataset.submissionToken;
+  }
+
+  $(document).on('submit', '.production-mobile-workflow form', function () {
+    if (String(this.method || 'GET').toUpperCase() !== 'POST' || this.querySelector('[name="_submission_token"]')) {
+      return;
+    }
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = '_submission_token';
+    input.value = submissionToken(this);
+    this.appendChild(input);
+  });
+
   function notify(icon, message) {
     if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
       window.AppAlerts.toast(icon, message);
@@ -461,6 +481,7 @@
     $.ajax({
       url: button.dataset.url,
       method: method,
+      data: method === 'POST' ? { _submission_token: submissionToken(button) } : undefined,
       headers: { 'X-CSRF-TOKEN': csrf(), Accept: 'application/json' }
     }).done(function (payload) {
       notify('success', payload.message || fallbackMessage('done'));
@@ -521,7 +542,7 @@
     $.ajax({
       url: button.dataset.url,
       method: 'POST',
-      data: { [button.dataset.reasonKey || 'reason']: reason },
+      data: { [button.dataset.reasonKey || 'reason']: reason, _submission_token: submissionToken(button) },
       headers: { 'X-CSRF-TOKEN': csrf(), Accept: 'application/json' }
     }).done(function (payload) {
       notify('success', payload.message || fallbackMessage('done'));

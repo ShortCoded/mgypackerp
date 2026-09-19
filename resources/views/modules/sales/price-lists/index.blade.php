@@ -13,6 +13,12 @@
         'restoreConfirmTitle' => __('price_lists.messages.restore_confirm_title'),
         'restoreConfirmText' => __('price_lists.messages.restore_confirm_text'),
         'restoreConfirmYes' => __('price_lists.messages.restore_confirm_yes'),
+        'increaseTitle' => __('price_lists.messages.increase_title'),
+        'increaseText' => __('price_lists.messages.increase_text'),
+        'increasePlaceholder' => __('price_lists.messages.increase_placeholder'),
+        'increaseConfirmYes' => __('price_lists.messages.increase_confirm_yes'),
+        'increaseInvalid' => __('price_lists.validation.increase_percentage'),
+        'increaseMaximum' => __('price_lists.validation.increase_percentage_max'),
         'cancel' => __('common.actions.cancel'),
         'unexpectedError' => __('common.messages.unexpected_error'),
     ];

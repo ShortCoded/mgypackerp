@@ -11,7 +11,9 @@ use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionQualityInspection;
+use Modules\Production\Models\ProductionRun;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
@@ -167,6 +169,12 @@ class InventoryDocumentPostingService
             }
             if ($locked->source_document_type === ProductionQualityInspection::class) {
                 throw new DomainException(__('production_execution.messages.quality_inventory_document_controlled'));
+            }
+            if ($locked->production_order_id !== null
+                || $locked->production_run_id !== null
+                || in_array($locked->source_document_type, [ProductionRun::class, ProductionMaterialRequirement::class], true)
+                || $locked->lines()->whereIn('source_line_type', [ProductionRun::class, ProductionMaterialRequirement::class])->exists()) {
+                throw new DomainException(__('Production-linked inventory documents must be reversed through the production workflow.'));
             }
 
             $salesOrder = null;

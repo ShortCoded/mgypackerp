@@ -174,22 +174,42 @@ class FixedAssetPurchaseIntegrationService
             return;
         }
 
-        $line = PurchaseInvoiceLine::query()
-            ->with(['purchaseInvoice.supplier.account', 'purchaseInvoice.branch', 'purchaseInvoice.currency', 'product', 'fixedAssets'])
+        $sourceId = (int) ($data['source_id'] ?? 0);
+        $invoiceId = PurchaseInvoiceLine::query()
+            ->whereKey($sourceId)
+            ->value('purchase_invoice_id');
+
+        if (! is_numeric($invoiceId)) {
+            throw new DomainException(__('fixed_assets.purchase_source.invalid'));
+        }
+
+        $invoice = PurchaseInvoice::query()
+            ->with(['supplier.account', 'branch', 'currency'])
             ->lockForUpdate()
-            ->find((int) ($data['source_id'] ?? 0));
+            ->find((int) $invoiceId);
+
+        $line = PurchaseInvoiceLine::query()
+            ->with([
+                'product',
+                'fixedAssets' => fn ($query) => $query->lockForUpdate(),
+            ])
+            ->where('purchase_invoice_id', (int) $invoiceId)
+            ->lockForUpdate()
+            ->find($sourceId);
 
         if (! $line instanceof PurchaseInvoiceLine) {
             throw new DomainException(__('fixed_assets.purchase_source.invalid'));
         }
 
-        $invoice = $line->purchaseInvoice;
         $context = $this->operatingContext->snapshot(request());
         if (! $invoice instanceof PurchaseInvoice || ! $invoice->isDraft()
             || (int) $invoice->company_id !== (int) ($context['company_id'] ?? 0)
+            || (int) $invoice->financial_period_id !== (int) ($context['financial_period_id'] ?? 0)
             || (int) $invoice->branch_id !== (int) ($context['branch_id'] ?? 0)) {
             throw new DomainException(__('fixed_assets.purchase_source.invoice_must_be_draft'));
         }
+
+        $line->setRelation('purchaseInvoice', $invoice);
 
         if (! $line->product instanceof Product || $line->product->isService() || $line->product->cost_as_inventory) {
             throw new DomainException(__('fixed_assets.purchase_source.non_inventory_required'));
@@ -221,6 +241,31 @@ class FixedAssetPurchaseIntegrationService
         if (bccomp(bcadd($allocated, $requested, 4), $this->lineNetAmount($line), 4) > 0) {
             throw new DomainException(__('fixed_assets.purchase_source.allocation_exceeds_line'));
         }
+    }
+
+    public function assertRestorableAsset(FixedAsset $asset): void
+    {
+        if ($asset->source_type !== self::SourceType) {
+            return;
+        }
+
+        $asset->loadMissing(['branch', 'currency', 'creditAccount']);
+        $this->assertAssetPayload([
+            'entry_type' => $asset->entry_type,
+            'source_type' => $asset->source_type,
+            'source_id' => $asset->source_id,
+            'source_doc_num' => $asset->source_doc_num,
+            'asset_date' => $asset->asset_date?->toDateString(),
+            'purchase_date' => $asset->purchase_date?->toDateString(),
+            'acquisition_date' => $asset->acquisition_date?->toDateString(),
+            'operation_date' => $asset->operation_date?->toDateString(),
+            'branch_doc_num' => $asset->branch?->doc_num,
+            'currency_doc_num' => $asset->currency?->doc_num,
+            'credit_account_doc_num' => $asset->creditAccount?->doc_num,
+            'exchange_rate' => $asset->exchange_rate,
+            'purchase_value' => $asset->purchase_value,
+            'status' => $asset->status,
+        ], $asset);
     }
 
     public function assertDraftInvoiceAssetsValid(PurchaseInvoice $invoice): void

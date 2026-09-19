@@ -13,6 +13,7 @@ use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Sales\DataTables\PriceListsDataTable;
 use Modules\Sales\Http\Requests\BulkDeletePriceListsRequest;
+use Modules\Sales\Http\Requests\IncreasePriceListPercentageRequest;
 use Modules\Sales\Http\Requests\StorePriceListRequest;
 use Modules\Sales\Http\Requests\UpdatePriceListRequest;
 use Modules\Sales\Models\Customer;
@@ -108,7 +109,38 @@ class PriceListController extends Controller
         return response()->json(['success' => true, 'message' => __('price_lists.messages.restored')]);
     }
 
-    private function form(Request $request, ?PriceList $record = null, bool $readOnly = false): View
+    public function clone(Request $request, PriceList $priceList): View
+    {
+        return $this->form($request, $priceList, clone: true);
+    }
+
+    public function increaseByPercentage(IncreasePriceListPercentageRequest $request, PriceList $priceList): JsonResponse
+    {
+        try {
+            $record = $this->service->increaseByPercentage(
+                $priceList,
+                $request->validated('percentage'),
+                $this->companies->requireCompanyId($request),
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => __('price_lists.messages.increased'),
+            'data' => [
+                'doc_num' => $record->doc_num,
+                'lines' => $record->lines->map(fn ($line) => [
+                    'id' => $line->id,
+                    'product' => $line->product?->name,
+                    'unit_price' => $line->unit_price,
+                ])->all(),
+            ],
+        ]);
+    }
+
+    private function form(Request $request, ?PriceList $record = null, bool $readOnly = false, bool $clone = false): View
     {
         $companyId = $this->companies->requireCompanyId($request);
         abort_if($record && (int) $record->company_id !== $companyId, 404);
@@ -116,10 +148,10 @@ class PriceListController extends Controller
         $selectedCustomerDocNum = old('customer_doc_num', $record?->customer?->doc_num);
 
         return view('modules.sales.price-lists.form', [
-            'record' => $record, 'readOnly' => $readOnly,
+            'record' => $record, 'readOnly' => $readOnly, 'clone' => $clone,
             'selectedCustomers' => Customer::query()->forCompany($companyId)->where('doc_num', $selectedCustomerDocNum)->get(),
             'currencies' => Currency::query()->forCompany($companyId)->active()->orderByDesc('is_main')->orderBy('code')->get(),
-            'breadcrumbs' => [...$this->breadcrumbs->forMenuRoute('admin.sales.price-lists.index'), ['label' => $record?->doc_num ?? __('price_lists.create'), 'active' => true]],
+            'breadcrumbs' => [...$this->breadcrumbs->forMenuRoute('admin.sales.price-lists.index'), ['label' => $clone ? __('price_lists.clone') : ($record?->doc_num ?? __('price_lists.create')), 'active' => true]],
         ]);
     }
 

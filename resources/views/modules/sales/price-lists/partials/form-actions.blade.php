@@ -1,6 +1,6 @@
 @php
     $isView = $mode === 'view';
-    $isCreate = $mode === 'create';
+    $isCreate = in_array($mode, ['create', 'clone'], true);
     $isTrashed = $record?->trashed() ?? false;
     $canList = auth()->user()?->can('price_lists.view');
     $canView = auth()->user()?->can('price_lists.view');

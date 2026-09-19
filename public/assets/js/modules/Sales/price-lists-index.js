@@ -229,6 +229,59 @@
     }
 
     function initializeRowActions() {
+        $(document).off('click.priceListsIncrease', '.js-increase-price-list[data-increase-url]').on('click.priceListsIncrease', '.js-increase-price-list[data-increase-url]', function () {
+            const $button = $(this);
+            const docNum = String($button.data('doc-num') || '').trim();
+
+            if (!window.Swal) {
+                return;
+            }
+
+            Swal.fire({
+                icon: 'warning',
+                title: messages.increaseTitle,
+                text: String(messages.increaseText || '').replace(':document', docNum),
+                input: 'number',
+                inputAttributes: { min: '0.0001', max: '1000', step: '0.0001' },
+                inputPlaceholder: messages.increasePlaceholder,
+                showCloseButton: true,
+                showCancelButton: true,
+                focusCancel: true,
+                confirmButtonText: messages.increaseConfirmYes,
+                cancelButtonText: messages.cancel || '',
+                preConfirm: function (value) {
+                    const percentage = String(value || '').trim();
+
+                    if (!/^\d+(?:\.\d{1,4})?$/.test(percentage) || Number(percentage) <= 0) {
+                        Swal.showValidationMessage(messages.increaseInvalid);
+                        return false;
+                    }
+                    if (Number(percentage) > 1000) {
+                        Swal.showValidationMessage(messages.increaseMaximum);
+                        return false;
+                    }
+
+                    return percentage;
+                }
+            }).then(function (result) {
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                $.ajax({
+                    url: $button.data('increase-url'),
+                    method: 'POST',
+                    data: { percentage: result.value },
+                    headers: headers()
+                }).done(function (response) {
+                    reloadTable();
+                    toast('success', response.message);
+                }).fail(function (response) {
+                    toast('error', response.responseJSON?.message || messages.unexpectedError);
+                });
+            });
+        });
+
         $(document).off('click.priceListsDelete', '.js-delete-record[data-delete-url]').on('click.priceListsDelete', '.js-delete-record[data-delete-url]', function () {
             const $button = $(this);
             const docNum = String($button.data('doc-num') || '').trim();

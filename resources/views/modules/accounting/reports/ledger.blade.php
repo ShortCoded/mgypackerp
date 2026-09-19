@@ -58,7 +58,7 @@
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="ledger_subject" :label="__('ledger_reports.filters.'.$subjectField)" :required="true" />
-                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="{{ $type === 'customer_statement' ? 0 : 1 }}" data-per-page="20" required>
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="{{ $isPartnerStatement ? 0 : 1 }}" data-per-page="20" required>
                     @if($selected)<option value="{{ $selected['doc_num'] }}" selected>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</option>@endif
                 </x-forms.select>
                 @error($subjectField)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror

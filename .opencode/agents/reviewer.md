@@ -1,7 +1,7 @@
 ---
 description: Read-only independent review for T2 and integration-sensitive changes.
 mode: subagent
-model: opencode/muse-spark-1.3-contributor-free#high
+model: opencode/mimo-v2.5-free
 steps: 8
 permissions:
   - action: "*"
@@ -22,16 +22,19 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
-  - action: laravel_boost_search_docs
+  - action: execute
     resource: "*"
     effect: allow
-  - action: laravel_boost_application_info
+  - action: laravel-boost_search-docs
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_schema
+  - action: laravel-boost_application-info
     resource: "*"
     effect: allow
-  - action: laravel_boost_database_query
+  - action: laravel-boost_database-schema
+    resource: "*"
+    effect: allow
+  - action: laravel-boost_database-query
     resource: "*"
     effect: allow
   - action: shell
