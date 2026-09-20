@@ -681,7 +681,30 @@ class MenuService
         if ($order !== []) {
             usort($section['children'], fn (array $first, array $second): int => ($order[$first['label'] ?? ''] ?? 999) <=> ($order[$second['label'] ?? ''] ?? 999));
         }
-        $section['children'] = [...$section['children'], ...$subgroups];
+        $convertedSubgroups = [];
+        foreach ($subgroups as $subgroup) {
+            $convertedSubgroups[] = [
+                'label' => $subgroup['label'],
+                'key' => $subgroup['key'] ?? $subgroup['label'],
+                'title' => (string) ($subgroup['title'] ?? Str::headline($subgroup['label'])),
+                'icon' => (string) ($subgroup['icon'] ?? 'folder-open'),
+                'route' => $subgroup['route'] ?? null,
+                'permission' => $subgroup['permission'] ?? null,
+                'active' => $subgroup['active'] ?? [],
+                'keywords' => $subgroup['keywords'] ?? [],
+                'children' => is_array($subgroup['children'] ?? null) ? array_values($subgroup['children']) : [],
+                'subgroups' => [],
+                'order' => (int) ($subgroup['order'] ?? 999),
+                'hidden' => false,
+                'visible' => true,
+                'phase_modes' => [],
+                'actions' => [],
+                'component' => null,
+                'data' => [],
+            ];
+        }
+
+        $section['children'] = [...$section['children'], ...$convertedSubgroups];
         unset($section['subgroups']);
 
         return $section;

@@ -448,6 +448,7 @@ return [
         'hr_payroll_preparation' => 'payroll',
         'hr_requests' => null,
         'reports_finance_document' => 'finance_reports',
+        'reports_finance' => 'finance_reports',
         'reports_reports_finance' => 'finance_reports',
         'reports_sales' => 'sales_reports',
         'reports_purchases' => null,
