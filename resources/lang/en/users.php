@@ -79,6 +79,7 @@ return [
         'view_forbidden' => 'You are not allowed to view deleted records.',
     ],
     'validation' => [
+        'roles_not_delegable' => 'You cannot assign one or more selected user groups because they exceed your permission ceiling.',
         'doc_number_numeric' => 'Document number must contain digits only.',
         'doc_number_unique' => 'Document number already exists.',
         'email_unique' => 'Email already exists.',

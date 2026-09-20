@@ -6,6 +6,7 @@ $screen = static fn (string $slug, string $en, string $ar, string $group = 'empl
     'title' => ['en' => $en, 'ar' => $ar],
     'group' => $group,
     'profile' => $profile,
+    'menu_visible' => false,
     ...$extra,
 ];
 
@@ -31,7 +32,7 @@ return [
         $screen('employee-attendance', 'Employee Attendance', 'حضور الموظفين', 'attendance', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'actions' => ['view', 'manage', 'correct', 'export']]),
         $screen('attendance-import', 'Attendance Import', 'استيراد الحضور', 'attendance'),
         $screen('attendance-corrections', 'Attendance Corrections', 'تصحيحات الحضور', 'attendance'),
-        $screen('shift-assignments', 'Shift Assignments', 'تخصيص الورديات', 'attendance'),
+        $screen('shift-assignments', 'Shift Assignments', 'تخصيص الورديات', 'attendance', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'actions' => ['view', 'manage']]),
         $screen('employee-leave-requests', 'Employee Leave Requests', 'طلبات إجازات الموظفين', 'leave'),
         $screen('leave-approvals', 'Leave Approvals', 'اعتمادات الإجازات', 'leave'),
         $screen('employee-permissions', 'Employee Permissions', 'أذونات الموظفين', 'leave'),

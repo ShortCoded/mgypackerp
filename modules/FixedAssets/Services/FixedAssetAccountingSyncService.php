@@ -13,6 +13,7 @@ class FixedAssetAccountingSyncService
     public function __construct(
         private readonly CrudAuditService $audit,
         private readonly BusinessPartnerAccountService $accounts,
+        private readonly FixedAssetPurchaseIntegrationService $purchaseIntegration,
     ) {}
 
     public function softDeleteLinkedAccountForFixedAsset(FixedAsset $fixedAsset): void
@@ -69,8 +70,21 @@ class FixedAssetAccountingSyncService
             return;
         }
 
+        $this->purchaseIntegration->assertRestorableAsset($fixedAsset);
+        $fixedAsset = FixedAsset::withTrashed()->whereKey($fixedAsset->getKey())->lockForUpdate()->firstOrFail();
         $this->assertFixedAssetCanBeRestored($fixedAsset);
         $this->audit->restore($fixedAsset, auth()->id());
+    }
+
+    public function assertFixedAssetRestorableForAccount(Account $account): void
+    {
+        $fixedAsset = $this->owningFixedAsset($account);
+
+        if (! $fixedAsset instanceof FixedAsset || ! $fixedAsset->trashed() || ! $this->accounts->isManagedLinkedAccount(BusinessPartnerAccountService::FixedAsset, $account)) {
+            return;
+        }
+
+        $this->purchaseIntegration->assertRestorableAsset($fixedAsset);
     }
 
     public function syncFixedAssetForAccountUpdate(Account $account): void

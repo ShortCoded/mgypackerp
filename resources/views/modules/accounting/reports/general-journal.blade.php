@@ -4,6 +4,7 @@
     $title = __('ledger_reports.types.general_journal');
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $sourceLabels = app(\Modules\Accounting\Services\JournalSourceLabelService::class);
     $fromDate = request('from_date', $period?->from_date?->format('Y-m-d'));
     $toDate = request('to_date', $period?->to_date?->format('Y-m-d'));
     $hasFilters = request()->boolean('run') || $errors->any();
@@ -12,12 +13,6 @@
         ['label' => __('reports.export_csv'), 'url' => route('admin.accounting.reports.general-journal.export.csv', request()->query()), 'icon' => 'file-csv', 'permission' => 'reports.account_ledger.export'],
         ['label' => __('reports.export_pdf'), 'url' => route('admin.accounting.reports.general-journal.export.pdf', request()->query()), 'icon' => 'file-pdf', 'permission' => 'reports.account_ledger.export', 'newTab' => true],
     ] : [];
-    $sourceLabel = static function (mixed $sourceType): string {
-        $source = filled($sourceType) ? (string) $sourceType : 'manual';
-        $key = 'ledger_reports.sources.'.$source;
-
-        return trans()->has($key) ? __($key) : __('ledger_reports.sources.other');
-    };
 @endphp
 
 @section('title', $title)
@@ -50,7 +45,7 @@
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="general_journal_account" :label="__('ledger_reports.filters.account_doc_num')" />
-                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="general_journal_account" name="account_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.accounts', ['report_scope' => 1, 'include_historical' => 1]) }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true" data-minimum-input-length="1">
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="general_journal_account" name="account_doc_num" data-url="{{ route('admin.accounting.journal-entries.select2.accounts', ['report_scope' => 1]) }}" data-placeholder="{{ __('ledger_reports.filters.all') }}" data-allow-clear="true" data-minimum-input-length="0">
                     @if($selectedAccount)<option value="{{ $selectedAccount['doc_num'] }}" selected>{{ $selectedAccount['name'] }}</option>@endif
                 </x-forms.select>
                 @error('account_doc_num')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
@@ -116,7 +111,7 @@
                                 <tr>
                                     <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
                                     <td dir="ltr">@can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $movement['doc_num']) }}">{{ $movement['doc_num'] }}</a>@else{{ $movement['doc_num'] }}@endcan</td>
-                                    <td>{{ $sourceLabel($movement['source_type']) }}</td>
+                                    <td>{{ $sourceLabels->label($movement['source_type']) }}</td>
                                     <td dir="ltr">{{ $movement['reference_no'] ?: ($movement['source_doc_num'] ?: '—') }}</td>
                                     <td>@can('reports.account_ledger.view')<a href="{{ route('admin.accounting.reports.account-ledger', ['run' => 1, 'all_periods' => 1, 'account_doc_num' => $movement['account_doc_num'], 'from_date' => $fromDate, 'to_date' => $toDate, 'branch_doc_num' => request('branch_doc_num'), 'cost_center_doc_num' => request('cost_center_doc_num')]) }}">{{ $movement['account'] }}</a>@else{{ $movement['account'] }}@endcan</td>
                                     <td>{{ $movement['description'] }}</td>

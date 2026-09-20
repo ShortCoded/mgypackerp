@@ -2,7 +2,10 @@
 
 namespace Modules\HR\Services;
 
+use App\Models\User;
+use Carbon\CarbonImmutable;
 use DomainException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
@@ -10,6 +13,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
@@ -20,6 +24,8 @@ final class PayrollPaymentService
         private readonly CashVoucherService $cashVouchers,
         private readonly JournalEntryService $journalEntries,
         private readonly FinancialPeriodService $financialPeriods,
+        private readonly HrLifecycleAuditLogger $audit,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     /**
@@ -31,10 +37,30 @@ final class PayrollPaymentService
         return DB::transaction(function () use ($payrollRunId, $companyId, $data): array {
             $existing = DB::table('hr_payroll_payments as payment')
                 ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+                ->join('cashboxes as cashbox', 'cashbox.id', '=', 'voucher.cashbox_id')
                 ->where('payment.company_id', $companyId)
                 ->where('payment.idempotency_key', $data['idempotency_key'])
-                ->first(['payment.*', 'voucher.doc_num as voucher_doc_num']);
+                ->first([
+                    'payment.*',
+                    'voucher.doc_num as voucher_doc_num',
+                    'voucher.voucher_date',
+                    'voucher.description as voucher_description',
+                    'cashbox.doc_num as cashbox_doc_num',
+                ]);
             if ($existing !== null) {
+                $expectedAmount = bcadd((string) $data['amount'], '0', 4);
+                $expectedDescription = filled($data['reference'] ?? null)
+                    ? trim((string) $data['reference'])
+                    : __('hr_payroll.payment.reference', ['run' => $payrollRunId]);
+                $samePayload = (int) $existing->payroll_run_id === $payrollRunId
+                    && hash_equals(trim((string) $existing->cashbox_doc_num), trim((string) $data['cashbox_doc_num']))
+                    && CarbonImmutable::parse($existing->voucher_date)->isSameDay($data['payment_date'])
+                    && hash_equals(trim((string) $existing->voucher_description), $expectedDescription)
+                    && bccomp((string) $existing->amount, $expectedAmount, 4) === 0;
+                if (! $samePayload) {
+                    throw new DomainException(__('hr_payroll.messages.payment_idempotency_conflict'));
+                }
+
                 return [
                     'payment' => $existing,
                     'voucher' => CashVoucher::query()->findOrFail($existing->cash_voucher_id),
@@ -53,12 +79,13 @@ final class PayrollPaymentService
                 ->where('doc_num', $data['cashbox_doc_num'])
                 ->whereNull('deleted_at')
                 ->firstOrFail();
-            $branchId = $cashbox->branch_id === null ? $run->branch_id : (int) $cashbox->branch_id;
-            if ($run->branch_id !== null && (int) $run->branch_id !== (int) $branchId) {
+            if ($run->branch_id !== null
+                && ($cashbox->branch_id === null || (int) $run->branch_id !== (int) $cashbox->branch_id)) {
                 throw new DomainException(__('hr_payroll.messages.payment_branch_mismatch'));
             }
+            $branchId = $cashbox->branch_id === null ? null : (int) $cashbox->branch_id;
 
-            $amount = number_format((float) $data['amount'], 4, '.', '');
+            $amount = bcadd((string) $data['amount'], '0', 4);
             $remaining = $this->remainingForBranch($payrollRunId, $branchId);
             if (bccomp($amount, '0.0000', 4) <= 0 || bccomp($amount, $remaining, 4) > 0) {
                 throw new DomainException(__('hr_payroll.messages.payment_exceeds_remaining', ['remaining' => $remaining]));
@@ -119,7 +146,10 @@ final class PayrollPaymentService
             }
 
             if ($payment->journal_entry_id !== null) {
-                return JournalEntry::query()->findOrFail($payment->journal_entry_id);
+                $journal = JournalEntry::query()->findOrFail($payment->journal_entry_id);
+                $this->logApprovedPayment($voucher, $payment, $journal, $payment->approved_by);
+
+                return $journal;
             }
 
             $run = $this->run((int) $payment->payroll_run_id, (int) $payment->company_id, lock: true);
@@ -181,6 +211,7 @@ final class PayrollPaymentService
                 'approved_by' => auth()->id(),
                 'updated_at' => now(),
             ]);
+            $this->logApprovedPayment($voucher, $payment, $journal, auth()->id());
 
             return $journal;
         }, attempts: 3);
@@ -198,7 +229,10 @@ final class PayrollPaymentService
             }
 
             if ($payment->reversal_journal_entry_id !== null) {
-                return JournalEntry::query()->findOrFail($payment->reversal_journal_entry_id);
+                $reversal = JournalEntry::query()->findOrFail($payment->reversal_journal_entry_id);
+                $this->logCancelledPayment($voucher, $payment, $reversal, $payment->cancelled_by);
+
+                return $reversal;
             }
 
             if ($payment->journal_entry_id === null) {
@@ -208,6 +242,7 @@ final class PayrollPaymentService
                     'cancelled_by' => auth()->id(),
                     'updated_at' => now(),
                 ]);
+                $this->logCancelledPayment($voucher, $payment, null, auth()->id());
 
                 return null;
             }
@@ -237,9 +272,88 @@ final class PayrollPaymentService
                 'cancelled_by' => auth()->id(),
                 'updated_at' => now(),
             ]);
+            $this->logCancelledPayment($voucher, $payment, $reversal, auth()->id());
 
             return $reversal;
         }, attempts: 3);
+    }
+
+    private function logApprovedPayment(CashVoucher $voucher, object $payment, JournalEntry $journal, mixed $userId): void
+    {
+        $request = $this->auditRequest();
+        $causer = $this->auditCauser($userId);
+        $properties = [
+            'payroll_run_id' => (int) $payment->payroll_run_id,
+            'payroll_payment_id' => (int) $payment->id,
+            'payment_status' => 'approved',
+            'voucher_doc_num' => $voucher->doc_num,
+            'journal_entry_id' => (int) $journal->getKey(),
+        ];
+        $this->audit->logStrict(
+            $request,
+            'hr.payroll.payment_approved',
+            (int) $payment->company_id,
+            $properties,
+            $voucher,
+            'payroll-payment:'.$payment->id.':approved',
+            causer: $causer,
+        );
+        $this->audit->logStrict(
+            $request,
+            'hr.payroll.payment_posted',
+            (int) $payment->company_id,
+            $properties,
+            $voucher,
+            'payroll-payment:'.$payment->id.':posted',
+            causer: $causer,
+        );
+    }
+
+    private function logCancelledPayment(CashVoucher $voucher, object $payment, ?JournalEntry $reversal, mixed $userId): void
+    {
+        $request = $this->auditRequest();
+        $causer = $this->auditCauser($userId);
+        $properties = [
+            'payroll_run_id' => (int) $payment->payroll_run_id,
+            'payroll_payment_id' => (int) $payment->id,
+            'payment_status' => 'cancelled',
+            'voucher_doc_num' => $voucher->doc_num,
+            'journal_entry_id' => $payment->journal_entry_id === null ? null : (int) $payment->journal_entry_id,
+            'reversal_journal_entry_id' => $reversal?->getKey(),
+        ];
+        $this->audit->logStrict(
+            $request,
+            'hr.payroll.payment_cancelled',
+            (int) $payment->company_id,
+            $properties,
+            $voucher,
+            'payroll-payment:'.$payment->id.':cancelled',
+            causer: $causer,
+        );
+
+        if ($reversal instanceof JournalEntry) {
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.payment_reversed',
+                (int) $payment->company_id,
+                $properties,
+                $voucher,
+                'payroll-payment:'.$payment->id.':reversed',
+                causer: $causer,
+            );
+        }
+    }
+
+    private function auditRequest(): Request
+    {
+        $request = app()->bound('request') ? app('request') : null;
+
+        return $request instanceof Request ? $request : Request::create('/');
+    }
+
+    private function auditCauser(mixed $userId): ?User
+    {
+        return $userId === null ? null : User::query()->find((int) $userId);
     }
 
     private function remainingForBranch(int $payrollRunId, ?int $branchId, ?int $excludingPaymentId = null): string
@@ -259,7 +373,11 @@ final class PayrollPaymentService
             ->whereNull('voucher.deleted_at')
             ->sum('payment.amount');
 
-        return bcsub(number_format((float) $payable, 4, '.', ''), number_format((float) $paid, 4, '.', ''), 4);
+        return bcsub(
+            $this->numbers->normalizeToScale($payable, 4) ?? '0.0000',
+            $this->numbers->normalizeToScale($paid, 4) ?? '0.0000',
+            4,
+        );
     }
 
     private function payrollPayableAccount(int $companyId): Account

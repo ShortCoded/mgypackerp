@@ -351,3 +351,32 @@ test('profitability keeps profit and margin unavailable when recognized cost is 
         ->and($report['totals']['gross_profit'])->toBe(__('costing_reports.values.unavailable'))
         ->and($report['notices'])->toContain(__('costing_reports.notices.incomplete_profitability', ['count' => 1]));
 });
+
+test('costing filter options default to active current records and preserve an explicit historical selection', function (): void {
+    $fixture = salesCycleFixture();
+    $session = salesCycleSession($fixture);
+    $this->actingAs($fixture['user'])->withSession($session);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put($session);
+    request()->setUserResolver(fn () => $fixture['user']);
+
+    $historicalProduct = $fixture['finished'];
+    $historicalProduct->update(['status' => 'inactive']);
+    $historicalCenter = CostCenter::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 99301,
+        'doc_num' => 'CC-COST-99301', 'cost_center_code' => 'COST-99301',
+        'name' => 'Historical costing center', 'is_group' => false, 'status' => 'inactive',
+    ]);
+
+    $service = app(CostingReportService::class);
+    $defaults = $service->filterOptions();
+    $selected = $service->filterOptions([
+        'product_doc_num' => $historicalProduct->doc_num,
+        'cost_center_doc_num' => $historicalCenter->doc_num,
+    ]);
+
+    expect($defaults['products']->pluck('doc_num'))->not->toContain($historicalProduct->doc_num)
+        ->and($defaults['cost_centers']->pluck('doc_num'))->not->toContain($historicalCenter->doc_num)
+        ->and($selected['products']->pluck('doc_num'))->toContain($historicalProduct->doc_num)
+        ->and($selected['cost_centers']->pluck('doc_num'))->toContain($historicalCenter->doc_num);
+});

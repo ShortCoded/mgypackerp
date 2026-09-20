@@ -16,6 +16,7 @@ use Modules\Finance\Services\FinanceReportService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Services\ProductionReportService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
+use Modules\Sales\Services\Reports\SalesCycleReadService;
 
 test('authenticated layout uses one directional theme and one user stylesheet', function () {
     $response = $this->withSession(['locale' => 'en'])
@@ -221,6 +222,7 @@ test('dashboard product master data stays within its query budget', function () 
         Mockery::mock(InventoryReportService::class),
         Mockery::mock(ProductionReportService::class),
         Mockery::mock(ProcurementCycleReport::class),
+        Mockery::mock(SalesCycleReadService::class),
         Mockery::mock(FinanceReportService::class),
     );
     $dashboard = [

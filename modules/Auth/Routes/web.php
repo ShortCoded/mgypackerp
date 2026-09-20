@@ -68,6 +68,9 @@ Route::middleware('auth')
     ->group(function (): void {
         Route::get('/select2/roles', RoleSelect2Controller::class)
             ->name('select2.roles');
+        Route::get('/select2/roles/assignable', [RoleSelect2Controller::class, 'assignment'])
+            ->middleware('can:users.roles.manage')
+            ->name('select2.roles.assignable');
         Route::get('/select2/users/{user:doc_num}/roles/selected', UserSelectedRolesController::class)
             ->middleware(['can:users.edit', 'can:users.roles.manage'])
             ->name('select2.users.roles.selected');

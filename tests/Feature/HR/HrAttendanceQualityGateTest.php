@@ -319,11 +319,11 @@ test('attendance report is tenant-isolated standardized responsive filterable an
     $this->actingAs($second['user'])->postJson(route('employee.hr.attendance.punch'), attendanceQualityPayload('check_in', (string) Str::uuid()))->assertOk();
 
     app(PermissionRegistrar::class)->forgetCachedPermissions();
-    foreach (['hr.employee_attendance.view', 'hr.employee_attendance.manage', 'hr.employee_attendance.export'] as $permission) {
+    foreach (['hr.employee_attendance.view', 'hr.employee_attendance.correct', 'hr.employee_attendance.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
     $reviewer = User::factory()->create();
-    $reviewer->givePermissionTo(['hr.employee_attendance.view', 'hr.employee_attendance.manage', 'hr.employee_attendance.export']);
+    $reviewer->givePermissionTo(['hr.employee_attendance.view', 'hr.employee_attendance.correct', 'hr.employee_attendance.export']);
     $session = attendanceQualityAdminSession($first);
 
     $response = $this->actingAs($reviewer)->withSession($session)->get(route('admin.hr.employee-attendance.index', [

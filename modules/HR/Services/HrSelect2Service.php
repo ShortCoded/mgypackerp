@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrFoundationModel;
@@ -20,6 +21,7 @@ class HrSelect2Service
         private readonly HrLookupRegistry $lookups,
         private readonly HrFoundationRegistry $foundation,
         private readonly OperatingCompanyContextService $companies,
+        private readonly OperatingScopeAccessService $scope,
     ) {}
 
     /**
@@ -90,9 +92,17 @@ class HrSelect2Service
     public function employees(Request $request): array
     {
         $search = $request->input('q', $request->input('term'));
+        $company = $this->companies->currentCompany($request);
+        $branchIds = $company === null
+            ? []
+            : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->pluck('branches.id')->all();
 
         $query = HrEmployee::query()
             ->select(['id', 'doc_num', 'full_name', 'doc_number'])
+            ->when($company === null, fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
+            ->when($company !== null, fn (Builder $query): Builder => $query
+                ->where('company_id', $company->getKey())
+                ->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
             ->where('status', 'active')
             ->orderBy('full_name')
             ->orderBy('doc_number');

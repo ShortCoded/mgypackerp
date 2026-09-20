@@ -21,6 +21,7 @@ use Modules\Auth\Http\Requests\StoreRoleRequest;
 use Modules\Auth\Http\Requests\UpdateRoleDocumentNumberSettingsRequest;
 use Modules\Auth\Http\Requests\UpdateRoleRequest;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionDelegationService;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Auth\Services\RoleDocumentNumberSettingsService;
 use Modules\Auth\Services\RoleService;
@@ -394,6 +395,14 @@ class RoleController extends Controller
             ->orderBy('name')
             ->pluck('name')
             ->all();
+
+        if (! in_array($mode, ['view'], true) && ! $isProtectedReadonly && $editor instanceof User) {
+            $delegablePermissions = array_flip(app(PermissionDelegationService::class)->effectivePermissionNames($editor));
+            $permissionNames = collect($permissionNames)
+                ->filter(fn (string $permission): bool => isset($delegablePermissions[$permissionRegistry->canonicalPermission($permission)]))
+                ->values()
+                ->all();
+        }
 
         return view('modules.auth.roles.form', [
             'mode' => $mode,

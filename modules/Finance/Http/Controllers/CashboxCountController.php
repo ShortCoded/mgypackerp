@@ -3,8 +3,8 @@
 namespace Modules\Finance\Http\Controllers;
 
 use Illuminate\Contracts\View\View;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Core\Services\BreadcrumbService;
@@ -32,7 +32,7 @@ final class CashboxCountController extends Controller
         return view('modules.finance.cashbox-count.index', [
             'report' => $this->reports->report($filters),
             'filters' => $filters,
-            'filterOptions' => $this->reports->filterOptions($filters['branch_id']),
+            'filterOptions' => $this->reports->filterOptions(['branch_id' => $filters['branch_id']]),
             'counts' => CashboxCount::query()
                 ->where('company_id', $filters['company_id'] ?? $this->context->snapshot($request)['company_id'])
                 ->where('branch_id', $filters['branch_id'])

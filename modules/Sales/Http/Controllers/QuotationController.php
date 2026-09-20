@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
@@ -108,19 +109,23 @@ class QuotationController extends Controller
     public function store(StoreQuotationRequest $request, SalesRequestService $salesRequests): JsonResponse
     {
         try {
-            $payload = $this->pricedPayload($request, $request->validated());
-            if ($request->filled('source_request_doc_num')) {
-                abort_unless($request->user()?->can('sales_requests.view'), 403);
-                $context = app(OperatingContextService::class)->snapshot($request);
-                $sourceRequest = SalesRequest::query()
-                    ->where('company_id', $context['company_id'])
-                    ->where('branch_id', $context['branch_id'])
-                    ->where('doc_num', $request->validated('source_request_doc_num'))
-                    ->firstOrFail();
-                $record = $salesRequests->convertToQuotation($sourceRequest, $payload);
-            } else {
-                $record = $this->service->create($payload, $request)['record'];
-            }
+            $record = DB::transaction(function () use ($request, $salesRequests): Quotation {
+                $convertingRequest = $request->filled('source_request_doc_num');
+                $payload = $this->pricedPayload($request, $request->validated(), resolvePrices: ! $convertingRequest);
+                if ($convertingRequest) {
+                    abort_unless($request->user()?->can('sales_requests.view'), 403);
+                    $context = app(OperatingContextService::class)->snapshot($request);
+                    $sourceRequest = SalesRequest::query()
+                        ->where('company_id', $context['company_id'])
+                        ->where('branch_id', $context['branch_id'])
+                        ->where('doc_num', $request->validated('source_request_doc_num'))
+                        ->firstOrFail();
+
+                    return $salesRequests->convertToQuotation($sourceRequest, $payload);
+                }
+
+                return $this->service->create($payload, $request)['record'];
+            });
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -147,7 +152,7 @@ class QuotationController extends Controller
     public function update(UpdateQuotationRequest $request, Quotation $quotation): JsonResponse
     {
         try {
-            $result = $this->service->update($quotation, $this->pricedPayload($request, $request->validated()));
+            $result = DB::transaction(fn (): array => $this->service->update($quotation, $this->pricedPayload($request, $request->validated())));
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -802,7 +807,7 @@ class QuotationController extends Controller
     }
 
     /** @param array<string, mixed> $data @return array<string, mixed> */
-    private function pricedPayload(Request $request, array $data): array
+    private function pricedPayload(Request $request, array $data, bool $resolvePrices = true): array
     {
         $context = app(OperatingContextService::class)->snapshot($request);
         $customerId = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->valueOrFail('id');
@@ -818,7 +823,9 @@ class QuotationController extends Controller
             ...$data,
             'discount_type' => null,
             'discount_value' => 0,
-            'lines' => $this->priceLists->applyToLines($lines, $context['company_id'], $customerId, $currencyId, $data['quotation_date'], 'quotation'),
+            'lines' => $resolvePrices
+                ? $this->priceLists->applyToLines($lines, $context['company_id'], $customerId, $currencyId, $data['quotation_date'], 'quotation', lockForUpdate: true)
+                : $lines,
         ];
     }
 

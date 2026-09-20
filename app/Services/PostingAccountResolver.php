@@ -15,6 +15,8 @@ class PostingAccountResolver
 
     public const FinishedGoodsInventory = 'finished_goods_inventory';
 
+    public const FactoryMaintenanceExpense = 'factory_maintenance_expense';
+
     public const FreightIn = 'freight_in';
 
     public const GoodsReceivedNotInvoiced = 'goods_received_not_invoiced';
@@ -80,6 +82,7 @@ class PostingAccountResolver
             self::WarehouseDamageLoss,
             self::InventoryAdjustmentGain,
             self::InventoryAdjustmentLoss,
+            self::FactoryMaintenanceExpense,
         ];
     }
 

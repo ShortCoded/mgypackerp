@@ -84,9 +84,9 @@ final class CostingReportService
         $companyId = (int) $context['company_id'];
         $periodId = (int) $context['financial_period_id'];
         $branchId = (int) $context['branch_id'];
-        $productId = $this->scopedId(Product::query()->where('company_id', $companyId), $filters['product_doc_num'] ?? null);
-        $orderId = $this->scopedId(ProductionOrder::query()->where('company_id', $companyId), $filters['production_order_doc_num'] ?? null);
-        $costCenterId = $this->scopedId(CostCenter::query()->forCompany($companyId), $filters['cost_center_doc_num'] ?? null);
+        $productId = $this->scopedId(Product::query()->withTrashed()->where('company_id', $companyId), $filters['product_doc_num'] ?? null);
+        $orderId = $this->scopedId(ProductionOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)->where('branch_id', $branchId), $filters['production_order_doc_num'] ?? null);
+        $costCenterId = $this->scopedId(CostCenter::query()->withTrashed()->forCompany($companyId), $filters['cost_center_doc_num'] ?? null);
         $type = (string) ($filters['type'] ?? self::ProductCost);
 
         if ($type === self::AllocationAnalysis) {
@@ -208,17 +208,34 @@ final class CostingReportService
     }
 
     /** @return array{products: Collection, orders: Collection, cost_centers: Collection} */
-    public function filterOptions(): array
+    public function filterOptions(array $selected = []): array
     {
         $context = $this->context->snapshot(request());
         $companyId = (int) $context['company_id'];
         $periodId = (int) $context['financial_period_id'];
         $branchId = (int) $context['branch_id'];
 
+        $products = Product::query()->where('company_id', $companyId)->active()
+            ->whereIn('item_classification', Product::salesItemClassifications())->orderBy('name')->get(['id', 'doc_num', 'name']);
+        $orders = ProductionOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)
+            ->where('branch_id', $branchId)->latest('production_order_date')->get(['id', 'doc_num']);
+        $costCenters = CostCenter::query()->forCompany($companyId)->active()
+            ->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']);
+
+        if (filled($selected['product_doc_num'] ?? null)) {
+            $products = $products->concat(Product::withTrashed()->where('company_id', $companyId)
+                ->whereIn('item_classification', Product::salesItemClassifications())
+                ->where('doc_num', $selected['product_doc_num'])->get(['id', 'doc_num', 'name']));
+        }
+        if (filled($selected['cost_center_doc_num'] ?? null)) {
+            $costCenters = $costCenters->concat(CostCenter::withTrashed()->forCompany($companyId)
+                ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name']));
+        }
+
         return [
-            'products' => Product::query()->where('company_id', $companyId)->whereIn('item_classification', Product::salesItemClassifications())->orderBy('name')->get(['id', 'doc_num', 'name']),
-            'orders' => ProductionOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)->where('branch_id', $branchId)->latest('production_order_date')->get(['id', 'doc_num']),
-            'cost_centers' => CostCenter::query()->forCompany($companyId)->where('status', 'active')->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']),
+            'products' => $products->unique('id')->sortBy('name')->values(),
+            'orders' => $orders,
+            'cost_centers' => $costCenters->unique('id')->sortBy('cost_center_code')->values(),
         ];
     }
 

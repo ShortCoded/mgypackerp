@@ -43,105 +43,107 @@ Authoritative Wave 0 audit backlog. Evidence was collected from the live checkou
 - Verification: focused coverage proves 5% and 2.5% adjustments, four-decimal half-up rounding, invalid bounds, authorization and company isolation, no-line rejection, injected second-line rollback, audit identity, and unchanged existing invoice snapshots.
 - Finalization: **COMPLETE for SAL-002**. `PriceListPricingService` and historical document pricing semantics were not changed.
 
-### SAL-003 — Print-only Price Lists cannot be represented or excluded
+### SAL-003 — Print-only Price Lists
 
-- Domain/workflow/current state: Sales pricing resolution; **CONFIRMED MISSING FEATURE** (`K-03`).
-- Evidence: `PriceList` has no print-only property; `PriceListPricingService::latestLine()` selects by company/customer/currency/effectivity without such an exclusion and feeds quotation, request, order, invoice, and suggestion paths.
+- Domain/workflow/current state: Sales pricing resolution; **VERIFIED IMPLEMENTED** in Wave 1B (`K-03`).
+- Evidence: additive `is_print_only` storage defaults existing/new rows to false; Price List administration and cloning preserve the flag; the shared operational-pricing scope excludes print-only lists from customer/general fallback, suggestions, quotations, requests, orders, invoices, and all three pricing-coverage queries.
 - Risk/severity: T3 / high. Dependencies: existing-data migration, centralized pricing fallback, reporting, historical price snapshots.
 - Likely components: Price List schema/model/request/form, `PriceListPricingService`, pricing-gap queries, all price-resolution tests.
-- Existing tests: `SalesPriceListTest`, `SalesBusinessAcceptanceTest`. Missing validation: default/backfill, customer/general fallback, every resolution path, concurrent update/resolution, and no repricing of stored documents.
-- Finalization: Wave 1 with independent critical review; backend resolver exclusion is mandatory, not only UI filtering.
+- Verification: focused tests prove schema default/cast, create/edit/audit, clone preservation, administrative visibility, customer/general fallback, only-print-only failure, suggestion/quotation/order/invoice exclusion, coverage/gap semantics, transaction rollback behavior, and historical snapshot invariance. An isolated SQLite `:memory:` fixture proves the additive migration default/NOT NULL behavior, preservation of a pre-migration row and line, and explicit `up()`/`down()` rollback. Persisted-document resolution locks candidate headers and lines in deterministic order, revalidates eligibility, and persists the snapshot in the same transaction; read-only suggestion remains lock-free. QA passed `SalesPriceListTest` (34 tests, 288 assertions, 48.02s), `SalesBusinessAcceptanceTest` (3 tests, 67 assertions, 41.03s), and `QuotationTest` (22 tests, 356 assertions, 46.68s). The independent critical reviewer returned GO with no findings.
+- Finalization: **COMPLETE for SAL-003**. SQLite verifies deterministic lock ordering, eligibility filtering/revalidation, fallback, migration behavior, and rollback contracts; live cross-connection PostgreSQL contention was not executed and remains an explicit residual limitation rather than an unreported proof claim.
 
-### SAL-004 — Price List print and exports are absent
+### SAL-004 — Price List print and exports
 
-- Domain/workflow/current state: Sales Price List output; **CONFIRMED MISSING FEATURE** (`K-04`).
-- Evidence: no Price List print/export routes or actions. Reusable infrastructure exists in `SalesCycleReportController`, `ReportPdfService`, export classes, and report toolbar components.
-- Risk/severity: T1 / medium. Dependencies: SAL-001/SAL-003 visibility rules and permission design.
-- Likely components: Price List controller/routes/views/export class.
-- Existing tests: report-export shape and Sales report tests. Missing validation: selected persisted header/details match HTML, PDF, XLSX, and CSV.
-- Finalization: Wave 1; outputs must not re-resolve operational prices.
+- Domain/workflow/current state: Sales Price List output; **VERIFIED IMPLEMENTED** (`K-04`).
+- Evidence: explicit HTML print, PDF, XLSX, and CSV routes now share one persisted-header-and-lines mapper. The outputs preserve stored line order and exact stored prices/discounts, support customer-specific and General lists, distinguish open-ended validity, render English/Arabic direction, retain historical soft-deleted relations, and never invoke operational price resolution.
+- Risk/severity: T2 / medium. Dependencies: SAL-001/SAL-003 visibility rules, company scope, soft-delete visibility, and separate print/export permissions.
+- Components: `PriceListController`, explicit Price List routes, `PriceListReportData`, `PriceListExport`, dedicated print/PDF views, permission-aware list/detail actions, translations, and focused feature tests.
+- Verification: the independent reviewer returned GO with no findings. QA passed `SalesPriceListTest` (41 tests, 365 assertions), confirmed all four exact routes, checked PHP syntax and the SAL boundary, verified English/Arabic PDF signatures, and passed `git diff --check`. Coverage includes authentication and distinct permissions, company/deleted visibility, canonical output parity, XLSX/CSV text and numeric semantics, empty lists, query bounds, UI visibility, and SAL-003 operational-eligibility regression.
+- Finalization: **COMPLETE for SAL-004**. Outputs are read-only representations of canonical stored Price List data and do not re-resolve operational prices.
 
 ### SAL-005 — Sales report summaries cover only selected perspectives
 
-- Domain/workflow/current state: Sales reporting; **PARTIALLY IMPLEMENTED** (`K-13`).
-- Evidence: `SalesCycleReportController` supplies summaries for financial/operational perspectives, while invoice, product, period, customer, receivable, collection, and return tables remain row-oriented; exports mirror that limitation.
+- Domain/workflow/current state: Sales reporting; **VERIFIED IMPLEMENTED** (`K-13`, Wave 1).
+- Evidence: every existing Sales report perspective now receives a canonical, exact-decimal summary derived from its fully filtered server-side dataset before display limiting or ledger pagination. `SalesCycleReadService::ledger()` enforces company/branch/financial-period/currency plus inclusive dates, customer/product/geography, quotation/order-status/overdue, warehouse, and order-derived filters. The controller supplies guarded perspective-specific aggregates for financial, invoice ledger, customer, product/customer-product, period, receivable/aging, collection/upcoming, and return/return-analysis tables; screen, PDF, XLSX, and CSV consume the same summary values and render explicit zero-state totals. Posted invoices contribute to sales, posted credit notes are subtracted only inside their own company/branch/period/currency/date scope, and no cross-currency summation occurs.
 - Risk/severity: T2 / medium. Dependencies: filter parity, currency boundaries, REP-001, export templates.
 - Likely components: Sales cycle report controller/read service/views/exports.
-- Existing tests: `SalesDocumentSummaryTest`, Sales report/export tests. Missing validation: mathematically valid totals per perspective and exact screen/PDF/XLSX/CSV/filter equivalence without cross-currency summation.
-- Finalization: Wave 1 for Sales-specific totals; Wave 11 for cross-report reconciliation.
+- Existing tests: focused `SalesReportTotalsTest` passed 9 tests / 186 assertions, covering exact BC-decimal relationships, all perspectives, more than 25 ledger rows, inclusive date boundaries, customer/product/order-status filters, posted credit-note subtraction, company/branch/period/currency isolation, permission denial, cancelled-return exclusion from ledger quantity, zero-state totals, and screen/PDF/export parity including serialized XLSX and CSV. Existing Sales report regressions passed 2 tests / 30 assertions, and localized workbook metadata passed 1 test / 7 assertions. Independent review returned GO and targeted QA passed.
+- Finalization: Wave 1 Sales-specific totals complete; Wave 11 retains broader cross-report reconciliation. Returns/return-analysis inclusion semantics remain deliberately unchanged: ledger `returned_quantity` excludes cancelled returns while the report returns tables preserve their existing all-status population, so no return-status policy change is claimed here.
 
 ## Wave 2 — Purchases
 
-### PUR-001 — Supplier bank payment path exists but end-to-end statement reconciliation is unproven
+### PUR-001 — Supplier bank payment path reconciles through canonical journals
 
-- Domain/workflow/current state: Purchases to Bank/AP/GL; **PARTIALLY IMPLEMENTED** (`K-08`).
-- Evidence: `ProcurementSettlementService` calls `SupplierPaymentPostingService`, which posts one supplier-payment journal and supports idempotent approval and reversal. `FinanceReportService` includes approved non-cheque supplier bank contexts. `ProcurementCycleTest` contains journal/cancellation assertions, but no executed test proved one-and-only-one appearance across bank statement, supplier statement, AP, and GL.
+- Domain/workflow/current state: Purchases to Bank/AP/GL; **VERIFIED IMPLEMENTED** (`K-08`, Wave 2).
+- Evidence: `ProcurementSettlementService` and `SupplierPaymentPostingService` create one canonical posted supplier-payment journal and one linked reversal. `FinanceReportService` now derives supplier bank movements from those posted journal lines, preserving original and reversal history, including soft-deleted bank/currency metadata, without creating a second ledger. The focused `ProcurementCycleTest` executed successfully with 115 assertions covering exact AP/bank lines, sequential approval/cancellation idempotency, supplier and bank ledger equality, bank statement/balance reconciliation to zero, filters, historical metadata, and orphan journal safety. `FinanceReportTest` passed 12 tests / 99 assertions.
 - Risk/severity: T3 / high. Dependencies: Accounting reports, bank/currency/date filters, Wave 9 reconciliation.
 - Likely components: the named settlement/posting/report services and `tests/Feature/ProcurementCycleTest.php`.
-- Missing validation: targeted runtime path for Bank method, exact statement/ledger equality, cancellation, branch/company/period isolation, and duplicate request.
-- Finalization: Wave 2 verification; Wave 4 accounting review; Wave 9/11 reconciliation. Do not introduce a second posting source.
+- Residual validation: simultaneous duplicate-request contention, injected rollback failures, and cross-period reversal remain Wave 9 hardening targets. Do not introduce a second posting source.
+- Finalization: Wave 2 verified the scoped Bank-method path; Wave 9 retains the residual concurrency/failure-injection/cross-period hardening.
 
 ## Wave 3 — Inventory
 
-### INV-001 — Aggregate inventory valuation capability is incomplete
+### INV-001 — Aggregate inventory valuation and maintenance-return position integrity
 
-- Domain/workflow/current state: Inventory valuation; **PARTIALLY IMPLEMENTED** (`K-10`).
-- Evidence: `InventoryReportService` can aggregate as-of quantity/value across operational dimensions, but operational stock reports hide financial values. The `/admin/inventory/reports/valuation` screen compares methods for one product/store rather than providing the required aggregate valuation. Missing cost is currently coalesced to zero.
+- Domain/workflow/current state: Inventory valuation and Maintenance return positions; **VERIFIED IMPLEMENTED** (`K-10`).
+- Evidence: the valuation screen exposes aggregate as-of book quantity/value from posted `inventory_transactions`, keeps comparison methods separate, distinguishes valid zero cost from incomplete `unit_cost`/`total_cost`, reports net unvalued and negative positions, carries prior-period history, preserves historical soft-deleted dimensions, and shares rows/totals with PDF/XLSX/CSV. Maintenance returns now split canonical return lines across the original issue allocations in deterministic allocation order, restore each exact store/hall/location/batch/manufacture/expiry position, retain original receipt-layer cost/date, and keep the return transaction/document/GL value at the original issue moving-average cost. Legacy null-location allocations retain an explicit compatible fallback; insufficient or mismatched restoration allocations fail closed.
 - Risk/severity: T3 / high. Dependencies: inventory ledger, book-cost policy, unpriced receipts, branch/store/hall/location filters, GL reconciliation.
-- Likely components: `InventoryReportService`, `InventoryValuationService`, `InventoryGlReconciliationService`, report controller/views/exports.
-- Existing tests: `InventoryValuationComparisonTest`, `OpeningStockPricingTest` (passed in focused run), `ReportExportShapeTest`. Missing validation: aggregate/as-of reconciliation, unvalued and negative stock, cross-period behavior, unit conversion, transfers/returns/production, isolation, and output parity.
-- Finalization: Wave 3 with critical review; label book valuation versus comparison methods explicitly.
+- Components verified/changed: `InventoryReportService`, `InventoryValuationService`, `InventoryGlReconciliationService`, `InventoryDocumentPostingService`, `InventoryLayerService`, `MaintenanceMaterialRequestService`, Maintenance report/export surfaces, and focused feature tests.
+- Verification: independent critical review returned **GO** after the per-position book-value assertion and nullable manual-receipt request regression were added. Final QA passed `MaintenanceMaterialCostIntegrityTest` (14/233), `InventoryBookValuationTest` (11/109), and six focused manufacturing/inventory regressions (6/170); PHP lint and `git diff --check` passed. Coverage includes two source locations with different layer costs, transaction/layer/availability/book-value equality at each position, aggregate conservation, canonical GL/document value, duplicate idempotency, null location, and rollback on accounting failure.
+- Finalization: Wave 3 implementation is verified. Wave 9/11 retains cumulative carry-in versus period-specific GL reconciliation, authorized populated-data reconciliation, and real two-connection PostgreSQL contention evidence; the SQLite `:memory:` suite does not prove row-lock behavior.
 
 ### COST-001 — Delivery COGS posts, but traceable sales-cost reporting is incomplete
 
-- Domain/workflow/current state: Inventory/Sales/Accounts costing; **PARTIALLY IMPLEMENTED** (`K-11`).
-- Evidence: `SalesAccountingService::postDeliveryCost()` and saleable-return reversal use posted inventory cost; Reconciliation Center compares COGS; financial statements classify cost of sales. Existing costing reports are production-oriented, not delivery/return movement reports.
+- Domain/workflow/current state: Inventory/Sales/Accounts costing; **VERIFIED IMPLEMENTED** (`K-11`).
+- Evidence: one read-only canonical Cost of Sales report now traces posted Sales Delivery inventory lines and posted saleable-return receipt lines to customer, product, order, invoice, source line, inventory document, journal, quantity, unit cost, signed COGS, and reconciliation status. Deliveries are positive cost; physical saleable returns are negative cost and reconcile to the quarantine-receipt COGS reversal without double counting the later disposition journal. Product-filtered output reconciles against each full source document, so a partial visible row set cannot create a false journal mismatch. Null costs remain explicit/unreconciled while valid zero costs are preserved.
 - Risk/severity: T3 / high. Dependencies: INV-001, Sales delivery/return/cancellation, production finished-goods cost, GL.
-- Likely components: `SalesAccountingService`, `ReconciliationCenterService`, inventory/sales read services, costing reports.
-- Existing tests: `SalesCycleTest` contains delivery COGS assertions. Missing validation: item/document traceability, partial delivery, returns/reversal, cancellation/repost, dates, isolation, and report-to-inventory-to-GL equality.
-- Finalization: Waves 3 and 4; mandatory Waves 9/11 reconciliation.
+- Report contract: company, current branch, financial period, inclusive posting date, customer, product, order, and invoice filters share one mapper across screen, PDF, XLSX, and CSV. COGS journals must be posted, match the exact source identity and operating dimensions/date, and equal the full inventory-source aggregate on the configured COGS account. Cost is base inventory cost; no sales-currency conversion or parallel valuation source was introduced.
+- Verification: independent critical review returned **GO**. Final QA passed `SalesCostReportTest` (10/91), `SalesReportTotalsTest` (9/186), focused delivery COGS tests (2/24), and focused saleable-return tests (3/108); PHP lint, Blade cache compilation, and `git diff --check` passed. Tests include repeated-product exact source-line lineage, missing-journal/null-cost diagnostics, empty state, output parity, scope/date isolation, permission denial, and a canonically posted production receipt whose finished-good cost remains 7.5 after its selling price changes from 25 to 99.
+- Finalization: Wave 3/4 traceable COGS reporting is verified. Wave 9/11 retains authorized populated-data source-to-inventory-to-GL reconciliation, broad cancellation/repost datasets, and the full Production Run lifecycle/release dataset; no production data was changed here.
 
 ## Wave 4 — Accounts & Costing
 
-### ACC-001 — Approved generic cash vouchers form a treasury truth outside the GL
+### ACC-001 — Generic cash vouchers post canonically; one legacy record requires reconciliation
 
-- Domain/workflow/current state: Receipt/payment vouchers, cashbox statement, ledger and closing; **CONFIRMED DEFECT** (`K-09` root; `K-06` dependent symptom).
-- Evidence: `CashVoucherService::approve()` journals linked supplier/payment/payroll contexts only; generic vouchers are merely approved. Generic cancellation has no journal reversal. `FinanceReportService::cashboxMovements()` reads every approved voucher, while `LedgerQueryService` reads posted journals. `PeriodClosePreflightService` explicitly blocks approved vouchers without a linked posting source; `JournalEntriesAndLedgerTest` covers that blocker. Approval's early return means already-approved records need explicit reconciliation handling.
-- Risk/severity: T3 / **blocker**. Dependencies: cash/bank account mapping, counter-account lines, currency, branch/company/period, historical data, closing.
-- Likely components: `CashVoucherService`, `CashVoucher`, voucher schema, `FinanceReportService`, `JournalEntryService`, `LedgerQueryService`, preflight and finance/accounting tests.
-- Existing tests: `FinanceReportTest` currently codifies document-derived cashbox totals; the focused Wave 0 ledger test passed. Missing validation: atomic posting/status, source-key idempotency, cancellation/reversal, already-approved reconciliation, cashbox opening/running/closing balance, and exact GL equality.
-- Finalization: Wave 4 with critical review. Wave 9/11 must prove K-06 statement reconciliation. Use the existing journal service; do not add parallel accounting logic.
+- Domain/workflow/current state: generic Cash Receipt and Cash Payment vouchers, cashbox statement, ledger and closing; **CONDITIONALLY VERIFIED / LEGACY RECONCILIATION REQUIRED** (`K-09` root; `K-06` dependent statement path).
+- Evidence: generic voucher routes now use explicit canonical posting entry points while customer, supplier, payroll, and production-owned voucher flows retain their existing owners. Receipt journals debit the selected cashbox account and credit persisted counter-account distributions; payment journals debit the distributions and credit cash. Deterministic receipt/payment source types and voucher IDs provide one posting, and cancellation retains the original journal plus one canonical reversal. Approval, posting, cancellation, and reversal share locked transactions; injected posting/reversal failures roll back voucher state and accounting.
+- Statement contract: generic voucher rows now come only from posted journal lines on the cashbox account. Operational generic rows are excluded, preventing double counting. Focused evidence proves prior-range opening, in-range movements, reversal, prior-only opening equals closing, date/cashbox/branch/currency isolation, historical journal-line branch attribution after cashbox movement, and exact cashbox-statement-to-GL equality. Generic vouchers are cashbox-only; no generic bank-voucher feature was invented, and the verified PUR-001 bank statement contract remains unchanged.
+- Integrity controls: duplicate approval is a deterministic no-op even after period closure; approved legacy records without a canonical journal are explicitly rejected rather than silently backfilled. Company, cashbox branch/account, currency, counter-account, permission, and open-period rules are revalidated. Pending payroll-schema ownership probes are guarded without modifying Payroll or REL-001.
+- Verification: `CashVoucherTest` passed **16 tests / 395 assertions**; `FinanceReportTest` passed **12 / 99**; the cash-voucher period-close preflight passed **1 / 9**; the unchanged PUR-001 bank/cheque regression passed **1 / 115**. Independent critical review returned GO, QA passed, and scoped syntax, Pint, and diff checks passed.
+- Remaining blocker: a read-only aggregate on the configured database found **one** approved generic cash voucher without a specialized owner or canonical generic journal. It remains protected by explicit replay rejection and period-close preflight, but requires a separately authorized, audited reconciliation before ACC-001/K-06/K-09 can be marked unconditionally complete. The configured database also remains behind the pending HR payroll migration under REL-001; no migration or data mutation was performed here.
+- Finalization: code path conditionally verified. Wave 9 must reconcile the one legacy record and retain source-to-statement-to-GL evidence; Wave 11 retains release-wide reconciliation. No second ledger was introduced.
 
-### UI-001 — Deleted-account exclusion is present but picker coverage is incomplete
+### UI-001 — Deleted-account exclusion and historical rendering
 
-- Domain/workflow/current state: Financial account selection; **PARTIALLY IMPLEMENTED** (`K-07`).
-- Evidence: `AccountSelect2Service` defaults to active, non-trashed accounts; authorized historical report contexts explicitly use `withTrashed()`. Finance transaction selectors require active/postable accounts and ledger lookup preserves old relationships.
-- Risk/severity: T2 / medium. Dependencies: shared Select2 clients and historical report rendering.
-- Likely components: Accounting/Finance Select2 services, financial screens, route-level selector tests.
-- Existing tests: Auth Select2 and account CRUD coverage. Missing validation: every affected picker distinguishes active/inactive/soft-deleted while historical rows remain readable.
-- Finalization: Wave 4 verification; shared UI corrections, if reproduced, belong in Wave 10.
+- Domain/workflow/current state: Financial account selection and historical account rendering; **BATCH A IMPLEMENTED / BATCH B DEFERRED** (`K-07`).
+- Batch A evidence: explicit account new-selection and direct-posting eligibility contracts preserve company scoping without a global active scope; Account parent validation and service locking reject inactive, deleted, and wrong-company parents; Finance cashbox/bank selectors reject stale linked ledger accounts; Opening Balance, Cash Voucher, and Overhead Allocation historical relations retain soft-deleted accounts; Finance report filters and movement mapping retain historical deleted holders.
+- Verification: focused Account CRUD selector, search, pagination, parent-manipulation, and locking regressions; Finance selector and voucher defenses; historical relation rendering; deleted-holder Finance report filters and movements; unchanged manual-journal and Cost Center historical behavior.
+- Batch B residual: Maintenance expense and Production expense persisted-option hydration for already-linked stale/deleted accounts remains deferred until the overlapping `MAINT-001` work completes. These historical options must remain displayable and preservable/removable without becoming newly selectable.
+- Boundaries: do not apply new-selection scopes to historical Accounting reports, and do not redesign Fixed Asset selectors unless a shared regression proves it necessary.
+- Finalization: retain Batch B as Wave 10 residual work after `MAINT-001`; no Maintenance or Production controller/form changes belong to Batch A.
 
 ## Wave 5 — Production
 
-### PROD-001 — Production integrity controls exist but recovery/idempotency release evidence is incomplete
+### PROD-001 — Production integrity controls conditionally verified; database concurrency evidence remains blocked
 
-- Domain/workflow/current state: BOM requirement through material issue, output, QC, receipt, costing, closure; **UNVERIFIED**.
-- Evidence: `ProductionCycleService` uses immutable BOM snapshots, locks, remaining-requirement/output guards, material reconciliation, QC gates, inventory documents, and WIP costing. The audit did not execute duplicate/resume or injected partial-failure paths.
+- Domain/workflow/current state: BOM requirement through material issue, output, QC, receipt, costing, closure; **CONDITIONALLY VERIFIED / CONCURRENCY EVIDENCE BLOCKED**.
+- Evidence: the canonical manufacturing cycle verifies immutable BOM snapshots, multi-run quantity ceilings, material reconciliation, QC gates, partial finished-goods receipts, WIP/costing, cancellation/short-close rules, and closure reconciliation. Production creation and repeatable lifecycle POSTs now use the shared idempotent-submission contract with required client keys; focused replay tests prove one-and-only-one run, material issue, and progress mutation, changed-payload conflict, permission recheck before replay, and uploaded-evidence byte hashing. Generic inventory reversal now rejects production-linked documents because no production-aware reversal workflow exists.
 - Risk/severity: T3 / high. Dependencies: Inventory, Quality, Sales demand, costing, period locks.
-- Likely components: `ProductionCycleService`, `ProductionCostService`, inventory posting services, `ManufacturingInventoryCycleTest`.
-- Existing tests: substantial manufacturing cycle and browser coverage. Missing validation: retry/idempotency of each action, rollback across stock/journal/reservation counters, reversal/cancellation, concurrent runs, and full order closure reconciliation.
-- Finalization: Wave 5 focused regression and reconciliation; fix only proven failures.
+- Components verified/changed: `ProductionCycleService`, `ProductionCostService`, `InventoryDocumentPostingService`, production routes/UI submission handling, and `ManufacturingInventoryCycleTest`.
+- Executed tests: canonical manufacturing cycle; required-token creation/replay; issue/progress replay and changed-payload rejection; permission-revocation replay; multipart evidence hashing; material-issue rollback across documents, transactions, journals, receipt layers, issue allocations, reservations, counters, and stock position; finished-goods receipt rollback across inventory/accounting/production counters; production-linked reversal rejection with QC precedence; focused production routing/workflow, QC, inventory posting, overhead, and costing regressions.
+- Remaining release evidence: PHPUnit is isolated on SQLite `:memory:` and cannot prove simultaneous PostgreSQL row-lock behavior for competing issue/receipt/closure transactions. Run the named contention scenarios on an authorized disposable PostgreSQL database before changing this status to unqualified `VERIFIED`. Outstanding aggregate valuation, COGS/report equality, and cross-module source-to-ledger reconciliation remain with `INV-001`, `COST-001`, and Waves 9/11.
+- Finalization: Wave 5 code/test remediation complete with independent critical-review GO; retain conditional status until authorized PostgreSQL concurrency evidence is recorded.
 
 ## Wave 6 — Quality & Maintenance
 
 ### MAINT-001 — Maintenance materials post to adjustment gain/loss rather than authoritative consumption cost
 
-- Domain/workflow/current state: maintenance material issue, consumption, return, costing; **CONFIRMED DEFECT**.
-- Evidence: `MaintenanceMaterialRequestService::issue()` posts `inventory_adjustment_out`; unused return posts `inventory_adjustment_in`; `InventoryAccountingPostingService` maps these to adjustment loss/gain. `recordConsumption()` only changes quantities. Return cost may be recalculated at the later moving average because original issue-cost lineage is absent.
-- Risk/severity: T3 / **blocker**. Dependencies: Inventory, Accounts & Costing, asset/cost-center policy, Maintenance closure.
-- Likely components: maintenance material service, inventory document/accounting posting services, manufacturing cycle tests.
-- Existing tests: quantity conservation is covered, but accounting classification/cost is not. Missing validation: issue-cost preservation, partial consumption/return, expense-or-asset policy, cost center, rollback/reversal/idempotency, and inventory-to-GL reconciliation.
-- Finalization: Wave 6 with Wave 4 accounting ownership and Wave 9/11 reconciliation.
+- Domain/workflow/current state: maintenance material issue, consumption, return, costing; **CONDITIONALLY VERIFIED IMPLEMENTED**.
+- Root cause and repair: maintenance issues and unused returns previously used `inventory_adjustment_out` / `inventory_adjustment_in`, producing adjustment loss/gain and losing original return-cost lineage. They now use maintenance-specific canonical inventory documents, posted `inventory_transactions`, receipt-layer allocations, and `JournalEntryService`; issue posts configured maintenance expense against inventory and return reverses the original issue's recorded accounts, cost center, dimensions, and moving-average unit cost.
+- Integrity evidence: null authoritative cost fails before mutation; direct generic reversal of Maintenance-owned documents is blocked; duplicate issue/return, insufficient stock, accounting failure, return failure, closed period, and operating-context mismatches roll back without partial Maintenance, inventory, layer, or journal state. Production-run cost center takes precedence over the optional asset cost center, with null preserved.
+- Cost and reporting evidence: two-cost receipt layers prove moving-average transaction/GL valuation while returned receipt layers retain deterministic original per-layer cost, date, and location. HTML, XLSX, and real PDF output expose exact per-material issued/returned/net quantities and unit/gross/returned/net cost using canonical events and redact financial values without `maintenance.reports.financial`.
+- Verification: independent critical review returned **GO**. Final QA passed **21 targeted tests / 401 assertions** across MAINT-001, existing Maintenance E2E, Production, normal adjustment accounting, account-resolution, permissions, and reports; PHP lint, scoped Pint, and `git diff --check` passed. A separate generic manual-receipt regression remains with the concurrent INV-001/COST-001 nullable-cost work and is not attributed to MAINT-001.
+- Remaining release evidence: run simultaneous issue/return contention on an authorized disposable PostgreSQL database. Before enabling this path on a populated installation, perform an authorized scoped classification audit/remediation for `factory_maintenance_expense` and verify `PostingAccountConfigurationAudit` per company; do not blindly rerun the broad chart seeder or infer a customized account. Wave 9/11 retains aggregate Inventory/COGS and cross-module source-to-GL reconciliation.
 
 ## Wave 7 — HR
 
@@ -149,14 +151,15 @@ No standalone HR defect was confirmed in Wave 0. Payroll lifecycle and `PayrollR
 
 ## Wave 8 — Fixed Assets
 
-### FA-001 — Purchase-to-asset capitalization needs final duplicate-recognition reconciliation
+### FA-001 — Purchase-to-asset capitalization reconciles through one canonical purchase journal
 
-- Domain/workflow/current state: purchase allocation, capitalization, depreciation, disposal and reversal; **UNVERIFIED**.
-- Evidence: Fixed Asset services use transactions and canonical journal sources; purchase allocation guards line limits and lifecycle services prevent duplicate source recognition. Strong lifecycle tests exist, but the audit did not execute purchase invoice journal versus capitalization reconciliation.
-- Risk/severity: T3 / high. Dependencies: Purchases, Accounts, account tree, branch/hall/cost center.
-- Likely components: `FixedAssetPurchaseIntegrationService`, `FixedAssetLifecycleService`, `FixedAssetAccountingSyncService`, fixed-asset integration/lifecycle tests.
-- Missing validation: exact purchase-line allocation, no duplicate inventory/asset recognition, reversal, period lock, and GL/book-value equality.
-- Finalization: Wave 8 verification; preserve existing account-tree foreign keys.
+- Domain/workflow/current state: purchase allocation, capitalization, depreciation, cancellation/reversal, and book-value/GL reconciliation; **VERIFIED IN FOCUSED TESTS / POSTGRESQL CONTENTION DEFERRED**.
+- Executed path: a draft Purchase Invoice line marked `new_asset` supplies one or more draft Fixed Assets; approval posts one canonical `purchase_invoice` journal with the asset-account debit(s) and supplier/AP credit, then binds the capitalization movements to that journal. Reversal posts the canonical purchase reversal and retains the original journal/movement history. Purchase-linked assets do not create an inventory transaction or a second capitalization journal.
+- Defect fixed: allocation validation previously locked the source line only during request validation, outside persistence, so concurrent or stale requests could persist over-allocated drafts. Create, update, direct restore, and managed linked-account restore now revalidate inside their transaction using invoice → purchase line → active allocation locks, enforce company/branch/financial-period/source dimensions, and roll back asset/account/audit effects on rejection.
+- Reconciliation evidence: exact scale-4 allocation (including multiple fractional assets), retry/no-second-allocation behavior, approved/cancelled source rejection, restore over-allocation/orphan rejection, one deterministic journal source, reversal/idempotency, period locks, company/branch/cost-center routing, book-value/GL equality, and failure rollback passed. Hall/location remains the existing asset dimension and is not invented as a purchase-journal dimension.
+- Verification: seven focused Fixed Asset suites passed **82 tests / 1,178 assertions**; independent critical review approved the final invoice/line/allocation lock order and restore paths; scoped Pint and `git diff --check` passed.
+- Preservation: no migration, account-tree/classification redesign, foreign-key change, new clearing account, or parallel accounting source was introduced.
+- Remaining Wave 9/11 evidence: exercise simultaneous create/update/approval/restore contention on an authorized disposable PostgreSQL database and retain live source-to-subledger-to-GL reconciliation in the cross-module/release dataset. The mandatory SQLite test harness proves deterministic revalidation and rollback but not real cross-connection row-lock behavior.
 
 ## Wave 9 — Cross-module Integration
 
@@ -164,23 +167,23 @@ Wave 9 owns reconciliation acceptance for ACC-001, PUR-001, INV-001, COST-001, P
 
 ## Wave 10 — Permissions & UI Consistency
 
-### UI-002 — Statement selector initial-load behavior is inconsistent
+### UI-002 — Statement selector initial-load behavior is consistent
 
-- Domain/workflow/current state: customer/supplier statements; **PARTIALLY IMPLEMENTED** (`K-12`).
-- Evidence: the shared paginated endpoint supports an empty query and active company-scoped results. Customer Statement uses minimum input length 0; Supplier Statement uses 1, producing the reported misleading empty initial state.
+- Domain/workflow/current state: customer/supplier statements; **VERIFIED IMPLEMENTED** (`K-12`, supplier side in Wave 2).
+- Evidence: both partner statements use minimum input length 0. The supplier endpoint remains permission-gated, active-only, company-scoped, searchable, and server-paginated; the focused statement test passed 48 assertions covering initial empty-query choices, paging, search, scope, and unauthorized access.
 - Risk/severity: T1 / medium. Dependencies: shared Select2 paging and statement permissions.
 - Likely components: `resources/views/modules/accounting/reports/ledger.blade.php`, Sales/Purchases Select2 services, Select2 browser tests.
-- Existing tests: shared Select2 service/lookup coverage. Missing validation: browser open-without-search for both populations, page navigation, large datasets, permission-only users, active/deleted scope.
-- Finalization: supplier correction in Wave 2 or shared Wave 10; retain server-side pagination.
+- Existing tests: shared Select2 service/lookup coverage plus focused supplier statement endpoint/layout coverage.
+- Finalization: supplier correction verified in Wave 2; retain server-side pagination.
 
-### REP-001 — Sales document signature identities are explicitly blank
+### REP-001 — Sales document signature identities use persisted lifecycle actors
 
-- Domain/workflow/current state: Prepared/Reviewed/Approved report identity; **CONFIRMED DEFECT** (`K-05`).
-- Evidence: `resources/views/reports/sales/document.blade.php` passes all three identities as null to `reports.partials.document-signatures`. The shared partial supports audit relations; `CompanyPrintIdentityService` owns company branding, not personnel identity.
-- Risk/severity: T1 / medium. Dependencies: real document audit/approval data and employee/user conventions.
-- Likely components: Sales print view, shared signature partial, document audit relations and print tests.
-- Existing tests: report/export shape coverage. Missing validation: every affected document with/without actual relations and absence of fabricated reviewers/approvers.
-- Finalization: Wave 10/11 after the real identity source per document is confirmed.
+- Domain/workflow/current state: Prepared/Reviewed/Approved report identity; **VERIFIED IMPLEMENTED** (`K-05`).
+- Evidence: the Sales document view resolves persisted lifecycle users, including soft-deleted historical users, for all nine document kinds. Prepared uses `created_by`; approval uses `approved_by` where present, return authorization uses `authorized_by`, production approval uses `released_by`, return review uses `inspected_by`, and production review uses `technical_approved_by`. Invoice, credit-note, and payment-schedule approval plus document kinds without a real review lifecycle remain intentionally blank.
+- Risk/severity: T1 / medium, bounded T2 verification because one template serves multiple workflows. No schema, lifecycle, shared-partial, permission, or company-branding behavior changed.
+- Changed components: `resources/views/reports/sales/document.blade.php` and focused `SalesCycleTest` coverage. The shared signature partial remains unchanged.
+- Verification: the focused English/Arabic HTML/PDF regression passed 177 assertions using distinct preparer, editor, approver, reviewer, and printer users. It proves historical soft-deleted preparer rendering, persisted role separation, intentional blanks, and no current-user or `updated_by` fabrication; the existing print-authorization regression separately passed. Independent review and QA found no blocking issue; scoped Pint, syntax, and diff checks passed.
+- Finalization: **COMPLETE for REP-001**. Document types without persisted semantic reviewer/approver lifecycle data remain blank rather than inferred; adding such lifecycle data is separate future scope.
 
 ### SEC-001 — Complete backend authorization coverage for sensitive mutations is unverified
 
@@ -221,7 +224,7 @@ Wave 9 owns reconciliation acceptance for ACC-001, PUR-001, INV-001, COST-001, P
 - Dependencies: owner confirmation that the database is disposable/non-production, writer-free window, verified snapshot/restore, duplicate/data preflight, staging rehearsal, Waves 4/7/11.
 - Likely components: the five `2026_09_17_*` migrations and related reconciliation tests.
 - Missing validation: production-target status and populated-payroll behavior. Two index reconciliations have empty `down()` methods; snapshot restore, not blanket rollback, is the recovery plan. The sandbox source had no payroll rows, so a populated target requires fresh duplicate/backfill preflight and restore rehearsal.
-- Wave 1 dependency: **WAVE 1 DOES NOT DEPEND ON PENDING MIGRATIONS**. None changes Price List/Sales schema; the product target indexes already existed identically on the source. SAL-003 will require its own future migration.
+- Wave 1 dependency: **WAVE 1 DOES NOT DEPEND ON THE FIVE PRE-EXISTING PENDING MIGRATIONS**. SAL-003 has its own additive Price List migration; its default, existing-row preservation, and explicit `up()`/`down()` behavior passed in an isolated SQLite `:memory:` database and it was not applied to the protected source database.
 - Finalization: Wave 12 only under separately authorized release/migration procedures.
 
 ### REL-002 — Production frontend build-script approval resolved
@@ -240,23 +243,23 @@ Queue note: the global database queue has `after_commit=false`, but current insp
 | --- | --- | --- |
 | K-01 Price List Clone | VERIFIED IMPLEMENTED (Wave 1A) | SAL-001 |
 | K-02 Increase Price List by Percentage | VERIFIED IMPLEMENTED (Wave 1A) | SAL-002 |
-| K-03 Print-Only Price Lists | CONFIRMED MISSING FEATURE | SAL-003 |
-| K-04 Price List Print and Export | CONFIRMED MISSING FEATURE | SAL-004 |
-| K-05 Prepared/Reviewed/Approved identity | CONFIRMED DEFECT | REP-001 |
-| K-06 Treasury/Cash Account Statement | ALREADY IMPLEMENTED BUT BROKEN | ACC-001 dependent reconciliation symptom |
+| K-03 Print-Only Price Lists | VERIFIED IMPLEMENTED (Wave 1B) | SAL-003 |
+| K-04 Price List Print and Export | VERIFIED IMPLEMENTED (Wave 1) | SAL-004 |
+| K-05 Prepared/Reviewed/Approved identity | VERIFIED IMPLEMENTED | REP-001; persisted lifecycle actors, historical soft-delete visibility, and intentional blanks passed focused HTML/PDF coverage |
+| K-06 Treasury/Cash Account Statement | CONDITIONALLY VERIFIED; LEGACY RECONCILIATION REQUIRED | ACC-001 generic cashbox movements now derive from canonical journal lines with opening/closing and GL equality; one legacy approved generic voucher remains unreconciled |
 | K-07 Deleted accounts in pickers | PARTIALLY IMPLEMENTED | UI-001; central exclusion exists, complete runtime coverage is missing |
-| K-08 Supplier bank payment reconciliation | PARTIALLY IMPLEMENTED | PUR-001; posting/reversal exists, statement-to-GL proof is missing |
-| K-09 Receipt/payment voucher accounting | CONFIRMED DEFECT | ACC-001 root cause |
-| K-10 Inventory Valuation Report | PARTIALLY IMPLEMENTED | INV-001 |
-| K-11 Cost of Sales reporting | PARTIALLY IMPLEMENTED | COST-001 |
-| K-12 Statement selector initial choices | ALREADY IMPLEMENTED BUT BROKEN | UI-002; supplier client configuration differs from working customer path |
-| K-13 Sales/invoice report totals | PARTIALLY IMPLEMENTED | SAL-005 |
+| K-08 Supplier bank payment reconciliation | VERIFIED IMPLEMENTED (Wave 2) | PUR-001; canonical posting/reversal and statement-to-GL reconciliation passed focused tests |
+| K-09 Receipt/payment voucher accounting | CONDITIONALLY VERIFIED; LEGACY RECONCILIATION REQUIRED | ACC-001 canonical receipt/payment posting and reversal passed focused T3 review/QA; one legacy approved generic voucher remains unreconciled |
+| K-10 Inventory Valuation Report | VERIFIED IMPLEMENTED | INV-001; exact maintenance-return position restoration and focused valuation/GL evidence passed critical review and QA |
+| K-11 Cost of Sales reporting | VERIFIED IMPLEMENTED | COST-001; traceable delivery/return cost, exact source lineage, full-source journal reconciliation, and screen/PDF/XLSX/CSV parity passed critical review and QA |
+| K-12 Statement selector initial choices | VERIFIED IMPLEMENTED (Wave 2 supplier side) | UI-002; supplier now matches the working paginated customer behavior |
+| K-13 Sales/invoice report totals | VERIFIED IMPLEMENTED (Wave 1) | SAL-005; full filtered pre-pagination summaries and screen/PDF/XLSX/CSV parity passed independent review and targeted QA |
 
 No K-item is classified `VERIFIED ALREADY CORRECT`; runtime/code/test evidence was insufficient for that designation.
 
 ## Release Gate Summary
 
 - Material findings: 20.
-- Severity blockers: 3 (`ACC-001`, `MAINT-001`, `REL-001`). `REL-001` remains a production-release schema gate but is not a Wave 1 dependency.
+- Severity blockers: 2 (`ACC-001`, `REL-001`). `MAINT-001` is conditionally verified with explicit populated-company account-classification and PostgreSQL contention prerequisites; `REL-001` remains a production-release schema gate but is not a Wave 1 dependency.
 - T3 findings: 11 (`SAL-003`, `PUR-001`, `INV-001`, `COST-001`, `ACC-001`, `PROD-001`, `MAINT-001`, `FA-001`, `SEC-001`, `CLOSE-001`, `REL-001`).
 - Wave 0.6 establishes a reliable baseline for Wave 1. Each implementation wave must apply `docs/erp/DEFINITION_OF_DONE.md`, preserve the named sources of truth, and stop before deployment or destructive data work unless separately authorized.

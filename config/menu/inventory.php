@@ -84,6 +84,20 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'inventory_sales_valuation_report',
+                'title' => 'Inventory Sales Valuation',
+                'icon' => 'tags',
+                'route' => 'admin.inventory.sales-valuation',
+                'permission' => 'inventory.reports.operational',
+                'keywords' => ['inventory sales valuation', 'price list valuation', 'sales value', 'تقييم المخزون بسعر البيع'],
+                'actions' => [
+                    'view' => 'inventory.reports.operational',
+                    'export' => 'inventory.reports.export',
+                ],
+                'active' => ['admin.inventory.sales-valuation*'],
+                'children' => [],
+            ],
+            [
                 'label' => 'production_reports_receipts',
                 'title' => 'Finished Goods Receipts Report',
                 'icon' => 'dolly-flatbed',

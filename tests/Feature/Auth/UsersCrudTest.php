@@ -490,6 +490,12 @@ test('users form renders ajax role select only for role managers', function () {
 
 test('users create and update sync roles by public role doc nums', function () {
     $manager = userCrudActor(['users.create', 'users.edit', 'users.roles.manage']);
+    Role::query()->create([
+        'name' => 'protected-system-role',
+        'guard_name' => 'web',
+        'doc_number' => 300,
+        'doc_num' => 'Role-00300',
+    ]);
     $firstRole = Role::query()->create([
         'name' => 'Assignable First',
         'guard_name' => 'web',

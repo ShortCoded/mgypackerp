@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
@@ -27,6 +28,8 @@ use Modules\Purchases\Services\Reports\ProcurementCycleReport;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Services\SalesCycleReadService;
 
 class PlasticsDashboardService
 {
@@ -76,6 +79,7 @@ class PlasticsDashboardService
         private readonly InventoryReportService $inventoryReports,
         private readonly ProductionReportService $productionReports,
         private readonly ProcurementCycleReport $procurementReports,
+        private readonly SalesCycleReadService $salesCycleReports,
         private readonly FinanceReportService $financeReports,
     ) {}
 
@@ -119,6 +123,174 @@ class PlasticsDashboardService
         }
 
         return $dashboard;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function summaryForRequest(Request $request, string $type): array
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 403);
+        abort_unless(in_array($type, ['sales', 'purchases'], true), 404);
+
+        $snapshot = $this->operatingContext->snapshot($request);
+        if (! $snapshot['company_doc_num'] || ! $snapshot['branch_doc_num'] || ! $snapshot['financial_period_doc_num']) {
+            return ['metrics' => [], 'empty' => true, 'message' => __('dashboard.summaries.context_required')];
+        }
+
+        $validated = $request->validate([
+            'branch_doc_num' => ['nullable', 'string'],
+            'financial_period_doc_num' => ['nullable', 'string'],
+            'currency_doc_num' => ['nullable', 'string'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+        $resolved = $this->operatingContext->resolveForUser(
+            $user,
+            (string) $snapshot['company_doc_num'],
+            (string) ($validated['branch_doc_num'] ?? $snapshot['branch_doc_num']),
+            (string) ($validated['financial_period_doc_num'] ?? $snapshot['financial_period_doc_num']),
+        );
+        $context = [
+            ...$snapshot,
+            'branch_id' => (int) $resolved['branch']->getKey(),
+            'branch_doc_num' => $resolved['branch']->doc_num,
+            'branch_name' => $resolved['branch']->name,
+            'financial_period_id' => (int) $resolved['financial_period']->getKey(),
+            'financial_period_doc_num' => $resolved['financial_period']->doc_num,
+            'financial_period_name' => $resolved['financial_period']->name,
+        ];
+        $period = $this->periodPayload($context);
+        $from = isset($validated['date_from']) ? Carbon::parse($validated['date_from'])->startOfDay() : $period['from'];
+        $to = isset($validated['date_to']) ? Carbon::parse($validated['date_to'])->endOfDay() : $period['to'];
+
+        if ($from->lt($period['from']) || $to->gt($period['to'])) {
+            throw ValidationException::withMessages([
+                'date_from' => __('dashboard.summaries.date_outside_period'),
+            ]);
+        }
+
+        $period['from'] = $from;
+        $period['to'] = $to;
+        $currency = null;
+        if (filled($validated['currency_doc_num'] ?? null)) {
+            $currency = Currency::query()
+                ->where('company_id', $context['company_id'])
+                ->where('doc_num', $validated['currency_doc_num'])
+                ->where('status', 'active')
+                ->first();
+
+            if (! $currency) {
+                throw ValidationException::withMessages([
+                    'currency_doc_num' => __('dashboard.summaries.currency_invalid'),
+                ]);
+            }
+        }
+
+        $metrics = $type === 'sales'
+            ? $this->salesSummaryMetrics($context, $period, $currency)
+            : $this->purchaseSummaryMetrics($context, $period, $currency);
+
+        return [
+            'metrics' => $metrics,
+            'empty' => $metrics === [],
+            'message' => $metrics === [] ? __('dashboard.summaries.empty') : null,
+            'filters' => [
+                'branch' => $context['branch_doc_num'],
+                'financial_period' => $context['financial_period_doc_num'],
+                'currency' => $currency?->code,
+                'date_from' => $from->toDateString(),
+                'date_to' => $to->toDateString(),
+            ],
+        ];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function salesSummaryMetrics(array $context, array $period, ?Currency $currency): array
+    {
+        $filters = [
+            'financial_period_id' => (int) $context['financial_period_id'],
+            'currency_id' => $currency?->getKey(),
+            'from' => $period['from']->toDateString(),
+            'to' => $period['to']->toDateString(),
+        ];
+        $invoices = $this->salesCycleReports->ledger((int) $context['company_id'], (int) $context['branch_id'], $filters);
+        $invoiceTotals = (clone $invoices)->reorder()->selectRaw('count(*) as invoice_count, coalesce(sum(total_amount), 0) as invoiced_value, coalesce(sum(remaining_amount), 0) as outstanding_value')->first();
+        $orders = SalesOrder::query()->forCompany((int) $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])->where('branch_id', $context['branch_id'])
+            ->whereBetween('order_date', [$filters['from'], $filters['to']])
+            ->when($currency, fn (Builder $query) => $query->where('currency_id', $currency->getKey()))->count();
+        $returns = SalesReturn::query()->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])->where('branch_id', $context['branch_id'])
+            ->where('status', '<>', SalesReturn::StatusCancelled)->whereBetween('return_date', [$filters['from'], $filters['to']])
+            ->when($currency, fn (Builder $query) => $query->where(function (Builder $query) use ($currency): void {
+                $query->whereHas('invoice', fn (Builder $invoice) => $invoice->where('currency_id', $currency->getKey()))
+                    ->orWhereHas('order', fn (Builder $order) => $order->where('currency_id', $currency->getKey()));
+            }));
+
+        return [
+            $this->summaryMetric('sales_orders', $orders),
+            $this->summaryMetric('sales_invoices', (int) ($invoiceTotals?->invoice_count ?? 0)),
+            $this->summaryMetric('sales_value', $currency ? (string) ($invoiceTotals?->invoiced_value ?? 0) : null, $currency),
+            $this->summaryMetric('sales_returns', (clone $returns)->count(), $currency, $currency ? (string) (clone $returns)->sum('total_amount') : null),
+            $this->summaryMetric('sales_outstanding', $currency ? (string) ($invoiceTotals?->outstanding_value ?? 0) : null, $currency),
+        ];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function purchaseSummaryMetrics(array $context, array $period, ?Currency $currency): array
+    {
+        $filters = [
+            'branch_id' => (int) $context['branch_id'], 'currency_doc_num' => $currency?->doc_num,
+            'date_from' => $period['from']->toDateString(), 'date_to' => $period['to']->toDateString(),
+        ];
+        $orders = $this->procurementReports->rows(ProcurementCycleReport::PurchaseOrderStatus, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
+        $invoices = $this->procurementReports->rows(ProcurementCycleReport::PurchaseInvoices, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
+        $returns = $this->procurementReports->rows(ProcurementCycleReport::Returns, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
+
+        return [
+            $this->summaryMetric('purchase_orders', $orders->pluck('document')->filter()->unique()->count()),
+            $this->summaryMetric('purchase_invoices', $invoices->pluck('document')->filter()->unique()->count()),
+            $this->summaryMetric('purchase_value', $currency ? (string) $invoices->sum('amount') : null, $currency),
+            $this->summaryMetric('purchase_returns', $returns->pluck('document')->filter()->unique()->count(), $currency, $currency ? (string) $returns->sum('amount') : null),
+            $this->summaryMetric('purchase_outstanding', $currency ? (string) $invoices->sum('outstanding') : null, $currency),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function summaryMetric(string $key, int|string|null $value, ?Currency $currency = null, ?string $secondaryValue = null): array
+    {
+        $formatted = $value === null ? __('dashboard.summaries.select_currency_for_value') : (is_int($value) ? $this->formatCount($value) : $this->numbers->format($value));
+        $meta = $currency?->code ?? __('dashboard.summaries.count_only');
+        if ($secondaryValue !== null) {
+            $meta = __('dashboard.summaries.return_value', ['value' => $this->numbers->format($secondaryValue), 'currency' => $currency?->code]);
+        }
+
+        return ['key' => $key, 'title' => __('dashboard.summaries.metrics.'.$key), 'value' => $formatted, 'meta' => $meta, 'icon' => 'chart-bar', 'color' => 'primary', 'url' => null];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function summaryFilterOptions(Request $request): array
+    {
+        $options = $this->operatingContext->options($request);
+        $companyId = $this->operatingContext->selectedCompanyId($request);
+
+        return [
+            'branches' => $options['branches'],
+            'financial_periods' => $options['financial_periods'],
+            'currencies' => $companyId ? Currency::query()
+                ->where('company_id', $companyId)
+                ->where('status', 'active')
+                ->orderByDesc('is_main')
+                ->orderBy('code')
+                ->get(['doc_num', 'code'])
+                ->map(fn (Currency $currency): array => ['id' => $currency->doc_num, 'text' => $currency->code])
+                ->all() : [],
+            'current' => $options['current'],
+        ];
     }
 
     /**
@@ -361,11 +533,11 @@ class PlasticsDashboardService
      * @param  array<string, mixed>  $context
      * @param  array<string, mixed>  $period
      */
-    private function appendPurchasing(array &$dashboard, User $user, array $context, array $period): void
+    private function appendPurchasing(array &$dashboard, User $user, array $context, array $period, bool $summaryMode = false, ?int $currencyId = null): void
     {
         $items = [];
 
-        if ($this->can($user, 'purchases.purchase_requisitions.view') && $this->tableExists('purchase_requisitions')) {
+        if (($summaryMode || $this->can($user, 'purchases.purchase_requisitions.view')) && $this->tableExists('purchase_requisitions')) {
             $query = $this->contextQuery(
                 'purchase_requisitions',
                 $context,
@@ -383,7 +555,7 @@ class PlasticsDashboardService
             );
         }
 
-        if ($this->can($user, 'suppliers.view') && $this->tableExists('suppliers')) {
+        if (($summaryMode || $this->can($user, 'suppliers.view')) && $this->tableExists('suppliers')) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.suppliers.title'),
                 $this->activeCompanyCount('suppliers', $context, $user, 'suppliers'),
@@ -394,9 +566,12 @@ class PlasticsDashboardService
             );
         }
 
-        if ($this->can($user, 'purchase_invoices.view') && $this->tableExists('purchase_invoices')) {
+        if (($summaryMode || $this->can($user, 'purchase_invoices.view')) && $this->tableExists('purchase_invoices')) {
             $query = $this->restrictedContextQuery('purchase_invoices', $context, $user, 'purchase_invoices')
                 ->whereBetween('invoice_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
+            if ($currencyId) {
+                $query->where('currency_id', $currencyId);
+            }
             [$count, $unpaid] = $this->countWithValues($query, 'payment_status', ['unpaid', 'partially_paid']);
 
             $items[] = $this->metric(
@@ -409,9 +584,12 @@ class PlasticsDashboardService
             );
         }
 
-        if ($this->can($user, 'purchase_orders.view') && $this->tableExists('purchase_orders')) {
+        if (($summaryMode || $this->can($user, 'purchase_orders.view')) && $this->tableExists('purchase_orders')) {
             $query = $this->restrictedContextQuery('purchase_orders', $context, $user, 'purchase_orders')
                 ->whereBetween('document_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
+            if ($currencyId) {
+                $query->where('currency_id', $currencyId);
+            }
             [$count, $draft] = $this->countWithValues($query, 'status', ['draft']);
 
             $items[] = $this->metric(
@@ -508,11 +686,11 @@ class PlasticsDashboardService
      * @param  array<string, mixed>  $context
      * @param  array<string, mixed>  $period
      */
-    private function appendSales(array &$dashboard, User $user, array $context, array $period): void
+    private function appendSales(array &$dashboard, User $user, array $context, array $period, bool $summaryMode = false, ?int $currencyId = null): void
     {
         $items = [];
 
-        if ($this->can($user, 'customers.view') && $this->tableExists('customers')) {
+        if (($summaryMode || $this->can($user, 'customers.view')) && $this->tableExists('customers')) {
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.customers.title'),
                 $this->activeCompanyCount('customers', $context, $user, 'customers'),
@@ -523,9 +701,12 @@ class PlasticsDashboardService
             );
         }
 
-        if ($this->can($user, 'quotations.view') && $this->tableExists('quotations')) {
+        if (($summaryMode || $this->can($user, 'quotations.view')) && $this->tableExists('quotations')) {
             $query = $this->restrictedContextQuery('quotations', $context, $user, 'quotations', branch: false, financialPeriod: false)
                 ->whereBetween('quotation_date', [$period['from']->toDateString(), $period['to']->toDateString()]);
+            if ($currencyId) {
+                $query->where('currency_id', $currencyId);
+            }
             [$count, $accepted] = $this->countWithValues($query, 'status', ['accepted']);
 
             $items[] = $this->metric(

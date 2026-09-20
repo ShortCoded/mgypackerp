@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Modules\Core\Models\UserNavigationSearch;
+use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -47,6 +48,32 @@ test('unauthorized menu item is not returned', function () {
         ->getJson(route('admin.navigation-search', ['q' => 'roles']))
         ->assertOk()
         ->assertJsonPath('data.results', []);
+});
+
+test('navigation search excludes pending generic shells and retains proven workflows', function (): void {
+    config()->set('erp.phase_mode', 'expanded');
+    $registry = app(ErpUiScreenRegistry::class);
+    $permissions = [
+        'cost_centers.view',
+        $registry->find('costing_overhead_allocation_rules')->permission('view'),
+        $registry->find('costing_overhead_allocation_run')->permission('view'),
+        $registry->find('finance_cashbox_count')->permission('view'),
+        $registry->find('reports_costing_product_cost')->permission('view'),
+        $registry->find('costing_work_order_estimated_cost')->permission('view'),
+        $registry->find('finance_bank_reconciliation')->permission('view'),
+        $registry->find('core_tax_definitions')->permission('view'),
+    ];
+    $user = navigationSearchActor($permissions);
+
+    foreach (['Work Order Estimated Cost', 'Bank Reconciliation', 'Tax Definitions'] as $query) {
+        $this->actingAs($user)->getJson(route('admin.navigation-search', ['q' => $query]))
+            ->assertOk()->assertJsonPath('data.results', []);
+    }
+
+    foreach (['Cost Centers', 'Overhead Allocation Rules', 'Overhead Allocation Run', 'Cashbox Count', 'Product Cost'] as $query) {
+        $this->actingAs($user)->getJson(route('admin.navigation-search', ['q' => $query]))
+            ->assertOk()->assertJsonCount(1, 'data.results');
+    }
 });
 
 test('navigation search matches arabic and english labels and aliases', function () {

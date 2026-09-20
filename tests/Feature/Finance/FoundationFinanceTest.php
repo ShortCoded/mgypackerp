@@ -2486,6 +2486,129 @@ test('finance datatables do not expose internal ids', function (): void {
     $this->actingAs($actor)->getJson(route('admin.finance.opening-balances.data'))->assertOk()->assertJsonMissingPath('data.0.id');
 });
 
+test('finance selectors require eligible same-company linked ledger accounts and keep pagination correct', function (): void {
+    seedFinanceFoundation();
+    $actor = financeActor(['fund_transfers.view', 'cash_receipt_vouchers.view']);
+    $company = financeCurrentCompany();
+    $currency = financeCurrency(company: $company);
+    config(['select2.pagination.per_page' => 1]);
+
+    $account = function (int $number, string $name, array $overrides = []) use ($company): Account {
+        return Account::query()->create([
+            'doc_number' => $number,
+            'doc_num' => 'ACC-SELECT-'.$number,
+            'company_id' => $company->getKey(),
+            'account_code' => '19'.$number,
+            'name' => $name,
+            'name_en' => $name,
+            'level' => 1,
+            'account_type' => Account::TypeAsset,
+            'statement_type' => Account::StatementFinancialPosition,
+            'normal_balance' => Account::BalanceDebit,
+            'is_group' => false,
+            'is_postable' => true,
+            'status' => 'active',
+            ...$overrides,
+        ]);
+    };
+    $eligibleOne = $account(8101, 'Eligible Ledger One');
+    $eligibleTwo = $account(8102, 'Eligible Ledger Two');
+    $inactive = $account(8103, 'Inactive Ledger', ['status' => 'inactive']);
+    $deleted = $account(8104, 'Deleted Ledger');
+    $deleted->delete();
+    $group = $account(8105, 'Group Ledger', ['is_group' => true, 'is_postable' => false]);
+    $otherCompany = Company::query()->create([
+        'doc_number' => 8199,
+        'doc_num' => 'COMP-SELECT-8199',
+        'name' => 'Other Selector Company',
+        'status' => 'active',
+    ]);
+    $wrongCompany = $account(8106, 'Wrong Company Ledger');
+    $wrongCompany->forceFill(['company_id' => $otherCompany->getKey()])->save();
+
+    $cashbox = function (int $number, Account $linkedAccount, string $name) use ($company): Cashbox {
+        return Cashbox::query()->create([
+            'doc_number' => $number,
+            'doc_num' => 'CASH-SELECT-'.$number,
+            'company_id' => $company->getKey(),
+            'name' => $name,
+            'account_id' => $linkedAccount->getKey(),
+            'status' => 'active',
+        ]);
+    };
+    $eligibleCashboxOne = $cashbox(8201, $eligibleOne, 'Eligible Cashbox One');
+    $eligibleCashboxTwo = $cashbox(8202, $eligibleTwo, 'Eligible Cashbox Two');
+    $cashbox(8203, $inactive, 'Inactive Ledger Cashbox');
+    $cashbox(8204, $deleted, 'Deleted Ledger Cashbox');
+    $cashbox(8205, $group, 'Group Ledger Cashbox');
+    $cashbox(8206, $wrongCompany, 'Wrong Company Ledger Cashbox');
+
+    $firstPage = $this->actingAs($actor)->getJson(route('admin.finance.select2.cashboxes', ['page' => 1]))->assertOk()->json();
+    $secondPage = $this->actingAs($actor)->getJson(route('admin.finance.select2.cashboxes', ['page' => 2]))->assertOk()->json();
+    expect(collect($firstPage['results'])->pluck('id')->all())->toBe([$eligibleCashboxOne->doc_num])
+        ->and($firstPage['pagination']['more'])->toBeTrue()
+        ->and(collect($secondPage['results'])->pluck('id')->all())->toBe([$eligibleCashboxTwo->doc_num])
+        ->and($secondPage['pagination']['more'])->toBeFalse();
+
+    foreach (['Inactive Ledger Cashbox', 'Deleted Ledger Cashbox', 'Group Ledger Cashbox', 'Wrong Company Ledger Cashbox'] as $search) {
+        $this->actingAs($actor)
+            ->getJson(route('admin.finance.select2.cashboxes', ['q' => $search]))
+            ->assertOk()
+            ->assertJsonCount(0, 'results');
+    }
+
+    $bankGroup = financeBankGroup('Selector Bank Group');
+    $bankAccount = function (int $number, Account $linkedAccount, string $name) use ($bankGroup, $company, $currency): BankAccount {
+        return BankAccount::query()->create([
+            'doc_number' => $number,
+            'doc_num' => 'BANK-SELECT-'.$number,
+            'company_id' => $company->getKey(),
+            'bank_id' => $bankGroup->getKey(),
+            'account_id' => $linkedAccount->getKey(),
+            'currency_id' => $currency->getKey(),
+            'account_name' => $name,
+            'account_number' => 'SELECT-'.$number,
+            'status' => 'active',
+        ]);
+    };
+    $eligibleBank = $bankAccount(8301, $eligibleOne, 'Eligible Bank Holder');
+    $bankAccount(8302, $inactive, 'Inactive Ledger Bank');
+    $bankAccount(8303, $deleted, 'Deleted Ledger Bank');
+    $bankAccount(8304, $group, 'Group Ledger Bank');
+    $bankAccount(8305, $wrongCompany, 'Wrong Company Ledger Bank');
+
+    $bankResults = $this->actingAs($actor)
+        ->getJson(route('admin.finance.select2.bank-accounts'))
+        ->assertOk()
+        ->json('results');
+    expect(collect($bankResults)->pluck('id')->all())->toBe([$eligibleBank->doc_num]);
+
+    $this->actingAs($actor)
+        ->getJson(route('admin.finance.select2.bank-accounts', ['q' => 'Deleted Ledger Bank']))
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+});
+
+test('opening balance lines retain soft deleted historical accounts', function (): void {
+    seedFinanceFoundation();
+    $company = financeCurrentCompany();
+    $currency = financeCurrency(company: $company);
+    $period = FinancialPeriod::query()->where('company_id', $company->getKey())->firstOrFail();
+    $account = Account::query()->forCompany($company->getKey())->eligibleForDirectPosting()->firstOrFail();
+    $openingBalance = financeOpeningBalanceRecord($company, $period, $currency, 8401, 'Historical account relation');
+    $line = $openingBalance->lines()->create([
+        'line_no' => 1,
+        'account_id' => $account->getKey(),
+        'debit_amount' => 10,
+        'credit_amount' => 0,
+    ]);
+
+    $account->delete();
+
+    expect($line->fresh()?->account)->toBeInstanceOf(Account::class)
+        ->and($line->fresh()?->account?->trashed())->toBeTrue();
+});
+
 test('OpeningBalance lines keep maximum accepted decimal precision before persistence', function (): void {
     seedFinanceFoundation();
     $actor = financeActor(['opening_balances.create']);

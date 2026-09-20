@@ -36,6 +36,10 @@ class InventoryDocument extends Model
 
     public const TypeMaterialConsumption = 'production_material_consumption';
 
+    public const TypeMaintenanceMaterialIssue = 'maintenance_material_issue';
+
+    public const TypeMaintenanceMaterialReturn = 'maintenance_material_return';
+
     public const TypeProductionWaste = 'production_waste';
 
     public const TypeTransfer = 'inventory_transfer';

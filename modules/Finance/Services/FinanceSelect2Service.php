@@ -29,9 +29,7 @@ class FinanceSelect2Service
         $companyId = $this->operatingContext->snapshot($request)['company_id'];
         $query = Account::query()
             ->join('account_classifications', 'account_classifications.id', '=', 'accounts.account_classification_id')
-            ->where('accounts.status', 'active')
-            ->where('accounts.is_postable', true)
-            ->where('accounts.is_group', false)
+            ->eligibleForDirectPosting()
             ->select(['accounts.doc_num', 'accounts.doc_number', 'accounts.account_code', 'accounts.name', 'accounts.name_en', 'accounts.normal_balance']);
 
         if ($companyId === null) {
@@ -77,8 +75,9 @@ class FinanceSelect2Service
         }
 
         $query = Cashbox::query()
-            ->leftJoin('accounts', 'accounts.id', '=', 'cashboxes.account_id')
+            ->join('accounts', 'accounts.id', '=', 'cashboxes.account_id')
             ->where('cashboxes.company_id', $companyId)
+            ->whereColumn('accounts.company_id', 'cashboxes.company_id')
             ->where('cashboxes.status', 'active')
             ->whereNull('cashboxes.deleted_at')
             ->select([
@@ -91,6 +90,8 @@ class FinanceSelect2Service
                 'accounts.name_en as account_name_en',
             ])
             ->orderBy('cashboxes.doc_number');
+
+        Account::applyDirectPostingEligibility($query);
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
@@ -121,8 +122,10 @@ class FinanceSelect2Service
         }
 
         $query = BankAccount::query()
+            ->join('accounts', 'accounts.id', '=', 'bank_accounts.account_id')
             ->leftJoin('currencies', 'currencies.id', '=', 'bank_accounts.currency_id')
             ->where('bank_accounts.company_id', $companyId)
+            ->whereColumn('accounts.company_id', 'bank_accounts.company_id')
             ->where('bank_accounts.status', 'active')
             ->whereNull('bank_accounts.deleted_at')
             ->select([
@@ -136,6 +139,8 @@ class FinanceSelect2Service
                 'currencies.is_main as currency_is_main',
             ])
             ->orderBy('bank_accounts.doc_number');
+
+        Account::applyDirectPostingEligibility($query);
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
@@ -416,7 +421,6 @@ class FinanceSelect2Service
     }
 
     /**
-     * @param  Customer|Supplier  $party
      * @return array{id: string, text: string, name: string}
      */
     private function partyOption(Customer|Supplier $party): array

@@ -99,7 +99,7 @@
                 @endforeach
             </div>
 
-            @can('hr.employee_attendance.manage')
+            @can('hr.employee_attendance.correct')
                 <div class="card mb-3">
                     <div class="card-header py-2"><h6 class="mb-0">{{ __('hr_attendance.admin.manual_title') }}</h6></div>
                     <div class="card-body py-3">

@@ -4,7 +4,10 @@ namespace Modules\Finance\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -13,16 +16,25 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
+use Modules\HR\Services\PayrollPaymentService;
+use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierPaymentPostingService;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Services\CustomerReceiptSettlementService;
-use Modules\HR\Services\PayrollPaymentService;
 
 class CashVoucherService
 {
+    public const SourceReceipt = 'cash_receipt_voucher';
+
+    public const SourcePayment = 'cash_payment_voucher';
+
+    public const SourceReceiptReversal = 'cash_receipt_voucher_reversal';
+
+    public const SourcePaymentReversal = 'cash_payment_voucher_reversal';
+
     public function __construct(
         private readonly DocumentNumberService $documents,
         private readonly CrudAuditService $audit,
@@ -30,6 +42,7 @@ class CashVoucherService
         private readonly NumericFormatService $numbers,
         private readonly SupplierPaymentPostingService $supplierPaymentPostings,
         private readonly FinancialPeriodService $financialPeriods,
+        private readonly JournalEntryService $journalEntries,
     ) {}
 
     public function create(string $voucherType, array $data, ?int $companyId = null): array
@@ -164,24 +177,48 @@ class CashVoucherService
 
     public function approve(string $voucherType, CashVoucher $record, ?int $companyId = null): CashVoucher
     {
-        return DB::transaction(function () use ($voucherType, $record, $companyId): CashVoucher {
+        return $this->approveVoucher($voucherType, $record, $companyId, false);
+    }
+
+    public function approveGeneric(string $voucherType, CashVoucher $record): CashVoucher
+    {
+        return $this->approveVoucher($voucherType, $record, null, true);
+    }
+
+    private function approveVoucher(string $voucherType, CashVoucher $record, ?int $companyId, bool $postGeneric): CashVoucher
+    {
+        return DB::transaction(function () use ($voucherType, $record, $companyId, $postGeneric): CashVoucher {
             $companyId ??= $this->companies->requireCompanyId();
 
             /** @var CashVoucher $locked */
             $locked = CashVoucher::query()
-                ->with(['cashbox.account', 'currency', 'lines.account'])
+                ->with(['cashbox.account', 'cashbox.branch', 'currency', 'lines.account'])
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
             $this->assertOwnedByCurrentScreen($locked, $voucherType, $companyId);
 
             if ($locked->isApproved()) {
+                if ($postGeneric && ! $this->hasSpecializedPostingOwner($locked)) {
+                    $existingJournal = JournalEntry::query()
+                        ->where('company_id', $companyId)
+                        ->where('source_type', $this->sourceType($locked))
+                        ->where('source_id', $locked->getKey())
+                        ->where('status', JournalEntry::StatusPosted)
+                        ->where('is_posted', true)
+                        ->lockForUpdate()
+                        ->first();
+                    if (! $existingJournal instanceof JournalEntry) {
+                        throw new DomainException(__('The approved cash voucher is missing its canonical journal entry and requires controlled reconciliation.'));
+                    }
+                }
+
                 return $locked;
             }
 
             $this->assertApprovable($locked);
             $this->assertNotLinkedToClosedPurchaseInvoice($locked);
-            $this->financialPeriods->resolveOpenForPostingDate(
+            $financialPeriod = $this->financialPeriods->resolveOpenForPostingDate(
                 $companyId,
                 $locked->voucher_date,
                 lockForUpdate: true,
@@ -195,15 +232,28 @@ class CashVoucherService
             ])->save();
             $this->postSupplierPayment($locked);
             app(PayrollPaymentService::class)->postApprovedVoucher($locked);
+            if ($postGeneric && ! $this->hasSpecializedPostingOwner($locked)) {
+                $this->postGenericVoucher($locked, (int) $financialPeriod->getKey());
+            }
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
-        });
+        }, attempts: 3);
     }
 
     public function cancel(string $voucherType, CashVoucher $record, string $reason): CashVoucher
     {
-        return DB::transaction(function () use ($voucherType, $record, $reason): CashVoucher {
+        return $this->cancelVoucher($voucherType, $record, $reason, false);
+    }
+
+    public function cancelGeneric(string $voucherType, CashVoucher $record, string $reason): CashVoucher
+    {
+        return $this->cancelVoucher($voucherType, $record, $reason, true);
+    }
+
+    private function cancelVoucher(string $voucherType, CashVoucher $record, string $reason, bool $reverseGeneric): CashVoucher
+    {
+        return DB::transaction(function () use ($voucherType, $record, $reason, $reverseGeneric): CashVoucher {
             $companyId = $this->companies->requireCompanyId();
 
             /** @var CashVoucher $locked */
@@ -235,10 +285,111 @@ class CashVoucherService
                 app(CustomerReceiptSettlementService::class)->reverse($receipt, $reason);
             }
             app(PayrollPaymentService::class)->reverseCancelledVoucher($locked);
+            if ($reverseGeneric && ! $this->hasSpecializedPostingOwner($locked)) {
+                $this->reverseGenericVoucher($locked);
+            }
             $this->refreshLinkedPurchaseInvoices($locked->refresh());
 
             return $locked->refresh()->load(['cashbox.account', 'currency', 'lines.account']);
-        });
+        }, attempts: 3);
+    }
+
+    private function postGenericVoucher(CashVoucher $voucher, ?int $financialPeriodId = null): JournalEntry
+    {
+        $voucher->loadMissing(['cashbox.account', 'cashbox.branch', 'currency', 'lines.account']);
+        $financialPeriodId ??= (int) $this->financialPeriods->resolveOpenForPostingDate(
+            (int) $voucher->company_id,
+            $voucher->voucher_date,
+            lockForUpdate: true,
+        )->getKey();
+
+        $cashAccountId = (int) $voucher->cashbox->account->getKey();
+        $branchId = $voucher->cashbox->branch_id === null ? null : (int) $voucher->cashbox->branch_id;
+        $lines = $voucher->lines->map(function ($line) use ($voucher, $branchId): array {
+            return [
+                'account_id' => (int) $line->account_id,
+                'debit_amount' => $voucher->isPayment() ? (string) $line->amount : '0.0000',
+                'credit_amount' => $voucher->isReceipt() ? (string) $line->amount : '0.0000',
+                'description' => (string) ($line->description ?: $voucher->reason),
+                'branch_id' => $branchId,
+            ];
+        })->all();
+        $lines[] = [
+            'account_id' => $cashAccountId,
+            'debit_amount' => $voucher->isReceipt() ? (string) $voucher->amount : '0.0000',
+            'credit_amount' => $voucher->isPayment() ? (string) $voucher->amount : '0.0000',
+            'description' => (string) $voucher->reason,
+            'branch_id' => $branchId,
+        ];
+
+        return $this->journalEntries->createPostedFromSource([
+            'entry_date' => $voucher->voucher_date,
+            'company_id' => (int) $voucher->company_id,
+            'financial_period_id' => $financialPeriodId,
+            'branch_id' => $branchId,
+            'currency_id' => (int) $voucher->currency_id,
+            'exchange_rate' => (string) $voucher->exchange_rate,
+            'description' => __($voucher->isReceipt() ? 'Cash receipt voucher :document' : 'Cash payment voucher :document', ['document' => $voucher->doc_num]),
+            'notes' => $voucher->description,
+            'source_type' => $this->sourceType($voucher),
+            'source_id' => (int) $voucher->getKey(),
+            'source_doc_num' => (string) $voucher->doc_num,
+        ], $lines);
+    }
+
+    private function reverseGenericVoucher(CashVoucher $voucher): JournalEntry
+    {
+        $original = JournalEntry::query()
+            ->where('company_id', $voucher->company_id)
+            ->where('source_type', $this->sourceType($voucher))
+            ->where('source_id', $voucher->getKey())
+            ->where('status', JournalEntry::StatusPosted)
+            ->lockForUpdate()
+            ->first();
+        if (! $original instanceof JournalEntry) {
+            throw new DomainException(__('The approved cash voucher does not have a canonical journal entry to reverse.'));
+        }
+
+        $entryDate = $voucher->cancelled_at?->toDateString() ?? now()->toDateString();
+        $financialPeriod = $this->financialPeriods->resolveOpenForPostingDate(
+            (int) $voucher->company_id,
+            $entryDate,
+            lockForUpdate: true,
+        );
+
+        return $this->journalEntries->createPostedReversalFromSource($original, [
+            'entry_date' => $entryDate,
+            'company_id' => (int) $voucher->company_id,
+            'financial_period_id' => (int) $financialPeriod->getKey(),
+            'branch_id' => $voucher->cashbox?->branch_id,
+            'currency_id' => (int) $voucher->currency_id,
+            'exchange_rate' => (string) $voucher->exchange_rate,
+            'description' => __('Cash voucher reversal :document', ['document' => $voucher->doc_num]),
+            'notes' => $voucher->cancel_reason,
+            'source_type' => $this->reversalSourceType($voucher),
+            'source_id' => (int) $voucher->getKey(),
+            'source_doc_num' => (string) $voucher->doc_num,
+        ]);
+    }
+
+    private function sourceType(CashVoucher $voucher): string
+    {
+        return $voucher->isReceipt() ? self::SourceReceipt : self::SourcePayment;
+    }
+
+    private function reversalSourceType(CashVoucher $voucher): string
+    {
+        return $voucher->isReceipt() ? self::SourceReceiptReversal : self::SourcePaymentReversal;
+    }
+
+    private function hasSpecializedPostingOwner(CashVoucher $voucher): bool
+    {
+        return SupplierPaymentContext::query()->where('cash_voucher_id', $voucher->getKey())->exists()
+            || PurchaseInvoicePaymentSchedule::query()->where('cash_voucher_id', $voucher->getKey())->exists()
+            || CustomerReceipt::query()->where('cash_voucher_id', $voucher->getKey())->exists()
+            || ProductionExpenseRequest::query()->where('cash_voucher_id', $voucher->getKey())->exists()
+            || (Schema::hasTable('hr_payroll_payments')
+                && DB::table('hr_payroll_payments')->where('cash_voucher_id', $voucher->getKey())->exists());
     }
 
     /**
@@ -443,13 +594,19 @@ class CashVoucherService
     {
         $cashbox = $record->cashbox;
 
-        if (! $cashbox instanceof Cashbox || $cashbox->trashed() || $cashbox->status !== 'active') {
+        if (! $cashbox instanceof Cashbox
+            || $cashbox->trashed()
+            || $cashbox->status !== 'active'
+            || (int) $cashbox->company_id !== (int) $record->company_id
+            || (int) $cashbox->branch?->company_id !== (int) $record->company_id) {
             throw new DomainException($this->message($record->voucher_type, 'cashbox_inactive'));
         }
 
         $account = $cashbox->account;
 
-        if (! $account instanceof Account || $account->trashed() || $account->status !== 'active' || ! $account->is_postable || $account->is_group) {
+        if (! $account instanceof Account
+            || ! $account->isEligibleForDirectPosting()
+            || (int) $account->company_id !== (int) $record->company_id) {
             throw new DomainException($this->message($record->voucher_type, 'cashbox_account_required'));
         }
     }
@@ -459,7 +616,10 @@ class CashVoucherService
         $currency = $record->currency;
         $cashbox = $record->cashbox;
 
-        if (! $currency instanceof Currency || $currency->trashed() || $currency->status !== 'active') {
+        if (! $currency instanceof Currency
+            || $currency->trashed()
+            || $currency->status !== 'active'
+            || (int) $currency->company_id !== (int) $record->company_id) {
             throw new DomainException($this->message($record->voucher_type, 'currency_inactive'));
         }
 
@@ -475,7 +635,9 @@ class CashVoucherService
         foreach ($record->lines as $line) {
             $account = $line->account;
 
-            if (! $account instanceof Account || $account->trashed() || $account->status !== 'active' || ! $account->is_postable || $account->is_group) {
+            if (! $account instanceof Account
+                || ! $account->isEligibleForDirectPosting()
+                || (int) $account->company_id !== (int) $record->company_id) {
                 throw new DomainException($this->message($record->voucher_type, 'account_not_postable'));
             }
 

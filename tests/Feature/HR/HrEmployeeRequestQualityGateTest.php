@@ -2,12 +2,14 @@
 
 use App\Models\User;
 use Illuminate\Support\Str;
+use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingContextService;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeServiceRequest;
+use Modules\HR\Models\HrLeaveType;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -45,6 +47,7 @@ function employeeRequestQualityFixture(int $suffix = 1, array $employeeOverrides
         'status' => 'active',
         ...$employeeOverrides,
     ]);
+    HrLeaveType::query()->firstOrCreate(['code' => 'ANNUAL'], ['name' => 'Annual Leave', 'status' => 'active', 'metadata' => ['requires_balance' => false]]);
 
     return compact('company', 'branch', 'currency', 'user', 'employee');
 }
@@ -234,6 +237,65 @@ test('request review is tenant-isolated idempotent and records the reviewer deci
         ->patch(route('admin.hr.hr-requests.review', $foreign), ['decision' => 'approved'])
         ->assertNotFound();
     expect($foreign->refresh()->status)->toBe(HrEmployeeServiceRequest::StatusSubmitted);
+});
+
+test('request inbox and review reject same-company requests outside a restricted reviewers branch scope', function (): void {
+    $fixture = employeeRequestQualityFixture();
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9599,
+        'doc_num' => 'Branch-REQ-QA-99',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other Same Company Branch',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $otherEmployee = HrEmployee::query()->create([
+        'doc_number' => 9599,
+        'doc_num' => 'HRE-REQ-QA-99',
+        'public_uuid' => (string) Str::uuid(),
+        'full_name' => 'Other Branch Employee',
+        'name' => 'Other Branch Employee',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $otherBranch->getKey(),
+        'status' => 'active',
+    ]);
+    $outsideRequest = HrEmployeeServiceRequest::query()->create([
+        'employee_id' => $otherEmployee->getKey(),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $otherBranch->getKey(),
+        'request_type' => 'other',
+        'details' => 'Outside reviewer branch',
+        'status' => HrEmployeeServiceRequest::StatusSubmitted,
+        'submitted_at' => now(),
+    ]);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $permissions = [
+        Permission::findOrCreate('hr.hr_requests.view', 'web'),
+        Permission::findOrCreate('hr.hr_requests.manage', 'web'),
+    ];
+    $reviewer = User::factory()->create();
+    $role = Role::query()->create([
+        'name' => 'Restricted Request Reviewer '.Str::random(8),
+        'guard_name' => 'web',
+        'company_access_restricted' => true,
+        'branch_access_restricted' => true,
+        'financial_period_access_restricted' => false,
+    ]);
+    $role->givePermissionTo($permissions);
+    $role->companyAccessCompanies()->sync([$fixture['company']->getKey()]);
+    $role->branchAccessBranches()->sync([$fixture['branch']->getKey()]);
+    $reviewer->assignRole($role);
+    $session = employeeRequestQualityAdminSession($fixture);
+
+    $this->actingAs($reviewer)->withSession($session)
+        ->get(route('admin.hr.hr-requests.index'))
+        ->assertOk()
+        ->assertDontSee($outsideRequest->details);
+    $this->withSession($session)
+        ->patch(route('admin.hr.hr-requests.review', $outsideRequest), ['decision' => 'approved'])
+        ->assertNotFound();
+
+    expect($outsideRequest->refresh()->status)->toBe(HrEmployeeServiceRequest::StatusSubmitted);
 });
 
 test('reviewers cannot approve their own employee requests', function (): void {

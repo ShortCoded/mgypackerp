@@ -12,11 +12,11 @@
         'supplier_statement' => route('admin.accounting.journal-entries.select2.suppliers'),
         default => route('admin.accounting.journal-entries.select2.accounts', [
             'report_scope' => 1,
-            'include_historical' => 1,
         ]),
     };
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $sourceLabels = app(\Modules\Accounting\Services\JournalSourceLabelService::class);
     $isPartnerStatement = in_array($type, ['customer_statement', 'supplier_statement'], true);
     $showCollectionDetails = $type === 'customer_statement';
     $partnerColumnCount = $showCollectionDetails ? 9 : 7;
@@ -58,7 +58,7 @@
 
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="ledger_subject" :label="__('ledger_reports.filters.'.$subjectField)" :required="true" />
-                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="{{ $isPartnerStatement ? 0 : 1 }}" data-per-page="20" required>
+                <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="ledger_subject" name="{{ $subjectField }}" data-url="{{ $subjectUrl }}" data-placeholder="{{ __('common.placeholders.select') }}" data-allow-clear="true" data-delay="150" data-minimum-input-length="0" data-per-page="20" required>
                     @if($selected)<option value="{{ $selected['doc_num'] }}" selected>{{ $selected['doc_num'] }} / {{ $selected['name'] }}</option>@endif
                 </x-forms.select>
                 @error($subjectField)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
@@ -244,7 +244,7 @@
                             @forelse($result['movements'] as $movement)
                                 <tr>
                                     <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
-                                    <td>{{ __('ledger_reports.sources.'.($movement['source_type'] ?: 'manual')) }}</td>
+                                    <td>{{ $sourceLabels->label($movement['source_type']) }}</td>
                                     <td dir="ltr">
                                         @can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $movement['doc_num']) }}">{{ $movement['doc_num'] }}</a>@else{{ $movement['doc_num'] }}@endcan
                                     </td>

@@ -37,6 +37,23 @@
         };
         $isInvoiceDocument = in_array($kind, ['invoice', 'credit_note'], true);
         $isLegalCopy = $isInvoiceDocument && ($copy ?? 'operational') === 'legal';
+        $signatureActorIds = match ($kind) {
+            'sales_order' => ['prepared' => $record->created_by, 'reviewed' => null, 'approved' => $record->approved_by],
+            'invoice', 'credit_note', 'payment_schedule' => ['prepared' => $record->created_by, 'reviewed' => null, 'approved' => null],
+            'customer_receipt' => ['prepared' => $record->created_by, 'reviewed' => null, 'approved' => $record->approved_by],
+            'sales_return', 'quality_disposition' => ['prepared' => $record->created_by, 'reviewed' => $record->inspected_by, 'approved' => $record->authorized_by],
+            'sales_delivery' => ['prepared' => $record->created_by, 'reviewed' => null, 'approved' => $record->approved_by],
+            'production_request' => ['prepared' => $record->created_by, 'reviewed' => $record->technical_approved_by, 'approved' => $record->released_by],
+            default => ['prepared' => null, 'reviewed' => null, 'approved' => null],
+        };
+        $signatureActors = \App\Models\User::withTrashed()
+            ->whereKey(collect($signatureActorIds)->filter()->unique()->values()->all())
+            ->pluck('name', 'id');
+        $signatureNames = [
+            __('Prepared by') => $signatureActors->get($signatureActorIds['prepared']),
+            __('Reviewed by') => $signatureActors->get($signatureActorIds['reviewed']),
+            __('Approved By') => $signatureActors->get($signatureActorIds['approved']),
+        ];
     @endphp
 
     @include('reports.partials.company-identity')
@@ -138,7 +155,7 @@
 
     @if($record->notes ?? null)<div style="margin-top:10px;"><strong>{{ __('Notes') }}:</strong> {{ $record->notes }}</div>@endif
     @if($showPrices && (isset($record->total_amount) || $kind === 'customer_receipt')) @include('reports.partials.amount-in-words') @endif
-    @include('reports.partials.document-signatures', ['signatureNames' => [__('Prepared by') => null, __('Reviewed by') => null, __('Approved By') => null]])
+    @include('reports.partials.document-signatures', ['signatureNames' => $signatureNames])
     @if(! $isInvoiceDocument || $isLegalCopy)
         @include('reports.partials.company-authorization')
     @endif

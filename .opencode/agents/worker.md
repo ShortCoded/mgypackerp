@@ -9,7 +9,7 @@ permissions:
     effect: deny
   - action: shell
     resource: "*"
-    effect: allow
+    effect: ask
   - action: read
     resource: "*"
     effect: allow
@@ -53,73 +53,181 @@ permissions:
     resource: "*"
     effect: allow
   - action: shell
-    resource: "git status *"
+    resource: "git status*"
     effect: allow
   - action: shell
-    resource: "git diff *"
+    resource: "git diff*"
     effect: allow
   - action: shell
-    resource: "git log *"
+    resource: "git log*"
     effect: allow
   - action: shell
-    resource: "php artisan test *"
+    resource: "php artisan test*"
     effect: allow
   - action: shell
-    resource: "php artisan route:list *"
+    resource: "php artisan route:list*"
     effect: allow
   - action: shell
-    resource: "vendor/bin/pest *"
+    resource: "vendor/bin/pest*"
     effect: allow
   - action: shell
-    resource: "vendor/bin/pint *"
+    resource: "vendor/bin/pint*"
     effect: allow
   - action: shell
-    resource: "php -l *"
+    resource: "php -l*"
     effect: allow
   - action: shell
-    resource: "composer test *"
+    resource: "composer test*"
     effect: allow
   - action: shell
-    resource: "pnpm test *"
+    resource: "pnpm test*"
     effect: allow
   - action: shell
-    resource: "pnpm run test *"
+    resource: "pnpm run test*"
     effect: allow
   - action: shell
-    resource: "pnpm run build *"
+    resource: "pnpm run build*"
     effect: allow
   - action: shell
-    resource: "pnpm run lint *"
+    resource: "pnpm run lint*"
     effect: allow
   - action: shell
-    resource: "git push *"
+    resource: "rg*"
+    effect: allow
+  - action: shell
+    resource: "ls*"
+    effect: allow
+  - action: shell
+    resource: "sed -n*"
+    effect: allow
+  - action: shell
+    resource: "head*"
+    effect: allow
+  - action: shell
+    resource: "tail*"
+    effect: allow
+  - action: shell
+    resource: "git push*"
     effect: deny
   - action: shell
     resource: "*deploy*"
     effect: deny
   - action: shell
-    resource: "git reset --hard *"
+    resource: "git reset --hard*"
     effect: deny
   - action: shell
-    resource: "git clean *"
+    resource: "git clean*"
     effect: deny
   - action: shell
-    resource: "rm -rf *"
+    resource: "rm -rf*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:fresh *"
+    resource: "php artisan migrate:fresh*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:reset *"
+    resource: "php artisan migrate:reset*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:refresh *"
+    resource: "php artisan migrate:refresh*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:rollback *"
+    resource: "php artisan migrate:rollback*"
     effect: deny
   - action: shell
-    resource: "php artisan db:wipe *"
+    resource: "php artisan db:wipe*"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate*"
+    effect: deny
+  - action: shell
+    resource: "php artisan db:*"
+    effect: deny
+  - action: shell
+    resource: "*--env=production*"
+    effect: deny
+  - action: shell
+    resource: "*--env production*"
+    effect: deny
+  - action: shell
+    resource: "psql*"
+    effect: deny
+  - action: shell
+    resource: "mysql*"
+    effect: deny
+  - action: shell
+    resource: "mysqladmin*"
+    effect: deny
+  - action: shell
+    resource: "dropdb*"
+    effect: deny
+  - action: shell
+    resource: "createdb*"
+    effect: deny
+  - action: shell
+    resource: "pg_restore*"
+    effect: deny
+  - action: shell
+    resource: "*git*push*"
+    effect: deny
+  - action: shell
+    resource: "*git*reset*--hard*"
+    effect: deny
+  - action: shell
+    resource: "*git*clean*"
+    effect: deny
+  - action: shell
+    resource: "*rm -r*"
+    effect: deny
+  - action: shell
+    resource: "*rm --recursive*"
+    effect: deny
+  - action: shell
+    resource: "*rm -*r*"
+    effect: deny
+  - action: shell
+    resource: "*rm -*R*"
+    effect: deny
+  - action: shell
+    resource: "*php artisan migrate*"
+    effect: deny
+  - action: shell
+    resource: "*php artisan db:*"
+    effect: deny
+  - action: shell
+    resource: "*psql*"
+    effect: deny
+  - action: shell
+    resource: "*mysql*"
+    effect: deny
+  - action: shell
+    resource: "*mysqladmin*"
+    effect: deny
+  - action: shell
+    resource: "*dropdb*"
+    effect: deny
+  - action: shell
+    resource: "*createdb*"
+    effect: deny
+  - action: shell
+    resource: "*pg_restore*"
+    effect: deny
+  - action: shell
+    resource: "*;*"
+    effect: deny
+  - action: shell
+    resource: "*|*"
+    effect: deny
+  - action: shell
+    resource: "*&&*"
+    effect: deny
+  - action: shell
+    resource: "*$(*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
+  - action: shell
+    resource: "*<*"
     effect: deny
 ---
 

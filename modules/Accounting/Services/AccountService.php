@@ -50,8 +50,13 @@ class AccountService
             $parent = Account::query()
                 ->with('classification')
                 ->forCompany($companyId)
+                ->eligibleForNewSelection()
                 ->lockForUpdate()
-                ->findOrFail($parent->getKey());
+                ->find($parent->getKey());
+
+            if (! $parent instanceof Account) {
+                throw new DomainException(__('accounts.messages.parent_unavailable'));
+            }
 
             $document = $this->documentNumbers->nextForCompany('accounts', Account::class, $companyId);
             $payload = [
@@ -116,15 +121,20 @@ class AccountService
         $companyId = $this->companyIdForOperation($account);
         $this->assertBelongsToCompany($account, $companyId);
 
-        if ($account->isProtectedRoot() || ($account->is_system && $account->parent_id === null)) {
-            throw new DomainException(__('accounts.messages.delete_blocked_system'));
-        }
+        DB::transaction(function () use ($account, $companyId): void {
+            $account = Account::query()
+                ->forCompany($companyId)
+                ->lockForUpdate()
+                ->findOrFail($account->getKey());
 
-        if ($account->children()->exists()) {
-            throw new DomainException(__('accounts.messages.delete_blocked_children'));
-        }
+            if ($account->isProtectedRoot() || ($account->is_system && $account->parent_id === null)) {
+                throw new DomainException(__('accounts.messages.delete_blocked_system'));
+            }
 
-        DB::transaction(function () use ($account): void {
+            if ($account->children()->exists()) {
+                throw new DomainException(__('accounts.messages.delete_blocked_children'));
+            }
+
             $this->audit->softDelete($account);
             app(BankAccountAccountingSyncService::class)->softDeleteBankAccountForAccount($account);
             app(CashboxAccountingSyncService::class)->softDeleteCashboxForAccount($account);
@@ -153,6 +163,11 @@ class AccountService
     {
         return DB::transaction(function () use ($account): Account {
             $companyId = $this->companyIdForOperation($account);
+            $fixedAssetSync = app(FixedAssetAccountingSyncService::class);
+            $account = Account::withTrashed()->whereKey($account->getKey())->firstOrFail();
+            $this->assertBelongsToCompany($account, $companyId);
+            $fixedAssetSync->assertFixedAssetRestorableForAccount($account);
+
             $account = Account::withTrashed()->whereKey($account->getKey())->lockForUpdate()->firstOrFail();
             $this->assertBelongsToCompany($account, $companyId);
 
@@ -167,7 +182,7 @@ class AccountService
             app(CashboxAccountingSyncService::class)->restoreCashboxForAccount($account);
             app(CustomerAccountingSyncService::class)->restoreCustomerForAccount($account);
             app(SupplierAccountingSyncService::class)->restoreSupplierForAccount($account);
-            app(FixedAssetAccountingSyncService::class)->restoreFixedAssetForAccount($account);
+            $fixedAssetSync->restoreFixedAssetForAccount($account);
 
             return $account->refresh();
         });
@@ -177,8 +192,18 @@ class AccountService
     {
         $companyId ??= $this->companyIdForOperation($current);
         $parent = ! empty($data['parent_doc_num'])
-            ? Account::query()->forCompany($companyId)->where('doc_num', $data['parent_doc_num'])->first()
+            ? Account::query()
+                ->forCompany($companyId)
+                ->eligibleForNewSelection()
+                ->where('doc_num', $data['parent_doc_num'])
+                ->lockForUpdate()
+                ->first()
             : null;
+
+        if (! empty($data['parent_doc_num']) && ! $parent instanceof Account) {
+            throw new DomainException(__('accounts.messages.parent_unavailable'));
+        }
+
         $classificationCode = $this->classificationCode($data, $parent, $current);
         $classification = ! empty($classificationCode)
             ? AccountClassification::query()->where('code', $classificationCode)->first()

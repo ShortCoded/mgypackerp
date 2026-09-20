@@ -3,19 +3,24 @@
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\JournalEntry;
+use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Http\Controllers\FinanceReportController;
+use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCount;
 use Modules\Finance\Models\CashVoucher;
-use Modules\Finance\Models\FundTransfer;
 use Modules\Finance\Models\Cheque;
+use Modules\Finance\Models\FundTransfer;
+use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\FinanceReportService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
@@ -44,6 +49,7 @@ function financeReportFixture(object $test): array
     ]);
     $accountOne = financeReportAccount($company, 9701, '111101', 'Main Cashbox Account');
     $accountTwo = financeReportAccount($company, 9702, '111102', 'Petty Cashbox Account');
+    $counterAccount = financeReportAccount($company, 9799, '411999', 'Receipt Counter Account');
     $cashboxOne = Cashbox::query()->create([
         'doc_number' => 9701, 'doc_num' => 'CASH-9701', 'company_id' => $company->getKey(), 'name' => 'Main Cashbox',
         'branch_id' => $branch->getKey(), 'account_id' => $accountOne->getKey(), 'status' => 'active',
@@ -53,10 +59,21 @@ function financeReportFixture(object $test): array
         'branch_id' => $branch->getKey(), 'account_id' => $accountTwo->getKey(), 'status' => 'active',
     ]);
 
-    CashVoucher::query()->create([
+    $receipt = CashVoucher::query()->create([
         'doc_number' => 9701, 'doc_num' => 'CRV-9701', 'company_id' => $company->getKey(), 'voucher_type' => CashVoucher::TypeReceipt,
         'voucher_date' => '2026-09-01', 'cashbox_id' => $cashboxOne->getKey(), 'currency_id' => $currency->getKey(),
         'exchange_rate' => 1, 'amount' => 100, 'amount_base' => 100, 'reason' => 'Approved receipt', 'status' => CashVoucher::StatusApproved,
+    ]);
+    $receiptJournal = JournalEntry::query()->create([
+        'doc_number' => 9701, 'doc_num' => 'JE-9701', 'entry_date' => '2026-09-01', 'company_id' => $company->getKey(),
+        'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'currency_id' => $currency->getKey(),
+        'exchange_rate' => 1, 'description' => 'Canonical generic receipt', 'source_type' => CashVoucherService::SourceReceipt,
+        'source_id' => $receipt->getKey(), 'source_doc_num' => $receipt->doc_num, 'status' => JournalEntry::StatusPosted,
+        'is_system_generated' => true, 'is_posted' => true, 'approved' => true,
+    ]);
+    $receiptJournal->lines()->createMany([
+        ['line_no' => 1, 'account_id' => $accountOne->getKey(), 'debit_amount' => 100, 'credit_amount' => 0, 'branch_id' => $branch->getKey()],
+        ['line_no' => 2, 'account_id' => $counterAccount->getKey(), 'debit_amount' => 0, 'credit_amount' => 100, 'branch_id' => $branch->getKey()],
     ]);
     CashVoucher::query()->create([
         'doc_number' => 9702, 'doc_num' => 'CRV-9702-DRAFT', 'company_id' => $company->getKey(), 'voucher_type' => CashVoucher::TypeReceipt,
@@ -151,6 +168,228 @@ test('finance cashbox reports reconcile approved vouchers and both transfer legs
     expect($statement['rows']->pluck('document')->all())
         ->toContain('CRV-9701', 'TRF-9701')
         ->not->toContain('CRV-9702-DRAFT');
+});
+
+test('finance report options exclude inactive or deleted holders while movement queries retain history', function (): void {
+    $fixture = financeReportFixture($this);
+    financeReportActor();
+    $service = app(FinanceReportService::class);
+    $bankGroup = financeReportAccount($fixture['company'], 9710, '111200', 'Historical Bank Group');
+    $bankGroup->forceFill(['is_group' => true, 'is_postable' => false])->save();
+    $bankSourceAccount = financeReportAccount($fixture['company'], 9711, '111201', 'Historical Bank Source Ledger');
+    $bankTargetAccount = financeReportAccount($fixture['company'], 9712, '111202', 'Historical Bank Target Ledger');
+    $bankSource = BankAccount::query()->create([
+        'doc_number' => 9711,
+        'doc_num' => 'BANK-9711',
+        'company_id' => $fixture['company']->getKey(),
+        'bank_id' => $bankGroup->getKey(),
+        'account_id' => $bankSourceAccount->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'account_name' => 'Historical Source Bank',
+        'account_number' => '9711',
+        'status' => 'active',
+    ]);
+    $bankTarget = BankAccount::query()->create([
+        'doc_number' => 9712,
+        'doc_num' => 'BANK-9712',
+        'company_id' => $fixture['company']->getKey(),
+        'bank_id' => $bankGroup->getKey(),
+        'account_id' => $bankTargetAccount->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'account_name' => 'Historical Target Bank',
+        'account_number' => '9712',
+        'status' => 'active',
+    ]);
+    FundTransfer::query()->create([
+        'doc_number' => 9711,
+        'doc_num' => 'TRF-BANK-9711',
+        'company_id' => $fixture['company']->getKey(),
+        'transfer_date' => '2026-09-03',
+        'source_type' => FundTransfer::HolderBankAccount,
+        'source_bank_account_id' => $bankSource->getKey(),
+        'target_type' => FundTransfer::HolderBankAccount,
+        'target_bank_account_id' => $bankTarget->getKey(),
+        'source_currency_id' => $fixture['currency']->getKey(),
+        'target_currency_id' => $fixture['currency']->getKey(),
+        'source_amount' => 30,
+        'exchange_rate' => 1,
+        'target_amount' => 30,
+        'source_amount_base' => 30,
+        'target_amount_base' => 30,
+        'reason' => 'Historical bank movement',
+        'status' => FundTransfer::StatusApproved,
+    ]);
+
+    $fixture['cashboxOne']->delete();
+    $bankSource->delete();
+    $fixture['cashboxTwo']->update(['status' => 'inactive']);
+    $bankTarget->update(['status' => 'inactive']);
+
+    $options = $service->filterOptions();
+    expect($options['cashboxes']->pluck('doc_num'))
+        ->not->toContain($fixture['cashboxOne']->doc_num, $fixture['cashboxTwo']->doc_num)
+        ->and($options['bank_accounts']->pluck('doc_num'))
+        ->not->toContain($bankSource->doc_num, $bankTarget->doc_num);
+
+    $selectedOptions = $service->filterOptions([
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+        'bank_account_doc_num' => $bankSource->doc_num,
+    ]);
+    expect($selectedOptions['cashboxes']->pluck('doc_num'))->toContain($fixture['cashboxOne']->doc_num)
+        ->and($selectedOptions['bank_accounts']->pluck('doc_num'))->toContain($bankSource->doc_num);
+
+    $cashboxStatement = $service->report([
+        'type' => FinanceReportService::CashboxStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+    ]);
+    $bankStatement = $service->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'bank_account_doc_num' => $bankSource->doc_num,
+    ]);
+
+    expect($cashboxStatement['rows']->pluck('document'))->toContain('CRV-9701', 'TRF-9701')
+        ->and($bankStatement['rows']->pluck('document'))->toContain('TRF-BANK-9711');
+
+    $this->actingAs(auth()->user())
+        ->get(route('admin.reports.finance.index', [
+            'type' => FinanceReportService::CashboxStatement,
+            'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+        ]))
+        ->assertOk()
+        ->assertSee($fixture['cashboxOne']->doc_num);
+});
+
+test('finance reports default to the operating branch and reject a branch outside the user scope', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9751, 'doc_num' => 'BR-9751', 'company_id' => $fixture['company']->getKey(),
+        'name' => 'Restricted Branch', 'type' => 'branch', 'status' => 'active',
+    ]);
+    $otherAccount = financeReportAccount($fixture['company'], 9751, '111751', 'Restricted Cashbox Account');
+    $otherCashbox = Cashbox::query()->create([
+        'doc_number' => 9751, 'doc_num' => 'CASH-9751', 'company_id' => $fixture['company']->getKey(),
+        'name' => 'Restricted Cashbox', 'branch_id' => $otherBranch->getKey(),
+        'account_id' => $otherAccount->getKey(), 'status' => 'active',
+    ]);
+    foreach ([
+        ['number' => 9752, 'document' => 'CRV-OTHER-APPROVED', 'status' => CashVoucher::StatusApproved],
+        ['number' => 9753, 'document' => 'CRV-OTHER-DRAFT', 'status' => CashVoucher::StatusDraft],
+    ] as $voucher) {
+        CashVoucher::query()->create([
+            'doc_number' => $voucher['number'], 'doc_num' => $voucher['document'],
+            'company_id' => $fixture['company']->getKey(), 'voucher_type' => CashVoucher::TypeReceipt,
+            'voucher_date' => '2026-09-01', 'cashbox_id' => $otherCashbox->getKey(),
+            'currency_id' => $fixture['currency']->getKey(), 'exchange_rate' => 1,
+            'amount' => 50, 'amount_base' => 50, 'reason' => 'Restricted branch voucher',
+            'status' => $voucher['status'],
+        ]);
+    }
+    $role = Role::query()->create([
+        'name' => 'finance-report-scope-9751', 'guard_name' => 'web', 'doc_number' => 9751,
+        'doc_num' => 'Role-09751', 'company_access_restricted' => true,
+        'branch_access_restricted' => true, 'financial_period_access_restricted' => true,
+    ]);
+    $actor->assignRole($role);
+    DB::table('role_company_access')->insert(['role_id' => $role->getKey(), 'company_id' => $fixture['company']->getKey(), 'created_at' => now(), 'updated_at' => now()]);
+    DB::table('role_branch_access')->insert(['role_id' => $role->getKey(), 'branch_id' => $fixture['branch']->getKey(), 'created_at' => now(), 'updated_at' => now()]);
+    DB::table('role_financial_period_access')->insert(['role_id' => $role->getKey(), 'financial_period_id' => $fixture['period']->getKey(), 'created_at' => now(), 'updated_at' => now()]);
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    request()->setUserResolver(fn (): User => $actor);
+
+    $filterRequest = Request::create('/reports', 'GET', [
+        'type' => FinanceReportService::CashboxBalances,
+    ]);
+    $filterRequest->setLaravelSession(app('session.store'));
+    $filterRequest->setUserResolver(fn (): User => $actor);
+    $filters = app(FinanceReportService::class)->filters($filterRequest);
+    $options = app(FinanceReportService::class)->filterOptions($filters);
+
+    expect($filters['branch_id'])->toBe($fixture['branch']->getKey())
+        ->and($options['cashboxes']->pluck('doc_num'))->not->toContain($otherCashbox->doc_num);
+
+    foreach ([
+        FinanceReportService::CashVouchers => ['CRV-9701', 'CRV-OTHER-APPROVED'],
+        FinanceReportService::UnapprovedDocuments => ['CRV-9702-DRAFT', 'CRV-OTHER-DRAFT'],
+    ] as $type => [$visibleDocument, $restrictedDocument]) {
+        $reportRequest = Request::create('/reports', 'GET', ['type' => $type]);
+        $reportRequest->setLaravelSession(app('session.store'));
+        $reportRequest->setUserResolver(fn (): User => $actor);
+        $report = app(FinanceReportService::class)->report(app(FinanceReportService::class)->filters($reportRequest));
+
+        expect($report['rows']->pluck('document'))->toContain($visibleDocument)
+            ->not->toContain($restrictedDocument);
+    }
+
+    $this->actingAs($actor)
+        ->getJson(route('admin.reports.finance.index', [
+            'type' => FinanceReportService::CashboxBalances,
+            'branch_id' => $otherBranch->getKey(),
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('branch_id');
+});
+
+test('due cheque filters use stable keys while rendering localized labels', function (): void {
+    Carbon::setTestNow(Carbon::create(2026, 9, 17, 10));
+    $fixture = financeReportFixture($this);
+    financeReportActor();
+
+    foreach ([
+        ['number' => 9761, 'document' => 'CHQ-OVERDUE', 'due' => '2026-09-16', 'state' => 'overdue'],
+        ['number' => 9762, 'document' => 'CHQ-TODAY', 'due' => '2026-09-17', 'state' => 'due_today'],
+        ['number' => 9763, 'document' => 'CHQ-UPCOMING', 'due' => '2026-09-18', 'state' => 'upcoming'],
+    ] as $cheque) {
+        Cheque::query()->create([
+            'doc_number' => $cheque['number'], 'doc_num' => $cheque['document'],
+            'company_id' => $fixture['company']->getKey(), 'cheque_type' => Cheque::TypeReceived,
+            'cheque_number' => (string) $cheque['number'], 'cheque_date' => '2026-09-01',
+            'due_date' => $cheque['due'], 'currency_id' => $fixture['currency']->getKey(),
+            'amount' => 10, 'amount_base' => 10, 'reason' => 'Due-state regression',
+            'status' => Cheque::StatusReceived,
+        ]);
+    }
+
+    foreach (['en', 'ar'] as $locale) {
+        app()->setLocale($locale);
+        foreach (['overdue' => 'CHQ-OVERDUE', 'due_today' => 'CHQ-TODAY', 'upcoming' => 'CHQ-UPCOMING'] as $state => $document) {
+            $rows = app(FinanceReportService::class)->report([
+                'type' => FinanceReportService::DueCheques,
+                'as_of_date' => '2026-09-17',
+                'to_date' => '2026-09-30',
+                'due_state' => $state,
+            ])['rows'];
+
+            expect($rows->pluck('document')->all())->toBe([$document])
+                ->and($rows->sole()['due_state'])->toBe(__("finance_reports.values.{$state}"));
+        }
+    }
+});
+
+test('cashbox statement defaults its through date and renders without explicit date filters', function (): void {
+    Carbon::setTestNow(Carbon::create(2026, 9, 30, 10));
+
+    try {
+        financeReportFixture($this);
+        $actor = financeReportActor();
+
+        $response = $this->actingAs($actor)->get(route('admin.reports.finance.index', [
+            'type' => FinanceReportService::CashboxStatement,
+        ]));
+
+        $response->assertOk()
+            ->assertSee(__('finance_reports.types.cashbox_statement.title'))
+            ->assertSee('CRV-9701')
+            ->assertDontSee('CRV-9702-DRAFT');
+
+    } finally {
+        Carbon::setTestNow();
+    }
 });
 
 test('legacy finance report route renders the actual unified report and unsupported guarantee navigation is absent', function (): void {

@@ -33,7 +33,7 @@ final class FinancialAnalyticsReportController extends Controller
         return view('modules.accounting.reports.financial-analytics', [
             'report' => $this->reports->report($filters),
             'filters' => $filters,
-            'filterOptions' => $this->reports->filterOptions((int) $filters['company_id']),
+            'filterOptions' => $this->reports->filterOptions((int) $filters['company_id'], $filters),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($request->route()?->getName() ?? ''),
         ]);
     }

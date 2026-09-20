@@ -233,6 +233,23 @@ class Account extends Model
         return $query->where($this->getTable().'.company_id', $companyId);
     }
 
+    public function scopeEligibleForNewSelection(Builder $query): Builder
+    {
+        return self::applyNewSelectionEligibility($query);
+    }
+
+    public static function applyNewSelectionEligibility(Builder|QueryBuilder $query): Builder|QueryBuilder
+    {
+        return $query
+            ->where('accounts.status', 'active')
+            ->whereNull('accounts.deleted_at');
+    }
+
+    public function isEligibleForNewSelection(): bool
+    {
+        return ! $this->trashed() && $this->status === 'active';
+    }
+
     public function scopeEligibleForDirectPosting(Builder $query): Builder
     {
         return self::applyDirectPostingEligibility($query);
@@ -240,11 +257,16 @@ class Account extends Model
 
     public static function applyDirectPostingEligibility(Builder|QueryBuilder $query): Builder|QueryBuilder
     {
-        return $query
-            ->where('accounts.status', 'active')
+        return self::applyNewSelectionEligibility($query)
             ->where('accounts.is_postable', true)
-            ->where('accounts.is_group', false)
-            ->whereNull('accounts.deleted_at');
+            ->where('accounts.is_group', false);
+    }
+
+    public function isEligibleForDirectPosting(): bool
+    {
+        return $this->isEligibleForNewSelection()
+            && (bool) $this->is_postable
+            && ! (bool) $this->is_group;
     }
 
     public function scopeOrdered(Builder $query): Builder

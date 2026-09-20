@@ -469,3 +469,23 @@ test('canonical allocation screens render with scoped permissions instead of the
         ->assertSee('Preview allocation')
         ->assertDontSee('New UI Shell');
 });
+
+test('overhead allocation sources retain soft deleted historical accounts', function (): void {
+    $fixture = overheadAllocationFixture();
+    overheadSourceJournal($fixture, '30000');
+    overheadProductionRun($fixture, $fixture['targetCenterA'], 1, 60);
+    overheadProductionRun($fixture, $fixture['targetCenterB'], 2, 40);
+    $preview = app(OverheadAllocationService::class)->preview(
+        overheadRule($fixture),
+        $fixture['period'],
+        $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(),
+        $fixture['period']->to_date->toDateString(),
+    );
+    $source = $preview->sources()->firstOrFail();
+
+    $fixture['sourceAccount']->delete();
+
+    expect($source->fresh()?->account)->toBeInstanceOf(Account::class)
+        ->and($source->fresh()?->account?->trashed())->toBeTrue();
+});

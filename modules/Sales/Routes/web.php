@@ -145,6 +145,8 @@ Route::middleware('auth')
             ->name('select2.quotation-products');
         Route::get('/select2/customer-quotation-terms', [QuotationController::class, 'customerTerms'])
             ->name('select2.customer-quotation-terms');
+        Route::get('/select2/price-lists', [PriceListController::class, 'select2PriceLists'])
+            ->name('select2.price-lists');
         Route::prefix('customers')->name('customers.')->controller(CustomerController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:customers.view')->name('index');
             Route::get('/data', 'data')->middleware('can:customers.view')->name('data');
@@ -176,10 +178,17 @@ Route::middleware('auth')
             Route::patch('/{priceList}/restore', 'restore')->withTrashed()->middleware('can:price_lists.restore')->name('restore');
             Route::get('/{priceList}/clone', 'clone')->middleware('can:price_lists.clone')->name('clone');
             Route::post('/{priceList}/increase-by-percentage', 'increaseByPercentage')->middleware('can:price_lists.edit')->name('increase-by-percentage');
+            Route::post('/{priceList}/review', 'review')->middleware('can:price_lists.review')->name('review');
+            Route::post('/{priceList}/approve', 'approve')->middleware('can:price_lists.approve')->name('approve');
+            Route::get('/{priceList}/print', 'print')->withTrashed()->middleware(['can:price_lists.view', 'can:price_lists.print'])->name('print');
+            Route::get('/{priceList}/pdf', 'pdf')->withTrashed()->middleware(['can:price_lists.view', 'can:price_lists.print'])->name('pdf');
+            Route::get('/{priceList}/export.xlsx', 'exportXlsx')->withTrashed()->middleware(['can:price_lists.view', 'can:price_lists.export'])->name('export.xlsx');
+            Route::get('/{priceList}/export.csv', 'exportCsv')->withTrashed()->middleware(['can:price_lists.view', 'can:price_lists.export'])->name('export.csv');
             Route::get('/{priceList}', 'show')->withTrashed()->middleware('can:price_lists.view')->name('show');
             Route::get('/{priceList}/edit', 'edit')->middleware('can:price_lists.edit')->name('edit');
             Route::put('/{priceList}', 'update')->middleware('can:price_lists.edit')->name('update');
             Route::delete('/{priceList}', 'destroy')->middleware('can:price_lists.delete')->name('destroy');
+            Route::get('/{priceList}/history', 'history')->withTrashed()->middleware('can:price_lists.view')->name('history');
         });
 
         Route::prefix('quotations')->name('quotations.')->controller(QuotationController::class)->group(function (): void {

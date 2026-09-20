@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Excel as ExcelFormat;
@@ -15,6 +16,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemCategory;
 use Modules\Core\Models\ItemColor;
@@ -29,13 +31,17 @@ use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Inventory\Exports\InventoryBookValuationExport;
 use Modules\Inventory\Exports\InventoryReportExport;
+use Modules\Inventory\Exports\InventorySalesValuationExport;
 use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
+use Modules\Inventory\Http\Requests\InventoryBookValuationRequest;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Inventory\Services\InventoryValuationService;
+use Modules\Sales\Models\PriceList;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class InventoryReportController extends Controller
@@ -89,42 +95,68 @@ class InventoryReportController extends Controller
         ], 'inventory-operations-report.pdf');
     }
 
-    public function valuation(Request $request): View
+    public function valuation(InventoryBookValuationRequest $request): View
     {
         return view('modules.inventory.reports.valuation', $this->valuationData($request));
     }
 
-    public function valuationExport(Request $request): BinaryFileResponse|Response
+    public function valuationExport(InventoryBookValuationRequest $request): BinaryFileResponse|Response
     {
         $data = $this->valuationData($request);
-        abort_unless(is_array($data['comparison']), 422, __('inventory_accounting.errors.export_requires_selection'));
         $format = (string) $request->route('valuation_export_format');
+        $isComparisonExport = filled($request->input('product_id'))
+            && filled($request->input('branch_store_id'))
+            && is_array($data['comparison']);
 
         if ($format === 'pdf') {
             $context = $this->context->snapshot($request);
             $company = Company::query()->findOrFail($context['company_id']);
 
-            return $this->pdf->stream('reports.inventory.valuation', [
-                'title' => __('inventory_accounting.valuation_report.title'),
-                'comparison' => $data['comparison'],
-                'product' => $data['selectedProduct'],
-                'store' => $data['selectedStore'],
+            if ($isComparisonExport) {
+                return $this->pdf->stream('reports.inventory.valuation', [
+                    'title' => __('inventory_accounting.valuation_report.title'),
+                    'comparison' => $data['comparison'],
+                    'product' => $data['selectedProduct'],
+                    'store' => $data['selectedStore'],
+                    'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+                ], 'inventory-valuation-comparison.pdf', 'L');
+            }
+
+            return $this->pdf->stream('reports.inventory.book-valuation', [
+                'title' => __('inventory_accounting.book_valuation.title'),
+                'rows' => $data['bookValuation']['rows'],
+                'totals' => $data['bookValuation']['totals'],
+                'asOf' => $data['asOf'],
+                'currencyCode' => $data['currencyCode'],
+                'filterSummary' => $data['filterSummary'],
                 'companyPrintIdentity' => $this->printIdentity->forCompany($company),
-            ], 'inventory-valuation-comparison.pdf', 'L');
+            ], 'inventory-book-valuation.pdf', 'L');
         }
 
         $writer = $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX;
         $extension = $format === 'csv' ? 'csv' : 'xlsx';
 
+        if ($isComparisonExport) {
+            return Excel::download(
+                new InventoryValuationComparisonExport($data['comparison']),
+                "inventory-valuation-comparison.{$extension}",
+                $writer,
+            );
+        }
+
         return Excel::download(
-            new InventoryValuationComparisonExport($data['comparison']),
-            "inventory-valuation-comparison.{$extension}",
+            new InventoryBookValuationExport(
+                $data['bookValuation']['rows'],
+                $data['bookValuation']['totals'],
+                $data['currencyCode'],
+            ),
+            "inventory-book-valuation.{$extension}",
             $writer,
         );
     }
 
     /** @return array<string, mixed> */
-    private function valuationData(Request $request): array
+    private function valuationData(InventoryBookValuationRequest $request): array
     {
         $context = $this->context->snapshot($request);
         abort_unless(
@@ -133,12 +165,7 @@ class InventoryReportController extends Controller
             __('inventory_accounting.errors.context_required'),
         );
 
-        $filters = $request->validate([
-            'as_of' => ['nullable', 'date'],
-            'product_id' => ['nullable', 'integer'],
-            'branch_store_id' => ['nullable', 'integer'],
-            'reference_method' => ['nullable', 'in:moving_average,periodic_weighted_average,fifo'],
-        ]);
+        $filters = $request->validated();
         $period = FinancialPeriod::query()
             ->where('company_id', $context['company_id'])
             ->findOrFail($context['financial_period_id']);
@@ -155,6 +182,54 @@ class InventoryReportController extends Controller
                 ]),
             ]);
         }
+
+        $branches = $this->context->allowedBranchQueryForCurrentCompany($request)
+            ->whereIn('branches.type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])
+            ->get();
+        $branchIds = $branches->modelKeys();
+        $aggregateStores = BranchStore::query()
+            ->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0])
+            ->with('branch:id,doc_num,name,type')
+            ->orderBy('position')->orderBy('name')->get();
+        $halls = BranchHall::query()
+            ->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0])
+            ->with('branch:id,doc_num,name,type')
+            ->orderBy('position')->orderBy('name')->get();
+        $locations = WarehouseLocation::query()
+            ->whereIn('branch_store_id', $aggregateStores->modelKeys() !== [] ? $aggregateStores->modelKeys() : [0])
+            ->with('branchStore.branch:id,doc_num,name,type')
+            ->orderBy('branch_store_id')->orderBy('position')->orderBy('code')->get();
+
+        $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
+        $selectedAggregateStore = $this->selectedOption($aggregateStores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
+        $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
+        $selectedLocation = $this->selectedOption($locations, 'public_id', $filters['warehouse_location_uuid'] ?? null, 'warehouse_location_uuid');
+
+        if ($selectedBranch && $selectedAggregateStore && (int) $selectedAggregateStore->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
+        }
+        if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
+        }
+        if ($selectedAggregateStore && $selectedLocation && (int) $selectedLocation->branch_store_id !== (int) $selectedAggregateStore->getKey()) {
+            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.location_store')]);
+        }
+
+        $queryFilters = [
+            ...$filters,
+            'as_of' => $asOf,
+            'branch_id' => $selectedBranch?->getKey(),
+            'branch_store_id' => $selectedAggregateStore?->getKey(),
+            'branch_hall_id' => $selectedHall?->getKey(),
+            'warehouse_location_id' => $selectedLocation?->getKey(),
+        ];
+        $bookValuation = $this->reports->bookValuation(
+            (int) $context['company_id'],
+            $branchIds,
+            $queryFilters,
+        );
+        $currencyCode = (string) (Currency::query()->forCompany((int) $context['company_id'])
+            ->active()->where('is_main', true)->value('code') ?? '—');
 
         $products = Product::query()
             ->where('company_id', $context['company_id'])
@@ -201,6 +276,29 @@ class InventoryReportController extends Controller
         }
 
         return [
+            'filters' => [...$filters, 'as_of' => $asOf],
+            'options' => [
+                'branches' => $branches,
+                'stores' => $aggregateStores,
+                'halls' => $halls,
+                'locations' => $locations,
+                'selected_branch' => $selectedBranch,
+                'selected_store' => $selectedAggregateStore,
+                'selected_hall' => $selectedHall,
+                'selected_location' => $selectedLocation,
+                'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
+                'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
+            ],
+            'bookValuation' => $bookValuation,
+            'currencyCode' => $currencyCode,
+            'filterSummary' => [
+                __('inventory_accounting.book_valuation.as_of') => $asOf,
+                __('inventory_accounting.book_valuation.currency') => $currencyCode,
+                __('stock_balance_inquiry.filters.branch') => (string) ($selectedBranch?->name ?? __('stock_balance_inquiry.options.all')),
+                __('stock_balance_inquiry.filters.store') => (string) ($selectedAggregateStore?->name ?? __('stock_balance_inquiry.options.all')),
+                __('stock_balance_inquiry.filters.hall') => (string) ($selectedHall?->name ?? __('stock_balance_inquiry.options.all')),
+                __('stock_balance_inquiry.filters.location') => (string) ($selectedLocation?->name ?? __('stock_balance_inquiry.options.all')),
+            ],
             'asOf' => $asOf,
             'referenceMethod' => $referenceMethod,
             'period' => $period,
@@ -259,8 +357,109 @@ class InventoryReportController extends Controller
         ], 'stock-balance-inquiry.pdf', 'L');
     }
 
-    /**
-     * @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>, 3: array<string, mixed>}
+    public function salesValuation(Request $request): View
+    {
+        [$context, $filters, $options, $valuation] = $this->salesValuationReport($request, false);
+
+        return view('modules.inventory.reports.sales-valuation', [
+            'context' => $context,
+            'filters' => $filters,
+            'options' => $options,
+            'valuation' => $valuation,
+            'numbers' => $this->numbers,
+        ]);
+    }
+
+    public function salesValuationExport(Request $request, string $format = 'xlsx'): BinaryFileResponse
+    {
+        abort_unless(in_array($format, ['xlsx', 'csv'], true), 404);
+        [, , , $valuation] = $this->salesValuationReport($request, true);
+
+        $extension = $format === 'csv' ? 'csv' : 'xlsx';
+
+        return Excel::download(
+            new InventorySalesValuationExport($valuation),
+            'inventory-sales-valuation-'.now()->format('Ymd-His').'.'.$extension,
+            $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX,
+        );
+    }
+
+    public function salesValuationPrint(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response
+    {
+        [$context, $filters, $options, $valuation] = $this->salesValuationReport($request, true);
+        $company = Company::query()->findOrFail($context['company_id']);
+
+        return $this->pdf->stream('reports.inventory.sales-valuation', [
+            'title' => __('inventory_accounting.sales_valuation.title'),
+            'valuation' => $valuation,
+            'filterSummary' => [
+                __('stock_balance_inquiry.filters.as_of') => $valuation['asOf'],
+                __('inventory_accounting.sales_valuation.price_list') => $valuation['priceList']
+                    ? $valuation['priceList']->doc_num
+                    : __('stock_balance_inquiry.options.all'),
+                __('stock_balance_inquiry.filters.branch') => $options['selected_branch']?->name ?? __('stock_balance_inquiry.options.all'),
+            ],
+            'companyPrintIdentity' => $this->printIdentity->forCompany($company),
+            'printIdentityPolicy' => 'report',
+            'numbers' => $this->numbers,
+        ], 'inventory-sales-valuation.pdf', 'L');
+    }
+
+    /** @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>, 3: ?array<string, mixed>} */
+    private function salesValuationReport(Request $request, bool $priceListRequired): array
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
+        $filters = $request->validate([
+            'as_of' => ['nullable', 'date'], 'branch_doc_num' => ['nullable', 'string'],
+            'branch_store_uuid' => ['nullable', 'string'], 'branch_hall_uuid' => ['nullable', 'string'],
+            'warehouse_location_uuid' => ['nullable', 'string'], 'product_doc_num' => ['nullable', 'string'],
+            'stock_status' => ['nullable', 'string'], 'quantity_state' => ['nullable', 'string', 'in:positive,negative'],
+            'price_list_id' => [$priceListRequired ? 'required' : 'nullable', 'integer', Rule::exists('price_lists', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->whereNull('deleted_at'))],
+        ]);
+        $branches = $this->context->allowedBranchQueryForCurrentCompany($request)->whereIn('branches.type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])->get();
+        $branchIds = $branches->modelKeys();
+        $stores = BranchStore::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
+        $halls = BranchHall::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
+        $locations = WarehouseLocation::query()->whereIn('branch_store_id', $stores->modelKeys() ?: [0])->with('branchStore.branch:id,doc_num,name,type')->orderBy('branch_store_id')->orderBy('position')->orderBy('code')->get();
+        $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
+        $selectedStore = $this->selectedOption($stores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
+        $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
+        $selectedLocation = $this->selectedOption($locations, 'public_id', $filters['warehouse_location_uuid'] ?? null, 'warehouse_location_uuid');
+        if ($selectedBranch && $selectedStore && (int) $selectedStore->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
+        }
+        if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
+        }
+        if ($selectedStore && $selectedLocation && (int) $selectedLocation->branch_store_id !== (int) $selectedStore->getKey()) {
+            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.location_store')]);
+        }
+        if ($selectedLocation && $selectedBranch && (int) $selectedLocation->branchStore?->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.invalid_scope')]);
+        }
+        if ($selectedStore && $selectedHall && (int) $selectedStore->branch_id !== (int) $selectedHall->branch_id) {
+            throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
+        }
+        if ($selectedHall && $selectedLocation && (int) $selectedLocation->branchStore?->branch_id !== (int) $selectedHall->branch_id) {
+            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.invalid_scope')]);
+        }
+        $queryFilters = [...$filters, 'branch_id' => $selectedBranch?->getKey(), 'branch_store_id' => $selectedStore?->getKey(), 'branch_hall_id' => $selectedHall?->getKey(), 'warehouse_location_id' => $selectedLocation?->getKey()];
+        $valuation = filled($filters['price_list_id'] ?? null) ? $this->reports->salesValuation((int) $context['company_id'], $branchIds, $queryFilters) : null;
+        $options = [
+            'branches' => $branches, 'stores' => $stores, 'halls' => $halls, 'locations' => $locations,
+            'selected_branch' => $selectedBranch, 'selected_store' => $selectedStore, 'selected_hall' => $selectedHall, 'selected_location' => $selectedLocation,
+            'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
+            'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
+            'priceLists' => PriceList::query()->forCompany((int) $context['company_id'])->orderBy('doc_num')->get(['id', 'doc_num', 'currency_id']),
+            'selected_price_list' => $valuation['priceList'] ?? null,
+            'currencies' => Currency::query()->forCompany((int) $context['company_id'])->active()->get(['id', 'doc_num', 'code', 'name']),
+        ];
+
+        return [$context, $filters, $options, $valuation];
+    }
+
+    /** @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>, 3: array<string, mixed>}
      */
     private function stockBalanceReport(StockBalanceInquiryRequest $request): array
     {

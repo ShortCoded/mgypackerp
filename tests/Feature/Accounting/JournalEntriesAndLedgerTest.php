@@ -432,7 +432,7 @@ test('canonical ledger calculates opening movement and ending debit deterministi
         ->and(collect($result['movements'])->pluck('doc_num')->all())->toBe(['JE-99102', 'JE-99103'])
         ->and($result['movements'][1]['running_debit'])->toBe('1100.0000');
 
-    $this->actingAs($actor)
+    $page = $this->actingAs($actor)
         ->get(route('admin.accounting.reports.account-ledger', [
             'run' => 1,
             'account_doc_num' => $subject->doc_num,
@@ -445,6 +445,8 @@ test('canonical ledger calculates opening movement and ending debit deterministi
         ->assertSee('1,100')
         ->assertSee('JE-99102')
         ->assertSee('JE-99103');
+    expect($page->getContent())->toContain('report_scope=1')
+        ->not->toContain('include_historical');
 
     $this->actingAs($actor)
         ->get(route('admin.accounting.reports.account-ledger.export.csv', [
@@ -674,6 +676,13 @@ test('trial balance uses posted journals across periods without double counting 
     expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
 
     $debitAccount->delete();
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.journal-entries.select2.accounts', [
+            'report_scope' => 1,
+            'q' => 'Trial Balance Debit',
+        ]))
+        ->assertOk()
+        ->assertJsonMissing(['id' => $debitAccount->doc_num]);
     $this->actingAs($actor)
         ->getJson(route('admin.accounting.journal-entries.select2.accounts', [
             'report_scope' => 1,
@@ -1793,6 +1802,59 @@ test('customer statement uses the shared report controls and exports pdf excel a
         ->and($pdfText)->not->toContain('Cost center')
         ->and($pdfText)->not->toContain('Export Customer Account')
         ->and($pdfText)->not->toContain('Customer Invoice, Payment and Credit History');
+
+    $customer->delete();
+    $customerAccount->delete();
+    $this->getJson(route('admin.accounting.journal-entries.select2.customers', ['q' => 'Export Customer']))
+        ->assertOk()
+        ->assertJsonMissing(['id' => $customer->doc_num]);
+    $this->get(route('admin.accounting.reports.customer-statement', $filters))
+        ->assertOk()
+        ->assertSee('Export Customer')
+        ->assertSee('JE-99222');
+    $this->get(route('admin.accounting.reports.customer-statement.export.csv', $filters))
+        ->assertOk()
+        ->assertDownload('customer-statement.csv');
+
+    $otherCompany = Company::factory()->create();
+    $otherAccount = Account::query()->create([
+        'doc_number' => 99229,
+        'doc_num' => 'ACC-99229',
+        'company_id' => $otherCompany->getKey(),
+        'account_code' => 'CUST-99229',
+        'name' => 'Cross Company Customer Account',
+        'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition,
+        'normal_balance' => Account::BalanceDebit,
+        'is_group' => false,
+        'is_postable' => true,
+        'status' => 'active',
+    ]);
+    $otherCustomer = Customer::query()->create([
+        'doc_number' => 99229,
+        'doc_num' => 'CUS-99229',
+        'company_id' => $otherCompany->getKey(),
+        'account_id' => $otherAccount->getKey(),
+        'name' => 'Cross Company Customer',
+        'status' => 'active',
+    ]);
+    $crossCompanyFilters = [...$filters, 'customer_doc_num' => $otherCustomer->doc_num];
+    $this->get(route('admin.accounting.reports.customer-statement', $crossCompanyFilters))
+        ->assertSessionHasErrors('customer_doc_num');
+    $this->get(route('admin.accounting.reports.customer-statement.export.csv', $crossCompanyFilters))
+        ->assertSessionHasErrors('customer_doc_num');
+
+    $mislinkedCustomer = Customer::query()->create([
+        'doc_number' => 99230,
+        'doc_num' => 'CUS-99230',
+        'company_id' => $context['company']->getKey(),
+        'account_id' => $otherAccount->getKey(),
+        'name' => 'Cross Company Account Customer',
+        'status' => 'active',
+    ]);
+    $mislinkedFilters = [...$filters, 'customer_doc_num' => $mislinkedCustomer->doc_num];
+    $this->get(route('admin.accounting.reports.customer-statement', $mislinkedFilters))
+        ->assertSessionHasErrors('customer_doc_num');
 });
 
 test('supplier statement uses the shared party layout and includes the prior balance detail', function (): void {
@@ -1938,6 +2000,19 @@ test('supplier statement uses the shared party layout and includes the prior bal
         ->toContain('Purchase invoice payable')
         ->not->toContain('مستحقات المورد عن فاتورة مشتريات')
         ->not->toContain('Supplier A Account');
+
+    $supplierA->delete();
+    $supplierAccountA->delete();
+    $this->getJson(route('admin.accounting.journal-entries.select2.suppliers', ['q' => 'Supplier A']))
+        ->assertOk()
+        ->assertJsonMissing(['id' => $supplierA->doc_num]);
+    $this->get(route('admin.accounting.reports.supplier-statement', $filters))
+        ->assertOk()
+        ->assertSee('Supplier A')
+        ->assertSee('JE-99311');
+    $this->get(route('admin.accounting.reports.supplier-statement.export.csv', $filters))
+        ->assertOk()
+        ->assertDownload('supplier-statement.csv');
 
     $actor->forceFill(['locale' => 'ar'])->save();
     app()->setLocale('ar');

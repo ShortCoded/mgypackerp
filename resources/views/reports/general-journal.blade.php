@@ -3,12 +3,7 @@
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
     @php($dates = app(\Modules\Core\Services\DateFormatService::class))
-    @php($sourceLabel = static function (mixed $sourceType): string {
-        $source = filled($sourceType) ? (string) $sourceType : 'manual';
-        $key = 'ledger_reports.sources.'.$source;
-
-        return trans()->has($key) ? __($key) : __('ledger_reports.sources.other');
-    })
+    @php($sourceLabels = app(\Modules\Accounting\Services\JournalSourceLabelService::class))
 
     <div class="report-filter-summary">
         <div>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }} — {{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</div>
@@ -27,7 +22,7 @@
                 <tr>
                     <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
                     <td>{{ $movement['doc_num'] }}</td>
-                    <td>{{ $sourceLabel($movement['source_type']) }}</td>
+                    <td>{{ $sourceLabels->label($movement['source_type']) }}</td>
                     <td>{{ $movement['reference_no'] ?: ($movement['source_doc_num'] ?: '—') }}</td>
                     <td>{{ $movement['account'] }}</td>
                     <td>{{ $movement['description'] }}</td>

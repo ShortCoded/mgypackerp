@@ -436,6 +436,15 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         $fixture['company']->getKey(),
         $fixture['period']->getKey(),
     );
+    $returnRows = app(ProcurementCycleReport::class)->rows(
+        ProcurementCycleReport::Returns,
+        [
+            'branch_id' => $return->branch_id,
+            'currency_doc_num' => $fixture['currency']->doc_num,
+        ],
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    );
     expect(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('quantity_out'))->toBe('2.00000000')
         ->and(InventoryTransaction::query()->where('transaction_type', 'purchase_return')->value('unit_cost'))->toBe('2.25000000')
         ->and((float) $returnedBalance->on_hand)->toBe(3.0)
@@ -446,6 +455,8 @@ test('split sourcing, receiving, quality, matching, and returns preserve line ca
         ->and($purchaseAnalysisRows)->toHaveCount(1)
         ->and((float) $purchaseAnalysisRows->sole()['quantity'])->toBe(3.0)
         ->and((float) $purchaseAnalysisRows->sole()['amount'])->toBe(5.4)
+        ->and($returnRows->pluck('document')->unique()->values()->all())->toBe([$return->doc_num])
+        ->and((float) $returnRows->sum('amount'))->toBe((float) $return->total_amount)
         ->and(fn () => $settlement->createPurchaseReturn([
             'purchase_order_doc_num' => $firstOrder->doc_num, 'return_date' => now()->toDateString(),
             'reason_code' => 'latent_defect',

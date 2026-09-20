@@ -725,6 +725,136 @@ test('detailed classifications are selectable while group accounts may remain un
     }
 });
 
+test('new account selection excludes inactive and deleted accounts across search and pagination', function (): void {
+    $actor = accountActor(['accounts.view']);
+    $context = accountCreateOperatingContext('Account Selection Company');
+    accountSetOperatingContext($context['company'], $context['branch'], $context['period']);
+    config(['select2.pagination.per_page' => 1]);
+
+    $activeFirst = app(AccountService::class)->create(accountPayload([
+        'account_code' => '100',
+        'name' => 'Eligible Alpha Account',
+    ]));
+    app(AccountService::class)->create(accountPayload([
+        'account_code' => '200',
+        'name' => 'Inactive Hidden Account',
+        'status' => 'inactive',
+    ]));
+    $deleted = app(AccountService::class)->create(accountPayload([
+        'account_code' => '300',
+        'name' => 'Deleted Hidden Account',
+    ]));
+    $deleted->delete();
+    $activeLater = app(AccountService::class)->create(accountPayload([
+        'account_code' => '400',
+        'name' => 'Eligible Later Account',
+    ]));
+
+    $firstPage = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['page' => 1]))
+        ->assertOk()
+        ->json();
+    $laterPage = $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['page' => 2]))
+        ->assertOk()
+        ->json();
+
+    expect(collect($firstPage['results'])->pluck('id')->all())->toBe([$activeFirst->doc_num])
+        ->and($firstPage['pagination']['more'])->toBeTrue()
+        ->and(collect($laterPage['results'])->pluck('id')->all())->toBe([$activeLater->doc_num])
+        ->and($laterPage['pagination']['more'])->toBeFalse();
+
+    foreach (['Inactive Hidden Account', 'Deleted Hidden Account'] as $search) {
+        $this->actingAs($actor)
+            ->getJson(route('admin.accounting.select2.accounts', ['q' => $search]))
+            ->assertOk()
+            ->assertJsonCount(0, 'results')
+            ->assertJsonPath('pagination.more', false);
+    }
+
+    $this->actingAs($actor)
+        ->getJson(route('admin.accounting.select2.accounts', ['q' => 'Eligible Later Account']))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $activeLater->doc_num);
+});
+
+test('account parent validation and service reject unavailable parents without requiring group parents', function (): void {
+    $actor = accountActor(['accounts.view', 'accounts.create', 'accounts.edit', 'accounts.account_code.control']);
+    $foreign = accountEnsureOperatingContext();
+    $context = accountCreateOperatingContext('Parent Validation Company');
+    accountSetOperatingContext($context['company'], $context['branch'], $context['period']);
+
+    $activePostableParent = app(AccountService::class)->create(accountPayload([
+        'account_code' => '610',
+        'name' => 'Active Postable Parent',
+        'is_group' => false,
+        'is_postable' => true,
+    ]));
+    $inactiveParent = app(AccountService::class)->create(accountPayload([
+        'account_code' => '620',
+        'name' => 'Inactive Parent',
+        'status' => 'inactive',
+    ]));
+    $deletedParent = app(AccountService::class)->create(accountPayload([
+        'account_code' => '630',
+        'name' => 'Deleted Parent',
+    ]));
+    $deletedParent->delete();
+
+    $created = $this->actingAs($actor)
+        ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+            'account_code' => '',
+            'name' => 'Allowed Non Group Parent Child',
+            'parent_doc_num' => $activePostableParent->doc_num,
+        ]))
+        ->assertOk()
+        ->json('data.doc_num');
+
+    foreach ([$inactiveParent->doc_num, $deletedParent->doc_num] as $parentDocNum) {
+        $this->actingAs($actor)
+            ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+                'account_code' => '',
+                'name' => 'Manipulated Parent Child',
+                'parent_doc_num' => $parentDocNum,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('parent_doc_num');
+    }
+
+    accountSetOperatingContext($foreign['company'], $foreign['branch'], $foreign['period']);
+    $foreignParent = app(AccountService::class)->create(accountPayload([
+        'account_code' => '640',
+        'name' => 'Foreign Parent',
+    ]));
+    $foreignParent->forceFill(['doc_num' => 'ACC-FOREIGN-PARENT'])->save();
+    accountSetOperatingContext($context['company'], $context['branch'], $context['period']);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.accounting.accounts.store'), accountPayload([
+            'account_code' => '',
+            'name' => 'Foreign Parent Child',
+            'parent_doc_num' => $foreignParent->doc_num,
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('parent_doc_num');
+
+    $child = Account::query()->forCompany($context['company']->getKey())->where('doc_num', $created)->firstOrFail();
+    $this->actingAs($actor)
+        ->putJson(route('admin.accounting.accounts.update', $child->doc_num), accountPayload([
+            'account_code' => $child->account_code,
+            'name' => $child->name,
+            'parent_doc_num' => $inactiveParent->doc_num,
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('parent_doc_num');
+
+    expect(fn () => app(AccountService::class)->create(accountPayload([
+        'account_code' => '',
+        'name' => 'Service Bypass Child',
+        'parent_doc_num' => $inactiveParent->doc_num,
+    ])))->toThrow(DomainException::class, __('accounts.messages.parent_unavailable'));
+});
+
 test('new accounts can only choose active classifications while existing inactive choices remain usable', function () {
     $this->seed(AccountClassificationsSeeder::class);
     $this->seed(DefaultChartOfAccountsSeeder::class);
@@ -1057,4 +1187,48 @@ test('system root account delete is blocked', function () {
 
     expect($root->fresh())->not->toBeNull()
         ->and($root->fresh()->deleted_at)->toBeNull();
+});
+
+test('account deletion rechecks protected state from the locked database row', function (): void {
+    accountActor(['accounts.delete']);
+    $account = app(AccountService::class)->create(accountPayload([
+        'account_code' => '1991',
+        'name' => 'Stale Delete Candidate',
+    ]));
+
+    Account::query()->whereKey($account->getKey())->update(['is_system' => true]);
+
+    expect($account->is_system)->toBeFalse()
+        ->and(fn () => app(AccountService::class)->delete($account))
+        ->toThrow(DomainException::class, __('accounts.messages.delete_blocked_system'))
+        ->and(Account::query()->whereKey($account->getKey())->exists())->toBeTrue();
+});
+
+test('account parent mutation and delete guards retain their transaction lock structure', function (): void {
+    $source = file(base_path('modules/Accounting/Services/AccountService.php'));
+    $valuesMethod = new ReflectionMethod(AccountService::class, 'values');
+    $deleteMethod = new ReflectionMethod(AccountService::class, 'delete');
+    $methodSource = function (ReflectionMethod $method) use ($source): string {
+        return implode('', array_slice(
+            $source,
+            $method->getStartLine() - 1,
+            $method->getEndLine() - $method->getStartLine() + 1,
+        ));
+    };
+    $valuesSource = $methodSource($valuesMethod);
+    $deleteSource = $methodSource($deleteMethod);
+
+    expect($valuesSource)
+        ->toContain('->eligibleForNewSelection()')
+        ->toContain('->lockForUpdate()')
+        ->and($deleteSource)
+        ->toContain('DB::transaction(')
+        ->toContain('->lockForUpdate()');
+
+    expect(strpos($deleteSource, '->lockForUpdate()'))
+        ->toBeLessThan(strpos($deleteSource, 'isProtectedRoot()'))
+        ->and(strpos($deleteSource, 'isProtectedRoot()'))
+        ->toBeLessThan(strpos($deleteSource, 'children()->exists()'))
+        ->and(strpos($deleteSource, 'children()->exists()'))
+        ->toBeLessThan(strpos($deleteSource, 'softDelete($account)'));
 });

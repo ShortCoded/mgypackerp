@@ -326,7 +326,7 @@ test('report-only permissions retain access, hide empty module parents, and acti
         ->and($activePath->slice(0, -1)->every(fn (array $item): bool => $item['open'] === true))->toBeTrue()
         ->and($leaf['permission'])->toBe($permission);
 })->with([
-    'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'financial_analysis_reports', 'sales_report_financial', ['dashboard', 'sales', 'accounting_costing', 'human_resources', 'reports'], ['report' => 'financial']],
+    'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'financial_analysis_reports', 'sales_report_financial', ['dashboard', 'sales', 'accounting_costing', 'human_resources'], ['report' => 'financial']],
     'purchase report' => ['reports.purchases.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'report_purchase_requests', ['dashboard', 'purchases', 'accounting_costing', 'human_resources'], ['report_type' => 'purchase_requests']],
     'inventory report' => ['inventory.reports.operational', 'admin.inventory.reports.index', 'inventory_module_reports', 'inventory_operational_reports', ['dashboard', 'inventory', 'human_resources']],
     'production report' => ['production.reports.operational', 'admin.production.reports.index', 'production_reports_operations', 'production_reports_overview', ['dashboard', 'inventory', 'production', 'human_resources']],
@@ -360,8 +360,6 @@ test('financial analysis is a direct accounting group backed only by working rep
             'report_due_supplier_installments',
             'report_supplier_aging',
             'report_upcoming_supplier_payments',
-            'reports_costing_profitability',
-            'reports_costing_allocation_analysis',
         );
 
     foreach ($group['children'] as $child) {
@@ -426,6 +424,24 @@ test('relocated reports keep breadcrumbs and recursive LTR and RTL rendering whi
         ->and($englishVertical)->toContain('Finance', 'Accounting &amp; Costing', 'Fixed Assets', 'Maintenance', 'Sales Reports', 'Sales Orders')
         ->and($arabicTop)->toContain('المالية', 'الحسابات والتكاليف', 'الأصول الثابتة', 'الصيانة', 'تقارير المبيعات', 'أوامر المبيعات')
         ->and($arabicVertical)->toContain('المالية', 'الحسابات والتكاليف', 'الأصول الثابتة', 'الصيانة', 'تقارير المبيعات', 'أوامر المبيعات')
-        ->and(collect($salesReportBreadcrumbs)->pluck('label')->all())->toBe(['Dashboard', 'Reports', 'Sales Reports', 'Sales Orders'])
+        ->and(collect($salesReportBreadcrumbs)->pluck('label')->all())->toBe(['Dashboard', 'Accounting & Costing', 'Financial Analytics Reports', 'Financial Analysis'])
         ->and(collect($fixedAssetBreadcrumbs)->pluck('label')->all())->toBe(['Dashboard', 'Accounting & Costing', 'Fixed Assets', 'Fixed Assets Register']);
+});
+
+test('inventory and sales reports use their owning modules without a top-level reports section', function (): void {
+    config()->set('erp.phase_mode', 'expanded');
+    $admin = navigationAuditAdmin();
+    $menu = app(MenuService::class)->getMenu($admin);
+    $records = collect(navigationAuditRecords($menu));
+
+    expect(collect($menu)->pluck('label')->all())->not->toContain('reports')
+        ->and($records->firstWhere('stable_path', 'inventory > item_data'))->not->toBeNull()
+        ->and(collect($records->firstWhere('stable_path', 'inventory > inventory_module_reports')['children'] ?? [])->pluck('label')->all())->toContain(
+            'inventory_stock_balance_inquiry',
+            'inventory_operational_reports',
+            'inventory_valuation_report',
+            'inventory_sales_valuation_report',
+        )
+        ->and($records->where('route', 'admin.reports.customers.index'))->toHaveCount(1)
+        ->and($records->firstWhere('route', 'admin.reports.customers.index')['label_path'])->toBe(['sales', 'sales_cycle_reports', 'customers_report']);
 });

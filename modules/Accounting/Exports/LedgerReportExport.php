@@ -5,6 +5,7 @@ namespace Modules\Accounting\Exports;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use Modules\Accounting\Services\JournalSourceLabelService;
 
 class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
 {
@@ -46,7 +47,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
         foreach ($this->result['movements'] as $movement) {
             $rows[] = [
                 $movement['entry_date'],
-                __('ledger_reports.sources.'.($movement['source_type'] ?: 'manual')),
+                $this->sourceLabel($movement['source_type']),
                 $movement['doc_num'],
                 $movement['reference_no'] ?: $movement['source_doc_num'],
                 $movement['description'],
@@ -214,10 +215,7 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
 
     private function sourceLabel(mixed $sourceType): string
     {
-        $source = filled($sourceType) ? (string) $sourceType : 'manual';
-        $key = 'ledger_reports.sources.'.$source;
-
-        return trans()->has($key) ? __($key) : __('ledger_reports.sources.other');
+        return app(JournalSourceLabelService::class)->label($sourceType);
     }
 
     private function isPartnerStatement(): bool

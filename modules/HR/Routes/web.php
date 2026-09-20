@@ -6,6 +6,7 @@ use Modules\HR\Http\Controllers\EmployeeSelfServiceController;
 use Modules\HR\Http\Controllers\HrAllowanceController;
 use Modules\HR\Http\Controllers\HrAreaController;
 use Modules\HR\Http\Controllers\HrAttendanceController;
+use Modules\HR\Http\Controllers\HrAttendanceSettingsController;
 use Modules\HR\Http\Controllers\HrBiometricDeviceController;
 use Modules\HR\Http\Controllers\HrCityController;
 use Modules\HR\Http\Controllers\HrCountryController;
@@ -21,6 +22,7 @@ use Modules\HR\Http\Controllers\HrHiringStatusController;
 use Modules\HR\Http\Controllers\HrIdentificationController;
 use Modules\HR\Http\Controllers\HrInsuranceOfficeController;
 use Modules\HR\Http\Controllers\HrJobController;
+use Modules\HR\Http\Controllers\HrLeaveTypeController;
 use Modules\HR\Http\Controllers\HrMilitaryServiceController;
 use Modules\HR\Http\Controllers\HrNationalityController;
 use Modules\HR\Http\Controllers\HrQualificationController;
@@ -28,12 +30,17 @@ use Modules\HR\Http\Controllers\HrReligionController;
 use Modules\HR\Http\Controllers\HrRequestController;
 use Modules\HR\Http\Controllers\HrSectionController;
 use Modules\HR\Http\Controllers\HrSelect2InlineController;
+use Modules\HR\Http\Controllers\HrShiftAssignmentController;
 use Modules\HR\Http\Controllers\HrShiftController;
 use Modules\HR\Http\Controllers\HrSocialInsurancePolicyController;
 use Modules\HR\Http\Controllers\HrSpecializationController;
 use Modules\HR\Http\Controllers\HrUniversityController;
-use Modules\HR\Http\Controllers\PayrollCostPreviewController;
+use Modules\HR\Http\Controllers\HrWorkforceReportController;
+use Modules\HR\Http\Controllers\PayrollAttendancePolicyController;
 use Modules\HR\Http\Controllers\PayrollController;
+use Modules\HR\Http\Controllers\PayrollCostPreviewController;
+use Modules\HR\Http\Controllers\PayrollReportController;
+use Modules\HR\Http\Controllers\PayslipController;
 use Modules\HR\Http\Controllers\Select2\HrSelect2Controller;
 
 Route::middleware('auth')
@@ -46,16 +53,37 @@ Route::middleware('auth')
         Route::post('/attendance/punch', 'punch')->middleware('throttle:12,1')->name('attendance.punch');
         Route::post('/requests', 'storeRequest')->middleware('throttle:10,1')->name('requests.store');
         Route::patch('/requests/{employeeRequest}/cancel', 'cancelRequest')->name('requests.cancel');
+        Route::get('/payslips/{payslip}', [PayslipController::class, 'employeeShow'])->whereNumber('payslip')->name('payslips.show');
+        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'employeePdf'])->whereNumber('payslip')->name('payslips.print');
+        Route::get('/payslips/{payslip}/pdf', [PayslipController::class, 'employeePdf'])->whereNumber('payslip')->name('payslips.pdf');
     });
 
 Route::middleware('auth')
     ->prefix('admin/hr')
     ->as('admin.hr.')
     ->group(function (): void {
+        Route::get('/attendance-settings', [HrAttendanceSettingsController::class, 'index'])
+            ->middleware('can:hr.attendance_settings.view')
+            ->name('attendance-settings.index');
+        Route::patch('/attendance-settings/{branch:doc_num}', [HrAttendanceSettingsController::class, 'update'])
+            ->middleware('can:hr.attendance_settings.manage')
+            ->name('attendance-settings.update');
+
+        Route::get('/shift-assignments', [HrShiftAssignmentController::class, 'index'])
+            ->middleware('can:hr.shift_assignments.view')
+            ->name('shift-assignments.index');
+        Route::post('/shift-assignments', [HrShiftAssignmentController::class, 'store'])
+            ->middleware('can:hr.shift_assignments.manage')
+            ->name('shift-assignments.store');
+        Route::patch('/shift-assignments/{assignment}', [HrShiftAssignmentController::class, 'update'])
+            ->whereNumber('assignment')
+            ->middleware('can:hr.shift_assignments.manage')
+            ->name('shift-assignments.update');
+
         Route::prefix('employee-attendance')->name('employee-attendance.')->controller(HrAttendanceController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:hr.employee_attendance.view')->name('index');
             Route::get('/export/csv', 'exportCsv')->middleware('can:hr.employee_attendance.export')->name('export.csv');
-            Route::post('/manual', 'storeManual')->middleware('can:hr.employee_attendance.manage')->name('manual.store');
+            Route::post('/manual', 'storeManual')->middleware('can:hr.employee_attendance.correct')->name('manual.store');
         });
 
         Route::prefix('hr-requests')->name('hr-requests.')->controller(HrRequestController::class)->group(function (): void {
@@ -63,9 +91,53 @@ Route::middleware('auth')
             Route::patch('/{employeeRequest}/review', 'review')->middleware('can:hr.hr_requests.manage')->name('review');
         });
 
+        Route::prefix('leave-types')->name('leave-types.')->controller(HrLeaveTypeController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:hr.leave_types.view')->name('index');
+            Route::post('/', 'store')->middleware('can:hr.leave_types.create')->name('store');
+            Route::patch('/{leaveType}/restore', 'restore')->whereNumber('leaveType')->middleware('can:hr.leave_types.restore')->name('restore');
+            Route::get('/{leaveType}', 'show')->whereNumber('leaveType')->middleware('can:hr.leave_types.view')->name('show');
+            Route::patch('/{leaveType}', 'update')->whereNumber('leaveType')->middleware('can:hr.leave_types.update')->name('update');
+            Route::delete('/{leaveType}', 'destroy')->whereNumber('leaveType')->middleware('can:hr.leave_types.delete')->name('destroy');
+        });
+
+        Route::get('/payroll-attendance-policies', [PayrollAttendancePolicyController::class, 'index'])
+            ->middleware('can:hr.payroll_attendance_policies.view')
+            ->name('payroll-attendance-policies.index');
+        Route::post('/payroll-attendance-policies', [PayrollAttendancePolicyController::class, 'store'])
+            ->middleware('can:hr.payroll_attendance_policies.manage')
+            ->name('payroll-attendance-policies.store');
+
         Route::get('/payroll-preparation', [PayrollController::class, 'index'])
             ->middleware('can:hr.payroll_preparation.view')
             ->name('payroll-preparation.index');
+        Route::get('/payslips/{payslip}', [PayslipController::class, 'adminShow'])
+            ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.show');
+        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'adminPdf'])
+            ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.print');
+        Route::get('/payslips/{payslip}/pdf', [PayslipController::class, 'adminPdf'])
+            ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.pdf');
+        Route::prefix('reports')->name('reports.')->group(function (): void {
+            Route::get('/employees', [HrWorkforceReportController::class, 'employees'])
+                ->middleware('can:hr.employee_reports.view')->name('employees');
+            Route::get('/employees/export', [HrWorkforceReportController::class, 'exportEmployees'])
+                ->middleware('can:hr.employee_reports.export')->name('employees.export');
+            Route::get('/attendance', [HrAttendanceController::class, 'index'])
+                ->middleware('can:hr.employee_attendance.view')->name('attendance');
+            Route::get('/attendance/export/csv', [HrAttendanceController::class, 'exportCsv'])
+                ->middleware('can:hr.employee_attendance.export')->name('attendance.export.csv');
+            Route::get('/leave-requests', [HrWorkforceReportController::class, 'leaveRequests'])
+                ->middleware('can:hr.leave_reports.view')->name('leave-requests');
+            Route::get('/leave-requests/export', [HrWorkforceReportController::class, 'exportLeaveRequests'])
+                ->middleware('can:hr.leave_reports.export')->name('leave-requests.export');
+            Route::get('/payroll', [PayrollReportController::class, 'payroll'])
+                ->middleware('can:hr.payroll_reports.view')->name('payroll');
+            Route::get('/payroll/export', [PayrollReportController::class, 'exportPayroll'])
+                ->middleware('can:hr.payroll_reports.export')->name('payroll.export');
+            Route::get('/payroll-payments', [PayrollReportController::class, 'payments'])
+                ->middleware('can:hr.payroll_payment_reports.view')->name('payments');
+            Route::get('/payroll-payments/export', [PayrollReportController::class, 'exportPayments'])
+                ->middleware('can:hr.payroll_payment_reports.export')->name('payments.export');
+        });
         Route::prefix('payroll-runs')->name('payroll-runs.')->controller(PayrollController::class)->group(function (): void {
             Route::post('/calculate', 'calculate')->middleware('can:hr.payroll_preparation.calculate')->name('calculate');
             Route::post('/{payrollRun}/review', 'review')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.review')->name('review');
@@ -73,7 +145,7 @@ Route::middleware('auth')
             Route::post('/{payrollRun}/payments', 'storePayment')->whereNumber('payrollRun')->middleware([
                 'can:hr.payroll_payment.create',
                 'can:cash_payment_vouchers.create',
-                IdempotentDocumentSubmission::class,
+                IdempotentDocumentSubmission::class.':required,idempotency_key',
             ])->name('payments.store');
             Route::get('/{payrollRun}/reconciliation', 'reconcile')->whereNumber('payrollRun')->middleware('can:hr.payroll_reconciliation.view')->name('reconciliation');
         });

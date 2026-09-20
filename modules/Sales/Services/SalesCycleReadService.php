@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Models\SalesReturn;
 
 class SalesCycleReadService
 {
@@ -68,17 +69,26 @@ class SalesCycleReadService
     public function ledger(int $companyId, int $branchId, array $filters = []): Builder
     {
         return CustomerInvoice::query()->with(['customer', 'order', 'currency', 'deliveries', 'lines.product.color', 'lines.product.category', 'lines.returnLines.salesReturn'])
-            ->with(['lines' => fn ($query) => $query->withSum(['returnLines as returned_quantity' => fn ($returns) => $returns->whereHas('salesReturn', fn ($return) => $return->whereNotIn('status', ['draft', 'cancelled', 'rejected']))], 'quantity')])
+            ->with(['lines' => fn ($query) => $query->withSum(['returnLines as returned_quantity' => fn ($returns) => $returns->whereHas('salesReturn', fn ($return) => $return->where('status', '<>', SalesReturn::StatusCancelled))], 'quantity')])
             ->where('company_id', $companyId)->where('branch_id', $branchId)->where('posting_status', 'posted')->where('document_type', CustomerInvoice::TypeInvoice)
+            ->when($filters['financial_period_id'] ?? null, fn ($query, $id) => $query->where('financial_period_id', $id))
             ->when($filters['customer_id'] ?? null, fn ($query, $id) => $query->where('customer_id', $id))
             ->when(array_key_exists('customer_ids', $filters) && $filters['customer_ids'] !== null, fn ($query) => $query->whereIn('customer_id', $filters['customer_ids']))
             ->when($filters['currency_id'] ?? null, fn ($query, $id) => $query->where('currency_id', $id))
             ->when($filters['invoice_id'] ?? null, fn ($query, $id) => $query->whereKey($id))
             ->when($filters['order_id'] ?? null, fn ($query, $id) => $query->where('sales_order_id', $id))
+            ->when(! empty($filters['has_order_filter'] ?? false), fn ($query) => $query->whereIn('sales_order_id', $filters['filtered_order_ids'] ?? []))
             ->when($filters['sales_person_id'] ?? null, fn ($query, $id) => $query->whereHas('order', fn ($order) => $order->where('business_employee_id', $id)))
-            ->when($filters['branch_store_id'] ?? null, fn ($query, $id) => $query->whereHas('deliveries', fn ($delivery) => $delivery
-                ->where('branch_store_id', $id)
-                ->where('status', 'posted')))
+            ->when($filters['quotation_id'] ?? null, fn ($query, $id) => $query->whereHas('order', fn ($order) => $order->where('quotation_id', $id)))
+            ->when($filters['order_status'] ?? null, fn ($query, $status) => $query->whereHas('order', fn ($order) => $order->where('status', $status)))
+            ->when(($filters['overdue_state'] ?? null) === 'overdue', fn ($query) => $query->whereHas('order', fn ($order) => $order->whereDate('expected_delivery_date', '<', today())))
+            ->when(($filters['overdue_state'] ?? null) === 'not_overdue', fn ($query) => $query->whereHas('order', fn ($order) => $order->whereDate('expected_delivery_date', '>=', today())))
+            ->when($filters['branch_store_id'] ?? null, fn ($query, $id) => $query->where(function ($warehouse) use ($id): void {
+                $warehouse->whereHas('order', fn ($order) => $order->where('branch_store_id', $id))
+                    ->orWhereHas('deliveries', fn ($delivery) => $delivery
+                        ->where('branch_store_id', $id)
+                        ->where('status', 'posted'));
+            }))
             ->when($filters['category_id'] ?? null, fn ($query, $id) => $query->whereHas('lines.product', fn ($product) => $product->where('item_category_id', $id)))
             ->when(($filters['payment_state'] ?? null) === 'outstanding', fn ($query) => $query->where('remaining_amount', '>', 0))
             ->when(($filters['payment_state'] ?? null) === 'settled', fn ($query) => $query->where('remaining_amount', '<=', 0))

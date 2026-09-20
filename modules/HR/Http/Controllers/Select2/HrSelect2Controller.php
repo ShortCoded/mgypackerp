@@ -59,6 +59,8 @@ class HrSelect2Controller extends Controller
             'hr.employees.view',
             'hr.employees.create',
             'hr.employees.edit',
+            'hr.shift_assignments.view',
+            'hr.shift_assignments.manage',
         ] as $permission) {
             if ($user?->can($permission)) {
                 return true;

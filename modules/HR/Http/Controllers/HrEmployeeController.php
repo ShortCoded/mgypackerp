@@ -8,13 +8,13 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
-use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\DocumentNumberService;
@@ -46,11 +46,11 @@ use Modules\HR\Models\HrShift;
 use Modules\HR\Services\HrEmployeeDocumentNumberSettingsService;
 use Modules\HR\Services\HrEmployeeService;
 use Modules\HR\Services\HrFoundationRegistry;
+use Modules\HR\Services\HrLifecycleAuditLogger;
 use Modules\HR\Services\HrLookupRegistry;
 use Modules\HR\Services\HrSocialInsuranceContributionCalculator;
 use Modules\HR\Services\HrStatutoryPolicyResolver;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use Throwable;
 
 class HrEmployeeController extends Controller
 {
@@ -74,7 +74,7 @@ class HrEmployeeController extends Controller
 
     public function __construct(
         private readonly HrEmployeeService $employees,
-        private readonly ActivityLogger $activityLogger,
+        private readonly HrLifecycleAuditLogger $audit,
         private readonly BreadcrumbService $breadcrumbs,
         private readonly HrLookupRegistry $hrLookupRegistry,
         private readonly HrFoundationRegistry $hrFoundationRegistry,
@@ -113,7 +113,7 @@ class HrEmployeeController extends Controller
 
     public function show(Request $request, HrEmployee $employee): View
     {
-        $this->logActivity($request, 'hr.employees.view', $this->recordPublicProperties($employee));
+        $this->logActivity($request, 'hr.employees.view', $this->recordPublicProperties($employee), $employee);
 
         return $this->formView('view', $employee);
     }
@@ -121,7 +121,7 @@ class HrEmployeeController extends Controller
     public function showTrashed(Request $request, string $employee): View
     {
         $employee = $this->trashedRecordByPublicUuid($employee);
-        $this->logActivity($request, 'hr.employees.view_trashed', $this->recordPublicProperties($employee));
+        $this->logActivity($request, 'hr.employees.view_trashed', $this->recordPublicProperties($employee), $employee);
 
         return $this->formView('view', $employee);
     }
@@ -146,22 +146,39 @@ class HrEmployeeController extends Controller
         $cloneSource = $this->cloneSourceFromRequest($request);
 
         try {
-            $employee = $this->employees->create($request->validated());
+            $employee = DB::transaction(function () use ($request, $cloneSource): HrEmployee {
+                $employee = $this->employees->create($request->validated());
+                $action = $cloneSource instanceof HrEmployee ? 'hr.employees.clone' : 'hr.employees.create';
+                $properties = $cloneSource instanceof HrEmployee
+                    ? ActivityLogProperties::crudCloned(
+                        'hr.employees',
+                        ActivityLogProperties::record('hr.employees', $cloneSource->full_name, $cloneSource->doc_num),
+                        $employee->full_name,
+                        $employee->doc_num,
+                        $this->submitActionProperties($request, creating: true),
+                    )
+                    : ActivityLogProperties::crudCreated(
+                        'hr.employees',
+                        $employee->full_name,
+                        $employee->doc_num,
+                        $this->submitActionProperties($request, creating: true),
+                    );
+
+                $this->logLifecycleActivity(
+                    $request,
+                    $action,
+                    $properties,
+                    $employee,
+                    'employee:'.$employee->getKey().':created',
+                );
+
+                return $employee;
+            });
         } catch (QueryException $exception) {
             $this->throwValidationExceptionIfUniqueConflict($exception);
 
             throw $exception;
         }
-
-        $this->logActivity($request, $cloneSource instanceof HrEmployee ? 'hr.employees.clone' : 'hr.employees.create', $cloneSource instanceof HrEmployee
-            ? ActivityLogProperties::crudCloned(
-                'hr.employees',
-                ActivityLogProperties::record('hr.employees', $cloneSource->full_name, $cloneSource->doc_num),
-                $employee->full_name,
-                $employee->doc_num,
-                $this->submitActionProperties($request, creating: true),
-            )
-            : ActivityLogProperties::crudCreated('hr.employees', $employee->full_name, $employee->doc_num, $this->submitActionProperties($request, creating: true)));
 
         return response()->json([
             'success' => true,
@@ -180,7 +197,43 @@ class HrEmployeeController extends Controller
         $this->authorizeSubmitAction($request, $this->submitAction($request), creating: false);
 
         try {
-            $result = $this->employees->update($employee, $request->validated());
+            $result = DB::transaction(function () use ($request, $employee): array {
+                $result = $this->employees->update($employee, $request->validated());
+                $updatedEmployee = $result['employee'];
+
+                if (! $result['changed']) {
+                    return $result;
+                }
+
+                $transitionKey = implode(':', [
+                    'employee',
+                    $updatedEmployee->getKey(),
+                    'updated',
+                    hash('sha256', json_encode($result['changes'], JSON_THROW_ON_ERROR)),
+                    $updatedEmployee->updated_at?->format('Y-m-d H:i:s.u') ?? now()->format('Y-m-d H:i:s.u'),
+                ]);
+
+                $this->logLifecycleActivity($request, 'hr.employees.update', ActivityLogProperties::crudUpdated(
+                    'hr.employees',
+                    $updatedEmployee->full_name,
+                    $updatedEmployee->doc_num,
+                    $result['changes'],
+                    $this->submitActionProperties($request),
+                ), $updatedEmployee, $transitionKey);
+
+                if (in_array('doc_number', $result['changed_fields'], true)) {
+                    $this->logLifecycleActivity($request, 'hr.employees.doc_number.changed', ActivityLogProperties::documentNumberChanged(
+                        'hr.employees',
+                        $updatedEmployee->full_name,
+                        $result['old_doc_number'],
+                        $result['old_doc_num'],
+                        $updatedEmployee->doc_number,
+                        $updatedEmployee->doc_num,
+                    ), $updatedEmployee, $transitionKey.':doc-number');
+                }
+
+                return $result;
+            });
         } catch (QueryException $exception) {
             $this->throwValidationExceptionIfUniqueConflict($exception);
 
@@ -195,25 +248,6 @@ class HrEmployeeController extends Controller
                 'type' => 'no_changes',
                 'message' => __('common.messages.no_changes'),
             ]);
-        }
-
-        $this->logActivity($request, 'hr.employees.update', ActivityLogProperties::crudUpdated(
-            'hr.employees',
-            $employee->full_name,
-            $employee->doc_num,
-            $result['changes'],
-            $this->submitActionProperties($request),
-        ));
-
-        if (in_array('doc_number', $result['changed_fields'], true)) {
-            $this->logActivity($request, 'hr.employees.doc_number.changed', ActivityLogProperties::documentNumberChanged(
-                'hr.employees',
-                $employee->full_name,
-                $result['old_doc_number'],
-                $result['old_doc_num'],
-                $employee->doc_number,
-                $employee->doc_num,
-            ));
         }
 
         return response()->json([
@@ -238,7 +272,7 @@ class HrEmployeeController extends Controller
             'hr.employees',
             $employee->full_name,
             $employee->doc_num,
-        ));
+        ), $employee);
 
         return response()->json([
             'success' => true,
@@ -299,15 +333,49 @@ class HrEmployeeController extends Controller
         $validated = $request->validated();
         $docNums = $validated['doc_nums'];
         $status = (string) $validated['status'];
-        $updated = $this->employees->bulkUpdateStatus($docNums, $status);
+        $updated = DB::transaction(function () use ($request, $docNums, $status): int {
+            $updated = $this->employees->bulkUpdateStatus($docNums, $status);
 
-        $this->logActivity($request, 'hr.employees.bulk_status', [
-            'bulk' => [
-                'count' => $updated,
-                'doc_nums' => $docNums,
-            ],
-            'status' => $status,
-        ]);
+            if ($updated === 0) {
+                return 0;
+            }
+
+            $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+
+            if ($companyId === null) {
+                throw new \RuntimeException('Employee status audit requires an operating company.');
+            }
+
+            $stateSignature = HrEmployee::query()
+                ->where('company_id', $companyId)
+                ->whereIn('doc_num', $docNums)
+                ->orderBy('id')
+                ->get(['id', 'status', 'updated_at'])
+                ->map(fn (HrEmployee $employee): array => [
+                    'id' => $employee->getKey(),
+                    'status' => $employee->status,
+                    'updated_at' => $employee->updated_at?->format('Y-m-d H:i:s.u'),
+                ])
+                ->all();
+
+            $this->audit->logStrict(
+                $request,
+                'hr.employees.bulk_status',
+                (int) $companyId,
+                [
+                    'bulk' => [
+                        'count' => $updated,
+                        'doc_nums' => $docNums,
+                    ],
+                    'status' => $status,
+                ],
+                null,
+                'employee-status:'.hash('sha256', json_encode($stateSignature, JSON_THROW_ON_ERROR)),
+                true,
+            );
+
+            return $updated;
+        });
 
         return response()->json([
             'success' => true,
@@ -338,7 +406,7 @@ class HrEmployeeController extends Controller
             $employee->full_name,
             $employee->doc_num,
             $this->recordRestoreProperties($request, $employee),
-        ));
+        ), $employee);
 
         return response()->json([
             'success' => true,
@@ -415,7 +483,7 @@ class HrEmployeeController extends Controller
             'document_title' => $document->title,
             'extension' => $document->extension,
             'size' => $document->size,
-        ]);
+        ], $employee);
 
         return response()->json([
             'success' => true,
@@ -451,7 +519,7 @@ class HrEmployeeController extends Controller
             ...$this->recordPublicProperties($employee),
             'document_doc_num' => $document->doc_num,
             'document_title' => $document->title,
-        ]);
+        ], $employee);
 
         return Response::download($path, $document->original_name);
     }
@@ -466,7 +534,7 @@ class HrEmployeeController extends Controller
             ...$this->recordPublicProperties($employee),
             'document_doc_num' => $document->doc_num,
             'document_title' => $document->title,
-        ]);
+        ], $employee);
 
         return response()->json([
             'success' => true,
@@ -1005,15 +1073,42 @@ class HrEmployeeController extends Controller
     /**
      * @param  array<string, mixed>  $properties
      */
-    private function logActivity(Request $request, string $action, array $properties = [], string $status = 'success'): void
+    private function logActivity(Request $request, string $action, array $properties = [], ?HrEmployee $subject = null): void
     {
-        try {
-            $this->activityLogger->log($request, 'hr', $action, $status, [
-                'properties_only' => true,
-                'properties' => $properties,
-            ]);
-        } catch (Throwable $exception) {
-            report($exception);
+        $companyId = $subject?->company_id ?? app(OperatingCompanyContextService::class)->currentCompanyId();
+
+        if ($companyId === null) {
+            return;
         }
+
+        $this->audit->log(
+            $request,
+            $action,
+            (int) $companyId,
+            $properties,
+            $subject,
+            redactSensitiveProperties: true,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $properties
+     */
+    private function logLifecycleActivity(
+        Request $request,
+        string $action,
+        array $properties,
+        HrEmployee $subject,
+        string $deduplicationKey,
+    ): void {
+        $this->audit->logStrict(
+            $request,
+            $action,
+            (int) $subject->company_id,
+            $properties,
+            $subject,
+            $deduplicationKey,
+            true,
+        );
     }
 }

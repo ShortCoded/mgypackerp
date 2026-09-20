@@ -70,6 +70,13 @@
                     @forelse($orders as $order)
                         @php
                             $materialLines = $order->materialRequests->flatMap->lines;
+                            $grossMaterialCost = $order->materialRequests->flatMap(fn ($request) => $request->issueDocument?->lines ?? collect())->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->total_cost, 4), '0.0000');
+                            $returnedMaterialCost = $order->materialRequests->flatMap(fn ($request) => $request->returnDocument?->lines ?? collect())->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->total_cost, 4), '0.0000');
+                            $issuedMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->issued_quantity, 8), '0.00000000');
+                            $consumedMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->consumed_quantity, 8), '0.00000000');
+                            $returnedMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->returned_quantity, 8), '0.00000000');
+                            $netMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, bcsub((string) $line->issued_quantity, (string) $line->returned_quantity, 8), 8), '0.00000000');
+                            $displayMaterialQuantity = fn (string $quantity): string => rtrim(rtrim($quantity, '0'), '.') ?: '0';
                             $expenseSummary = $order->expenses->groupBy(fn ($expense) => $expense->currency?->code ?: '—')->map(fn ($rows, $currency) => $currency.': '.$rows->sum('amount'))->implode(' | ');
                         @endphp
                         <tr>
@@ -81,7 +88,33 @@
                             <td>{{ $order->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</td>
                             <td>{{ $order->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</td>
                             <td>{{ $order->total_paused_minutes + ($order->paused_at ? (int) $order->paused_at->diffInMinutes(now()) : 0) }}</td>
-                            <td>{{ __('maintenance.reports.material_summary', ['issued' => $materialLines->sum('issued_quantity'), 'consumed' => $materialLines->sum('consumed_quantity'), 'returned' => $materialLines->sum('returned_quantity')]) }}</td>
+                            <td>
+                                <div>{{ __('maintenance.reports.material_summary', ['issued' => $displayMaterialQuantity($issuedMaterialQuantity), 'consumed' => $displayMaterialQuantity($consumedMaterialQuantity), 'returned' => $displayMaterialQuantity($returnedMaterialQuantity), 'net' => $displayMaterialQuantity($netMaterialQuantity)]) }}</div>
+                                @foreach($order->materialRequests as $materialRequest)
+                                    @foreach($materialRequest->lines as $materialLine)
+                                        @php
+                                            $issueLine = $materialRequest->issueDocument?->lines->firstWhere('source_line_id', $materialLine->getKey());
+                                            $returnLines = $materialRequest->returnDocument?->lines->filter(
+                                                fn ($rl): bool => (string) ($rl->source_line_id ?? null) === (string) $materialLine->getKey()
+                                            ) ?? collect();
+                                            $grossLineCost = $issueLine?->total_cost === null ? '0.0000' : bcadd((string) $issueLine->total_cost, '0', 4);
+                                            $returnedLineCost = $returnLines->reduce(
+                                                fn (string $carry, $rl): string => $rl->total_cost === null ? $carry : bcadd($carry, (string) $rl->total_cost, 4),
+                                                '0.0000'
+                                            );
+                                        @endphp
+                                        <div class="small mt-1">
+                                            {{ __('maintenance.reports.material_line_quantity', ['product' => $materialLine->product?->doc_num.' — '.$materialLine->product?->name, 'unit' => $materialLine->unit?->name ?? '—', 'issued' => $materialLine->issued_quantity, 'returned' => $materialLine->returned_quantity, 'net' => bcsub((string) $materialLine->issued_quantity, (string) $materialLine->returned_quantity, 8)]) }}
+                                            @if($canViewFinancial)
+                                                <span class="text-600">{{ __('maintenance.reports.material_line_cost', ['unit_cost' => $issueLine?->unit_cost ?? '0.00000000', 'gross' => $grossLineCost, 'returned' => $returnedLineCost, 'net' => bcsub($grossLineCost, $returnedLineCost, 4)]) }}</span>
+                                            @endif
+                                        </div>
+                                    @endforeach
+                                @endforeach
+                                @if($canViewFinancial)
+                                    <div class="small text-600">{{ __('maintenance.reports.material_cost_summary', ['gross' => $grossMaterialCost, 'returned' => $returnedMaterialCost, 'net' => bcsub($grossMaterialCost, $returnedMaterialCost, 4)]) }}</div>
+                                @endif
+                            </td>
                             @if($canViewFinancial)<td>{{ $expenseSummary ?: '—' }}</td>@endif
                             <td><span class="badge rounded-pill badge-subtle-secondary">{{ __('maintenance.statuses.'.$order->status) }}</span></td>
                         </tr>

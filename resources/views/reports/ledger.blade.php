@@ -102,7 +102,7 @@
             @foreach($result['movements'] as $movement)
                 <tr>
                     <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
-                    <td>{{ __('ledger_reports.sources.'.($movement['source_type'] ?: 'manual')) }}</td>
+                    <td>{{ app(\Modules\Accounting\Services\JournalSourceLabelService::class)->label($movement['source_type']) }}</td>
                     <td>{{ $movement['doc_num'] }}</td>
                     <td>{{ $movement['reference_no'] ?: $movement['source_doc_num'] }}</td>
                     <td>{{ $movement['description'] }}</td>

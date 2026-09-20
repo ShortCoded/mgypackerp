@@ -10,12 +10,13 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Modules\Core\Models\Branch;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Finance\Models\Cashbox;
 use Modules\HR\Http\Requests\CalculatePayrollRequest;
 use Modules\HR\Http\Requests\CreatePayrollPaymentRequest;
+use Modules\HR\Services\HrLifecycleAuditLogger;
 use Modules\HR\Services\PayrollCalculationService;
 use Modules\HR\Services\PayrollLifecycleService;
 use Modules\HR\Services\PayrollPaymentService;
@@ -29,18 +30,32 @@ class PayrollController extends Controller
         private readonly PayrollPaymentService $payments,
         private readonly PayrollReconciliationService $reconciliation,
         private readonly OperatingCompanyContextService $companies,
+        private readonly OperatingScopeAccessService $scope,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly HrLifecycleAuditLogger $audit,
     ) {}
 
     public function index(Request $request): View
     {
         abort_unless((bool) $request->user()?->can('hr.payroll_preparation.view'), 403);
-        $companyId = $this->companies->requireCompanyId($request);
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $companyId = (int) $company->getKey();
+        $branchIds = $this->allowedBranchIds($request, (string) $company->doc_num);
+        $financialPeriodIds = $this->allowedFinancialPeriodIds($request, (string) $company->doc_num);
         $runs = DB::table('hr_payroll_runs as run')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->leftJoin('branches as branch', 'branch.id', '=', 'run.branch_id')
             ->leftJoin('hr_payslips as payslip', 'payslip.payroll_run_id', '=', 'run.id')
             ->where('period.company_id', $companyId)
+            ->when($branchIds !== null, fn ($query) => $query->whereNotNull('run.branch_id')->whereIn('run.branch_id', $branchIds !== [] ? $branchIds : [0]))
+            ->when($financialPeriodIds !== null, fn ($query) => $query->whereExists(fn ($financial) => $financial
+                ->selectRaw('1')
+                ->from('financial_periods as access_period')
+                ->whereIn('access_period.id', $financialPeriodIds !== [] ? $financialPeriodIds : [0])
+                ->whereColumn('access_period.from_date', '<=', 'period.period_start')
+                ->whereColumn('access_period.to_date', '>=', 'period.period_end')
+                ->whereNull('access_period.deleted_at')))
             ->whereNull('run.deleted_at')
             ->whereNull('period.deleted_at')
             ->groupBy('run.id', 'period.id', 'branch.id')
@@ -66,12 +81,21 @@ class PayrollController extends Controller
             ->paginate(20)
             ->withQueryString();
         $selectedRunId = $request->integer('run') ?: ($runs->items()[0]->id ?? null);
-        $selected = $selectedRunId === null
-            ? null
-            : $this->guardDomain(fn (): array => $this->reconciliation->forRun($selectedRunId, $companyId, $request->string('as_of')->toString() ?: null));
+        if ($selectedRunId !== null) {
+            $this->findRunOrFail($request, $selectedRunId, $companyId, (string) $company->doc_num);
+        }
+        $selected = $selectedRunId === null ? null : $this->guardDomain(
+            fn (): array => $this->reconciliation->forRun(
+                $selectedRunId,
+                $companyId,
+                $request->string('as_of')->toString() ?: null,
+                $financialPeriodIds,
+            )
+        );
         $cashboxes = Cashbox::query()
             ->forCompany($companyId)
             ->active()
+            ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
             ->when($selected !== null && $selected['run']->branch_id !== null, fn ($query) => $query->where('branch_id', $selected['run']->branch_id))
             ->orderBy('name')
             ->get(['doc_num', 'name', 'branch_id']);
@@ -80,7 +104,7 @@ class PayrollController extends Controller
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.payroll-preparation.index'),
             'runs' => $runs,
             'selected' => $selected,
-            'branches' => Branch::query()->where('company_id', $companyId)->active()->orderBy('name')->get(['doc_num', 'name']),
+            'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
             'cashboxes' => $cashboxes,
             'paymentIdempotencyKey' => (string) Str::uuid(),
         ]);
@@ -88,10 +112,27 @@ class PayrollController extends Controller
 
     public function calculate(CalculatePayrollRequest $request): JsonResponse
     {
-        $result = $this->guardDomain(fn (): array => $this->calculations->calculate(
-            $this->companies->requireCompanyId($request),
-            $request->validated(),
-        ));
+        $companyId = $this->companies->requireCompanyId($request);
+        $result = $this->guardDomain(fn (): array => DB::transaction(function () use ($request, $companyId): array {
+            $result = $this->calculations->calculate($companyId, $request->validated());
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.calculated',
+                $companyId,
+                [
+                    'payroll_run_id' => $result['run_id'],
+                    'employee_count' => $result['employee_count'],
+                    'period_start' => $request->validated('period_start'),
+                    'period_end' => $request->validated('period_end'),
+                    'branch_doc_num' => $request->validated('branch_doc_num'),
+                    'status' => 'calculated',
+                ],
+                null,
+                'payroll-run:'.$result['run_id'].':calculated',
+            );
+
+            return $result;
+        }));
 
         return response()->json(['success' => true, 'message' => __('hr_payroll.messages.calculated'), 'data' => $result]);
     }
@@ -100,8 +141,26 @@ class PayrollController extends Controller
     {
         abort_unless((bool) $request->user()?->can('hr.payroll_approval.review'), 403);
         $companyId = $this->companies->requireCompanyId($request);
-        $this->findRunOrFail($payrollRun, $companyId);
-        $run = $this->guardDomain(fn (): object => $this->lifecycle->submitForReview($payrollRun, $companyId));
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $previousRun = $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
+        $run = $this->guardDomain(fn (): object => DB::transaction(function () use ($request, $payrollRun, $companyId, $previousRun): object {
+            $run = $this->lifecycle->submitForReview($payrollRun, $companyId);
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.reviewed',
+                $companyId,
+                [
+                    'payroll_run_id' => $payrollRun,
+                    'previous_status' => $previousRun->status,
+                    'status' => $run->status,
+                ],
+                null,
+                'payroll-run:'.$payrollRun.':reviewed',
+            );
+
+            return $run;
+        }));
 
         return response()->json(['success' => true, 'message' => __('hr_payroll.messages.submitted_for_review'), 'data' => ['status' => $run->status]]);
     }
@@ -110,8 +169,36 @@ class PayrollController extends Controller
     {
         abort_unless((bool) $request->user()?->can('hr.payroll_approval.approve'), 403);
         $companyId = $this->companies->requireCompanyId($request);
-        $this->findRunOrFail($payrollRun, $companyId);
-        $result = $this->guardDomain(fn (): array => $this->lifecycle->approve($payrollRun, $companyId));
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $previousRun = $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
+        $result = $this->guardDomain(fn (): array => DB::transaction(function () use ($request, $payrollRun, $companyId, $previousRun): array {
+            $result = $this->lifecycle->approve($payrollRun, $companyId);
+            $properties = [
+                'payroll_run_id' => $payrollRun,
+                'previous_status' => $previousRun->status,
+                'status' => $result['run']->status,
+                'journal_entry_id' => $result['journal_entry_id'],
+            ];
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.approved',
+                $companyId,
+                $properties,
+                null,
+                'payroll-run:'.$payrollRun.':approved',
+            );
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.posted',
+                $companyId,
+                $properties,
+                null,
+                'payroll-run:'.$payrollRun.':posted',
+            );
+
+            return $result;
+        }));
 
         return response()->json([
             'success' => true,
@@ -123,8 +210,28 @@ class PayrollController extends Controller
     public function storePayment(CreatePayrollPaymentRequest $request, int $payrollRun): JsonResponse
     {
         $companyId = $this->companies->requireCompanyId($request);
-        $this->findRunOrFail($payrollRun, $companyId);
-        $result = $this->guardDomain(fn (): array => $this->payments->createCashPayment($payrollRun, $companyId, $request->validated()));
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $run = $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
+        $this->guardPaymentScope($request, $companyId, (string) $company->doc_num, $run);
+        $result = $this->guardDomain(fn (): array => DB::transaction(function () use ($request, $payrollRun, $companyId): array {
+            $result = $this->payments->createCashPayment($payrollRun, $companyId, $request->validated());
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.payment_initiated',
+                $companyId,
+                [
+                    'payroll_run_id' => $payrollRun,
+                    'payroll_payment_id' => $result['payment']->id,
+                    'payment_status' => $result['payment']->status,
+                    'voucher_doc_num' => $result['voucher']->doc_num,
+                ],
+                null,
+                'payroll-payment:'.$result['payment']->id.':initiated',
+            );
+
+            return $result;
+        }));
 
         return response()->json([
             'success' => true,
@@ -141,29 +248,95 @@ class PayrollController extends Controller
     {
         abort_unless((bool) $request->user()?->can('hr.payroll_reconciliation.view'), 403);
         $companyId = $this->companies->requireCompanyId($request);
-        $this->findRunOrFail($payrollRun, $companyId);
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
+        $allowedPaymentPeriodIds = $this->allowedFinancialPeriodIds($request, (string) $company->doc_num);
         $result = $this->guardDomain(fn (): array => $this->reconciliation->forRun(
             $payrollRun,
             $companyId,
             $request->string('as_of')->toString() ?: null,
+            $allowedPaymentPeriodIds,
         ));
 
         return response()->json(['success' => true, 'data' => $result]);
     }
 
-    private function findRunOrFail(int $payrollRunId, int $companyId): void
+    private function findRunOrFail(Request $request, int $payrollRunId, int $companyId, string $companyDocNum): object
     {
-        abort_unless(DB::table('hr_payroll_runs as run')
+        $run = DB::table('hr_payroll_runs as run')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->where('run.id', $payrollRunId)
             ->where('period.company_id', $companyId)
             ->whereNull('run.deleted_at')
             ->whereNull('period.deleted_at')
-            ->exists(), 404);
+            ->first(['run.*', 'period.period_start', 'period.period_end']);
+        abort_unless($run !== null, 404);
+
+        if ($run->branch_id === null) {
+            abort_unless($this->scope->hasUnrestrictedBranchAccess($request->user()), 404);
+        } else {
+            abort_unless($this->scope->allowedBranchQuery($request->user(), [$companyDocNum])
+                ->where('branches.id', $run->branch_id)->exists(), 404);
+        }
+
+        if (! $this->scope->hasUnrestrictedFinancialPeriodAccess($request->user())) {
+            abort_unless($this->scope->allowedFinancialPeriodQuery($request->user(), [$companyDocNum])
+                ->whereDate('financial_periods.from_date', '<=', $run->period_start)
+                ->whereDate('financial_periods.to_date', '>=', $run->period_end)
+                ->exists(), 404);
+        }
+
+        return $run;
+    }
+
+    /** @return list<int>|null */
+    private function allowedBranchIds(Request $request, string $companyDocNum): ?array
+    {
+        if ($this->scope->hasUnrestrictedBranchAccess($request->user())) {
+            return null;
+        }
+
+        return $this->scope->allowedBranchQuery($request->user(), [$companyDocNum])
+            ->pluck('branches.id')->map(fn (mixed $id): int => (int) $id)->all();
+    }
+
+    /** @return list<int>|null */
+    private function allowedFinancialPeriodIds(Request $request, string $companyDocNum): ?array
+    {
+        if ($this->scope->hasUnrestrictedFinancialPeriodAccess($request->user())) {
+            return null;
+        }
+
+        return $this->scope->allowedFinancialPeriodQuery($request->user(), [$companyDocNum])
+            ->pluck('financial_periods.id')->map(fn (mixed $id): int => (int) $id)->all();
+    }
+
+    private function guardPaymentScope(Request $request, int $companyId, string $companyDocNum, object $run): void
+    {
+        $paymentDate = $request->string('payment_date')->toString();
+        if (! $this->scope->hasUnrestrictedFinancialPeriodAccess($request->user())) {
+            abort_unless($this->scope->allowedFinancialPeriodQuery($request->user(), [$companyDocNum])
+                ->whereDate('financial_periods.from_date', '<=', $paymentDate)
+                ->whereDate('financial_periods.to_date', '>=', $paymentDate)
+                ->exists(), 404);
+        }
+
+        $cashbox = Cashbox::query()->forCompany($companyId)->active()
+            ->where('doc_num', $request->string('cashbox_doc_num')->toString())
+            ->firstOrFail();
+        if ($cashbox->branch_id !== null) {
+            abort_unless($this->scope->allowedBranchQuery($request->user(), [$companyDocNum])
+                ->where('branches.id', $cashbox->branch_id)->exists(), 404);
+        }
+        if ($run->branch_id !== null) {
+            abort_unless($cashbox->branch_id !== null && (int) $run->branch_id === (int) $cashbox->branch_id, 404);
+        }
     }
 
     /**
      * @template TReturn
+     *
      * @param  callable(): TReturn  $callback
      * @return TReturn
      */

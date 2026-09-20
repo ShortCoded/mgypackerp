@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
@@ -1105,6 +1106,16 @@ test('authorized users can load the concrete create edit collection reporting an
 
 test('every formal sales document streams canonical inline mPDF with operational price privacy', function () {
     $fixture = salesCycleFixture();
+    $preparer = $fixture['user'];
+    $preparer->update(['name' => 'HistoricalPreparer']);
+    $editor = User::factory()->create(['name' => 'EditActor']);
+    $approver = User::factory()->create(['name' => 'ApprovalActor']);
+    $reviewer = User::factory()->create(['name' => 'ReturnReviewer']);
+    $printer = User::factory()->create(['name' => 'CurrentPrinter']);
+    $actAs = static function (User $user): void {
+        auth()->login($user);
+        request()->setUserResolver(fn (): User => $user);
+    };
     $salesRepresentative = HrEmployee::query()->create([
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
@@ -1124,14 +1135,14 @@ test('every formal sales document streams canonical inline mPDF with operational
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
-    $fixture['user']->givePermissionTo($permissions);
+    $printer->givePermissionTo($permissions);
 
     $orders = app(SalesOrderService::class);
     $fulfillment = app(SalesFulfillmentService::class);
     $invoices = app(CustomerInvoiceService::class);
     $receipts = app(CustomerReceiptService::class);
     $returns = app(SalesReturnService::class);
-    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture, [
+    $orderPayload = salesCycleOrderPayload($fixture, [
         'business_employee_id' => $salesRepresentative->getKey(),
         'lines' => [[
             'product_id' => $fixture['finished']->getKey(),
@@ -1147,7 +1158,16 @@ test('every formal sales document streams canonical inline mPDF with operational
             'amount' => '8765.40',
             'due_date' => now()->toDateString(),
         ]],
-    ])));
+    ]);
+    $actAs($preparer);
+    $draftOrder = $orders->create($orderPayload);
+    $order = $orders->create($orderPayload);
+    $actAs($editor);
+    $order = $orders->update($order, [...$orderPayload, 'internal_notes' => 'Edited before approval.']);
+    expect($order->updated_by)->toBe($editor->getKey());
+    $actAs($approver);
+    $order = $orders->approve($order);
+    $actAs($preparer);
     $orderLine = $order->lines->sole();
     $openingStock = InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->sole();
     $openingStock->update(['quantity_in' => '0', 'total_cost' => '0']);
@@ -1222,17 +1242,28 @@ test('every formal sales document streams canonical inline mPDF with operational
         'customer_invoice_line_id' => $invoice->lines->sole()->getKey(),
         'quantity' => '10',
     ]]);
+    $actAs($approver);
     $returns->authorize($return);
+    $actAs($preparer);
     $return = $returns->receive($return);
+    $actAs($reviewer);
     $return = $returns->inspect($return, [[
         'sales_return_line_id' => $return->lines->sole()->getKey(),
         'saleable_quantity' => '7',
         'quarantine_quantity' => '3',
     ]]);
+    $actAs($preparer);
     $return = $returns->close($return);
     $session = salesCycleSession($fixture);
+    expect($order->fresh()->created_by)->toBe($preparer->getKey())
+        ->and($order->fresh()->approved_by)->toBe($approver->getKey())
+        ->and($return->fresh()->created_by)->toBe($preparer->getKey())
+        ->and($return->fresh()->inspected_by)->toBe($reviewer->getKey())
+        ->and($return->fresh()->authorized_by)->toBe($approver->getKey());
+    $preparer->delete();
 
     $routes = [
+        'draft sales order' => route('admin.sales.sales-orders.print', $draftOrder),
         'sales order' => route('admin.sales.sales-orders.print', $order),
         'sales-origin production request' => route('admin.sales.production-requests.print', $production),
         'production work order' => route('admin.production.work-orders.print', $production),
@@ -1251,15 +1282,23 @@ test('every formal sales document streams canonical inline mPDF with operational
     ];
     $responses = [];
     foreach ($routes as $name => $url) {
-        $response = $this->actingAs($fixture['user'])->withSession($session)->get($url);
+        $response = $this->actingAs($printer)->withSession($session)->get($url);
         $response->assertOk()->assertHeader('content-type', 'application/pdf');
         expect($response->headers->get('content-disposition'))->toStartWith('inline; filename=')
             ->and($response->getContent())->toStartWith('%PDF-');
         $responses[$name] = $response;
     }
 
+    $draftOrderText = salesPdfText($responses['draft sales order']->getContent());
+    expect($draftOrderText)->toContain('Prepared by', $preparer->name, 'Reviewed by', 'Approved By')
+        ->not->toContain($editor->name, $approver->name, $reviewer->name, $printer->name);
+    $orderText = salesPdfText($responses['sales order']->getContent());
+    expect($orderText)->toContain('Prepared by', $preparer->name, 'Reviewed by', 'Approved By', $approver->name)
+        ->not->toContain($editor->name, $reviewer->name, $printer->name);
     $invoiceText = salesPdfText($responses['sales invoice']->getContent());
     expect($invoiceText)->toContain('Unit price')->toContain('876.54')
+        ->toContain('Prepared by', $preparer->name, 'Reviewed by', 'Approved By')
+        ->not->toContain($editor->name, $approver->name, $reviewer->name, $printer->name)
         ->toContain('Sales PDF Legal Identity')->toContain(__('sales_ui.operational_invoice_copy'))
         ->not->toContain(__('sales_ui.legal_invoice_copy'))->not->toContain('PDF Authorized Signatory')->not->toContain('Finance Director')
         ->and(salesPdfImageCount($responses['sales invoice']->getContent()))->toBeGreaterThanOrEqual(1);
@@ -1277,20 +1316,50 @@ test('every formal sales document streams canonical inline mPDF with operational
         expect(salesPdfText($responses[$salesDocument]->getContent()))
             ->toContain($salesRepresentative->full_name);
     }
+    foreach (['sales return', 'return quality disposition'] as $returnDocument) {
+        expect(salesPdfText($responses[$returnDocument]->getContent()))
+            ->toContain('Prepared by', $preparer->name, 'Reviewed by', $reviewer->name, 'Approved By', $approver->name)
+            ->not->toContain($editor->name, $printer->name);
+    }
     expect(salesPdfText($responses['cash customer receipt']->getContent()))->toContain($cashReceipt->cashVoucher->doc_num)
         ->and(salesPdfText($responses['cheque customer receipt']->getContent()))->toContain($chequeReceipt->cheque->doc_num);
 
-    $fixture['user']->update(['locale' => 'ar']);
+    $html = view('reports.sales.document', [
+        'title' => 'Sales Order',
+        'kind' => 'sales_order',
+        'record' => $order->fresh()->load(['company', 'customer', 'salesEmployee', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']),
+        'copy' => 'operational',
+        'showPrices' => true,
+        'companyPrintIdentity' => [],
+        'direction' => 'ltr',
+    ])->render();
+    expect($html)->toContain('Prepared by', $preparer->name, 'Reviewed by', 'Approved By', $approver->name)
+        ->not->toContain($editor->name, $reviewer->name, $printer->name);
+
+    $printer->update(['locale' => 'ar']);
     app()->setLocale('ar');
-    $returnPage = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-returns.show', $return));
+    $returnPage = $this->actingAs($printer)->withSession([...$session, 'locale' => 'ar'])->get(route('admin.sales.sales-returns.show', $return));
     $returnPage->assertOk()
         ->assertSee(__('Saleable').'، '.__('Quarantine'))
         ->assertSee(__('Print Quality Disposition'))
         ->assertDontSee('Saleable,Quarantine')
         ->assertDontSee(__('Return and quality actions'));
-    $returnPdf = $this->get(route('admin.sales.sales-returns.print', $return))->assertOk();
+    $returnPdf = $this->withSession([...$session, 'locale' => 'ar'])->get(route('admin.sales.sales-returns.print', $return))->assertOk();
     expect(salesPdfText($returnPdf->getContent()))
-        ->not->toContain('Saleable,Quarantine', $fixture['user']->name);
+        ->toContain($preparer->name, $reviewer->name, $approver->name)
+        ->not->toContain('Saleable,Quarantine', $editor->name, $printer->name);
+
+    $arabicHtml = view('reports.sales.document', [
+        'title' => 'Sales Order',
+        'kind' => 'sales_order',
+        'record' => $order->fresh()->load(['company', 'customer', 'salesEmployee', 'quotation.currentRevision', 'quotationRevision', 'branch', 'branchStore', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']),
+        'copy' => 'operational',
+        'showPrices' => true,
+        'companyPrintIdentity' => [],
+        'direction' => 'rtl',
+    ])->render();
+    expect($arabicHtml)->toContain('أعده', 'راجعه', 'اعتمده', $preparer->name, $approver->name)
+        ->not->toContain($editor->name, $reviewer->name, $printer->name);
 });
 
 test('sales PDF routes enforce print authorization', function () {

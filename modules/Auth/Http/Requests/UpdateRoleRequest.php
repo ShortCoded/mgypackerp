@@ -2,11 +2,14 @@
 
 namespace Modules\Auth\Http\Requests;
 
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 use Modules\Auth\Http\Requests\Concerns\ValidatesRoleOperatingScope;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionDelegationService;
 use Modules\Auth\Services\RoleService;
 use Modules\Core\Services\DocumentNumberService;
 
@@ -41,6 +44,7 @@ class UpdateRoleRequest extends FormRequest
             'permissions' => ['nullable', 'array'],
             'permissions.*' => [
                 'string',
+                'distinct',
                 Rule::exists(config('permission.table_names.permissions', 'permissions'), 'name')
                     ->where('guard_name', 'web'),
             ],
@@ -94,6 +98,17 @@ class UpdateRoleRequest extends FormRequest
                 $validator->errors()->add('role', __('roles.messages.protected_update_blocked'));
 
                 return;
+            }
+
+            $actor = $this->user();
+            $permissions = $this->input('permissions', []);
+
+            if ($actor instanceof User && is_array($permissions) && ! $validator->errors()->has('permissions')) {
+                try {
+                    app(PermissionDelegationService::class)->assertCanDelegatePermissions($actor, $permissions);
+                } catch (ValidationException $exception) {
+                    $validator->errors()->add('permissions', $exception->errors()['permissions'][0]);
+                }
             }
 
             $this->validateOperatingScope($validator);

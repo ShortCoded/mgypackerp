@@ -4,6 +4,7 @@ OpenCode subagents have bounded model-step budgets. Codex agents follow the same
 
 | Role | OpenCode steps |
 | --- | ---: |
+| `orchestrator` | 12 |
 | `explorer` | 8 |
 | `worker` | 14 |
 | `deep_worker` | 22 |
@@ -25,7 +26,7 @@ When a budget is exhausted, the agent stops and returns concise findings: comple
 ## Loop Discipline
 
 - One explorer pass should produce the evidence contract used by downstream roles.
-- One writer owns a mutation boundary. A failed check may trigger a targeted correction within the remaining budget, not a fresh unbounded loop.
+- One writer owns a mutation boundary. A failed check triggers a targeted correction by resuming the same writer session within its remaining budget whenever possible, not a fresh unbounded loop.
 - Review is scoped to the diff, acceptance criteria, and named risks. QA is scoped to targeted regression evidence.
 - Commands should be targeted and output-limited. Do not dump broad logs, schemas, or repository trees into agent context.
 - Do not store routine task plans or loop state in repository files.

@@ -2,10 +2,12 @@
 
 namespace Modules\Auth\Http\Controllers\Select2;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionDelegationService;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\Select2ResponseService;
 
@@ -14,6 +16,7 @@ class RoleSelect2Controller extends Controller
     public function __construct(
         private readonly DataTableSearchService $searchService,
         private readonly Select2ResponseService $select2,
+        private readonly PermissionDelegationService $permissionDelegation,
     ) {}
 
     public function __invoke(Request $request): JsonResponse
@@ -27,6 +30,19 @@ class RoleSelect2Controller extends Controller
             403
         );
 
+        return $this->response($request, assignment: false);
+    }
+
+    public function assignment(Request $request): JsonResponse
+    {
+        abort_unless((bool) $request->user()?->can('users.roles.manage'), 403);
+
+        return $this->response($request, assignment: true);
+    }
+
+    private function response(Request $request, bool $assignment): JsonResponse
+    {
+
         $search = $request->input('q', $request->input('term'));
 
         $query = Role::query()
@@ -38,6 +54,12 @@ class RoleSelect2Controller extends Controller
             ])
             ->orderBy('roles.name')
             ->orderBy('roles.doc_number');
+
+        $actor = $request->user();
+
+        if ($assignment && $actor instanceof User) {
+            $this->permissionDelegation->constrainToDelegableRoles($query, $actor);
+        }
 
         $terms = $this->searchService->terms(is_string($search) ? $search : null);
 

@@ -284,8 +284,8 @@ class LedgerReportController extends Controller
 
         $model = $type === 'customer_statement' ? Customer::class : Supplier::class;
         $field = $type === 'customer_statement' ? 'customer_doc_num' : 'supplier_doc_num';
-        $party = $model::query()->forCompany($companyId)->active()->where('doc_num', $validated[$field])->firstOrFail();
-        $account = Account::query()->forCompany($companyId)->whereKey($party->account_id)->first();
+        $party = $model::query()->withTrashed()->forCompany($companyId)->where('doc_num', $validated[$field])->firstOrFail();
+        $account = Account::query()->withTrashed()->forCompany($companyId)->whereKey($party->account_id)->first();
 
         if (! $account) {
             throw ValidationException::withMessages([$field => __('ledger_reports.messages.partner_account_missing')]);

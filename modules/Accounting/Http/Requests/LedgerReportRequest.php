@@ -94,8 +94,8 @@ class LedgerReportRequest extends FormRequest
 
             $checks = [
                 'account_doc_num' => Account::query()->withTrashed()->forCompany((int) $companyId),
-                'customer_doc_num' => Customer::query()->forCompany((int) $companyId)->active(),
-                'supplier_doc_num' => Supplier::query()->forCompany((int) $companyId)->active(),
+                'customer_doc_num' => Customer::query()->withTrashed()->forCompany((int) $companyId),
+                'supplier_doc_num' => Supplier::query()->withTrashed()->forCompany((int) $companyId),
                 'branch_doc_num' => Branch::query()->where('company_id', (int) $companyId)->active(),
                 'cost_center_doc_num' => CostCenter::query()->forCompany((int) $companyId)->active()->where('is_group', false),
             ];

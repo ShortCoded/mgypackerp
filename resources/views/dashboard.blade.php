@@ -13,6 +13,70 @@
             <h4 class="mb-0">{{ __('dashboard.title') }}</h4>
         </header>
 
+        @canany(['dashboard.summaries.sales.view', 'dashboard.summaries.purchases.view'])
+            <details class="card mb-3" data-dashboard-summaries>
+                <summary class="card-header py-3 d-flex align-items-center justify-content-between gap-2">
+                    <span><strong>{{ __('dashboard.summaries.title') }}</strong><small class="d-block text-600">{{ __('dashboard.summaries.hint') }}</small></span>
+                    <span class="fas fa-chevron-down" aria-hidden="true"></span>
+                </summary>
+                <div class="card-body">
+                    <form class="row g-2 align-items-end mb-3" data-summary-filters>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="summary-branch">{{ __('dashboard.summaries.branch') }}</label>
+                            <x-forms.select id="summary-branch" name="branch_doc_num">
+                                @foreach ($summaryFilters['branches'] as $option)
+                                    <option value="{{ $option['id'] }}" @selected(($summaryFilters['current']['branch']['doc_num'] ?? null) === $option['id'])>{{ $option['text'] }}</option>
+                                @endforeach
+                            </x-forms.select>
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="summary-period">{{ __('dashboard.summaries.financial_period') }}</label>
+                            <x-forms.select id="summary-period" name="financial_period_doc_num">
+                                @foreach ($summaryFilters['financial_periods'] as $option)
+                                    <option value="{{ $option['id'] }}" @selected(($summaryFilters['current']['financial_period']['doc_num'] ?? null) === $option['id'])>{{ $option['text'] }}</option>
+                                @endforeach
+                            </x-forms.select>
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-2">
+                            <label class="form-label" for="summary-currency">{{ __('dashboard.summaries.currency') }}</label>
+                            <x-forms.select id="summary-currency" name="currency_doc_num">
+                                <option value="">{{ __('dashboard.summaries.all_currencies') }}</option>
+                                @foreach ($summaryFilters['currencies'] as $option)
+                                    <option value="{{ $option['id'] }}">{{ $option['text'] }}</option>
+                                @endforeach
+                            </x-forms.select>
+                        </div>
+                        <div class="col-6 col-xl-1">
+                            <label class="form-label" for="summary-date-from">{{ __('dashboard.summaries.date_from') }}</label>
+                            <x-forms.date-input id="summary-date-from" name="date_from" />
+                        </div>
+                        <div class="col-6 col-xl-1">
+                            <label class="form-label" for="summary-date-to">{{ __('dashboard.summaries.date_to') }}</label>
+                            <x-forms.date-input id="summary-date-to" name="date_to" />
+                        </div>
+                        <div class="col-12 col-xl-2 d-grid">
+                            <button class="btn btn-falcon-primary" type="submit">{{ __('dashboard.summaries.refresh') }}</button>
+                        </div>
+                    </form>
+                    <div class="row g-3">
+                        @can('dashboard.summaries.sales.view')
+                            <div class="col-12 col-xl-6">
+                                <h6>{{ __('dashboard.summaries.sales') }}</h6>
+                                <div class="dashboard-kpi-grid" data-summary-panel="sales"></div>
+                            </div>
+                        @endcan
+                        @can('dashboard.summaries.purchases.view')
+                            <div class="col-12 col-xl-6">
+                                <h6>{{ __('dashboard.summaries.purchases') }}</h6>
+                                <div class="dashboard-kpi-grid" data-summary-panel="purchases"></div>
+                            </div>
+                        @endcan
+                    </div>
+                    <p class="small text-danger d-none mt-2 mb-0" data-summary-error role="alert"></p>
+                </div>
+            </details>
+        @endcanany
+
         <section class="plastics-dashboard-section" data-personal-dashboard>
             <div class="mb-2">
                 <h5 class="mb-1">{{ __('dashboard.personal.title') }}</h5>
@@ -249,6 +313,22 @@
         };
     </script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/personal-dashboard.js') }}"></script>
+    @canany(['dashboard.summaries.sales.view', 'dashboard.summaries.purchases.view'])
+        <script>
+            window.AppDashboardSummaries = {
+                urls: {
+                    @can('dashboard.summaries.sales.view') sales: @json(route('dashboard.summaries.sales', [], false)), @endcan
+                    @can('dashboard.summaries.purchases.view') purchases: @json(route('dashboard.summaries.purchases', [], false)), @endcan
+                },
+                messages: {
+                    loading: @json(__('dashboard.summaries.loading')),
+                    empty: @json(__('dashboard.summaries.empty')),
+                    failed: @json(__('dashboard.summaries.failed'))
+                }
+            };
+        </script>
+        <script src="{{ $erpAsset->url('assets/js/modules/Core/dashboard-summaries.js') }}"></script>
+    @endcanany
     @if ($charts !== [])
         <script src="{{ $erpAsset->url('vendors/echarts/echarts.min.js') }}"></script>
         <script src="{{ $erpAsset->url('assets/js/modules/Core/expanded-dashboard.js') }}"></script>

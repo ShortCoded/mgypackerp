@@ -56,6 +56,7 @@
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap all no-colvis dt-code">{{ __('price_lists.fields.code') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text dt-ellipsis">{{ __('price_lists.fields.scope') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text dt-ellipsis">{{ __('price_lists.fields.currency') }}</th>
+                                    <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-text">{{ __('price_lists.fields.pricing_use') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-date">{{ __('price_lists.fields.date') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-date">{{ __('price_lists.fields.valid_from') }}</th>
                                     <th class="text-900 sort pe-1 align-middle white-space-nowrap dt-date">{{ __('price_lists.fields.valid_until') }}</th>

@@ -39,7 +39,7 @@ class AccountSelect2Service
         if ($request->boolean('postable')) {
             $query->eligibleForDirectPosting();
         } elseif (! $includeHistorical) {
-            $query->active();
+            $query->eligibleForNewSelection();
         }
 
         if ($request->boolean('group')) {

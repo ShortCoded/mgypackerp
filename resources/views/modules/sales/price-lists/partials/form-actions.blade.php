@@ -5,6 +5,14 @@
     $canList = auth()->user()?->can('price_lists.view');
     $canView = auth()->user()?->can('price_lists.view');
     $canEdit = auth()->user()?->can('price_lists.edit');
+    $canClone = $isView && $record && ! $isTrashed && auth()->user()?->can('price_lists.clone');
+    $canDelete = $isView && $record && ! $isTrashed && auth()->user()?->can('price_lists.delete');
+    $canRestore = $isView && $record && $isTrashed && auth()->user()?->can('price_lists.restore');
+    $canUseTrashed = ! $isTrashed || auth()->user()?->can('price_lists.view_trashed');
+    $canPrint = $isView && $record && $canView && $canUseTrashed && auth()->user()?->can('price_lists.print');
+    $canExport = $isView && $record && $canView && $canUseTrashed && auth()->user()?->can('price_lists.export');
+    $canReview = $isView && $record && ! $isTrashed && ! $record->reviewed_at && auth()->user()?->can('price_lists.review');
+    $canApprove = $isView && $record && ! $isTrashed && $record->reviewed_at && ! $record->approved_at && auth()->user()?->can('price_lists.approve');
     $mainSubmitAction = $isCreate ? 'save_new' : 'save';
     $shortcutTitles = [
         'back' => __('common.shortcuts.back'),
@@ -27,6 +35,45 @@
         <a class="btn btn-primary btn-sm" href="{{ route('admin.sales.price-lists.edit', $record) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">
             <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}
         </a>
+    @endif
+
+    @if ($canClone)
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.clone', $record) }}"><span class="fas fa-copy me-1"></span>{{ __('price_lists.actions.clone') }}</a>
+    @endif
+
+    @if ($isView && $record && $canView && $canUseTrashed)
+        <button class="btn btn-falcon-default btn-sm" type="button" data-price-list-copy><span class="fas fa-copy me-1"></span>{{ __('price_lists.actions.copy_lines') }}</button>
+    @endif
+
+    @if ($isView && $record && ! $isTrashed && $canEdit)
+        <button type="button" class="btn btn-falcon-default btn-sm js-increase-price-list" data-doc-num="{{ $record->doc_num }}" data-increase-url="{{ route('admin.sales.price-lists.increase-by-percentage', $record) }}" data-success-url="{{ route('admin.sales.price-lists.show', $record) }}"><span class="fas fa-percent me-1"></span>{{ __('price_lists.actions.increase') }}</button>
+    @endif
+
+    @if ($isView && $record && $canView && $canUseTrashed)
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.history', $record) }}"><span class="fas fa-history me-1"></span>{{ __('price_lists.actions.history') }}</a>
+    @endif
+
+    @if ($canPrint)
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.pdf', $record) }}">{{ __('price_lists.actions.pdf') }}</a>
+    @endif
+    @if ($canExport)
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.export.xlsx', $record) }}">{{ __('price_lists.actions.excel') }}</a>
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.export.csv', $record) }}">{{ __('price_lists.actions.csv') }}</a>
+    @endif
+
+    @if ($canReview)
+        <button type="button" class="btn btn-info btn-sm js-price-list-lifecycle" data-action-url="{{ route('admin.sales.price-lists.review', $record) }}" data-success-url="{{ route('admin.sales.price-lists.show', $record) }}"><span class="fas fa-user-check me-1"></span>{{ __('price_lists.actions.review') }}</button>
+    @endif
+    @if ($canApprove)
+        <button type="button" class="btn btn-success btn-sm js-price-list-lifecycle" data-action-url="{{ route('admin.sales.price-lists.approve', $record) }}" data-success-url="{{ route('admin.sales.price-lists.show', $record) }}"><span class="fas fa-check-circle me-1"></span>{{ __('price_lists.actions.approve') }}</button>
+    @endif
+
+    @if ($canRestore)
+        <button type="button" class="btn btn-success btn-sm js-restore-record" data-doc-num="{{ $record->doc_num }}" data-restore-url="{{ route('admin.sales.price-lists.restore', $record) }}" data-success-url="{{ route('admin.sales.price-lists.show', $record) }}"><span class="fas fa-undo me-1"></span>{{ __('common.actions.restore') }}</button>
+    @endif
+
+    @if ($canDelete)
+        <button type="button" class="btn btn-falcon-danger btn-sm js-delete-record" data-doc-num="{{ $record->doc_num }}" data-delete-url="{{ route('admin.sales.price-lists.destroy', $record) }}" data-success-url="{{ route('admin.sales.price-lists.index') }}"><span class="fas fa-trash me-1"></span>{{ __('common.actions.delete') }}</button>
     @endif
 
     @unless ($isView)

@@ -30,6 +30,10 @@ return [
     'filters' => [
         'type' => 'Report', 'from_date' => 'From date', 'to_date' => 'To date', 'as_of_date' => 'As of date',
         'cashbox_doc_num' => 'Cashbox', 'bank_account_doc_num' => 'Bank account', 'currency_doc_num' => 'Currency', 'status' => 'Status',
+        'branch_id' => 'Branch', 'financial_period_id' => 'Financial period', 'due_state' => 'Due state',
+    ],
+    'messages' => [
+        'invalid_branch' => 'The selected branch is not available in the operating company.',
     ],
     'columns' => [
         'date' => 'Date', 'as_of_date' => 'As of date', 'document' => 'Document', 'document_type' => 'Document type',

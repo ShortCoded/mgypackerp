@@ -4,13 +4,17 @@ namespace Modules\HR\Services;
 
 use DomainException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Services\NumericFormatService;
 
 final class PayrollReconciliationService
 {
+    public function __construct(private readonly NumericFormatService $numbers) {}
+
     /**
      * @return array{
      *     mapping_configured: bool,
@@ -48,21 +52,26 @@ final class PayrollReconciliationService
     }
 
     /**
+     * @param  list<int>|null  $allowedPaymentPeriodIds
      * @return array{
      *     run: object,
      *     status: string,
      *     summary: array<string, string>,
      *     journal: object|null,
-     *     payments: \Illuminate\Support\Collection<int, object>
+     *     payments: Collection<int, object>
      * }
      */
-    public function forRun(int $payrollRunId, int $companyId, ?string $asOf = null): array
-    {
+    public function forRun(
+        int $payrollRunId,
+        int $companyId,
+        ?string $asOf = null,
+        ?array $allowedPaymentPeriodIds = null,
+    ): array {
         $run = $this->run($payrollRunId, $companyId);
         $asOfDate = Carbon::parse($asOf ?? now())->toDateString();
         $payableAccount = $this->payrollPayableAccount($companyId);
         $currentPayable = $this->runPayable($payrollRunId);
-        $currentPaid = $this->runPaidAsOf($payrollRunId, $asOfDate);
+        $currentPaid = $this->runPaidAsOf($payrollRunId, $asOfDate, $allowedPaymentPeriodIds);
         $currentRemaining = bcsub($currentPayable, $currentPaid, 4);
         if (! $payableAccount instanceof Account) {
             return [
@@ -83,12 +92,17 @@ final class PayrollReconciliationService
                     'cash_bank_difference' => $currentPaid,
                 ],
                 'journal' => null,
-                'payments' => $this->payments($payrollRunId, $asOfDate),
+                'payments' => $this->payments($payrollRunId, $asOfDate, $allowedPaymentPeriodIds),
             ];
         }
 
         $journal = DB::table('hr_payroll_postings as posting')
-            ->leftJoin('journal_entries as journal', 'journal.id', '=', 'posting.journal_entry_id')
+            ->leftJoin('journal_entries as journal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('journal.id', '=', 'posting.journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('journal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
             ->where('posting.payroll_run_id', $payrollRunId)
             ->first([
                 'posting.journal_entry_id',
@@ -97,14 +111,22 @@ final class PayrollReconciliationService
                 'journal.entry_date',
                 'journal.status as journal_status',
             ]);
-        $payments = $this->payments($payrollRunId, $asOfDate);
-        $opening = $this->subledgerBalanceBefore($companyId, $run->branch_id, $run->period_start);
-        $periodPayroll = $this->periodPayroll($companyId, $run->branch_id, $run->period_start, $asOfDate);
-        $periodSettlements = $this->periodSettlements($companyId, $run->branch_id, $run->period_start, $asOfDate);
+        $payments = $this->payments($payrollRunId, $asOfDate, $allowedPaymentPeriodIds);
+        $branchId = $run->branch_id === null ? null : (int) $run->branch_id;
+        $periodStart = (string) $run->period_start;
+        $opening = $this->subledgerBalanceBefore($companyId, $branchId, $periodStart, $allowedPaymentPeriodIds);
+        $periodPayroll = $this->periodPayroll($companyId, $branchId, $periodStart, $asOfDate);
+        $periodSettlements = $this->periodSettlements($companyId, $branchId, $periodStart, $asOfDate, $allowedPaymentPeriodIds);
         $endingPayable = bcsub(bcadd($opening, $periodPayroll, 4), $periodSettlements, 4);
-        $glEnding = $this->glPayableBalance($companyId, $run->branch_id, $asOfDate, (int) $payableAccount->getKey());
+        $glEnding = $this->glPayableBalance(
+            $companyId,
+            $branchId,
+            $asOfDate,
+            (int) $payableAccount->getKey(),
+            $allowedPaymentPeriodIds,
+        );
         $glDifference = bcsub($endingPayable, $glEnding, 4);
-        $cashEffect = $this->cashEffect($payrollRunId, $asOfDate);
+        $cashEffect = $this->cashEffect($payrollRunId, $asOfDate, $allowedPaymentPeriodIds);
         $cashDifference = bcsub($currentPaid, $cashEffect, 4);
 
         $status = match (true) {
@@ -156,18 +178,39 @@ final class PayrollReconciliationService
         return $this->money(DB::table('hr_payslips')->where('payroll_run_id', $payrollRunId)->sum('net_amount'));
     }
 
-    private function runPaidAsOf(int $payrollRunId, string $asOf): string
+    /** @param list<int>|null $allowedPaymentPeriodIds */
+    private function runPaidAsOf(int $payrollRunId, string $asOf, ?array $allowedPaymentPeriodIds): string
     {
-        return $this->money(DB::table('hr_payroll_payments')
-            ->where('payroll_run_id', $payrollRunId)
-            ->whereNotNull('approved_at')
-            ->whereDate('approved_at', '<=', $asOf)
-            ->where(fn ($query) => $query->whereNull('cancelled_at')->orWhereDate('cancelled_at', '>', $asOf))
-            ->sum('amount'));
+        return $this->money(DB::table('hr_payroll_payments as payment')
+            ->leftJoin('journal_entries as reversal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('reversal.id', '=', 'payment.reversal_journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('reversal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
+            ->where('payment.payroll_run_id', $payrollRunId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('payment.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
+            ->whereNotNull('payment.approved_at')
+            ->whereDate('payment.approved_at', '<=', $asOf)
+            ->where(function ($query) use ($allowedPaymentPeriodIds, $asOf): void {
+                $query->whereNull('payment.cancelled_at')
+                    ->orWhereDate('payment.cancelled_at', '>', $asOf);
+                if ($allowedPaymentPeriodIds !== null) {
+                    $query->orWhere(fn ($hiddenReversal) => $hiddenReversal
+                        ->whereNotNull('payment.reversal_journal_entry_id')
+                        ->whereNull('reversal.id'));
+                }
+            })
+            ->sum('payment.amount'));
     }
 
-    private function subledgerBalanceBefore(int $companyId, ?int $branchId, string $periodStart): string
-    {
+    /** @param list<int>|null $allowedPaymentPeriodIds */
+    private function subledgerBalanceBefore(
+        int $companyId,
+        ?int $branchId,
+        string $periodStart,
+        ?array $allowedPaymentPeriodIds = null,
+    ): string {
         $payroll = $this->money(DB::table('hr_payslips as payslip')
             ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
@@ -176,13 +219,28 @@ final class PayrollReconciliationService
             ->whereDate('period.period_end', '<', $periodStart)
             ->when($branchId !== null, fn ($query) => $query->where('payslip.branch_id', $branchId))
             ->sum('payslip.net_amount'));
-        $payments = $this->money(DB::table('hr_payroll_payments')
-            ->where('company_id', $companyId)
-            ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
-            ->whereNotNull('approved_at')
-            ->whereDate('approved_at', '<', $periodStart)
-            ->where(fn ($query) => $query->whereNull('cancelled_at')->orWhereDate('cancelled_at', '>=', $periodStart))
-            ->sum('amount'));
+        $payments = $this->money(DB::table('hr_payroll_payments as payment')
+            ->leftJoin('journal_entries as reversal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('reversal.id', '=', 'payment.reversal_journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('reversal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
+            ->where('payment.company_id', $companyId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('payment.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
+            ->when($branchId !== null, fn ($query) => $query->where('payment.branch_id', $branchId))
+            ->whereNotNull('payment.approved_at')
+            ->whereDate('payment.approved_at', '<', $periodStart)
+            ->where(function ($query) use ($allowedPaymentPeriodIds, $periodStart): void {
+                $query->whereNull('payment.cancelled_at')
+                    ->orWhereDate('payment.cancelled_at', '>=', $periodStart);
+                if ($allowedPaymentPeriodIds !== null) {
+                    $query->orWhere(fn ($hiddenReversal) => $hiddenReversal
+                        ->whereNotNull('payment.reversal_journal_entry_id')
+                        ->whereNull('reversal.id'));
+                }
+            })
+            ->sum('payment.amount'));
 
         return bcsub($payroll, $payments, 4);
     }
@@ -224,29 +282,52 @@ final class PayrollReconciliationService
             ->sum('payslip.net_amount'));
     }
 
-    private function periodSettlements(int $companyId, ?int $branchId, string $periodStart, string $asOf): string
-    {
+    /** @param list<int>|null $allowedPaymentPeriodIds */
+    private function periodSettlements(
+        int $companyId,
+        ?int $branchId,
+        string $periodStart,
+        string $asOf,
+        ?array $allowedPaymentPeriodIds = null,
+    ): string {
         $approved = $this->money(DB::table('hr_payroll_payments')
             ->where('company_id', $companyId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
             ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
             ->whereBetween(DB::raw('DATE(approved_at)'), [$periodStart, $asOf])
             ->sum('amount'));
-        $cancelled = $this->money(DB::table('hr_payroll_payments')
-            ->where('company_id', $companyId)
-            ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
-            ->whereBetween(DB::raw('DATE(cancelled_at)'), [$periodStart, $asOf])
-            ->sum('amount'));
+        $cancelled = $this->money(DB::table('hr_payroll_payments as payment')
+            ->leftJoin('journal_entries as reversal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('reversal.id', '=', 'payment.reversal_journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('reversal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
+            ->where('payment.company_id', $companyId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query
+                ->whereIn('payment.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0])
+                ->whereNotNull('reversal.id'))
+            ->when($branchId !== null, fn ($query) => $query->where('payment.branch_id', $branchId))
+            ->whereBetween(DB::raw('DATE(payment.cancelled_at)'), [$periodStart, $asOf])
+            ->sum('payment.amount'));
 
         return bcsub($approved, $cancelled, 4);
     }
 
-    private function glPayableBalance(int $companyId, ?int $branchId, string $asOf, int $accountId): string
-    {
+    /** @param list<int>|null $allowedFinancialPeriodIds */
+    private function glPayableBalance(
+        int $companyId,
+        ?int $branchId,
+        string $asOf,
+        int $accountId,
+        ?array $allowedFinancialPeriodIds = null,
+    ): string {
         $row = DB::table('journal_entry_lines as line')
             ->join('journal_entries as journal', 'journal.id', '=', 'line.journal_entry_id')
             ->where('journal.company_id', $companyId)
             ->where('journal.status', 'posted')
             ->where('journal.is_posted', true)
+            ->when($allowedFinancialPeriodIds !== null, fn ($query) => $query->whereIn('journal.financial_period_id', $allowedFinancialPeriodIds !== [] ? $allowedFinancialPeriodIds : [0]))
             ->whereDate('journal.entry_date', '<=', $asOf)
             ->whereIn('journal.source_type', ['hr_payroll_run', 'hr_payroll_payment', 'hr_payroll_payment_reversal'])
             ->where('line.account_id', $accountId)
@@ -257,7 +338,8 @@ final class PayrollReconciliationService
         return $this->money($row?->balance ?? 0);
     }
 
-    private function cashEffect(int $payrollRunId, string $asOf): string
+    /** @param list<int>|null $allowedPaymentPeriodIds */
+    private function cashEffect(int $payrollRunId, string $asOf, ?array $allowedPaymentPeriodIds): string
     {
         $row = DB::table('hr_payroll_payments as payment')
             ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
@@ -271,6 +353,8 @@ final class PayrollReconciliationService
                     ->on('line.account_id', '=', 'cashbox.account_id');
             })
             ->where('payment.payroll_run_id', $payrollRunId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('payment.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('journal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
             ->whereDate('journal.entry_date', '<=', $asOf)
             ->where('journal.status', 'posted')
             ->selectRaw('COALESCE(SUM(line.credit_amount - line.debit_amount), 0) as balance')
@@ -315,28 +399,51 @@ final class PayrollReconciliationService
             ->exists();
     }
 
-    private function payments(int $payrollRunId, string $asOf): \Illuminate\Support\Collection
+    /** @param list<int>|null $allowedPaymentPeriodIds */
+    private function payments(int $payrollRunId, string $asOf, ?array $allowedPaymentPeriodIds): Collection
     {
+        $effectiveStatusSql = $allowedPaymentPeriodIds === null
+            ? 'payment.status'
+            : "CASE WHEN payment.reversal_journal_entry_id IS NOT NULL AND reversal.id IS NULL THEN 'approved' ELSE payment.status END";
+        $effectiveCancelledAtSql = $allowedPaymentPeriodIds === null
+            ? 'payment.cancelled_at'
+            : 'CASE WHEN payment.reversal_journal_entry_id IS NOT NULL AND reversal.id IS NULL THEN NULL ELSE payment.cancelled_at END';
+        $effectiveVoucherStatusSql = $allowedPaymentPeriodIds === null
+            ? 'voucher.status'
+            : "CASE WHEN payment.reversal_journal_entry_id IS NOT NULL AND reversal.id IS NULL THEN 'approved' ELSE voucher.status END";
+
         return DB::table('hr_payroll_payments as payment')
             ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
-            ->leftJoin('journal_entries as journal', 'journal.id', '=', 'payment.journal_entry_id')
-            ->leftJoin('journal_entries as reversal', 'reversal.id', '=', 'payment.reversal_journal_entry_id')
+            ->leftJoin('journal_entries as journal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('journal.id', '=', 'payment.journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('journal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
+            ->leftJoin('journal_entries as reversal', function ($join) use ($allowedPaymentPeriodIds): void {
+                $join->on('reversal.id', '=', 'payment.reversal_journal_entry_id');
+                if ($allowedPaymentPeriodIds !== null) {
+                    $join->whereIn('reversal.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]);
+                }
+            })
             ->where('payment.payroll_run_id', $payrollRunId)
+            ->when($allowedPaymentPeriodIds !== null, fn ($query) => $query->whereIn('payment.financial_period_id', $allowedPaymentPeriodIds !== [] ? $allowedPaymentPeriodIds : [0]))
             ->whereDate('voucher.voucher_date', '<=', $asOf)
             ->orderBy('voucher.voucher_date')
             ->orderBy('payment.id')
-            ->get([
+            ->select([
                 'payment.id',
                 'payment.amount',
-                'payment.status',
                 'payment.approved_at',
-                'payment.cancelled_at',
                 'voucher.doc_num as voucher_doc_num',
                 'voucher.voucher_date',
-                'voucher.status as voucher_status',
                 'journal.doc_num as journal_doc_num',
                 'reversal.doc_num as reversal_journal_doc_num',
-            ]);
+            ])
+            ->selectRaw("{$effectiveStatusSql} as status")
+            ->selectRaw("{$effectiveCancelledAtSql} as cancelled_at")
+            ->selectRaw("{$effectiveVoucherStatusSql} as voucher_status")
+            ->get();
     }
 
     private function run(int $payrollRunId, int $companyId): object
@@ -353,6 +460,6 @@ final class PayrollReconciliationService
 
     private function money(mixed $value): string
     {
-        return number_format((float) $value, 4, '.', '');
+        return $this->numbers->normalizeToScale($value, 4) ?? '0.0000';
     }
 }

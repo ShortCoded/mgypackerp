@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -28,6 +29,8 @@ use Modules\HR\Models\HrNationality;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
 use Modules\HR\Models\HrSocialInsurancePolicy;
+use Modules\HR\Services\HrLifecycleAuditLogger;
+use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -165,6 +168,17 @@ function hrAllReviewHrViewPermissions(): array
     return [
         ...hrSimplifiedHrViewPermissions(),
         ...hrRestoredLegacyHrViewPermissions(),
+        'hr.attendance_settings.view',
+        'hr.shift_assignments.view',
+        'hr.employee_attendance.view',
+        'hr.hr_requests.view',
+        'hr.payroll_preparation.view',
+        'hr.leave_types.view',
+        'hr.payroll_attendance_policies.view',
+        'hr.employee_reports.view',
+        'hr.leave_reports.view',
+        'hr.payroll_reports.view',
+        'hr.payroll_payment_reports.view',
     ];
 }
 
@@ -220,14 +234,36 @@ function hrAllReviewHrMenuRoutes(): array
         'admin.hr.sections.index',
         'admin.hr.jobs.index',
         'admin.hr.employment-types.index',
-        'admin.hr.biometric-devices.index',
-        'admin.hr.shifts.index',
-        'employee.hr.self-service.index',
+        'admin.hr.grades.index',
+        'admin.hr.hiring-statuses.index',
         'admin.hr.document-types.index',
+        'admin.hr.leave-types.index',
+        'admin.hr.allowances.index',
         'admin.hr.insurance-offices.index',
         'admin.hr.social-insurance-policies.index',
         'admin.hr.employment-tax-policies.index',
-        ...hrRestoredLegacyHrIndexRoutes(),
+        'admin.hr.identifications.index',
+        'admin.hr.nationalities.index',
+        'admin.hr.religions.index',
+        'admin.hr.qualifications.index',
+        'admin.hr.universities.index',
+        'admin.hr.faculties.index',
+        'admin.hr.specializations.index',
+        'admin.hr.military-services.index',
+        'admin.hr.shifts.index',
+        'admin.hr.biometric-devices.index',
+        'admin.hr.attendance-settings.index',
+        'admin.hr.shift-assignments.index',
+        'admin.hr.employee-attendance.index',
+        'admin.hr.hr-requests.index',
+        'admin.hr.payroll-preparation.index',
+        'admin.hr.payroll-attendance-policies.index',
+        'employee.hr.self-service.index',
+        'admin.hr.reports.employees',
+        'admin.hr.reports.attendance',
+        'admin.hr.reports.leave-requests',
+        'admin.hr.reports.payroll',
+        'admin.hr.reports.payments',
     ];
 }
 
@@ -477,7 +513,7 @@ test('HrEmployee permissions are discovered and assigned to admin role', functio
     }
 });
 
-test('Human Resources menu exposes current screens and retained lookup screens', function () {
+test('Human Resources menu exposes real screens in professional groups and hides geography screens', function () {
     app()->setLocale('en');
 
     $actor = hrEmployeeActor(hrAllReviewHrViewPermissions());
@@ -496,7 +532,9 @@ test('Human Resources menu exposes current screens and retained lookup screens',
         ->assertSee(__('menu.hr_shifts'))
         ->assertSee(__('menu.hr_document_types'))
         ->assertSee(__('menu.hr_insurance_offices'))
-        ->assertSee(__('menu.hr_countries'))
+        ->assertSee(__('menu.hr_attendance_management'))
+        ->assertSee(__('menu.hr_employee_requests'))
+        ->assertDontSee(__('menu.hr_countries'))
         ->assertSee(__('menu.hr_grades'));
 
     $menu = app(MenuService::class)->getMenu($actor);
@@ -505,40 +543,13 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     $labels = collect($humanResources['children'])->pluck('label')->all();
 
     expect($humanResources)->not->toBeNull()
+        ->and(collect($menu)->pluck('label'))->not->toContain('reports')
         ->and($humanResources['text'])->toBe('Human Resources')
-        ->and($labels)->toBe([
-            'hr_employees',
-            'hr_departments',
-            'hr_sections',
-            'hr_jobs',
-            'hr_employment_types',
-            'hr_biometric_devices',
-            'hr_shifts',
-            'employee_self_service',
-            'hr_document_types',
-            'hr_insurance_offices',
-            'hr_social_insurance_policies',
-            'hr_employment_tax_policies',
-            'hr_allowances',
-            'hr_areas',
-            'hr_cities',
-            'hr_countries',
-            'hr_faculties',
-            'hr_governorates',
-            'hr_grades',
-            'hr_hiring_statuses',
-            'hr_identifications',
-            'hr_military_services',
-            'hr_nationalities',
-            'hr_qualifications',
-            'hr_religions',
-            'hr_specializations',
-            'hr_universities',
-        ])
+        ->and($labels)->toBe(['hr_employees', 'hr_employment_data', 'hr_attendance_management', 'hr_employee_requests', 'hr_payroll', 'hr_self_service', 'hr_reports'])
         ->and(hrMenuItemByLabel([$humanResources], 'hr_employees')['text'])->toBe('Employees')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_sections')['text'])->toBe('Job Sections')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_jobs')['text'])->toBe('Jobs')
-        ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_types')['text'])->toBe('Job Types')
+        ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_types')['text'])->toBe('Employment Types')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_social_insurance_policies')['text'])->toBe('Social Insurance Policies')
         ->and(hrMenuItemByLabel([$humanResources], 'hr_employment_tax_policies')['text'])->toBe('Employment Tax Policies')
         ->and($routes)->toBe(hrAllReviewHrMenuRoutes())
@@ -559,7 +570,7 @@ test('Human Resources menu exposes current screens and retained lookup screens',
         ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_employees')['text'])->toBe('الموظفون')
         ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_sections')['text'])->toBe('الأقسام الوظيفية')
         ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_jobs')['text'])->toBe('الوظائف')
-        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_employment_types')['text'])->toBe('أنواع الوظائف')
+        ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_employment_types')['text'])->toBe('أنواع التوظيف')
         ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_document_types')['text'])->toBe('أنواع مستندات الموظفين')
         ->and(hrMenuItemByLabel([$arabicHumanResources], 'hr_insurance_offices')['text'])->toBe('مكاتب التأمين');
 
@@ -568,9 +579,8 @@ test('Human Resources menu exposes current screens and retained lookup screens',
     $lookupOnly = hrEmployeeActor(['hr.countries.view']);
     $lookupOnlyHr = collect(app(MenuService::class)->getMenu($lookupOnly))->firstWhere('label', 'human_resources');
 
-    expect($lookupOnlyHr)->not->toBeNull();
-    expect(collect($lookupOnlyHr['children'])->pluck('label')->all())->toBe(['employee_self_service', 'hr_countries'])
-        ->and(hrMenuItemByLabel([$lookupOnlyHr], 'hr_countries'))->not->toBeNull();
+    expect($lookupOnlyHr)->not->toBeNull()
+        ->and(hrMenuItemByLabel([$lookupOnlyHr], 'hr_countries'))->toBeNull();
 });
 
 test('HrEmployee index uses the shared wide table usability contract', function (): void {
@@ -743,6 +753,22 @@ test('HrEmployee form is tabbed and uses public select2 doc nums', function () {
         ->assertJsonPath('results.0.id', $fixtures['documentType']->doc_num);
 });
 
+test('employee validation rejects the removed other gender value and uses precise labels', function (): void {
+    app()->setLocale('en');
+    $fixtures = hrEmployeeFixtures();
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+
+    $this->actingAs($actor)
+        ->withSession(hrOperatingSession($fixtures))
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, ['gender' => 'other']))
+        ->assertJsonValidationErrors('gender');
+
+    app()->setLocale('en');
+    expect(__('hr.employees.attributes.gender'))->toBe('Gender')
+        ->and(__('hr.employees.attributes.employment_type_doc_num'))->toBe('Employment Type')
+        ->and(__('hr.employees.genders.other'))->toBe('hr.employees.genders.other');
+});
+
 test('HrEmployee signature continues to use the shared archive image picker and validation', function (): void {
     Storage::fake('public');
 
@@ -882,18 +908,68 @@ test('HrEmployee insurance and tax profiles validate persist hydrate filter and 
     $this->withSession($session)
         ->putJson(route('admin.hr.employees.update', $employee->doc_num), [
             ...$payload,
+            'basic_salary' => '12,500.00',
             'insurance_contribution_wage' => '11,000.00',
         ])
         ->assertOk()
         ->assertJsonPath('success', true);
 
-    $activityProperties = json_decode((string) DB::table(config('activitylog.table_name', 'activity_log'))
-        ->where('event', 'hr.employees.update')
-        ->latest('id')
-        ->value('properties'), true, flags: JSON_THROW_ON_ERROR);
+    $activity = Activity::query()->where('event', 'hr.employees.update')->latest('id')->firstOrFail();
+    $activityProperties = $activity->properties->toArray();
 
-    expect(data_get($activityProperties, 'changes.insurance_contribution_wage.old'))->toBe('10000.00')
-        ->and(data_get($activityProperties, 'changes.insurance_contribution_wage.new'))->toBe('11000.00');
+    expect(data_get($activityProperties, 'changes.insurance_contribution_wage'))->toBe([
+        'changed' => true,
+        'redacted' => true,
+    ])
+        ->and(data_get($activityProperties, 'changes.basic_salary'))->toBe([
+            'changed' => true,
+            'redacted' => true,
+        ])
+        ->and(data_get($activityProperties, 'changes.insurance_contribution_wage.old'))->toBeNull()
+        ->and(data_get($activityProperties, 'changes.insurance_contribution_wage.new'))->toBeNull()
+        ->and($activity->company_id)->toBe($fixtures['company']->getKey())
+        ->and($activity->causer_id)->toBe($actor->getKey())
+        ->and($activity->subject_type)->toBe($employee->getMorphClass())
+        ->and($activity->subject_id)->toBe($employee->getKey());
+
+    $auditRequest = Request::create('/admin/hr/employees/'.$employee->doc_num, 'PUT');
+    $auditRequest->setUserResolver(fn (): User => $actor);
+    app(HrLifecycleAuditLogger::class)->log($auditRequest, 'hr.employees.pii_redaction_test', (int) $employee->company_id, [
+        'changes' => [
+            'national_id' => ['old' => '29104151234567', 'new' => '29104151234568'],
+            'personal_email' => ['old' => 'nadia.personal@example.test', 'new' => 'nadia.changed@example.test'],
+            'phone' => ['old' => '+201000000001', 'new' => '+201000000099'],
+            'address' => ['old' => 'Cairo', 'new' => 'Giza'],
+            'emergency_contact_phone' => ['old' => '+201000000003', 'new' => '+201000000098'],
+        ],
+    ], $employee, redactSensitiveProperties: true);
+
+    $piiActivityProperties = Activity::query()
+        ->where('event', 'hr.employees.pii_redaction_test')
+        ->latest('id')
+        ->firstOrFail()
+        ->properties
+        ->toArray();
+
+    foreach (['national_id', 'personal_email', 'phone', 'address', 'emergency_contact_phone'] as $sensitiveKey) {
+        expect(data_get($piiActivityProperties, 'changes.'.$sensitiveKey))->toBe([
+            'changed' => true,
+            'redacted' => true,
+        ]);
+    }
+
+    expect(json_encode($piiActivityProperties, JSON_THROW_ON_ERROR))->not->toContain(
+        '29104151234567',
+        '29104151234568',
+        'nadia.personal@example.test',
+        'nadia.changed@example.test',
+        '+201000000001',
+        '+201000000099',
+        'Cairo',
+        'Giza',
+        '+201000000003',
+        '+201000000098',
+    );
 
     $this->withSession($session)
         ->getJson(route('admin.hr.employees.data', hrEmployeeDataTableQuery([

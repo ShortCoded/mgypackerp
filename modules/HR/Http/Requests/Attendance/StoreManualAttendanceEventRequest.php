@@ -11,7 +11,7 @@ class StoreManualAttendanceEventRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('hr.employee_attendance.manage');
+        return (bool) $this->user()?->can('hr.employee_attendance.correct');
     }
 
     /** @return array<string, mixed> */

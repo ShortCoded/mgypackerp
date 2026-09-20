@@ -12,9 +12,12 @@
 # Codex-led OpenCode Delegation
 
 - Codex owns diagnosis, task boundaries, review, integration, and final verification. OpenCode is a single scoped implementation worker, not a second lead, and must not delegate the assigned work again.
+- OpenCode is the default execution runtime for eligible T0, T1, and T2 work. Codex must classify risk, define the mutation boundary, and use `scripts/ai/delegate-opencode` without requiring the user to open the OpenCode TUI or request delegation explicitly.
 - Before relying on OpenCode, Codex must verify the installed CLI version, configuration, authorized provider, permissions, and a small safe invocation. A local attached server must remain bound to loopback; do not disable approvals or change billing/provider configuration.
 - Every implementation delegation must state the concrete problem, expected behavior, allowed files or areas, existing patterns and invariants, acceptance criteria, and requested report of edits, tests actually run, and unverified items. Never include secrets or customer data.
 - Start with one writer. Do not overlap writers on the same files. After each delegation, Codex must inspect the diff for scope drift and run the relevant tests on the integrated working tree. Tool completion or an agent claim is not proof of correctness.
+- Resume the same OpenCode writer session after review corrections whenever possible. Start another writer only when new evidence, a distinct boundary, or an explicit tier escalation justifies it.
+- Codex remains the T3 owner for accounting, inventory integrity, security privilege boundaries, migrations, concurrency, closing, reconciliation, and release gates. It may delegate bounded discovery, safe subparts, review, or QA, but retains architecture and GO / NO-GO responsibility.
 - If delegation is unavailable or fails, report the exact limitation and continue safe in-scope work directly; do not claim OpenCode wrote changes it did not produce.
 
 # Local Agent Infrastructure v1
@@ -25,6 +28,7 @@
 - Critical financial, inventory, migration, security, concurrency, idempotency, and tenant-scope work is T3 regardless of apparent size and requires an independent critical review plus targeted regression or reconciliation evidence.
 - Do not bypass an exhausted step budget by respawning the same role. A new invocation needs new evidence, narrower scope, an explicit tier escalation, or a distinct independent review purpose.
 - Git pushes, production deployments, destructive database operations, and broad secret or environment-file access must never happen automatically.
+- Local Qwen 27B is optional and manual only. Its current CPU latency is impractical for normal routing, so neither Codex nor OpenCode may auto-start it or use it as an automatic provider, role, or fallback.
 
 === foundation rules ===
 

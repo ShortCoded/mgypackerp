@@ -30,6 +30,10 @@ return [
     'filters' => [
         'type' => 'التقرير', 'from_date' => 'من تاريخ', 'to_date' => 'إلى تاريخ', 'as_of_date' => 'كما في تاريخ',
         'cashbox_doc_num' => 'الخزينة', 'bank_account_doc_num' => 'الحساب البنكي', 'currency_doc_num' => 'العملة', 'status' => 'الحالة',
+        'branch_id' => 'الفرع', 'financial_period_id' => 'الفترة المالية', 'due_state' => 'حالة الاستحقاق',
+    ],
+    'messages' => [
+        'invalid_branch' => 'الفرع المحدد غير متاح في شركة التشغيل.',
     ],
     'columns' => [
         'date' => 'التاريخ', 'as_of_date' => 'كما في تاريخ', 'document' => 'المستند', 'document_type' => 'نوع المستند',

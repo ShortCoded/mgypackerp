@@ -18,9 +18,11 @@ class IdempotentDocumentSubmission
      *
      * @param  Closure(Request): (Response)  $next
      */
-    public function handle(Request $request, Closure $next, string $mode = 'optional'): Response
+    public function handle(Request $request, Closure $next, string $mode = 'optional', ?string $inputName = null): Response
     {
-        $token = $request->input('_submission_token', $request->header('Idempotency-Key'));
+        $token = $inputName === null
+            ? $request->input('_submission_token', $request->header('Idempotency-Key'))
+            : $request->input($inputName, $request->header('Idempotency-Key'));
         if (! $request->isMethod('POST')) {
             return $next($request);
         }

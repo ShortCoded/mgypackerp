@@ -1,7 +1,7 @@
 (function ($, window, document) {
     'use strict';
 
-    const messages = window.priceListIndexMessages || {};
+    const messages = window.priceListIndexMessages || window.priceListActionMessages || {};
     const selectedDocNums = new Set();
     let table = null;
 
@@ -131,6 +131,7 @@
                 { data: 'doc_num', name: tableName + '.doc_number', className: 'dt-code no-colvis all align-middle white-space-nowrap fw-semi-bold dtr-control', responsivePriority: 2 },
                 { data: 'scope', name: 'scope', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
                 { data: 'currency', name: 'currency', className: 'align-middle white-space-nowrap dt-text dt-ellipsis' },
+                { data: 'pricing_use', name: 'pricing_use', className: 'align-middle white-space-nowrap dt-text' },
                 { data: 'price_list_date', name: 'price_list_date', className: 'align-middle white-space-nowrap dt-date' },
                 { data: 'valid_from', name: 'valid_from', className: 'align-middle white-space-nowrap dt-date' },
                 { data: 'valid_until', name: 'valid_until', className: 'align-middle white-space-nowrap dt-date' },
@@ -274,6 +275,10 @@
                     data: { percentage: result.value },
                     headers: headers()
                 }).done(function (response) {
+                    if ($button.data('success-url')) {
+                        window.location.assign($button.data('success-url'));
+                        return;
+                    }
                     reloadTable();
                     toast('success', response.message);
                 }).fail(function (response) {
@@ -293,6 +298,10 @@
 
                 $.ajax({ url: $button.data('delete-url'), method: 'DELETE', headers: headers() })
                     .done(function (response) {
+                        if ($button.data('success-url')) {
+                            window.location.assign($button.data('success-url'));
+                            return;
+                        }
                         selectedDocNums.delete(docNum);
                         reloadTable();
                         toast('success', response.message);
@@ -313,6 +322,10 @@
 
                 $.ajax({ url: $button.data('restore-url'), method: 'PATCH', headers: headers() })
                     .done(function (response) {
+                        if ($button.data('success-url')) {
+                            window.location.assign($button.data('success-url'));
+                            return;
+                        }
                         reloadTable();
                         toast('success', response.message);
                     })
@@ -320,6 +333,21 @@
                         toast('error', response.responseJSON?.message || messages.unexpectedError);
                     });
             });
+        });
+
+        $(document).off('click.priceListsLifecycle', '.js-price-list-lifecycle[data-action-url]').on('click.priceListsLifecycle', '.js-price-list-lifecycle[data-action-url]', function () {
+            const $button = $(this);
+            $button.prop('disabled', true);
+
+            $.ajax({ url: $button.data('action-url'), method: 'POST', headers: headers() })
+                .done(function (response) {
+                    toast('success', response.message);
+                    window.location.assign($button.data('success-url') || window.location.href);
+                })
+                .fail(function (response) {
+                    $button.prop('disabled', false);
+                    toast('error', response.responseJSON?.message || messages.unexpectedError);
+                });
         });
     }
 

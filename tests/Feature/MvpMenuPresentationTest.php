@@ -89,7 +89,6 @@ test('admin sees the clean MVP top level menu in the requested order', function 
         'production',
         'accounting_costing',
         'human_resources',
-        'reports',
         'tools',
     ]);
 
@@ -131,7 +130,7 @@ test('top navigation exposes three production departments and nests finance and 
     $fixedAssets = collect($accounting['children'])->firstWhere('label', 'fixed_assets');
     $finance = collect($accounting['children'])->firstWhere('label', 'finance');
     $generalAccountingReports = collect($accounting['children'])->firstWhere('label', 'accounting_costing_reports');
-    $expectedAccountingChildren = ['general_accounting', 'accounting_costing_reports', 'finance', 'fixed_assets', 'costing', 'costing_reports', 'financial_analysis_reports'];
+    $expectedAccountingChildren = ['general_accounting', 'accounting_costing_reports', 'finance', 'fixed_assets', 'costing', 'financial_analysis_reports'];
     $expectedProductionChildren = ['production_management', 'quality', 'maintenance'];
     $menuDestinations = mvpMenuDestinations($menu);
 
@@ -196,7 +195,7 @@ test('top navigation exposes three production departments and nests finance and 
     app()->setLocale('en');
 });
 
-test('real MVP menu entries keep their existing routes and expanded entries use their UI shell routes', function (): void {
+test('real MVP menu entries remain reachable while pending generic shells stay hidden', function (): void {
     $admin = mvpAdminActor();
     $menu = app(MenuService::class)->getMenu($admin);
 
@@ -216,10 +215,15 @@ test('real MVP menu entries keep their existing routes and expanded entries use 
         ->and(mvpFindMenuItem($menu, 'calendar')['route'])->toBe('admin.calendar.index')
         ->and(mvpFindMenuItem($menu, 'my_board')['route'])->toBe('admin.my-board.index')
         ->and(mvpFindMenuItem($menu, 'team_board')['route'])->toBe('admin.tools.team-board.index')
-        ->and(mvpFindMenuItem($menu, 'pwa_settings')['route'])->toBe('admin.settings.pwa');
+        ->and(mvpFindMenuItem($menu, 'pwa_settings')['route'])->toBe('admin.settings.pwa')
+        ->and(mvpFindMenuItem($menu, 'costing_overhead_allocation_rules')['route'])->toBe('admin.costing.overhead-allocation-rules.index')
+        ->and(mvpFindMenuItem($menu, 'costing_overhead_allocation_run')['route'])->toBe('admin.costing.overhead-allocation-run.index')
+        ->and(mvpFindMenuItem($menu, 'finance_cashbox_count')['route'])->toBe('admin.finance.cashbox-count.index')
+        ->and(mvpFindMenuItem($menu, 'reports_costing_product_cost')['route'])->toBe('admin.reports.costing.product-cost.index')
+        ->and(mvpFindMenuItem($menu, 'reports_costing_allocation_analysis')['route'])->toBe('admin.reports.costing.allocation-analysis.index')
+        ->and(mvpFindMenuItem($menu, 'costing_work_order_estimated_cost'))->toBeNull();
 
     foreach ([
-        'costing_work_order_estimated_cost',
         'production_work_orders',
         'production_quality',
         'maintenance_orders',

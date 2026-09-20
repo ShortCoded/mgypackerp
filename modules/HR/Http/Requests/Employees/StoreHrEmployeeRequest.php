@@ -62,7 +62,7 @@ class StoreHrEmployeeRequest extends FormRequest
             'employee_code' => ['nullable', 'string', 'max:255', Rule::unique('hr_employees', 'employee_code')->withoutTrashed()],
             'person_type' => ['required', 'string', Rule::in(['fixed_employee', 'regular_labor', 'casual_labor'])],
             'status' => ['required', 'string', Rule::in(['active', 'inactive', 'suspended', 'stopped', 'left'])],
-            'gender' => ['nullable', 'string', Rule::in(['male', 'female', 'other'])],
+            'gender' => ['nullable', 'string', Rule::in(['male', 'female'])],
             'birth_date' => ['nullable', 'date_format:Y-m-d'],
             'marital_status' => ['nullable', 'string', Rule::in(['single', 'married', 'divorced', 'widowed'])],
             'national_id' => ['nullable', 'string', 'max:60', $this->uniqueEmployeeRule('national_id')],

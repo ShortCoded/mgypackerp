@@ -9,12 +9,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\SettingService;
 use Modules\Finance\DataTables\CashVouchersDataTable;
@@ -33,6 +37,7 @@ abstract class AbstractCashVoucherController extends Controller
     public function __construct(
         private readonly CashVoucherService $service,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly OperatingScopeAccessService $scopeAccess,
     ) {}
 
     public function index(FinanceDocumentNumberSettingsService $settings): View
@@ -62,6 +67,7 @@ abstract class AbstractCashVoucherController extends Controller
     public function show(Request $request, string $cashVoucher): View
     {
         $cashVoucher = $this->findInCurrentCompany($request, $cashVoucher, true);
+        $this->enforceOperatingScope($request, $cashVoucher);
         abort_if($cashVoucher->trashed() && ! $request->user()?->can($this->permissionPrefix().'.view_trashed'), 404);
 
         return $this->form('view', $cashVoucher);
@@ -70,6 +76,7 @@ abstract class AbstractCashVoucherController extends Controller
     public function edit(Request $request, string $cashVoucher): View
     {
         $cashVoucher = $this->findInCurrentCompany($request, $cashVoucher);
+        $this->enforceOperatingScope($request, $cashVoucher);
         abort_if($cashVoucher->isLockedForEditing(), 403, __($this->translationKey().'.messages.document_locked'));
 
         return $this->form('edit', $cashVoucher);
@@ -105,6 +112,7 @@ abstract class AbstractCashVoucherController extends Controller
     public function update(UpdateCashVoucherRequest $request, string $cashVoucher): JsonResponse
     {
         $cashVoucher = $this->findInCurrentCompany($request, $cashVoucher);
+        $this->enforceOperatingScope($request, $cashVoucher);
         $result = $this->guardDomain(fn (): array => $this->service->update($this->voucherType(), $cashVoucher, $request->validated()));
 
         if (! $result['changed']) {
@@ -160,7 +168,8 @@ abstract class AbstractCashVoucherController extends Controller
     public function approve(Request $request, string $cashVoucher): JsonResponse
     {
         $cashVoucher = $this->findInCurrentCompany($request, $cashVoucher);
-        $record = $this->guardDomain(fn (): CashVoucher => $this->service->approve($this->voucherType(), $cashVoucher));
+        $this->enforceOperatingScope($request, $cashVoucher);
+        $record = $this->guardDomain(fn (): CashVoucher => $this->service->approveGeneric($this->voucherType(), $cashVoucher));
 
         return response()->json([
             'success' => true,
@@ -175,7 +184,8 @@ abstract class AbstractCashVoucherController extends Controller
     public function cancel(CancelCashVoucherRequest $request, string $cashVoucher): JsonResponse
     {
         $cashVoucher = $this->findInCurrentCompany($request, $cashVoucher);
-        $record = $this->guardDomain(fn (): CashVoucher => $this->service->cancel($this->voucherType(), $cashVoucher, (string) $request->validated('cancel_reason')));
+        $this->enforceOperatingScope($request, $cashVoucher, includeCancellationPeriod: true);
+        $record = $this->guardDomain(fn (): CashVoucher => $this->service->cancelGeneric($this->voucherType(), $cashVoucher, (string) $request->validated('cancel_reason')));
 
         return response()->json([
             'success' => true,
@@ -335,6 +345,82 @@ abstract class AbstractCashVoucherController extends Controller
             ->where('voucher_type', $this->voucherType())
             ->where('doc_num', $docNum)
             ->firstOrFail();
+    }
+
+    private function enforceOperatingScope(Request $request, CashVoucher $cashVoucher, bool $includeCancellationPeriod = false): void
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 404);
+
+        $company = Company::query()->find($cashVoucher->company_id);
+        abort_unless($company instanceof Company && $this->scopeAccess->canAccessCompany($user, $company), 404);
+
+        if (! $this->scopeAccess->hasUnrestrictedBranchAccess($user)) {
+            $branch = Branch::query()->find($cashVoucher->cashbox?->branch_id);
+            abort_unless($branch instanceof Branch && $this->scopeAccess->canAccessBranch($user, $branch, $company), 404);
+        }
+
+        if ($this->scopeAccess->hasUnrestrictedFinancialPeriodAccess($user)) {
+            return;
+        }
+
+        $companyDocNums = [(string) $company->doc_num];
+        $voucherDate = $cashVoucher->voucher_date?->toDateString();
+        abort_unless($voucherDate !== null && $this->scopeAccess->allowedFinancialPeriodQuery($user, $companyDocNums)
+            ->whereDate('financial_periods.from_date', '<=', $voucherDate)
+            ->whereDate('financial_periods.to_date', '>=', $voucherDate)
+            ->exists(), 404);
+
+        $payrollPayments = DB::table('hr_payroll_payments')
+            ->where('cash_voucher_id', $cashVoucher->getKey())
+            ->get(['financial_period_id', 'journal_entry_id', 'reversal_journal_entry_id']);
+        $payrollPeriodIds = $payrollPayments
+            ->pluck('financial_period_id')
+            ->filter()
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        if ($payrollPeriodIds !== []) {
+            $allowedPayrollPeriodCount = $this->scopeAccess->allowedFinancialPeriodQuery($user, $companyDocNums)
+                ->whereIn('financial_periods.id', $payrollPeriodIds)
+                ->count();
+            abort_unless($allowedPayrollPeriodCount === count($payrollPeriodIds), 404);
+        }
+
+        $journalEntryIds = $payrollPayments
+            ->flatMap(static fn (object $payment): array => [$payment->journal_entry_id, $payment->reversal_journal_entry_id])
+            ->filter()
+            ->map(static fn (mixed $id): int => (int) $id);
+        $genericJournalEntryIds = DB::table('journal_entries')
+            ->where('source_id', $cashVoucher->getKey())
+            ->whereIn('source_type', $cashVoucher->isPayment()
+                ? [CashVoucherService::SourcePayment, CashVoucherService::SourcePaymentReversal]
+                : [CashVoucherService::SourceReceipt, CashVoucherService::SourceReceiptReversal])
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id);
+        $journalPeriodIds = DB::table('journal_entries')
+            ->whereIn('id', $journalEntryIds->merge($genericJournalEntryIds)->unique()->values()->all())
+            ->pluck('financial_period_id')
+            ->filter()
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        if ($journalPeriodIds !== []) {
+            $allowedJournalPeriodCount = $this->scopeAccess->allowedFinancialPeriodQuery($user, $companyDocNums)
+                ->whereIn('financial_periods.id', $journalPeriodIds)
+                ->count();
+            abort_unless($allowedJournalPeriodCount === count($journalPeriodIds), 404);
+        }
+
+        if ($includeCancellationPeriod) {
+            $cancellationDate = now()->toDateString();
+            abort_unless($this->scopeAccess->allowedFinancialPeriodQuery($user, $companyDocNums)
+                ->whereDate('financial_periods.from_date', '<=', $cancellationDate)
+                ->whereDate('financial_periods.to_date', '>=', $cancellationDate)
+                ->exists(), 404);
+        }
     }
 
     /**

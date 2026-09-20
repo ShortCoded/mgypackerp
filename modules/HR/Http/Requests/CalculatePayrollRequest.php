@@ -3,8 +3,11 @@
 namespace Modules\HR\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 
 class CalculatePayrollRequest extends FormRequest
 {
@@ -53,5 +56,74 @@ class CalculatePayrollRequest extends FormRequest
             ],
             'adjustments.*.advance_applications.*.amount' => ['required', 'numeric', 'gt:0', 'max:99999999999999.9999'],
         ];
+    }
+
+    /** @return list<callable(Validator): void> */
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            if ($validator->errors()->isNotEmpty()) {
+                return;
+            }
+
+            $company = app(OperatingCompanyContextService::class)->currentCompany($this);
+            if ($company === null) {
+                return;
+            }
+
+            $scope = app(OperatingScopeAccessService::class);
+            $branchDocNum = $this->string('branch_doc_num')->trim()->toString();
+            $branchId = null;
+            if ($branchDocNum === '') {
+                if (! $scope->hasUnrestrictedBranchAccess($this->user())) {
+                    $validator->errors()->add('branch_doc_num', __('operating_context.validation.branch_invalid'));
+                }
+            } else {
+                $branchId = $scope->allowedBranchQuery($this->user(), [(string) $company->doc_num])
+                    ->where('branches.doc_num', $branchDocNum)
+                    ->value('branches.id');
+                if ($branchId === null) {
+                    $validator->errors()->add('branch_doc_num', __('operating_context.validation.branch_invalid'));
+                }
+            }
+
+            if (! $scope->hasUnrestrictedFinancialPeriodAccess($this->user())
+                && ! $scope->allowedFinancialPeriodQuery($this->user(), [(string) $company->doc_num])
+                    ->whereDate('financial_periods.from_date', '<=', $this->string('period_start')->toString())
+                    ->whereDate('financial_periods.to_date', '>=', $this->string('period_end')->toString())
+                    ->exists()) {
+                $validator->errors()->add('period_start', __('operating_context.validation.financial_period_invalid'));
+            }
+
+            $adjustments = collect($this->input('adjustments', []));
+            $employeeDocNums = $adjustments->pluck('employee_doc_num')->filter()->unique()->values();
+            $employees = DB::table('hr_employees')
+                ->where('company_id', $company->getKey())
+                ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
+                ->whereNull('deleted_at')
+                ->whereIn('doc_num', $employeeDocNums)
+                ->pluck('id', 'doc_num');
+            if ($employees->count() !== $employeeDocNums->count()) {
+                $validator->errors()->add('adjustments', __('hr_payroll.messages.adjustment_scope_invalid'));
+            }
+
+            foreach ($adjustments as $index => $adjustment) {
+                $employeeId = $employees->get($adjustment['employee_doc_num'] ?? '');
+                $advanceIds = collect($adjustment['advance_applications'] ?? [])->pluck('salary_advance_id')->filter()->unique()->values();
+                if ($advanceIds->isEmpty()) {
+                    continue;
+                }
+
+                $validAdvances = DB::table('hr_salary_advances')
+                    ->where('employee_id', $employeeId ?? 0)
+                    ->whereIn('id', $advanceIds)
+                    ->where('status', 'active')
+                    ->whereNull('deleted_at')
+                    ->count();
+                if ($validAdvances !== $advanceIds->count()) {
+                    $validator->errors()->add("adjustments.{$index}.advance_applications", __('hr_payroll.messages.advance_scope_invalid'));
+                }
+            }
+        }];
     }
 }

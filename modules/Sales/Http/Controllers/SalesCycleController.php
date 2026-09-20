@@ -17,6 +17,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
@@ -436,16 +437,29 @@ class SalesCycleController extends Controller
     {
         $context = $this->requiredContext($request);
         try {
-            $payload = $this->salesOrderPayload($request->validated(), $context);
-            if ($request->filled('source_request_doc_num')) {
-                abort_unless($request->user()?->can('sales_requests.view'), 403);
-                $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
-                    ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
-                $order = $requestService->convertToOrder($sourceRequest, $payload);
-            } else {
+            $order = DB::transaction(function () use ($request, $context, $requestService, $service): SalesOrder {
+                $convertingRequest = $request->filled('source_request_doc_num');
+                if (! $convertingRequest) {
+                    app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                        $context['company_id'],
+                        (string) $request->validated('order_date'),
+                        $context['financial_period_id'],
+                        lockForUpdate: true,
+                    );
+                }
+                $payload = $this->salesOrderPayload($request->validated(), $context, resolvePrices: ! $convertingRequest);
+                if ($convertingRequest) {
+                    abort_unless($request->user()?->can('sales_requests.view'), 403);
+                    $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                        ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
+
+                    return $requestService->convertToOrder($sourceRequest, $payload);
+                }
+
                 $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
-                $order = $service->create(collect($payload)->except('source_request_doc_num')->all());
-            }
+
+                return $service->create(collect($payload)->except('source_request_doc_num')->all());
+            });
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
@@ -458,9 +472,19 @@ class SalesCycleController extends Controller
         $context = $this->requiredContext($request);
         abort_unless((int) $salesOrder->financial_period_id === $context['financial_period_id'], 404);
         try {
-            $payload = $this->salesOrderPayload($request->validated(), $context, $salesOrder->business_employee_id, $salesOrder);
-            $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
-            $order = $service->update($salesOrder, collect($payload)->except('source_request_doc_num')->all());
+            $order = DB::transaction(function () use ($request, $context, $salesOrder, $service): SalesOrder {
+                $lockedOrder = SalesOrder::query()->lockForUpdate()->findOrFail($salesOrder->getKey());
+                app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                    $context['company_id'],
+                    (string) $request->validated('order_date'),
+                    $context['financial_period_id'],
+                    lockForUpdate: true,
+                );
+                $payload = $this->salesOrderPayload($request->validated(), $context, $lockedOrder->business_employee_id, $lockedOrder);
+                $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+
+                return $service->update($lockedOrder, collect($payload)->except('source_request_doc_num')->all());
+            });
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
@@ -846,7 +870,7 @@ class SalesCycleController extends Controller
      * @param  array{company_id: int, financial_period_id: int, branch_id: int}  $context
      * @return array<string, mixed>
      */
-    private function salesOrderPayload(array $data, array $context, ?int $preservedEmployeeId = null, ?SalesOrder $existingOrder = null): array
+    private function salesOrderPayload(array $data, array $context, ?int $preservedEmployeeId = null, ?SalesOrder $existingOrder = null, bool $resolvePrices = true): array
     {
         $customer = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
         $currency = Currency::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
@@ -865,9 +889,11 @@ class SalesCycleController extends Controller
         })->all();
 
         $pricing = app(PriceListPricingService::class);
-        $lines = $existingOrder
-            ? $pricing->preserveStoredOrderPrices($lines, $existingOrder->lines()->orderBy('line_number')->get(), $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'])
-            : $pricing->applyToLines($lines, $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'], 'amount');
+        if ($resolvePrices) {
+            $lines = $existingOrder
+                ? $pricing->preserveStoredOrderPrices($lines, $existingOrder->lines()->orderBy('line_number')->get(), $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'], lockForUpdate: true)
+                : $pricing->applyToLines($lines, $context['company_id'], $customer->getKey(), $currency->getKey(), $data['order_date'], 'amount', lockForUpdate: true);
+        }
 
         return [
             ...collect($data)->except(['customer_doc_num', 'currency_doc_num', 'branch_store_uuid', 'sales_employee_doc_num', 'lines'])->all(),

@@ -70,11 +70,13 @@ return [
         'in_transit' => 'قيد النقل',
     ],
     'columns' => [
+        'positions' => 'المواضع المخزنية',
         'branch' => 'الفرع',
         'store' => 'المخزن',
         'hall' => 'الصالة',
         'location' => 'الموقع',
         'item' => 'الصنف',
+        'product' => 'الصنف',
         'item_code' => 'كود الصنف',
         'item_name' => 'اسم الصنف',
         'classification' => 'نوع الصنف',

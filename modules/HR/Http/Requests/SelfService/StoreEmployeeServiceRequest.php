@@ -13,6 +13,16 @@ class StoreEmployeeServiceRequest extends FormRequest
         return $this->user() !== null;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $payload = $this->input('payload');
+
+        if (is_array($payload) && filled($payload['leave_type'] ?? null)) {
+            $payload['leave_type'] = strtoupper(trim((string) $payload['leave_type']));
+            $this->merge(['payload' => $payload]);
+        }
+    }
+
     /** @return array<string, mixed> */
     public function rules(): array
     {
@@ -33,7 +43,13 @@ class StoreEmployeeServiceRequest extends FormRequest
                     ->whereNull('deleted_at'),
             ],
             'payload' => ['nullable', 'array:leave_type,requested_check_in,requested_check_out,asset_type,letter_language,profile_field,profile_value'],
-            'payload.leave_type' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'leave'), 'nullable', 'string', 'max:100'],
+            'payload.leave_type' => [
+                Rule::requiredIf(fn (): bool => $this->input('request_type') === 'leave'),
+                'nullable',
+                'string',
+                'max:100',
+                Rule::exists('hr_leave_types', 'code')->where('status', 'active')->whereNull('deleted_at'),
+            ],
             'payload.requested_check_in' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'attendance_adjustment'), 'nullable', 'date'],
             'payload.requested_check_out' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'attendance_adjustment'), 'nullable', 'date', 'after_or_equal:payload.requested_check_in'],
             'payload.asset_type' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'device_asset'), 'nullable', 'string', 'max:100'],

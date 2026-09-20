@@ -5,10 +5,15 @@ namespace Modules\Finance\Services;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\JournalSourceLabelService;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
@@ -61,6 +66,8 @@ class FinanceReportService
     public function __construct(
         private readonly OperatingCompanyContextService $companies,
         private readonly DateFormatService $dates,
+        private readonly JournalSourceLabelService $sourceLabels,
+        private readonly OperatingContextService $operatingContext,
     ) {}
 
     /** @return list<string> */
@@ -93,17 +100,17 @@ class FinanceReportService
         return match ($type) {
             self::CashboxStatement => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num', 'branch_id'],
             self::CashboxBalances => ['as_of_date', 'cashbox_doc_num', 'currency_doc_num', 'branch_id'],
-            self::CashVouchers => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num', 'status'],
+            self::CashVouchers => ['from_date', 'to_date', 'cashbox_doc_num', 'currency_doc_num', 'status', 'branch_id'],
             self::BankAccountStatement => ['from_date', 'to_date', 'bank_account_doc_num', 'currency_doc_num'],
             self::BankAccountBalances => ['as_of_date', 'bank_account_doc_num', 'currency_doc_num'],
-            self::FundTransfers => ['from_date', 'to_date', 'status'],
+            self::FundTransfers => ['from_date', 'to_date', 'status', 'branch_id'],
             self::BankReconciliation => ['from_date', 'to_date', 'bank_account_doc_num'],
             self::DueCheques => ['to_date', 'as_of_date', 'bank_account_doc_num', 'currency_doc_num', 'due_state'],
             self::ReceivedCheques, self::IssuedCheques, self::ClearedCheques,
             self::ReturnedCheques, self::CancelledCheques => [
                 'from_date', 'to_date', 'as_of_date', 'bank_account_doc_num', 'currency_doc_num',
             ],
-            self::AdvancesAllocations, self::UnapprovedDocuments => ['from_date', 'to_date', 'currency_doc_num'],
+            self::AdvancesAllocations, self::UnapprovedDocuments => ['from_date', 'to_date', 'currency_doc_num', 'branch_id'],
             self::CustomerAging, self::SupplierAging => [
                 'as_of_date', 'currency_doc_num', 'due_state', 'branch_id', 'financial_period_id',
             ],
@@ -135,6 +142,20 @@ class FinanceReportService
 
         if (in_array('as_of_date', $applicableFilters, true)) {
             $filters['as_of_date'] ??= $filters['to_date'] ?? now()->toDateString();
+        }
+
+        if (in_array('branch_id', $applicableFilters, true)) {
+            $filters['branch_id'] ??= $this->operatingContext->snapshot($request)['branch_id'] ?? null;
+
+            if (filled($filters['branch_id'] ?? null)
+                && ! $this->operatingContext->allowedBranchQueryForCurrentCompany($request)
+                    ->active()
+                    ->whereKey($filters['branch_id'])
+                    ->exists()) {
+                throw ValidationException::withMessages([
+                    'branch_id' => __('finance_reports.messages.invalid_branch'),
+                ]);
+            }
         }
 
         return array_filter($filters, fn (mixed $value): bool => $value !== null && trim((string) $value) !== '');
@@ -177,19 +198,49 @@ class FinanceReportService
     }
 
     /** @return array{cashboxes: Collection<int, Cashbox>, bank_accounts: Collection<int, BankAccount>, currencies: Collection<int, mixed>} */
-    public function filterOptions(?int $branchId = null): array
+    public function filterOptions(array $selected = []): array
     {
+        $companyId = $this->companyId();
+        $branchId = filled($selected['branch_id'] ?? null)
+            ? (int) $selected['branch_id']
+            : (int) ($this->operatingContext->snapshot(request())['branch_id'] ?? 0);
+        $allowedBranchIds = $this->operatingContext->allowedBranchQueryForCurrentCompany(request())->pluck('branches.id');
+        $cashboxes = Cashbox::query()->where('company_id', $companyId)->active()
+            ->whereIn('branch_id', $allowedBranchIds)
+            ->when($branchId > 0, fn ($query) => $query->where('branch_id', $branchId))
+            ->orderBy('name')->get(['id', 'doc_num', 'name']);
+        $bankAccounts = BankAccount::query()->where('company_id', $companyId)->active()
+            ->orderBy('account_name')->get(['id', 'doc_num', 'account_name', 'account_number']);
+        $currencies = Currency::query()->where('company_id', $companyId)->active()
+            ->orderBy('code')->get(['id', 'doc_num', 'code', 'name']);
+
+        if (filled($selected['cashbox_doc_num'] ?? null)) {
+            $cashboxes = $cashboxes->concat(Cashbox::withTrashed()->where('company_id', $companyId)
+                ->whereIn('branch_id', $allowedBranchIds)->where('doc_num', $selected['cashbox_doc_num'])
+                ->get(['id', 'doc_num', 'name']));
+        }
+        if (filled($selected['bank_account_doc_num'] ?? null)) {
+            $bankAccounts = $bankAccounts->concat(BankAccount::withTrashed()->where('company_id', $companyId)
+                ->where('doc_num', $selected['bank_account_doc_num'])
+                ->get(['id', 'doc_num', 'account_name', 'account_number']));
+        }
+        if (filled($selected['currency_doc_num'] ?? null)) {
+            $currencies = $currencies->concat(Currency::withTrashed()->where('company_id', $companyId)
+                ->where('doc_num', $selected['currency_doc_num'])
+                ->get(['id', 'doc_num', 'code', 'name']));
+        }
+
         return [
-            'cashboxes' => Cashbox::query()->where('company_id', $this->companyId())->when($branchId, fn ($query) => $query->where('branch_id', $branchId))->orderBy('name')->get(['id', 'doc_num', 'name']),
-            'bank_accounts' => BankAccount::query()->where('company_id', $this->companyId())->orderBy('account_name')->get(['id', 'doc_num', 'account_name', 'account_number']),
-            'currencies' => Currency::query()->where('company_id', $this->companyId())->orderBy('code')->get(['id', 'doc_num', 'code', 'name']),
+            'cashboxes' => $cashboxes->unique('id')->sortBy('name')->values(),
+            'bank_accounts' => $bankAccounts->unique('id')->sortBy('account_name')->values(),
+            'currencies' => $currencies->unique('id')->sortBy('code')->values(),
         ];
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>, 2: list<string>} */
     private function cashboxStatement(array $filters): array
     {
-        $rows = $this->statementRows($this->cashboxMovements($filters), $filters);
+        $rows = $this->statementRows($this->cashboxMovements($filters), $filters, includePriorOnlyBalanceRows: true);
 
         return [$this->labels(['date', 'cashbox', 'branch', 'currency', 'document', 'movement', 'party_reference', 'status', 'receipt', 'payment', 'balance']), $rows, []];
     }
@@ -264,7 +315,7 @@ class FinanceReportService
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>, 2: list<string>} */
     private function bankAccountStatement(array $filters): array
     {
-        $rows = $this->statementRows($this->bankMovements($filters), $filters);
+        $rows = $this->statementRows($this->bankMovements($filters), $filters, includePriorOnlyBalanceRows: false);
 
         return [$this->labels(['date', 'bank_account', 'currency', 'document', 'movement', 'party_reference', 'status', 'receipt', 'payment', 'balance']), $rows, []];
     }
@@ -293,6 +344,7 @@ class FinanceReportService
     private function cashVouchers(array $filters): array
     {
         $query = CashVoucher::query()->where('company_id', $this->companyId())->with(['cashbox.branch', 'currency'])
+            ->when($filters['branch_id'] ?? null, fn ($query, $value) => $query->whereHas('cashbox', fn ($query) => $query->where('branch_id', $value)))
             ->when($filters['cashbox_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('cashbox', fn ($query) => $query->where('doc_num', $value)))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)))
             ->when($filters['status'] ?? null, fn ($query, $value) => $query->where('status', $value));
@@ -316,6 +368,7 @@ class FinanceReportService
     {
         $query = FundTransfer::query()->where('company_id', $this->companyId())
             ->with(['sourceCashbox', 'sourceBankAccount', 'targetCashbox', 'targetBankAccount', 'sourceCurrency', 'targetCurrency'])
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $this->scopeFundTransfersToBranch($query, $branchId))
             ->when($filters['status'] ?? null, fn ($query, $value) => $query->where('status', $value));
         $this->dateFilters($query, 'transfer_date', $filters);
 
@@ -389,7 +442,8 @@ class FinanceReportService
         $rows = $query->orderBy('due_date')->orderBy('doc_number')->get()->map(fn (Cheque $cheque): array => [
             '_url' => route('admin.finance.cheques.show', $cheque),
             'date' => $this->date($cheque->cheque_date), 'due_date' => $this->date($cheque->due_date),
-            'due_state' => $this->dueState($cheque, $asOf), 'document' => $cheque->doc_num,
+            '_due_state' => $this->dueStateKey($cheque, $asOf),
+            'due_state' => $this->value($this->dueStateKey($cheque, $asOf)), 'document' => $cheque->doc_num,
             'cheque_number' => $cheque->cheque_number, 'cheque_type' => $this->value($cheque->cheque_type),
             'party_reference' => $cheque->party_name, 'bank_account' => $this->bankLabel($cheque->bankAccount),
             'currency' => $cheque->currency?->code, 'amount' => $cheque->amount, 'status' => $this->value($cheque->status),
@@ -397,7 +451,12 @@ class FinanceReportService
             'collected_cleared_at' => $this->date($cheque->isReceived() ? $cheque->collected_at : $cheque->cleared_at),
             'returned_cancelled_at' => $this->date($cheque->returned_at ?: $cheque->cancelled_at),
             'reason' => $cheque->cancel_reason ?: $cheque->clearing_reversal_reason ?: $cheque->reason,
-        ])->when($filters['due_state'] ?? null, fn (Collection $rows, string $state) => $rows->where('due_state', $state)->values());
+        ])->when($filters['due_state'] ?? null, fn (Collection $rows, string $state) => $rows->where('_due_state', $state)->values())
+            ->map(function (array $row): array {
+                unset($row['_due_state']);
+
+                return $row;
+            });
 
         return [$this->labels(['date', 'due_date', 'due_state', 'document', 'cheque_number', 'cheque_type', 'party_reference', 'bank_account', 'currency', 'amount', 'status', 'deposited_at', 'collected_cleared_at', 'returned_cancelled_at', 'reason']), $rows, [__('finance_reports.notices.cheque_history_scope')]];
     }
@@ -407,6 +466,9 @@ class FinanceReportService
     {
         $customerQuery = CustomerReceipt::query()->where('company_id', $this->companyId())->where('status', CustomerReceipt::StatusApproved)
             ->where(fn ($query) => $query->where('receipt_type', CustomerReceipt::TypeAdvance)->orWhere('unallocated_amount', '>', 0))
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->where(fn ($query) => $query
+                ->whereNull('cashbox_id')
+                ->orWhereHas('cashbox', fn ($query) => $query->where('branch_id', $branchId))))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($customerQuery, 'receipt_date', $filters);
         $customerRows = $customerQuery->with(['customer', 'currency'])->get()->map(fn (CustomerReceipt $receipt): array => [
@@ -418,6 +480,7 @@ class FinanceReportService
         ]);
         $supplierQuery = SupplierPaymentContext::query()->where('company_id', $this->companyId())->where('status', SupplierPaymentContext::StatusApproved)
             ->where(fn ($query) => $query->where('is_advance', true)->orWhereColumn('allocated_amount', '<', 'amount'))
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->where('branch_id', $branchId))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($supplierQuery, 'payment_date', $filters);
         $supplierRows = $supplierQuery->with(['supplier', 'currency'])->get()->map(fn (SupplierPaymentContext $payment): array => [
@@ -436,6 +499,7 @@ class FinanceReportService
     {
         $rows = collect();
         $cashVouchers = CashVoucher::query()->where('company_id', $this->companyId())->where('status', CashVoucher::StatusDraft)
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->whereHas('cashbox', fn ($query) => $query->where('branch_id', $branchId)))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($cashVouchers, 'voucher_date', $filters);
         $rows->push(...$cashVouchers->with('currency')->get()->map(fn (CashVoucher $row): array => [
@@ -444,6 +508,7 @@ class FinanceReportService
             'party_reference' => $row->person_name, 'currency' => $row->currency?->code, 'amount' => $row->amount, 'status' => $this->value($row->status),
         ]));
         $transfers = FundTransfer::query()->where('company_id', $this->companyId())->where('status', FundTransfer::StatusDraft)
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $this->scopeFundTransfersToBranch($query, $branchId))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('sourceCurrency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($transfers, 'transfer_date', $filters);
         $rows->push(...$transfers->with('sourceCurrency')->get()->map(fn (FundTransfer $row): array => [
@@ -451,6 +516,9 @@ class FinanceReportService
             'document' => $row->doc_num, 'party_reference' => '', 'currency' => $row->sourceCurrency?->code, 'amount' => $row->source_amount, 'status' => $this->value($row->status),
         ]));
         $customerReceipts = CustomerReceipt::query()->where('company_id', $this->companyId())->where('status', CustomerReceipt::StatusDraft)
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->where(fn ($query) => $query
+                ->whereNull('cashbox_id')
+                ->orWhereHas('cashbox', fn ($query) => $query->where('branch_id', $branchId))))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($customerReceipts, 'receipt_date', $filters);
         $rows->push(...$customerReceipts->with(['customer', 'currency'])->get()->map(fn (CustomerReceipt $row): array => [
@@ -458,6 +526,7 @@ class FinanceReportService
             'document' => $row->doc_num, 'party_reference' => $row->customer?->name, 'currency' => $row->currency?->code, 'amount' => $row->amount, 'status' => $this->value($row->status),
         ]));
         $supplierPayments = SupplierPaymentContext::query()->where('company_id', $this->companyId())->where('status', SupplierPaymentContext::StatusDraft)
+            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->where('branch_id', $branchId))
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)));
         $this->dateFilters($supplierPayments, 'payment_date', $filters);
         $rows->push(...$supplierPayments->with(['supplier', 'currency'])->get()->map(fn (SupplierPaymentContext $row): array => [
@@ -553,13 +622,26 @@ class FinanceReportService
     private function cashboxMovements(array $filters): Collection
     {
         $companyId = $this->companyId();
-        $through = $filters['to_date'] ?? $filters['as_of_date'];
+        $through = $filters['to_date'] ?? $filters['as_of_date'] ?? now()->toDateString();
         $cashboxDocNum = $filters['cashbox_doc_num'] ?? null;
         $currencyDocNum = $filters['currency_doc_num'] ?? null;
         $branchId = $filters['branch_id'] ?? null;
         $rows = collect();
 
         CashVoucher::query()->where('company_id', $companyId)->where('status', CashVoucher::StatusApproved)->whereDate('voucher_date', '<=', $through)
+            ->where(function ($query): void {
+                $ownerTables = ['supplier_payment_contexts', 'purchase_invoice_payment_schedules', 'customer_receipts', 'production_expense_requests'];
+                if (Schema::hasTable('hr_payroll_payments')) {
+                    $ownerTables[] = 'hr_payroll_payments';
+                }
+
+                foreach ($ownerTables as $table) {
+                    $query->orWhereExists(fn ($owner) => $owner
+                        ->selectRaw('1')
+                        ->from($table)
+                        ->whereColumn("{$table}.cash_voucher_id", 'cash_vouchers.id'));
+                }
+            })
             ->when($branchId, fn ($query, int $value) => $query->whereHas('cashbox', fn ($query) => $query->where('branch_id', $value)))
             ->when($cashboxDocNum, fn ($query, $value) => $query->whereHas('cashbox', fn ($query) => $query->where('doc_num', $value)))
             ->when($currencyDocNum, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)))
@@ -579,6 +661,72 @@ class FinanceReportService
                 ));
             });
 
+        $cashboxesByAccount = Cashbox::withTrashed()
+            ->where('company_id', $companyId)
+            ->with('branch')
+            ->get()
+            ->keyBy('account_id');
+        $branches = Branch::withTrashed()->where('company_id', $companyId)->get(['id', 'name'])->keyBy('id');
+        $genericEntries = JournalEntry::query()
+            ->where('company_id', $companyId)
+            ->where('status', JournalEntry::StatusPosted)
+            ->where('is_posted', true)
+            ->whereIn('source_type', [
+                CashVoucherService::SourceReceipt,
+                CashVoucherService::SourcePayment,
+                CashVoucherService::SourceReceiptReversal,
+                CashVoucherService::SourcePaymentReversal,
+            ])
+            ->whereDate('entry_date', '<=', $through)
+            ->whereHas('lines', fn ($query) => $query->whereIn('account_id', $cashboxesByAccount->keys()))
+            ->with([
+                'branch' => fn ($query) => $query->withTrashed(),
+                'currency' => fn ($query) => $query->withTrashed(),
+                'lines' => fn ($query) => $query->whereIn('account_id', $cashboxesByAccount->keys()),
+            ])
+            ->orderBy('entry_date')
+            ->orderBy('id')
+            ->get();
+        $genericVouchers = CashVoucher::withTrashed()
+            ->where('company_id', $companyId)
+            ->whereKey($genericEntries->pluck('source_id')->filter()->unique())
+            ->get()
+            ->keyBy('id');
+
+        $genericEntries->each(function (JournalEntry $entry) use ($branches, $branchId, $cashboxesByAccount, $cashboxDocNum, $currencyDocNum, $genericVouchers, $rows): void {
+            $voucher = $genericVouchers->get($entry->source_id);
+            if (! $voucher instanceof CashVoucher || ($currencyDocNum && $entry->currency?->doc_num !== $currencyDocNum)) {
+                return;
+            }
+
+            $entry->lines->each(function ($line) use ($branches, $branchId, $cashboxesByAccount, $cashboxDocNum, $entry, $voucher, $rows): void {
+                $cashbox = $cashboxesByAccount->get($line->account_id);
+                $movementBranchId = $line->branch_id ?? $entry->branch_id;
+                if (! $cashbox
+                    || ($cashboxDocNum && $cashbox->doc_num !== $cashboxDocNum)
+                    || ($branchId && (int) $movementBranchId !== (int) $branchId)) {
+                    return;
+                }
+
+                $isReversal = in_array($entry->source_type, [CashVoucherService::SourceReceiptReversal, CashVoucherService::SourcePaymentReversal], true);
+                $row = $this->cashboxMovementRow(
+                    $cashbox,
+                    $entry->currency_id,
+                    $entry->currency?->code,
+                    $entry->entry_date,
+                    $entry->source_doc_num,
+                    $this->sourceLabels->label($entry->source_type),
+                    trim(implode(' / ', array_filter([$voucher->person_name, $isReversal ? $voucher->cancel_reason : $voucher->reason]))),
+                    $entry->status,
+                    (string) $line->debit_amount,
+                    (string) $line->credit_amount,
+                    route($voucher->isReceipt() ? 'admin.finance.cash-receipt-vouchers.show' : 'admin.finance.cash-payment-vouchers.show', $voucher),
+                );
+                $row['branch'] = $branches->get($movementBranchId)?->name;
+                $rows->push($row);
+            });
+        });
+
         FundTransfer::query()->where('company_id', $companyId)->where('status', FundTransfer::StatusApproved)->whereDate('transfer_date', '<=', $through)
             ->with(['sourceCashbox.branch', 'targetCashbox.branch', 'sourceCurrency', 'targetCurrency', 'sourceBankAccount', 'targetBankAccount'])->get()
             ->each(function (FundTransfer $transfer) use ($branchId, $cashboxDocNum, $currencyDocNum, $rows): void {
@@ -596,7 +744,7 @@ class FinanceReportService
                 }
             });
 
-        $cashboxes = Cashbox::query()->where('company_id', $companyId)
+        $cashboxes = Cashbox::withTrashed()->where('company_id', $companyId)
             ->when($branchId, fn ($query, int $value) => $query->where('branch_id', $value))
             ->with('branch')->get()->keyBy('account_id');
         OpeningBalanceLine::query()->whereIn('account_id', $cashboxes->keys())
@@ -623,11 +771,11 @@ class FinanceReportService
     private function bankMovements(array $filters): Collection
     {
         $companyId = $this->companyId();
-        $through = $filters['to_date'] ?? $filters['as_of_date'];
+        $through = $filters['to_date'] ?? $filters['as_of_date'] ?? now()->toDateString();
         $bankDocNum = $filters['bank_account_doc_num'] ?? null;
         $currencyDocNum = $filters['currency_doc_num'] ?? null;
         $rows = collect();
-        $bankAccounts = BankAccount::query()->where('company_id', $companyId)->get()->keyBy('id');
+        $bankAccounts = BankAccount::withTrashed()->where('company_id', $companyId)->get()->keyBy('id');
 
         OpeningBalanceLine::query()->whereIn('bank_account_id', $bankAccounts->keys())
             ->whereHas('openingBalance', fn ($query) => $query->where('company_id', $companyId)->where('status', 'approved')->whereDate('document_date', '<=', $through))
@@ -703,7 +851,7 @@ class FinanceReportService
                     $entry->currency?->code,
                     $entry->entry_date,
                     $entry->source_doc_num ?? $entry->doc_num,
-                    $isReversal ? $this->value('supplier_payment').' / '.$this->value('reversed') : $this->value('supplier_payment'),
+                    $this->sourceLabels->label($entry->source_type),
                     $payment?->supplier?->name ?? '',
                     $isReversal ? 'reversed' : ($entry->reversed_entry_id !== null ? 'cancelled' : 'approved'),
                     (string) $line->debit_amount,
@@ -729,16 +877,17 @@ class FinanceReportService
     }
 
     /** @return Collection<int, array<string, mixed>> */
-    private function statementRows(Collection $allRows, array $filters): Collection
+    private function statementRows(Collection $allRows, array $filters, bool $includePriorOnlyBalanceRows): Collection
     {
         $from = $filters['from_date'] ?? null;
-        $to = $filters['to_date'] ?? $filters['as_of_date'];
-        $opening = $allRows->filter(fn (array $row): bool => $from !== null && $row['_date'] < $from)->groupBy('_balance_key')->map(fn (Collection $rows): string => $this->net($rows));
+        $to = $filters['to_date'] ?? $filters['as_of_date'] ?? now()->toDateString();
+        $priorRows = $allRows->filter(fn (array $row): bool => $from !== null && $row['_date'] < $from)->groupBy('_balance_key');
+        $opening = $priorRows->map(fn (Collection $rows): string => $this->net($rows));
         $rows = $allRows->filter(fn (array $row): bool => ($from === null || $row['_date'] >= $from) && $row['_date'] <= $to)
             ->sortBy(fn (array $row): string => $row['_date'].'|'.$row['document'])->values();
         $running = $opening->all();
 
-        return $rows->map(function (array $row) use (&$running): array {
+        $movementRows = $rows->map(function (array $row) use (&$running): array {
             $key = $row['_balance_key'];
             $row['opening_balance'] = (string) ($running[$key] ?? '0.0000');
             $running[$key] = bcadd($row['opening_balance'], bcsub((string) $row['receipt'], (string) $row['payment'], 4), 4);
@@ -746,6 +895,38 @@ class FinanceReportService
 
             return $row;
         });
+        if (! $includePriorOnlyBalanceRows) {
+            return $movementRows;
+        }
+
+        $movementKeys = $movementRows->pluck('_balance_key')->unique();
+        $balanceRows = $priorRows
+            ->reject(fn (Collection $holderRows, string $key): bool => $movementKeys->contains($key))
+            ->map(function (Collection $holderRows, string $key) use ($from, $opening): array {
+                $last = $holderRows->sortBy(fn (array $row): string => $row['_date'].'|'.$row['document'])->last();
+                $balance = (string) $opening->get($key, '0.0000');
+
+                return [
+                    ...$last,
+                    '_url' => '',
+                    '_date' => (string) $from,
+                    '_is_balance_row' => true,
+                    'date' => $this->date($from),
+                    'document' => '',
+                    'movement' => __('finance_reports.opening_balance'),
+                    'party_reference' => '',
+                    'status' => '',
+                    'receipt' => '0.0000',
+                    'payment' => '0.0000',
+                    'opening_balance' => $balance,
+                    'balance' => $balance,
+                ];
+            })
+            ->values();
+
+        return $movementRows->concat($balanceRows)
+            ->sortBy(fn (array $row): string => $row['_date'].'|'.$row['document'])
+            ->values();
     }
 
     /** @return array<string, mixed> */
@@ -827,6 +1008,17 @@ class FinanceReportService
         return bcsub($this->sum($rows, 'receipt'), $this->sum($rows, 'payment'), 4);
     }
 
+    private function scopeFundTransfersToBranch(mixed $query, int $branchId): void
+    {
+        $query->where(function ($query) use ($branchId): void {
+            $query->where(function ($query): void {
+                $query->where('source_type', FundTransfer::HolderBankAccount)
+                    ->where('target_type', FundTransfer::HolderBankAccount);
+            })->orWhereHas('sourceCashbox', fn ($query) => $query->where('branch_id', $branchId))
+                ->orWhereHas('targetCashbox', fn ($query) => $query->where('branch_id', $branchId));
+        });
+    }
+
     private function transferHolder(FundTransfer $transfer, bool $source): string
     {
         $type = $source ? $transfer->source_type : $transfer->target_type;
@@ -844,15 +1036,20 @@ class FinanceReportService
         return trim(implode(' / ', array_filter([$bank?->doc_num, $bank?->account_name, $bank?->account_number])));
     }
 
-    private function dueState(Cheque $cheque, Carbon $asOf): string
+    private function dueStateKey(Cheque $cheque, Carbon $asOf): string
     {
         if (! $cheque->due_date) {
             return '';
         }
 
-        $days = $asOf->copy()->startOfDay()->diffInDays($cheque->due_date, false);
+        $asOfDate = $asOf->copy()->startOfDay();
+        $dueDate = Carbon::parse($cheque->due_date)->startOfDay();
 
-        return $this->value($days < 0 ? 'overdue' : ($days === 0 ? 'due_today' : 'upcoming'));
+        return match (true) {
+            $dueDate->lt($asOfDate) => 'overdue',
+            $dueDate->isSameDay($asOfDate) => 'due_today',
+            default => 'upcoming',
+        };
     }
 
     private function agingBucket(int $days): string

@@ -13,6 +13,7 @@ use Modules\HR\Models\HrAttendanceDailyRecord;
 use Modules\HR\Models\HrAttendanceEvent;
 use Modules\HR\Models\HrAttendanceSession;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrEmployeeShiftAssignment;
 use Modules\HR\Models\HrShift;
 
 class HrAttendanceService
@@ -226,7 +227,7 @@ class HrAttendanceService
                     throw new DomainException(__('hr_attendance.messages.already_checked_in'));
                 }
 
-                $shift = $lockedEmployee->defaultShift()->first();
+                $shift = $this->effectiveShift($lockedEmployee, $occurredAt);
                 $session = HrAttendanceSession::query()->create([
                     'employee_id' => $lockedEmployee->getKey(),
                     'company_id' => $lockedEmployee->company_id,
@@ -389,6 +390,24 @@ class HrAttendanceService
         return $occurredAt->toDateString();
     }
 
+    private function effectiveShift(HrEmployee $employee, CarbonImmutable $occurredAt): ?HrShift
+    {
+        $assignment = HrEmployeeShiftAssignment::query()
+            ->where('employee_id', $employee->getKey())
+            ->whereDate('effective_from', '<=', $occurredAt->toDateString())
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $occurredAt->toDateString()))
+            ->latest('effective_from')
+            ->latest('id')
+            ->lockForUpdate()
+            ->first();
+
+        if ($assignment instanceof HrEmployeeShiftAssignment) {
+            return HrShift::withTrashed()->find($assignment->shift_id);
+        }
+
+        return $employee->defaultShift()->withTrashed()->first();
+    }
+
     private function rebuildDailyRecord(HrAttendanceSession $session, CarbonInterface $calculatedAt): void
     {
         $sessions = HrAttendanceSession::query()
@@ -473,16 +492,16 @@ class HrAttendanceService
         }
 
         $distance = $this->distanceMeters($latitude, $longitude, (float) $branch->attendance_latitude, (float) $branch->attendance_longitude);
-        $inside = $distance <= (int) $branch->attendance_radius_meters;
+        $inside = $distance <= (float) $branch->attendance_radius_meters;
 
         return [
             'status' => $inside ? 'inside' : 'outside',
-            'distance_meters' => $distance,
+            'distance_meters' => (int) round($distance),
             'actual_branch_id' => $inside ? $branch->getKey() : null,
         ];
     }
 
-    private function distanceMeters(float $latitude, float $longitude, float $branchLatitude, float $branchLongitude): int
+    private function distanceMeters(float $latitude, float $longitude, float $branchLatitude, float $branchLongitude): float
     {
         $earthRadius = 6371000;
         $latitudeDelta = deg2rad($branchLatitude - $latitude);
@@ -490,6 +509,6 @@ class HrAttendanceService
         $value = sin($latitudeDelta / 2) ** 2
             + cos(deg2rad($latitude)) * cos(deg2rad($branchLatitude)) * sin($longitudeDelta / 2) ** 2;
 
-        return (int) round($earthRadius * 2 * atan2(sqrt($value), sqrt(1 - $value)));
+        return $earthRadius * 2 * atan2(sqrt($value), sqrt(1 - $value));
     }
 }

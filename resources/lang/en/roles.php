@@ -174,6 +174,8 @@ return [
         'view_forbidden' => 'You are not allowed to view deleted records.',
     ],
     'validation' => [
+        'permissions_invalid' => 'One or more selected permissions are not registered for role assignment.',
+        'permissions_not_delegable' => 'You cannot grant one or more selected permissions because you do not possess them.',
         'doc_number_numeric' => 'Document number must contain digits only.',
         'doc_number_unique' => 'Document number already exists.',
         'name_unique' => 'A user group with this name already exists.',

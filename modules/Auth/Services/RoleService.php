@@ -6,6 +6,7 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Modules\Auth\Exceptions\RoleDeleteBlockedException;
 use Modules\Auth\Exceptions\RoleRestoreBlockedException;
 use Modules\Auth\Models\Role;
@@ -25,6 +26,7 @@ class RoleService
     public function __construct(
         private readonly DocumentNumberService $documentNumberService,
         private readonly PermissionRegistryService $permissionRegistry,
+        private readonly PermissionDelegationService $permissionDelegation,
         private readonly CrudAuditService $crudAudit,
     ) {}
 
@@ -34,6 +36,16 @@ class RoleService
     public function create(array $data, ?Role $cloneSource = null): Role
     {
         return DB::transaction(function () use ($data, $cloneSource): Role {
+            $actor = $this->authenticatedActor();
+            $actor = $this->permissionDelegation->lockMutationState(
+                $actor,
+                additionalRoleIds: $cloneSource instanceof Role ? [(int) $cloneSource->getKey()] : [],
+            );
+            $cloneSource?->refresh();
+            $permissions = $this->permissionDelegation->assertCanDelegatePermissions(
+                $actor,
+                $data['permissions'] ?? [],
+            );
             $documentNumber = array_key_exists('doc_number', $data)
                 ? $this->manualDocumentNumber((int) $data['doc_number'])
                 : $this->documentNumberService->next('roles', Role::class);
@@ -51,6 +63,32 @@ class RoleService
                 ? $this->normalizeDocNums($data['accessible_financial_period_doc_nums'])
                 : [];
 
+            if (! $hasCompanyAccessPayload && ! $hasBranchAccessPayload && ! $hasPeriodAccessPayload && $cloneSource instanceof Role) {
+                $companyDocNums = $this->currentActiveCompanyDocNums($cloneSource);
+                $branchDocNums = $this->currentActiveBranchDocNums($cloneSource);
+                $periodDocNums = $this->currentActiveFinancialPeriodDocNums($cloneSource);
+            }
+
+            $companyRestricted = $hasCompanyAccessPayload
+                ? $companyDocNums !== []
+                : (bool) ($cloneSource?->company_access_restricted ?? false);
+            $branchRestricted = $hasBranchAccessPayload
+                ? $branchDocNums !== []
+                : (bool) ($cloneSource?->branch_access_restricted ?? false);
+            $periodRestricted = $hasPeriodAccessPayload
+                ? $periodDocNums !== []
+                : (bool) ($cloneSource?->financial_period_access_restricted ?? false);
+
+            $this->permissionDelegation->assertCanDelegateOperatingScope(
+                $actor,
+                $companyRestricted,
+                $companyDocNums,
+                $branchRestricted,
+                $branchDocNums,
+                $periodRestricted,
+                $periodDocNums,
+            );
+
             $role = Role::query()->create([
                 'name' => trim((string) $data['name']),
                 'notes' => $this->normalizeNotes($data['notes'] ?? null),
@@ -63,7 +101,7 @@ class RoleService
                 'created_by' => $userId,
             ]);
 
-            $this->syncPermissions($role, $this->normalizeFormPermissions($data['permissions'] ?? []));
+            $this->syncPermissions($role, $permissions);
 
             if ($hasCompanyAccessPayload) {
                 $this->syncCompanyAccess($role, $companyDocNums);
@@ -96,7 +134,17 @@ class RoleService
         $this->ensureRoleCanBeUpdated($role);
 
         return DB::transaction(function () use ($role, $data): array {
-            $role->loadMissing('permissions:id,name');
+            $actor = $this->authenticatedActor();
+            $actor = $this->permissionDelegation->lockMutationState(
+                $actor,
+                additionalRoleIds: [(int) $role->getKey()],
+            );
+            $role->refresh()->load('permissions:id,name');
+            $this->ensureRoleCanBeUpdated($role);
+            $requestedPermissions = $this->permissionDelegation->assertCanDelegatePermissions(
+                $actor,
+                $data['permissions'] ?? [],
+            );
 
             $oldDocNumber = $role->doc_number === null ? null : (int) $role->doc_number;
             $oldDocNum = $role->doc_num;
@@ -106,10 +154,10 @@ class RoleService
             $newDocNum = $canChangeDocumentNumber ? $this->documentNumberService->format('roles', $newDocNumber) : $oldDocNum;
             $newName = trim((string) $data['name']);
             $newNotes = $this->normalizeNotes($data['notes'] ?? null);
-            $newPermissions = $this->mergePreservedNonFormPermissions(
-                $role,
-                $this->normalizeFormPermissions($data['permissions'] ?? []),
-            );
+            $newPermissions = $this->normalizePermissions([
+                ...$requestedPermissions,
+                ...$this->permissionDelegation->permissionsToPreserve($role, $actor),
+            ]);
             $currentPermissions = $this->normalizePermissions($role->permissions->pluck('name')->all());
             $hasCompanyAccessPayload = array_key_exists('accessible_company_doc_nums', $data);
             $hasBranchAccessPayload = array_key_exists('accessible_branch_doc_nums', $data);
@@ -129,6 +177,16 @@ class RoleService
             $newPeriodAccessRestricted = $hasPeriodAccessPayload
                 ? $newPeriodDocNums !== []
                 : (bool) $role->financial_period_access_restricted;
+
+            $this->permissionDelegation->assertCanDelegateOperatingScope(
+                $actor,
+                $newCompanyAccessRestricted,
+                $hasCompanyAccessPayload ? $newCompanyDocNums : $this->currentActiveCompanyDocNums($role),
+                $newBranchAccessRestricted,
+                $hasBranchAccessPayload ? $newBranchDocNums : $this->currentActiveBranchDocNums($role),
+                $newPeriodAccessRestricted,
+                $hasPeriodAccessPayload ? $newPeriodDocNums : $this->currentActiveFinancialPeriodDocNums($role),
+            );
 
             $changedFields = [];
             $changes = [];
@@ -412,35 +470,17 @@ class RoleService
             ->all();
     }
 
-    /**
-     * @param  array<int, string>  $permissions
-     * @return list<string>
-     */
-    private function normalizeFormPermissions(array $permissions): array
+    private function authenticatedActor(): User
     {
-        $formPermissions = array_flip($this->permissionRegistry->formAssignablePermissions());
+        $actor = auth()->user();
 
-        return collect($this->normalizePermissions($permissions))
-            ->filter(fn (string $permission): bool => isset($formPermissions[$permission]))
-            ->values()
-            ->all();
-    }
+        if (! $actor instanceof User) {
+            throw ValidationException::withMessages([
+                'permissions' => [__('roles.validation.permissions_not_delegable')],
+            ]);
+        }
 
-    /**
-     * @param  list<string>  $permissions
-     * @return list<string>
-     */
-    private function mergePreservedNonFormPermissions(Role $role, array $permissions): array
-    {
-        $formPermissions = array_flip($this->permissionRegistry->formAssignablePermissions());
-        $preserved = $role->permissions
-            ->pluck('name')
-            ->map(fn (string $permission): string => $this->permissionRegistry->canonicalPermission($permission))
-            ->filter(fn (string $permission): bool => ! isset($formPermissions[$permission]))
-            ->values()
-            ->all();
-
-        return $this->normalizePermissions([...$permissions, ...$preserved]);
+        return $actor;
     }
 
     /**

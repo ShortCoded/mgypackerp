@@ -568,7 +568,7 @@ test('protected first role update is blocked without mutating permissions notes 
 test('normal role remains editable after the first protected role', function () {
     protectedRoleFixture();
 
-    $editor = userWithPermissions(['roles.edit', 'roles.view']);
+    $editor = userWithPermissions(['roles.edit', 'roles.view', 'users.view']);
     Permission::findOrCreate('users.view', 'web');
     $role = Role::query()->create([
         'name' => 'editable-role',
@@ -1169,7 +1169,7 @@ test('trashed role restore is blocked when an active role reuses its document co
 });
 
 test('role can be created with permissions and generated document number', function () {
-    $user = userWithPermissions(['roles.create', 'roles.edit']);
+    $user = userWithPermissions(['roles.create', 'roles.edit', 'users.view']);
     Permission::findOrCreate('users.view', 'web');
 
     $this->actingAs($user)
@@ -1585,7 +1585,7 @@ test('role validation returns field errors', function () {
 test('role can be cloned from public doc num without copying document number', function () {
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.clone', 'roles.edit']);
+    $user = userWithPermissions(['roles.clone', 'roles.edit', 'users.view', 'roles.view']);
     $company = Company::factory()->create([
         'doc_number' => 111,
         'doc_num' => 'Company-00111',
@@ -1688,7 +1688,18 @@ test('role form is reused as full pages for create edit and view modes', functio
     $role->forceFill(['company_access_restricted' => true])->save();
     $role->companyAccessCompanies()->sync([$company->id]);
 
-    $this->actingAs(userWithPermissions(['roles.create']))
+    $this->actingAs(userWithPermissions([
+        'roles.create',
+        'dashboard.view',
+        'file_manager.view',
+        'companies.view',
+        'hr.employees.view',
+        'hr.departments.view',
+        'users.view',
+        'users.index',
+        'roles.bulk_delete',
+        'companies.files.view',
+    ]))
         ->get(route('admin.roles.create'))
         ->assertOk()
         ->assertSee('js-role-form', false)
@@ -1786,7 +1797,7 @@ test('role form is reused as full pages for create edit and view modes', functio
         ->assertSee('js-delete-record', false)
         ->assertSee(__('common.shortcuts.delete'), false);
 
-    $this->actingAs(userWithPermissions(['roles.clone']))
+    $this->actingAs(userWithPermissions(['roles.clone', 'users.view']))
         ->get(route('admin.roles.clone', $role->doc_num))
         ->assertOk()
         ->assertSee('data-mode="clone"', false)
@@ -1810,7 +1821,7 @@ test('role form is reused as full pages for create edit and view modes', functio
 test('role permissions table uses localized labels as primary text', function () {
     Permission::findOrCreate('users.roles.manage', 'web');
 
-    $this->actingAs(userWithPermissions(['roles.create']))
+    $this->actingAs(userWithPermissions(['roles.create', 'users.roles.manage']))
         ->get(route('admin.roles.create'))
         ->assertOk()
         ->assertSee('إدارة مجموعات المستخدمين')
@@ -1820,7 +1831,7 @@ test('role permissions table uses localized labels as primary text', function ()
 test('role can be updated and permissions are synced', function () {
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.edit']);
+    $user = userWithPermissions(['roles.edit', 'users.view', 'roles.view']);
     Permission::findOrCreate('users.view', 'web');
     Permission::findOrCreate('roles.view', 'web');
     $role = Role::query()->create(['name' => 'manager', 'guard_name' => 'web', 'doc_number' => 1, 'doc_num' => 'Role-00001']);
@@ -1925,7 +1936,7 @@ test('role edit without company access permission cannot change company access p
     allowMultipleCompaniesForRoleTests();
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.edit']);
+    $user = userWithPermissions(['roles.edit', 'users.view', 'roles.view']);
     $firstCompany = Company::factory()->create([
         'doc_number' => 91,
         'doc_num' => 'Company-00091',
@@ -1965,7 +1976,7 @@ test('role edit without company access permission cannot change company access p
 test('role update hides stale permissions from the form but preserves existing stale grants', function () {
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.edit']);
+    $user = userWithPermissions(['roles.edit', 'users.view', 'roles.view']);
     Permission::findOrCreate('users.view', 'web');
     Permission::findOrCreate('roles.view', 'web');
     Permission::findOrCreate('companies.files.view', 'web');
@@ -1994,7 +2005,7 @@ test('role update hides stale permissions from the form but preserves existing s
 test('role update detects no changes without mutating or logging update activity', function () {
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.edit']);
+    $user = userWithPermissions(['roles.edit', 'users.view']);
     Permission::findOrCreate('users.view', 'web');
     $previousUpdatedAt = now()->subHours(4)->startOfSecond();
     $role = Role::query()->create([
@@ -2220,7 +2231,7 @@ test('roles datatable exposes doc num URLs and does not expose internal id contr
 test('role mutations write activity with public document properties', function () {
     protectedRoleFixture();
 
-    $user = userWithPermissions(['roles.create', 'roles.edit', 'roles.delete', 'roles.document_number.control']);
+    $user = userWithPermissions(['roles.create', 'roles.edit', 'roles.delete', 'roles.document_number.control', 'users.view']);
     Permission::findOrCreate('users.view', 'web');
 
     $this->actingAs($user)

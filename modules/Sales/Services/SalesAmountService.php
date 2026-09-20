@@ -36,12 +36,12 @@ class SalesAmountService
         return bccomp((string) $left, (string) $right, $scale);
     }
 
-    /** @param iterable<string|int|float> $values */
+    /** @param iterable<string|int|float|null> $values */
     public function sum(iterable $values, int $scale = 4): string
     {
         $total = '0';
         foreach ($values as $value) {
-            $total = $this->add($total, $value, $scale);
+            $total = $this->add($total, $value ?? 0, $scale);
         }
 
         return $total;

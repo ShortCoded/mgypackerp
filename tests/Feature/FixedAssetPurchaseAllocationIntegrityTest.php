@@ -2,6 +2,7 @@
 
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\AccountService;
 use Modules\Accounting\Services\BusinessPartnerAccountService;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
@@ -190,6 +191,12 @@ test('purchase line allocation is revalidated atomically when assets are persist
         ->and($purchaseIntegration->allocatedAmount($line->fresh()))->toBe('10.0000');
 
     $assets->delete($restoredInitialAsset);
+    $restoredAccount = app(AccountService::class)->restore(Account::withTrashed()->findOrFail($initialAccountId));
+    expect($restoredAccount->trashed())->toBeFalse()
+        ->and(FixedAsset::query()->findOrFail($initialAsset->getKey())->trashed())->toBeFalse()
+        ->and($purchaseIntegration->allocatedAmount($line->fresh()))->toBe('10.0000');
+
+    $assets->delete(FixedAsset::query()->findOrFail($initialAsset->getKey()));
     $replacement = $assets->create([
         ...$payload,
         'asset_name' => 'Replacement Fractional Allocation',
@@ -200,6 +207,8 @@ test('purchase line allocation is revalidated atomically when assets are persist
     $accountCountBeforeRestore = Account::withTrashed()->count();
     $activityCountBeforeRestore = Activity::query()->count();
 
+    expect(fn () => app(AccountService::class)->restore(Account::withTrashed()->findOrFail($initialAccountId)))
+        ->toThrow(DomainException::class, __('fixed_assets.purchase_source.allocation_exceeds_line'));
     expect(fn () => $assets->restore($deletedAsset))
         ->toThrow(DomainException::class, __('fixed_assets.purchase_source.allocation_exceeds_line'));
     expect(FixedAsset::withTrashed()->findOrFail($initialAsset->getKey())->trashed())->toBeTrue()
@@ -214,6 +223,8 @@ test('purchase line allocation is revalidated atomically when assets are persist
 
     $line->delete();
     $activityCountBeforeOrphanRestore = Activity::query()->count();
+    expect(fn () => app(AccountService::class)->restore(Account::withTrashed()->findOrFail($initialAccountId)))
+        ->toThrow(DomainException::class, __('fixed_assets.purchase_source.invalid'));
     expect(fn () => $assets->restore($deletedAsset))
         ->toThrow(DomainException::class, __('fixed_assets.purchase_source.invalid'));
     expect(FixedAsset::withTrashed()->findOrFail($initialAsset->getKey())->trashed())->toBeTrue()

@@ -380,7 +380,13 @@
   function init(root) {
     const scope = root && root.querySelectorAll ? root : document;
 
-    scope.querySelectorAll(selector).forEach(initSelect);
+    scope.querySelectorAll(selector).forEach(function (element) {
+      const form = element.closest('[data-price-list-form]');
+      if (form && form.getAttribute('data-mode') === 'view') {
+        return;
+      }
+      initSelect(element);
+    });
   }
 
   window.AppSelect2Ajax = Object.assign({}, window.AppSelect2Ajax || {}, {

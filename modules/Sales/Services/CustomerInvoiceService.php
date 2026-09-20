@@ -36,12 +36,12 @@ class CustomerInvoiceService
     public function createDirect(array $data, ?SalesRequest $sourceRequest = null): CustomerInvoice
     {
         return DB::transaction(function () use ($data, $sourceRequest): CustomerInvoice {
-            $customer = Customer::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
-            $currency = Currency::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
-            $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $data['company_id'], $data['invoice_date'], lockForUpdate: true);
             $source = $sourceRequest
                 ? SalesRequest::query()->with(['lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($sourceRequest->getKey())
                 : null;
+            $customer = Customer::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
+            $currency = Currency::query()->forCompany((int) $data['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
+            $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $data['company_id'], $data['invoice_date'], lockForUpdate: true);
             if ($source && (! in_array($source->status, ['approved', 'partially_converted'], true)
                 || (int) $source->company_id !== (int) $data['company_id']
                 || (int) $source->branch_id !== (int) $data['branch_id']
@@ -49,6 +49,16 @@ class CustomerInvoiceService
                 || (int) $source->currency_id !== (int) $currency->getKey())) {
                 throw new DomainException(__('The selected sales request is not eligible for direct invoicing.'));
             }
+
+            $eligiblePriceListIds = $this->priceLists->lockForPersistedResolution(
+                (int) $data['company_id'],
+                $customer->getKey(),
+                $currency->getKey(),
+                Product::query()->forCompany((int) $data['company_id'])->active()
+                    ->whereIn('doc_num', array_column($data['lines'], 'product_doc_num'))
+                    ->orderBy('id')->pluck('id')->map(fn (mixed $id): int => (int) $id)->all(),
+                (string) $data['invoice_date'],
+            );
 
             $prepared = [];
             $unpricedProducts = [];
@@ -68,7 +78,16 @@ class CustomerInvoiceService
 
                 $quantity = (string) $input['quantity'];
                 try {
-                    $price = $this->priceLists->resolve((int) $data['company_id'], $customer->getKey(), $currency->getKey(), $product, $unit->getKey(), $quantity, (string) $data['invoice_date']);
+                    $price = $this->priceLists->resolveFromLockedCandidates(
+                        (int) $data['company_id'],
+                        $customer->getKey(),
+                        $currency->getKey(),
+                        $product,
+                        $unit->getKey(),
+                        $quantity,
+                        (string) $data['invoice_date'],
+                        $eligiblePriceListIds,
+                    );
                 } catch (DomainException) {
                     $unpricedProducts[] = $product->doc_num.' / '.$product->name;
 

@@ -33,7 +33,7 @@ final class CostingReportController extends Controller
         return view('modules.accounting.reports.costing', [
             'report' => $this->reports->report($filters),
             'filters' => $filters,
-            'filterOptions' => $this->reports->filterOptions(),
+            'filterOptions' => $this->reports->filterOptions($filters),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($request->route()?->getName() ?? 'admin.reports.costing.product-cost.index'),
         ]);
     }

@@ -64,12 +64,12 @@ class InventoryTransaction extends Model
 
     public function branchStore(): BelongsTo
     {
-        return $this->belongsTo(BranchStore::class);
+        return $this->belongsTo(BranchStore::class)->withTrashed();
     }
 
     public function warehouseLocation(): BelongsTo
     {
-        return $this->belongsTo(WarehouseLocation::class);
+        return $this->belongsTo(WarehouseLocation::class)->withTrashed();
     }
 
     public function productionRun(): BelongsTo

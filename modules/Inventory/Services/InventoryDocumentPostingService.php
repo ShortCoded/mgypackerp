@@ -3,6 +3,7 @@
 namespace Modules\Inventory\Services;
 
 use DomainException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\FinancialPeriod;
@@ -10,7 +11,9 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
+use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
@@ -18,6 +21,7 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Models\SalesReturnLine;
 
 class InventoryDocumentPostingService
 {
@@ -76,23 +80,40 @@ class InventoryDocumentPostingService
                     continue;
                 }
 
-                $resolvedUnitCost = bccomp((string) $line->unit_cost, '0', 8) > 0
-                    ? (string) $line->unit_cost
-                    : $this->valuation->movingAverageUnitCost(
+                $this->hydrateSalesReturnDispositionDimensions($locked, $line, $profile['source_status']);
+                $sourceLocationId = $line->warehouse_location_id ?? $locked->warehouse_location_id;
+                $sourceProductionRunId = $profile['source_status'] === InventoryTransaction::StatusProductionStaging
+                    ? ($line->production_run_id ?? $locked->production_run_id)
+                    : null;
+                $exactSourceDimensions = $sourceLocationId !== null
+                    || filled($line->batch_lot)
+                    || $sourceProductionRunId !== null;
+                $sourceIssue = $this->validatedSourceIssue($locked, $line, $quantity);
+
+                $unitCost = match (true) {
+                    $line->unit_cost !== null => (string) $line->unit_cost,
+                    $profile['outbound'] => $this->valuation->bookUnitCostForPosition(
                         (int) $locked->company_id,
                         (int) $locked->branch_store_id,
                         (int) $line->product_id,
-                        $profile['outbound'] ? $profile['source_status'] : null,
-                        $line->warehouse_location_id ?? $locked->warehouse_location_id,
+                        $profile['source_status'],
+                        $sourceLocationId,
                         $line->batch_lot,
-                        $profile['source_status'] === InventoryTransaction::StatusProductionStaging
-                            ? $locked->production_run_id
-                            : null,
+                        $sourceProductionRunId,
                         $locked->document_date,
-                    );
-                $unitCost = bccomp($resolvedUnitCost, '0', 8) > 0 ? $resolvedUnitCost : null;
+                        $exactSourceDimensions,
+                    ),
+                    $sourceIssue !== null && $sourceIssue->unit_cost !== null && $sourceIssue->total_cost !== null => (string) $sourceIssue->unit_cost,
+                    default => null,
+                };
 
-                $sourceIssue = null;
+                if (in_array($locked->document_type, [
+                    InventoryDocument::TypeMaintenanceMaterialIssue,
+                    InventoryDocument::TypeMaintenanceMaterialReturn,
+                ], true) && $unitCost === null) {
+                    throw new DomainException(__('Maintenance material movements require an authoritative inventory cost.'));
+                }
+
                 if ($profile['outbound']) {
                     $this->assertPositionCanIssue($locked, $line, $quantity, $profile['source_status']);
                     $sourceIssue = $this->createTransaction(
@@ -110,11 +131,6 @@ class InventoryDocumentPostingService
                 }
 
                 if ($profile['inbound']) {
-                    if ($sourceIssue === null && isset($line->product_snapshot['source_issue_transaction_id'])) {
-                        $sourceIssue = InventoryTransaction::query()
-                            ->lockForUpdate()
-                            ->findOrFail($line->product_snapshot['source_issue_transaction_id']);
-                    }
                     $receiptTransaction = $this->createTransaction(
                         $locked,
                         $line,
@@ -130,7 +146,8 @@ class InventoryDocumentPostingService
                         '0',
                         $unitCost,
                     );
-                    $this->layers->recordInbound($receiptTransaction, $sourceIssue);
+                    $restorationAllocations = $this->resolveRestorationAllocations($locked, $line, $sourceIssue);
+                    $this->layers->recordInbound($receiptTransaction, $sourceIssue, $restorationAllocations);
                 }
 
                 $line->update([
@@ -166,6 +183,13 @@ class InventoryDocumentPostingService
 
             if ($locked->status !== InventoryDocument::StatusPosted) {
                 throw new DomainException(__('Only a posted inventory document can be reversed.'));
+            }
+            if ($locked->source_document_type === MaintenanceMaterialRequest::class
+                || in_array($locked->document_type, [
+                    InventoryDocument::TypeMaintenanceMaterialIssue,
+                    InventoryDocument::TypeMaintenanceMaterialReturn,
+                ], true)) {
+                throw new DomainException(__('Maintenance material inventory documents are controlled by the maintenance workflow.'));
             }
             if ($locked->source_document_type === ProductionQualityInspection::class) {
                 throw new DomainException(__('production_execution.messages.quality_inventory_document_controlled'));
@@ -293,6 +317,7 @@ class InventoryDocumentPostingService
             InventoryDocument::TypeSalesDelivery,
             InventoryDocument::TypeIssue,
             InventoryDocument::TypeAdjustmentOut,
+            InventoryDocument::TypeMaintenanceMaterialIssue,
             InventoryDocument::TypeMaterialConsumption,
             InventoryDocument::TypeProductionWaste,
             InventoryDocument::TypeScrap,
@@ -355,6 +380,188 @@ class InventoryDocumentPostingService
                 ],
             ));
         }
+    }
+
+    private function validatedSourceIssue(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        string $quantity,
+    ): ?InventoryTransaction {
+        $sourceIssueId = $line->product_snapshot['source_issue_transaction_id'] ?? null;
+        if ($sourceIssueId === null && $document->document_type !== InventoryDocument::TypeSalesReturnReceipt) {
+            return null;
+        }
+
+        $canonicalSourceIssue = $document->document_type === InventoryDocument::TypeSalesReturnReceipt
+            ? $this->canonicalSalesReturnSourceIssue($document, $line)
+            : null;
+        $sourceIssue = $canonicalSourceIssue ?? (is_numeric($sourceIssueId)
+            ? InventoryTransaction::query()->lockForUpdate()->find((int) $sourceIssueId)
+            : null);
+
+        if ($canonicalSourceIssue instanceof InventoryTransaction) {
+            $line->forceFill([
+                'batch_lot' => $sourceIssue->batch_lot,
+                'manufacture_date' => $sourceIssue->manufacture_date,
+                'expiry_date' => $sourceIssue->expiry_date,
+            ])->save();
+        }
+        $sourceDocument = $sourceIssue?->source_type === InventoryDocument::class
+            ? InventoryDocument::query()->lockForUpdate()->find($sourceIssue->source_id)
+            : null;
+        $expectedProductionRunId = $line->production_run_id ?? $document->production_run_id;
+        $isMaintenanceAllocationBound = $document->document_type === InventoryDocument::TypeMaintenanceMaterialReturn
+            && isset($line->product_snapshot['restoration_allocation_id']);
+
+        if (! $sourceIssue instanceof InventoryTransaction
+            || ! $sourceDocument instanceof InventoryDocument
+            || (int) $sourceIssue->company_id !== (int) $document->company_id
+            || (int) $sourceIssue->branch_id !== (int) $document->branch_id
+            || ($document->document_type !== InventoryDocument::TypeSalesReturnReceipt
+                && (int) $sourceIssue->branch_store_id !== (int) $document->branch_store_id)
+            || (int) $sourceIssue->product_id !== (int) $line->product_id
+            || $sourceIssue->is_reversal
+            || bccomp((string) $sourceIssue->quantity_in, '0', 8) !== 0
+            || bccomp((string) $sourceIssue->quantity_out, $quantity, 8) < 0
+            || $sourceIssue->unit_cost === null
+            || $sourceIssue->total_cost === null
+            || (! $isMaintenanceAllocationBound && $sourceIssue->batch_lot !== $line->batch_lot)
+            || ($sourceIssue->production_run_id === null ? null : (int) $sourceIssue->production_run_id) !== ($expectedProductionRunId === null ? null : (int) $expectedProductionRunId)
+            || $sourceIssue->transaction_date?->gt($document->document_date)
+            || $sourceDocument->status !== InventoryDocument::StatusPosted
+            || ! $this->sourceIssueLinkMatches($document, $line, $sourceIssue, $sourceDocument)) {
+            throw new DomainException(__('The linked source issue does not match this inventory return line.'));
+        }
+
+        return $sourceIssue;
+    }
+
+    private function hydrateSalesReturnDispositionDimensions(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        string $sourceStatus,
+    ): void {
+        if ($document->document_type !== InventoryDocument::TypeTransfer
+            || $document->source_document_type !== SalesReturn::class
+            || $line->source_line_type !== SalesReturnLine::class
+            || $sourceStatus !== InventoryTransaction::StatusQuarantine) {
+            return;
+        }
+
+        $salesReturn = SalesReturn::query()->lockForUpdate()->find($document->source_document_id);
+        $sourceReceipt = $salesReturn?->return_inventory_document_id
+            ? InventoryTransaction::query()
+                ->where('source_type', InventoryDocument::class)
+                ->where('source_id', $salesReturn->return_inventory_document_id)
+                ->where('source_line_type', SalesReturnLine::class)
+                ->where('source_line_id', $line->source_line_id)
+                ->where('product_id', $line->product_id)
+                ->where('stock_status', InventoryTransaction::StatusQuarantine)
+                ->where('quantity_in', '>', 0)
+                ->where('is_reversal', false)
+                ->lockForUpdate()
+                ->latest('id')
+                ->first()
+            : null;
+
+        if (! $sourceReceipt instanceof InventoryTransaction) {
+            return;
+        }
+
+        $line->forceFill([
+            'warehouse_location_id' => $sourceReceipt->warehouse_location_id,
+            'batch_lot' => $sourceReceipt->batch_lot,
+            'manufacture_date' => $sourceReceipt->manufacture_date,
+            'expiry_date' => $sourceReceipt->expiry_date,
+        ])->save();
+    }
+
+    private function sourceIssueLinkMatches(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        InventoryTransaction $sourceIssue,
+        InventoryDocument $sourceDocument,
+    ): bool {
+        if ($document->document_type === InventoryDocument::TypeMaintenanceMaterialReturn) {
+            return $sourceDocument->document_type === InventoryDocument::TypeMaintenanceMaterialIssue
+                && $sourceDocument->source_document_type === $document->source_document_type
+                && (int) $sourceDocument->source_document_id === (int) $document->source_document_id
+                && $sourceIssue->source_line_type === $line->source_line_type
+                && (int) $sourceIssue->source_line_id === (int) $line->source_line_id;
+        }
+
+        if ($document->document_type !== InventoryDocument::TypeSalesReturnReceipt
+            || $document->source_document_type !== SalesReturn::class
+            || $line->source_line_type !== SalesReturnLine::class) {
+            return false;
+        }
+
+        $salesReturn = SalesReturn::query()
+            ->where('company_id', $document->company_id)
+            ->lockForUpdate()
+            ->find($document->source_document_id);
+        $returnLine = $salesReturn instanceof SalesReturn
+            ? SalesReturnLine::query()
+                ->where('sales_return_id', $salesReturn->getKey())
+                ->where('product_id', $line->product_id)
+                ->lockForUpdate()
+                ->find($line->source_line_id)
+            : null;
+        $deliveryLine = $returnLine instanceof SalesReturnLine
+            ? InventoryDocumentLine::query()
+                ->lockForUpdate()
+                ->find($returnLine->delivery_line_id)
+            : null;
+
+        return $salesReturn instanceof SalesReturn
+            && $returnLine instanceof SalesReturnLine
+            && $deliveryLine instanceof InventoryDocumentLine
+            && (int) $deliveryLine->inventory_document_id === (int) $sourceDocument->getKey()
+            && $sourceDocument->document_type === InventoryDocument::TypeSalesDelivery
+            && $sourceIssue->source_line_type === $deliveryLine->source_line_type
+            && (int) $sourceIssue->source_line_id === (int) $deliveryLine->source_line_id;
+    }
+
+    private function canonicalSalesReturnSourceIssue(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+    ): ?InventoryTransaction {
+        if ($document->source_document_type !== SalesReturn::class
+            || $line->source_line_type !== SalesReturnLine::class) {
+            return null;
+        }
+
+        $returnLine = SalesReturnLine::query()
+            ->where('sales_return_id', $document->source_document_id)
+            ->where('product_id', $line->product_id)
+            ->lockForUpdate()
+            ->find($line->source_line_id);
+        $deliveryLine = $returnLine instanceof SalesReturnLine
+            ? InventoryDocumentLine::query()->lockForUpdate()->find($returnLine->delivery_line_id)
+            : null;
+
+        if (! $deliveryLine instanceof InventoryDocumentLine) {
+            return null;
+        }
+
+        return InventoryTransaction::query()
+            ->where('source_type', InventoryDocument::class)
+            ->where('source_id', $deliveryLine->inventory_document_id)
+            ->where('source_line_type', $deliveryLine->source_line_type)
+            ->where('source_line_id', $deliveryLine->source_line_id)
+            ->where('product_id', $line->product_id)
+            ->where('warehouse_location_id', $deliveryLine->warehouse_location_id)
+            ->when(
+                $deliveryLine->batch_lot !== null,
+                fn ($query) => $query->where('batch_lot', $deliveryLine->batch_lot),
+                fn ($query) => $query->whereNull('batch_lot'),
+            )
+            ->where('quantity_in', 0)
+            ->where('quantity_out', '>', 0)
+            ->where('is_reversal', false)
+            ->lockForUpdate()
+            ->latest('id')
+            ->first();
     }
 
     private function assertQualityHoldAuthority(InventoryDocument $document, string $sourceStatus, string $destinationStatus): void
@@ -436,5 +643,102 @@ class InventoryDocumentPostingService
         if ($hasLaterMovement) {
             throw new DomainException(__('Backdated inventory posting is blocked because later valued movements already exist for this product and store.'));
         }
+    }
+
+    /**
+     * Resolve and validate a specific restoration allocation for a maintenance return line.
+     * Returns null when the line does not carry explicit allocation lineage, letting the
+     * layer service fall back to the general source-issue allocation lookup.
+     *
+     * Validation:
+     *  - Only MaintenanceMaterialReturn documents may use restoration_allocation_id.
+     *  - allocation.issue_transaction_id must equal the linked source issue ID.
+     *  - allocation layer must exist and match company/store/product/status of the return context.
+     *  - return line location, batch, manufacture/expiry must agree with the allocation layer.
+     *  - return slice quantity must not exceed allocation quantity.
+     *
+     * @return Collection<int, InventoryLayerAllocation>|null
+     */
+    private function resolveRestorationAllocations(
+        InventoryDocument $document,
+        InventoryDocumentLine $line,
+        ?InventoryTransaction $sourceIssue,
+    ): ?Collection {
+        $allocationId = $line->product_snapshot['restoration_allocation_id'] ?? null;
+        if ($allocationId === null || ! is_numeric($allocationId)) {
+            return null;
+        }
+
+        if ($document->document_type !== InventoryDocument::TypeMaintenanceMaterialReturn) {
+            throw new DomainException(__('Only maintenance material returns may use restoration allocation lineage.'));
+        }
+
+        $allocation = InventoryLayerAllocation::query()
+            ->with(['layer', 'layer.receiptTransaction'])
+            ->where('id', (int) $allocationId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($allocation === null) {
+            throw new DomainException(__('The maintenance return references a restoration allocation that does not exist.'));
+        }
+
+        if (! $sourceIssue instanceof InventoryTransaction) {
+            throw new DomainException(__('Restoration allocation requires a validated source issue transaction.'));
+        }
+
+        if ((int) $allocation->issue_transaction_id !== (int) $sourceIssue->getKey()) {
+            throw new DomainException(__('The restoration allocation does not belong to the linked source issue.'));
+        }
+
+        $layer = $allocation->layer;
+        if ($layer === null) {
+            throw new DomainException(__('The restoration allocation is missing its receipt layer lineage.'));
+        }
+
+        if ((int) $layer->company_id !== (int) $document->company_id
+            || (int) $layer->financial_period_id !== (int) $document->financial_period_id
+            || (int) $layer->branch_id !== (int) $document->branch_id
+            || (int) $layer->branch_store_id !== (int) $document->branch_store_id
+            || (int) $layer->product_id !== (int) $line->product_id
+            || $layer->stock_status !== $document->destination_stock_status) {
+            throw new DomainException(__('The restoration allocation layer does not match the return document context.'));
+        }
+
+        $receiptTransaction = $layer->receiptTransaction;
+        if ($receiptTransaction !== null
+            && $receiptTransaction->production_run_id !== null
+            && ($document->production_run_id === null
+                || (int) $receiptTransaction->production_run_id !== (int) $document->production_run_id)) {
+            throw new DomainException(__('The restoration allocation receipt production run does not match the return document.'));
+        }
+
+        $lineLocationId = $line->warehouse_location_id;
+        if (($layer->warehouse_location_id ?? null) !== ($lineLocationId ?? null)) {
+            throw new DomainException(__('The return line location does not match the restoration allocation layer location.'));
+        }
+
+        $lineBatchLot = $line->batch_lot;
+        if (($layer->batch_lot ?? null) !== ($lineBatchLot ?? null)) {
+            throw new DomainException(__('The return line batch does not match the restoration allocation layer batch.'));
+        }
+
+        $lineManufactureDate = $line->manufacture_date?->toDateString();
+        $layerManufactureDate = $layer->manufacture_date?->toDateString();
+        if (($layerManufactureDate ?? null) !== ($lineManufactureDate ?? null)) {
+            throw new DomainException(__('The return line manufacture date does not match the restoration allocation layer.'));
+        }
+
+        $lineExpiryDate = $line->expiry_date?->toDateString();
+        $layerExpiryDate = $layer->expiry_date?->toDateString();
+        if (($layerExpiryDate ?? null) !== ($lineExpiryDate ?? null)) {
+            throw new DomainException(__('The return line expiry date does not match the restoration allocation layer.'));
+        }
+
+        if (bccomp((string) $line->quantity, (string) $allocation->quantity, 8) > 0) {
+            throw new DomainException(__('The return slice quantity exceeds its restoration allocation quantity.'));
+        }
+
+        return collect([$allocation]);
     }
 }

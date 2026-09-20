@@ -187,11 +187,11 @@ return [
         'view' => 'View Grade',
     ],
     'employment_types' => [
-        'title' => 'Job Types',
-        'singular' => 'Job Type',
-        'create' => 'Create Job Type',
-        'edit' => 'Edit Job Type',
-        'view' => 'View Job Type',
+        'title' => 'Employment Types',
+        'singular' => 'Employment Type',
+        'create' => 'Create Employment Type',
+        'edit' => 'Edit Employment Type',
+        'view' => 'View Employment Type',
     ],
     'insurance_offices' => [
         'title' => 'Insurance Offices',
@@ -337,7 +337,6 @@ return [
         'genders' => [
             'male' => 'Male',
             'female' => 'Female',
-            'other' => 'Other',
         ],
         'marital_statuses' => [
             'single' => 'Single',
@@ -371,7 +370,7 @@ return [
             'department_doc_num' => 'Department',
             'section_doc_num' => 'Job Section',
             'job_doc_num' => 'Job',
-            'employment_type_doc_num' => 'Job Type',
+            'employment_type_doc_num' => 'Employment Type',
             'grade_doc_num' => 'Grade',
             'department_name' => 'Department',
             'department' => 'Department',
@@ -444,7 +443,7 @@ return [
             'department_doc_num' => 'Select department',
             'section_doc_num' => 'Select job section',
             'job_doc_num' => 'Select job',
-            'employment_type_doc_num' => 'Select job type',
+            'employment_type_doc_num' => 'Select employment type',
             'grade_doc_num' => 'Select grade',
             'manager_employee_doc_num' => 'Select manager',
             'default_shift_doc_num' => 'Select work shift',

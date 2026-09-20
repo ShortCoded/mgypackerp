@@ -1,0 +1,68 @@
+@extends('layouts.app')
+
+@section('title', __('hr_leave_types.title'))
+
+@section('content')
+    <div class="container-fluid px-0 px-sm-3">
+        @if (session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
+        @if ($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+
+        @if ($canViewDeleted)
+            <div class="btn-group mb-3" role="group">
+                @foreach (['active' => '', 'with' => 'with', 'only' => 'only'] as $label => $value)
+                    <a class="btn btn-sm {{ $trash === $value ? 'btn-primary' : 'btn-outline-primary' }}" href="{{ route('admin.hr.leave-types.index', $value === '' ? [] : ['trash' => $value]) }}">{{ __('hr_leave_types.trash_filters.'.$label) }}</a>
+                @endforeach
+            </div>
+        @endif
+
+        @can('hr.leave_types.create')
+            <div class="card mb-3">
+                <div class="card-header"><h5 class="mb-0">{{ __('hr_leave_types.create') }}</h5></div>
+                <div class="card-body">
+                    <form method="POST" action="{{ route('admin.hr.leave-types.store') }}" class="row g-3">
+                        @csrf
+                        <div class="col-md-3"><label class="form-label">{{ __('hr_leave_types.fields.code') }}</label><input class="form-control" name="code" value="{{ old('code') }}" required></div>
+                        <div class="col-md-5"><label class="form-label">{{ __('hr_leave_types.fields.name') }}</label><input class="form-control" name="name" value="{{ old('name') }}" required></div>
+                        <div class="col-md-4"><label class="form-label">{{ __('hr_leave_types.fields.payment_status') }}</label><select class="form-select" name="payment_status" required>@foreach (['paid', 'unpaid'] as $status)<option value="{{ $status }}" @selected(old('payment_status', 'paid') === $status)>{{ __('hr_leave_types.payment_statuses.'.$status) }}</option>@endforeach</select></div>
+                        <div class="col-md-3"><label class="form-label">{{ __('hr_leave_types.fields.annual_entitlement_days') }}</label><input class="form-control" type="number" min="0" max="366" step="0.001" name="annual_entitlement_days" value="{{ old('annual_entitlement_days') }}"></div>
+                        <div class="col-md-3"><label class="form-label">{{ __('hr_leave_types.fields.carry_forward_max_days') }}</label><input class="form-control" type="number" min="0" max="366" step="0.001" name="carry_forward_max_days" value="{{ old('carry_forward_max_days') }}"></div>
+                        <div class="col-md-3"><label class="form-label">{{ __('hr_leave_types.fields.status') }}</label><select class="form-select" name="status">@foreach (['active', 'inactive'] as $status)<option value="{{ $status }}">{{ __('hr_leave_types.statuses.'.$status) }}</option>@endforeach</select></div>
+                        <div class="col-md-3 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="requires_balance" value="1" id="requires_balance"><label class="form-check-label" for="requires_balance">{{ __('hr_leave_types.fields.requires_balance') }}</label></div></div>
+                        <div class="col-12"><label class="form-label">{{ __('hr_leave_types.fields.notes') }}</label><textarea class="form-control" name="notes" rows="2">{{ old('notes') }}</textarea></div>
+                        <div class="col-12"><button class="btn btn-primary" type="submit">{{ __('common.actions.save') }}</button></div>
+                    </form>
+                </div>
+            </div>
+        @endcan
+
+        <div class="row g-3">
+            @forelse ($leaveTypes as $leaveType)
+                <div class="col-12 col-xl-6">
+                    <div class="card h-100"><div class="card-body">
+                        <div class="d-flex justify-content-between gap-2 mb-2"><div><strong>{{ $leaveType->name }}</strong><div class="small text-muted" dir="ltr">{{ $leaveType->code }}</div></div><div><a href="{{ route('admin.hr.leave-types.show', $leaveType->getKey()) }}">{{ __('hr_leave_types.show') }}</a>@if ($leaveType->trashed())<span class="badge bg-danger ms-2">{{ __('common.trash.trashed') }}</span>@endif</div></div>
+                        @if ($leaveType->trashed())
+                            @can('hr.leave_types.restore')<form method="POST" action="{{ route('admin.hr.leave-types.restore', $leaveType->getKey()) }}">@csrf @method('PATCH')<button class="btn btn-success w-100" type="submit">{{ __('common.actions.restore') }}</button></form>@endcan
+                        @else
+                        <form method="POST" action="{{ route('admin.hr.leave-types.update', $leaveType) }}" class="row g-2">
+                            @csrf @method('PATCH')
+                            <div class="col-4"><input class="form-control" name="code" value="{{ $leaveType->code }}" @cannot('hr.leave_types.update') disabled @endcannot required></div>
+                            <div class="col-8"><input class="form-control" name="name" value="{{ $leaveType->name }}" @cannot('hr.leave_types.update') disabled @endcannot required></div>
+                            <div class="col-6"><select class="form-select" name="payment_status" @cannot('hr.leave_types.update') disabled @endcannot>@foreach (['paid', 'unpaid'] as $status)<option value="{{ $status }}" @selected(data_get($leaveType->metadata, 'payment_status', 'paid') === $status)>{{ __('hr_leave_types.payment_statuses.'.$status) }}</option>@endforeach</select></div>
+                            <div class="col-3"><input class="form-control" type="number" min="0" max="366" step="0.001" name="annual_entitlement_days" value="{{ data_get($leaveType->metadata, 'annual_entitlement_days') }}" @cannot('hr.leave_types.update') disabled @endcannot></div>
+                            <div class="col-3"><input class="form-control" type="number" min="0" max="366" step="0.001" name="carry_forward_max_days" value="{{ data_get($leaveType->metadata, 'carry_forward_max_days') }}" @cannot('hr.leave_types.update') disabled @endcannot></div>
+                            <div class="col-5"><select class="form-select" name="status" @cannot('hr.leave_types.update') disabled @endcannot>@foreach (['active', 'inactive'] as $status)<option value="{{ $status }}" @selected($leaveType->status === $status)>{{ __('hr_leave_types.statuses.'.$status) }}</option>@endforeach</select></div>
+                            <div class="col-7 d-flex align-items-center"><div class="form-check"><input class="form-check-input" type="checkbox" name="requires_balance" value="1" id="requires_balance_{{ $leaveType->getKey() }}" @checked($leaveType->requiresBalance()) @cannot('hr.leave_types.update') disabled @endcannot><label class="form-check-label" for="requires_balance_{{ $leaveType->getKey() }}">{{ __('hr_leave_types.fields.requires_balance') }}</label></div></div>
+                            <div class="col-12"><textarea class="form-control" name="notes" rows="2" @cannot('hr.leave_types.update') disabled @endcannot>{{ $leaveType->notes }}</textarea></div>
+                            @can('hr.leave_types.update')<div class="col-6"><button class="btn btn-primary w-100" type="submit">{{ __('common.actions.save') }}</button></div>@endcan
+                        </form>
+                        @can('hr.leave_types.delete')<form method="POST" action="{{ route('admin.hr.leave-types.destroy', $leaveType) }}" class="mt-2">@csrf @method('DELETE')<button class="btn btn-outline-danger w-100" type="submit">{{ __('common.actions.delete') }}</button></form>@endcan
+                        @endif
+                    </div></div>
+                </div>
+            @empty
+                <div class="col-12"><div class="alert alert-info">{{ __('hr_leave_types.messages.empty') }}</div></div>
+            @endforelse
+        </div>
+        <div class="mt-3">{{ $leaveTypes->links() }}</div>
+    </div>
+@endsection

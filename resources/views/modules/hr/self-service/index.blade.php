@@ -79,6 +79,20 @@
         @endunless
 
         @if ($attendance['linked'])
+            <section class="card mb-3" id="employee-payslips">
+                <div class="card-header"><h5 class="mb-0">{{ __('hr_payroll_reports.payslip.my_payslips') }}</h5></div>
+                <div class="list-group list-group-flush">
+                    @forelse ($payslips as $payslip)
+                        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ route('employee.hr.payslips.show', $payslip->id) }}">
+                            <span dir="ltr">{{ $payslip->period_start }} — {{ $payslip->period_end }}</span>
+                            <strong dir="ltr">{{ number_format((float) $payslip->net_amount, 2) }}</strong>
+                        </a>
+                    @empty
+                        <div class="list-group-item text-muted">{{ __('hr_payroll_reports.payslip.no_payslips') }}</div>
+                    @endforelse
+                </div>
+            </section>
+
             <section class="card mb-3" id="employee-requests">
                 <div class="card-header"><h5 class="mb-0">{{ __('hr_requests.self_service.new_request') }}</h5></div>
                 <div class="card-body">
@@ -98,7 +112,28 @@
                         <div class="col-12 col-md-6 js-request-field" data-types="overtime"><label class="form-label" for="requested_minutes">{{ __('hr_requests.labels.minutes') }}</label><x-forms.input class="form-control form-control-lg" id="requested_minutes" name="requested_minutes" type="number" min="1" max="1440" value="{{ old('requested_minutes') }}" /></div>
                         <div class="col-12 col-md-6 js-request-field" data-types="salary_advance"><label class="form-label" for="amount">{{ __('hr_requests.labels.amount') }}</label><x-forms.input class="form-control form-control-lg" id="amount" name="amount" type="number" min="0" step="0.01" value="{{ old('amount') }}" /></div>
                         <div class="col-12 col-md-6 js-request-field" data-types="salary_advance"><label class="form-label" for="currency_doc_num">{{ __('hr_requests.labels.currency') }}</label><x-forms.select class="form-select form-select-lg" id="currency_doc_num" name="currency_doc_num"><option value="">{{ __('hr_requests.placeholders.currency') }}</option>@foreach ($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(old('currency_doc_num') === $currency->doc_num)>{{ $currency->code }} / {{ $currency->name }}</option>@endforeach</x-forms.select></div>
-                        <div class="col-12 col-md-6 js-request-field" data-types="leave"><label class="form-label" for="leave_type">{{ __('hr_requests.labels.leave_type') }}</label><x-forms.input class="form-control form-control-lg" id="leave_type" name="payload[leave_type]" value="{{ old('payload.leave_type') }}" /></div>
+                        <div class="col-12 col-md-6 js-request-field" data-types="leave">
+                            <label class="form-label" for="leave_type">{{ __('hr_requests.labels.leave_type') }}</label>
+                            <x-forms.select class="form-select form-select-lg" id="leave_type" name="payload[leave_type]">
+                                <option value="">{{ __('hr_requests.placeholders.leave_type') }}</option>
+                                @foreach ($leaveTypes as $leaveType)
+                                    <option value="{{ $leaveType['code'] }}" @selected(old('payload.leave_type') === $leaveType['code'])>
+                                        {{ $leaveType['name'] }}
+                                    </option>
+                                @endforeach
+                            </x-forms.select>
+                            @if ($leaveTypes !== [])
+                                <div class="small text-muted mt-1">
+                                    @foreach ($leaveTypes as $leaveType)
+                                        @if ($leaveType['requires_balance'])
+                                            @foreach ($leaveType['balances'] as $balance)
+                                                <span class="d-block">{{ $leaveType['name'] }} — {{ __('hr_requests.balance.year') }} {{ $balance['year'] }}: {{ __('hr_requests.balance.current') }} {{ number_format($balance['current'], 2) }}, {{ __('hr_requests.balance.pending') }} {{ number_format($balance['pending'], 2) }}, {{ __('hr_requests.balance.available') }} {{ number_format($balance['available'], 2) }}</span>
+                                            @endforeach
+                                        @endif
+                                    @endforeach
+                                </div>
+                            @endif
+                        </div>
                         <div class="col-12 col-md-6 js-request-field" data-types="attendance_adjustment"><label class="form-label" for="requested_check_in">{{ __('hr_requests.labels.requested_check_in') }}</label><x-forms.date-input class="form-control-lg" id="requested_check_in" name="payload[requested_check_in]" :value="old('payload.requested_check_in')" enable-time /></div>
                         <div class="col-12 col-md-6 js-request-field" data-types="attendance_adjustment"><label class="form-label" for="requested_check_out">{{ __('hr_requests.labels.requested_check_out') }}</label><x-forms.date-input class="form-control-lg" id="requested_check_out" name="payload[requested_check_out]" :value="old('payload.requested_check_out')" enable-time /></div>
                         <div class="col-12 col-md-6 js-request-field" data-types="device_asset"><label class="form-label" for="asset_type">{{ __('hr_requests.labels.asset_type') }}</label><x-forms.input class="form-control form-control-lg" id="asset_type" name="payload[asset_type]" value="{{ old('payload.asset_type') }}" /></div>

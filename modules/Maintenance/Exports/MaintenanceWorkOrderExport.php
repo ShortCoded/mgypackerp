@@ -8,6 +8,7 @@ use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Maatwebsite\Excel\Concerns\WithTitle;
+use Modules\Maintenance\Models\MaintenanceWorkOrder;
 
 class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison, WithTitle
 {
@@ -24,6 +25,20 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
                 ->groupBy(fn ($expense) => $expense->currency?->code ?: '—')
                 ->map(fn ($rows, $currency) => $currency.': '.$rows->sum('amount'))
                 ->implode(' | ');
+            $grossMaterialCost = $order->materialRequests
+                ->flatMap(fn ($request) => $request->issueDocument?->lines ?? collect())
+                ->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->total_cost, 4), '0.0000');
+            $returnedMaterialCost = $order->materialRequests
+                ->flatMap(fn ($request) => $request->returnDocument?->lines ?? collect())
+                ->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->total_cost, 4), '0.0000');
+            $netMaterialQuantity = $materialLines->reduce(
+                fn (string $carry, $line): string => bcadd($carry, bcsub((string) $line->issued_quantity, (string) $line->returned_quantity, 8), 8),
+                '0.00000000',
+            );
+            $materialQuantity = fn (string $field): string => $materialLines->reduce(
+                fn (string $carry, $line): string => bcadd($carry, (string) $line->{$field}, 8),
+                '0.00000000',
+            );
 
             $row = [
                 $order->doc_num,
@@ -41,10 +56,15 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
                 $order->test_result ? __('maintenance.test_results.'.$order->test_result) : null,
                 $order->repair_outcome ? __('maintenance.repair_outcomes.'.$order->repair_outcome) : null,
                 $order->external_cost,
-                $materialLines->sum('requested_quantity'),
-                $materialLines->sum('issued_quantity'),
-                $materialLines->sum('consumed_quantity'),
-                $materialLines->sum('returned_quantity'),
+                $materialQuantity('requested_quantity'),
+                $materialQuantity('issued_quantity'),
+                $materialQuantity('consumed_quantity'),
+                $materialQuantity('returned_quantity'),
+                $netMaterialQuantity,
+                $this->materialTrace($order),
+                $grossMaterialCost,
+                $returnedMaterialCost,
+                bcsub($grossMaterialCost, $returnedMaterialCost, 4),
                 $expenseSummary,
                 __('maintenance.statuses.'.$order->status),
                 $order->diagnosis,
@@ -54,7 +74,7 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
             ];
 
             if (! $this->canViewFinancial) {
-                unset($row[14], $row[19]);
+                unset($row[14], $row[21], $row[22], $row[23], $row[24]);
             }
 
             return array_values($row);
@@ -83,6 +103,11 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
             __('maintenance.reports.issued_material_quantity'),
             __('maintenance.reports.consumed_material_quantity'),
             __('maintenance.reports.returned_material_quantity'),
+            __('maintenance.reports.net_material_quantity'),
+            __('maintenance.reports.material_trace'),
+            __('maintenance.reports.gross_material_cost'),
+            __('maintenance.reports.returned_material_cost'),
+            __('maintenance.reports.net_material_cost'),
             __('maintenance.reports.expenses'),
             __('maintenance.fields.status'),
             __('maintenance.fields.diagnosis'),
@@ -92,7 +117,7 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
         ];
 
         if (! $this->canViewFinancial) {
-            unset($headings[14], $headings[19]);
+            unset($headings[14], $headings[21], $headings[22], $headings[23], $headings[24]);
         }
 
         return array_values($headings);
@@ -101,5 +126,44 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
     public function title(): string
     {
         return __('maintenance.reports.sheet_title');
+    }
+
+    private function materialTrace(MaintenanceWorkOrder $order): string
+    {
+        return $order->materialRequests->flatMap(function ($request): array {
+            return $request->lines->map(function ($line) use ($request): string {
+                $issueLine = $request->issueDocument?->lines->firstWhere('source_line_id', $line->getKey());
+                $returnLines = $request->returnDocument?->lines->filter(
+                    fn ($returnLine): bool => (string) ($returnLine->source_line_id ?? null) === (string) $line->getKey(),
+                ) ?? collect();
+                $issued = (string) $line->issued_quantity;
+                $returned = (string) $line->returned_quantity;
+                $gross = $issueLine?->total_cost === null ? '0.0000' : bcadd((string) $issueLine->total_cost, '0', 4);
+                $returnedCost = $returnLines->reduce(
+                    fn (string $carry, $rl): string => $rl->total_cost === null
+                        ? $carry
+                        : bcadd($carry, (string) $rl->total_cost, 4),
+                    '0.0000',
+                );
+                $quantityTrace = __('maintenance.reports.material_line_quantity', [
+                    'product' => $line->product?->doc_num.' — '.$line->product?->name,
+                    'unit' => $line->unit?->name ?? '—',
+                    'issued' => $issued,
+                    'returned' => $returned,
+                    'net' => bcsub($issued, $returned, 8),
+                ]);
+
+                if (! $this->canViewFinancial) {
+                    return $quantityTrace;
+                }
+
+                return $quantityTrace.' | '.__('maintenance.reports.material_line_cost', [
+                    'unit_cost' => $issueLine?->unit_cost ?? '0.00000000',
+                    'gross' => $gross,
+                    'returned' => $returnedCost,
+                    'net' => bcsub($gross, $returnedCost, 4),
+                ]);
+            })->all();
+        })->implode(' || ');
     }
 }

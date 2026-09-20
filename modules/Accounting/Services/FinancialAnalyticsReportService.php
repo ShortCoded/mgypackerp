@@ -7,6 +7,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
@@ -52,6 +53,7 @@ final class FinancialAnalyticsReportService
         private readonly OperatingContextService $context,
         private readonly DateFormatService $dates,
         private readonly FinancialStatementQueryService $statements,
+        private readonly JournalSourceLabelService $sourceLabels,
     ) {}
 
     /** @return list<string> */
@@ -76,6 +78,15 @@ final class FinancialAnalyticsReportService
             $filters[$field] = $this->dates->normalizeForStorage(trim((string) ($filters[$field] ?? '')));
         }
 
+        $branch = filled($filters['branch_doc_num'] ?? null)
+            ? $this->context->allowedBranchForCurrentCompany($request, (string) $filters['branch_doc_num'])
+            : null;
+        if (filled($filters['branch_doc_num'] ?? null) && (! $branch instanceof Branch || $branch->status !== 'active')) {
+            throw ValidationException::withMessages([
+                'branch_doc_num' => __('finance_reports.messages.invalid_branch'),
+            ]);
+        }
+
         return array_filter([
             ...$filters,
             'type' => $type,
@@ -84,7 +95,7 @@ final class FinancialAnalyticsReportService
             'view_mode' => ($filters['view_mode'] ?? 'summary') === 'detail' ? 'detail' : 'summary',
             'company_id' => (int) $context['company_id'],
             'financial_period_id' => (int) $context['financial_period_id'],
-            'branch_id' => $context['branch_id'] ? (int) $context['branch_id'] : null,
+            'branch_id' => $branch instanceof Branch ? (int) $branch->getKey() : ($context['branch_id'] ? (int) $context['branch_id'] : null),
         ], fn (mixed $value): bool => $value !== null && $value !== '');
     }
 
@@ -99,14 +110,36 @@ final class FinancialAnalyticsReportService
     }
 
     /** @return array<string, Collection<int, mixed>> */
-    public function filterOptions(int $companyId): array
+    public function filterOptions(int $companyId, array $selected = []): array
     {
+        $accounts = Account::query()->forCompany($companyId)->active()->where('account_type', Account::TypeExpense)
+            ->orderBy('account_code')->get(['id', 'doc_num', 'account_code', 'name', 'name_en']);
+        $costCenters = CostCenter::query()->forCompany($companyId)->active()
+            ->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']);
+        $branches = $this->context->allowedBranchQueryForCurrentCompany(request())->active()
+            ->orderBy('name')->get(['id', 'doc_num', 'name']);
+        $currencies = Currency::query()->forCompany($companyId)->active()
+            ->orderBy('code')->get(['id', 'doc_num', 'code', 'name']);
+
+        if (filled($selected['account_doc_num'] ?? null)) {
+            $accounts = $accounts->concat(Account::withTrashed()->forCompany($companyId)
+                ->where('doc_num', $selected['account_doc_num'])->get(['id', 'doc_num', 'account_code', 'name', 'name_en']));
+        }
+        if (filled($selected['cost_center_doc_num'] ?? null)) {
+            $costCenters = $costCenters->concat(CostCenter::withTrashed()->forCompany($companyId)
+                ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name']));
+        }
+        if (filled($selected['currency_doc_num'] ?? null)) {
+            $currencies = $currencies->concat(Currency::withTrashed()->forCompany($companyId)
+                ->where('doc_num', $selected['currency_doc_num'])->get(['id', 'doc_num', 'code', 'name']));
+        }
+
         return [
-            'accounts' => Account::query()->withTrashed()->forCompany($companyId)->where('account_type', Account::TypeExpense)->orderBy('account_code')->get(['id', 'doc_num', 'account_code', 'name', 'name_en']),
-            'classifications' => DB::table('account_classifications')->whereIn('id', Account::query()->withTrashed()->forCompany($companyId)->where('account_type', Account::TypeExpense)->whereNotNull('account_classification_id')->select('account_classification_id'))->orderBy('code')->get(['code', 'name', 'name_en']),
-            'cost_centers' => CostCenter::query()->withTrashed()->forCompany($companyId)->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']),
-            'branches' => Branch::query()->where('company_id', $companyId)->orderBy('name')->get(['id', 'doc_num', 'name']),
-            'currencies' => Currency::query()->forCompany($companyId)->orderBy('code')->get(['id', 'doc_num', 'code', 'name']),
+            'accounts' => $accounts->unique('id')->sortBy('account_code')->values(),
+            'classifications' => DB::table('account_classifications')->whereIn('id', Account::query()->forCompany($companyId)->active()->where('account_type', Account::TypeExpense)->whereNotNull('account_classification_id')->select('account_classification_id'))->where('status', 'active')->orderBy('code')->get(['code', 'name', 'name_en']),
+            'cost_centers' => $costCenters->unique('id')->sortBy('cost_center_code')->values(),
+            'branches' => $branches->unique('id')->sortBy('name')->values(),
+            'currencies' => $currencies->unique('id')->sortBy('code')->values(),
         ];
     }
 
@@ -191,8 +224,8 @@ final class FinancialAnalyticsReportService
                 return [
                     '_url' => route('admin.accounting.journal-entries.show', $row->doc_num),
                     'date' => CarbonImmutable::parse($row->entry_date)->toDateString(), 'journal' => $row->doc_num,
-                    'source_document' => trim(implode(' / ', array_filter([$row->source_type, $row->source_doc_num]))),
-                    'source_type' => $row->source_type ?: __('financial_analytics.values.manual'),
+                    'source_document' => $this->sourceLabels->labelWithDocument($row->source_type, $row->source_doc_num),
+                    'source_type' => $this->sourceLabels->label($row->source_type),
                     'account' => Account::codeNameLabelFor($row->account_code, $row->account_name, $row->account_name_en),
                     'classification' => $classification !== '' ? $classification : __('financial_analytics.values.unspecified'),
                     'cost_center' => $costCenter !== '' ? $costCenter : __('financial_analytics.values.unspecified'),
@@ -284,7 +317,7 @@ final class FinancialAnalyticsReportService
     }
 
     /** @param array<string, mixed> $filters
-     * @param list<string> $codes
+     * @param  list<string>  $codes
      * @return array{amount: string, mapped: bool}
      */
     private function classifiedBalance(array $filters, array $codes, string $toDate, string $accountType): array

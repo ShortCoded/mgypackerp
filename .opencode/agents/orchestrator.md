@@ -2,6 +2,7 @@
 description: Classifies risk and coordinates only the approved project agents.
 mode: primary
 model: opencode/muse-spark-1.3-contributor-free#medium
+steps: 12
 permissions:
   - action: subagent
     resource: "*"
@@ -26,45 +27,153 @@ permissions:
     effect: allow
   - action: shell
     resource: "*"
+    effect: ask
+  - action: shell
+    resource: "git status*"
     effect: allow
   - action: shell
-    resource: "git status *"
+    resource: "git diff*"
     effect: allow
   - action: shell
-    resource: "git diff *"
+    resource: "git log*"
     effect: allow
   - action: shell
-    resource: "git log *"
+    resource: "rg*"
     effect: allow
   - action: shell
-    resource: "git push *"
+    resource: "ls*"
+    effect: allow
+  - action: shell
+    resource: "sed -n*"
+    effect: allow
+  - action: shell
+    resource: "head*"
+    effect: allow
+  - action: shell
+    resource: "tail*"
+    effect: allow
+  - action: shell
+    resource: "git push*"
     effect: deny
   - action: shell
     resource: "*deploy*"
     effect: deny
   - action: shell
-    resource: "git reset --hard *"
+    resource: "git reset --hard*"
     effect: deny
   - action: shell
-    resource: "git clean *"
+    resource: "git clean*"
     effect: deny
   - action: shell
-    resource: "rm -rf *"
+    resource: "rm -rf*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:fresh *"
+    resource: "php artisan migrate:fresh*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:reset *"
+    resource: "php artisan migrate:reset*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:refresh *"
+    resource: "php artisan migrate:refresh*"
     effect: deny
   - action: shell
-    resource: "php artisan migrate:rollback *"
+    resource: "php artisan migrate:rollback*"
     effect: deny
   - action: shell
-    resource: "php artisan db:wipe *"
+    resource: "php artisan db:wipe*"
+    effect: deny
+  - action: shell
+    resource: "php artisan migrate*"
+    effect: deny
+  - action: shell
+    resource: "php artisan db:*"
+    effect: deny
+  - action: shell
+    resource: "*--env=production*"
+    effect: deny
+  - action: shell
+    resource: "*--env production*"
+    effect: deny
+  - action: shell
+    resource: "psql*"
+    effect: deny
+  - action: shell
+    resource: "mysql*"
+    effect: deny
+  - action: shell
+    resource: "mysqladmin*"
+    effect: deny
+  - action: shell
+    resource: "dropdb*"
+    effect: deny
+  - action: shell
+    resource: "createdb*"
+    effect: deny
+  - action: shell
+    resource: "pg_restore*"
+    effect: deny
+  - action: shell
+    resource: "*git*push*"
+    effect: deny
+  - action: shell
+    resource: "*git*reset*--hard*"
+    effect: deny
+  - action: shell
+    resource: "*git*clean*"
+    effect: deny
+  - action: shell
+    resource: "*rm -r*"
+    effect: deny
+  - action: shell
+    resource: "*rm --recursive*"
+    effect: deny
+  - action: shell
+    resource: "*rm -*r*"
+    effect: deny
+  - action: shell
+    resource: "*rm -*R*"
+    effect: deny
+  - action: shell
+    resource: "*php artisan migrate*"
+    effect: deny
+  - action: shell
+    resource: "*php artisan db:*"
+    effect: deny
+  - action: shell
+    resource: "*psql*"
+    effect: deny
+  - action: shell
+    resource: "*mysql*"
+    effect: deny
+  - action: shell
+    resource: "*mysqladmin*"
+    effect: deny
+  - action: shell
+    resource: "*dropdb*"
+    effect: deny
+  - action: shell
+    resource: "*createdb*"
+    effect: deny
+  - action: shell
+    resource: "*pg_restore*"
+    effect: deny
+  - action: shell
+    resource: "*;*"
+    effect: deny
+  - action: shell
+    resource: "*|*"
+    effect: deny
+  - action: shell
+    resource: "*&&*"
+    effect: deny
+  - action: shell
+    resource: "*$(*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
+  - action: shell
+    resource: "*<*"
     effect: deny
 ---
 

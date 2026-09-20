@@ -162,11 +162,28 @@ class SalesRequestService
                 throw new DomainException(__('Select at least one sales request line.'));
             }
 
+            $period = $this->periods->resolveOpenForPostingDate(
+                (int) $record->company_id,
+                (string) $data['order_date'],
+                isset($data['financial_period_id']) ? (int) $data['financial_period_id'] : null,
+                lockForUpdate: true,
+            );
+            $preparedLines = $this->priceLists->applyToLines(
+                $preparedLines,
+                (int) $record->company_id,
+                (int) $record->customer_id,
+                (int) $record->currency_id,
+                (string) $data['order_date'],
+                'amount',
+                lockForUpdate: true,
+            );
+
             $order = app(SalesOrderService::class)->create([
                 ...collect($data)->except(['source_request_doc_num', 'lines', 'customer_id', 'currency_id', 'branch_store_id', 'business_employee_id'])->all(),
                 'customer_id' => $record->customer_id,
                 'currency_id' => $record->currency_id,
                 'exchange_rate' => $record->exchange_rate,
+                'financial_period_id' => $period->getKey(),
                 'branch_store_id' => null,
                 'business_employee_id' => $record->business_employee_id ?: ($data['business_employee_id'] ?? null),
                 'sales_request_id' => $record->getKey(),
@@ -215,6 +232,17 @@ class SalesRequestService
             if ($preparedLines === []) {
                 throw new DomainException(__('Select at least one sales request line.'));
             }
+
+            $this->periods->resolveOpenForPostingDate((int) $record->company_id, (string) $data['quotation_date'], lockForUpdate: true);
+            $preparedLines = $this->priceLists->applyToLines(
+                $preparedLines,
+                (int) $record->company_id,
+                (int) $record->customer_id,
+                (int) $record->currency_id,
+                (string) $data['quotation_date'],
+                'quotation',
+                lockForUpdate: true,
+            );
 
             $quotation = app(QuotationService::class)->create([
                 ...collect($data)->except(['source_request_doc_num', 'sales_person_doc_num', 'customer_doc_num', 'currency_doc_num', 'lines'])->all(),
@@ -265,6 +293,7 @@ class SalesRequestService
             if ($selection === [] || count(array_unique(array_column($selection, 'public_id'))) !== count($selection)) {
                 throw new DomainException(__('Select each source line once.'));
             }
+            $period = $this->periods->resolveOpenForPostingDate((int) $record->company_id, now()->toDateString(), lockForUpdate: true);
             $lines = [];
             foreach ($selection as $input) {
                 $line = $record->lines->firstWhere('public_id', $input['public_id']);
@@ -283,8 +312,8 @@ class SalesRequestService
                 (int) $record->currency_id,
                 now()->toDateString(),
                 $target === 'quotation' ? 'quotation' : 'amount',
+                lockForUpdate: true,
             );
-            $period = $this->periods->resolveOpenForPostingDate((int) $record->company_id, now()->toDateString(), lockForUpdate: true);
             if ($target === 'quotation') {
                 $document = app(QuotationService::class)->create(['branch_id' => $record->branch_id, 'sales_request_id' => $record->id, 'business_employee_id' => $record->business_employee_id,
                     'customer_doc_num' => $record->customer->doc_num, 'currency_doc_num' => $record->currency->doc_num,

@@ -193,7 +193,7 @@
                                         name="roles[]"
                                         class="form-select js-select2-ajax"
                                         multiple
-                                        data-url="{{ route('admin.select2.roles') }}"
+                                        data-url="{{ route('admin.select2.roles.assignable') }}"
                                         :data-selected-url="$isEdit && $user ? route('admin.select2.users.roles.selected', $user->doc_num) : null"
                                         data-placeholder="{{ __('users.placeholders.roles') }}"
                                         data-allow-clear="true"

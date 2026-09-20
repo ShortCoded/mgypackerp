@@ -50,7 +50,10 @@ class StoreAccountRequest extends FormRequest
                 'nullable',
                 'string',
                 Rule::exists('accounts', 'doc_num')
-                    ->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at')),
+                    ->where(function ($query) use ($companyId): void {
+                        $query->where('company_id', $companyId);
+                        Account::applyNewSelectionEligibility($query);
+                    }),
             ],
             'classification_code' => [
                 'nullable',

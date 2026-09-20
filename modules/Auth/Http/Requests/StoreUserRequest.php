@@ -6,8 +6,10 @@ use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\PermissionDelegationService;
 use Modules\Core\Services\DocumentNumberService;
 
 class StoreUserRequest extends FormRequest
@@ -105,6 +107,20 @@ class StoreUserRequest extends FormRequest
 
             if ($existingCount !== count($roleDocNums)) {
                 $validator->errors()->add('roles', __('users.validation.roles_invalid'));
+
+                return;
+            }
+
+            $actor = $this->user();
+
+            if (! $actor instanceof User) {
+                return;
+            }
+
+            try {
+                app(PermissionDelegationService::class)->assertCanAssignRoles($actor, $roleDocNums);
+            } catch (ValidationException $exception) {
+                $validator->errors()->add('roles', (string) collect($exception->errors())->flatten()->first());
             }
         });
     }

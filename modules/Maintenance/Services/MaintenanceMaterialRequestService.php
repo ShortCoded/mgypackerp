@@ -3,12 +3,14 @@
 namespace Modules\Maintenance\Services;
 
 use DomainException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
@@ -150,7 +152,7 @@ class MaintenanceMaterialRequestService
         return DB::transaction(function () use ($request): InventoryDocument {
             $locked = $this->lockedRequest($request, [MaintenanceMaterialRequest::StatusApproved]);
             $document = $this->movements->createAndPost(
-                $this->movementHeader($locked, InventoryDocument::TypeAdjustmentOut, __('maintenance.inventory_reasons.issue')),
+                $this->movementHeader($locked, InventoryDocument::TypeMaintenanceMaterialIssue, __('maintenance.inventory_reasons.issue')),
                 $locked->lines->map(fn ($line): array => [
                     'product_id' => $line->product_id,
                     'unit_id' => $line->unit_id,
@@ -180,29 +182,82 @@ class MaintenanceMaterialRequestService
     {
         return DB::transaction(function () use ($request): InventoryDocument {
             $locked = $this->lockedRequest($request, [MaintenanceMaterialRequest::StatusIssued, MaintenanceMaterialRequest::StatusPartiallyReturned]);
-            $lines = $locked->lines->map(function ($line): ?array {
+            $lines = $locked->lines->flatMap(function ($line) use ($locked): array {
                 $remaining = bcsub(
                     bcsub((string) $line->issued_quantity, (string) $line->consumed_quantity, 8),
                     (string) $line->returned_quantity,
                     8,
                 );
 
-                return bccomp($remaining, '0', 8) > 0 ? [
-                    'product_id' => $line->product_id,
-                    'unit_id' => $line->unit_id,
-                    'quantity' => $remaining,
-                    'source_line_type' => $line::class,
-                    'source_line_id' => $line->getKey(),
-                ] : null;
-            })->filter()->values();
+                if (bccomp($remaining, '0', 8) <= 0) {
+                    return [];
+                }
 
-            if ($lines->isEmpty()) {
+                $sourceIssue = $this->sourceIssueTransaction($locked, $line);
+                $allocations = $this->sourceAllocations($sourceIssue);
+
+                if ($allocations->isEmpty()) {
+                    return [[
+                        'product_id' => $line->product_id,
+                        'unit_id' => $line->unit_id,
+                        'quantity' => $remaining,
+                        'source_line_type' => $line::class,
+                        'source_line_id' => $line->getKey(),
+                        'unit_cost' => (string) $sourceIssue->unit_cost,
+                        'product_snapshot' => [
+                            'doc_num' => $line->product?->doc_num,
+                            'name' => $line->product?->name,
+                            'source_issue_transaction_id' => $sourceIssue->getKey(),
+                        ],
+                    ]];
+                }
+
+                $positionLines = [];
+                $allocRemaining = $remaining;
+                foreach ($allocations as $allocation) {
+                    if (bccomp($allocRemaining, '0', 8) <= 0) {
+                        break;
+                    }
+                    $quantity = bccomp((string) $allocation->quantity, $allocRemaining, 8) > 0
+                        ? $allocRemaining
+                        : (string) $allocation->quantity;
+                    $layer = $allocation->layer;
+                    $positionLines[] = [
+                        'product_id' => $line->product_id,
+                        'unit_id' => $line->unit_id,
+                        'quantity' => $quantity,
+                        'warehouse_location_id' => $layer?->warehouse_location_id,
+                        'batch_lot' => $layer?->batch_lot,
+                        'manufacture_date' => $layer?->manufacture_date?->toDateString(),
+                        'expiry_date' => $layer?->expiry_date?->toDateString(),
+                        'source_line_type' => $line::class,
+                        'source_line_id' => $line->getKey(),
+                        'unit_cost' => (string) $sourceIssue->unit_cost,
+                        'product_snapshot' => [
+                            'doc_num' => $line->product?->doc_num,
+                            'name' => $line->product?->name,
+                            'source_issue_transaction_id' => $sourceIssue->getKey(),
+                            'restoration_allocation_id' => $allocation->getKey(),
+                        ],
+                    ];
+                    $allocRemaining = bcsub($allocRemaining, $quantity, 8);
+                }
+
+                if (bccomp($allocRemaining, '0', 8) > 0) {
+                    throw new DomainException(__('The returned quantity exceeds its original issue allocation lineage.'));
+                }
+
+                return $positionLines;
+            });
+
+            $linesArray = $lines->values()->all();
+            if ($linesArray === []) {
                 throw new DomainException(__('maintenance.messages.no_material_to_return'));
             }
 
             $document = $this->movements->createAndPost(
-                $this->movementHeader($locked, InventoryDocument::TypeAdjustmentIn, __('maintenance.inventory_reasons.return')),
-                $lines->all(),
+                $this->movementHeader($locked, InventoryDocument::TypeMaintenanceMaterialReturn, __('maintenance.inventory_reasons.return')),
+                $linesArray,
             );
             foreach ($locked->lines as $line) {
                 $remaining = bcsub(
@@ -297,6 +352,44 @@ class MaintenanceMaterialRequestService
             'source_doc_num' => $request->doc_num,
             'notes' => $request->reason,
         ];
+    }
+
+    private function sourceIssueTransaction(
+        MaintenanceMaterialRequest $request,
+        MaintenanceMaterialRequestLine $line,
+    ): InventoryTransaction {
+        $transaction = InventoryTransaction::query()
+            ->where('source_type', InventoryDocument::class)
+            ->where('source_id', $request->inventory_issue_document_id)
+            ->where('source_line_type', $line::class)
+            ->where('source_line_id', $line->getKey())
+            ->where('product_id', $line->product_id)
+            ->where('branch_store_id', $request->branch_store_id)
+            ->where('quantity_out', '>', 0)
+            ->where('is_reversal', false)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $transaction instanceof InventoryTransaction
+            || $transaction->unit_cost === null
+            || (int) $transaction->company_id !== (int) $request->company_id
+            || (int) $transaction->financial_period_id !== (int) $request->financial_period_id
+            || (int) $transaction->branch_id !== (int) $request->branch_id
+            || $transaction->transaction_type !== InventoryDocument::TypeMaintenanceMaterialIssue) {
+            throw new DomainException(__('The maintenance material return requires its original posted issue transaction.'));
+        }
+
+        return $transaction;
+    }
+
+    /** @return Collection<int, InventoryLayerAllocation> */
+    private function sourceAllocations(InventoryTransaction $sourceIssue): Collection
+    {
+        return InventoryLayerAllocation::query()
+            ->with('layer')
+            ->where('issue_transaction_id', $sourceIssue->getKey())
+            ->orderBy('id')
+            ->get();
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */

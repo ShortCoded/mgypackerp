@@ -7,18 +7,28 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Collection;
+use Maatwebsite\Excel\Excel as ExcelWriter;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Sales\DataTables\PriceListsDataTable;
+use Modules\Sales\Exports\PriceListExport;
 use Modules\Sales\Http\Requests\BulkDeletePriceListsRequest;
 use Modules\Sales\Http\Requests\IncreasePriceListPercentageRequest;
 use Modules\Sales\Http\Requests\StorePriceListRequest;
 use Modules\Sales\Http\Requests\UpdatePriceListRequest;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\PriceList;
+use Modules\Sales\Services\PriceListReportData;
 use Modules\Sales\Services\PriceListService;
+use Spatie\Activitylog\Models\Activity;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class PriceListController extends Controller
 {
@@ -58,6 +68,28 @@ class PriceListController extends Controller
         abort_if($priceList->trashed() && ! $request->user()?->can('price_lists.view_trashed'), 404);
 
         return $this->form($request, $priceList, true);
+    }
+
+    public function print(Request $request, PriceList $priceList): RedirectResponse
+    {
+        $this->authorizeOutput($request, $priceList);
+
+        return redirect()->route('admin.sales.price-lists.pdf', $priceList);
+    }
+
+    public function pdf(Request $request, PriceList $priceList, PriceListReportData $reportData, CompanyPrintIdentityService $printIdentity, ReportPdfService $pdf): Response
+    {
+        return $this->pdfResponse($request, $priceList, $reportData, $printIdentity, $pdf);
+    }
+
+    public function exportXlsx(Request $request, PriceList $priceList, PriceListReportData $reportData): BinaryFileResponse
+    {
+        return $this->export($request, $priceList, $reportData, false);
+    }
+
+    public function exportCsv(Request $request, PriceList $priceList, PriceListReportData $reportData): BinaryFileResponse
+    {
+        return $this->export($request, $priceList, $reportData, true);
     }
 
     public function edit(Request $request, PriceList $priceList): View
@@ -109,6 +141,35 @@ class PriceListController extends Controller
         return response()->json(['success' => true, 'message' => __('price_lists.messages.restored')]);
     }
 
+    public function history(Request $request, PriceList $priceList): View
+    {
+        $this->authorizeOutput($request, $priceList);
+
+        $activity = $this->getPriceListActivity($priceList);
+
+        return view('modules.sales.price-lists.history', [
+            'record' => $priceList,
+            'activity' => $activity,
+            'breadcrumbs' => [...$this->breadcrumbs->forMenuRoute('admin.sales.price-lists.index'), [
+                'label' => __('price_lists.history'),
+                'active' => true,
+            ]],
+        ]);
+    }
+
+    private function getPriceListActivity(PriceList $priceList): Collection
+    {
+        $log = Activity::query()
+            ->with('causer')
+            ->where('subject_type', $priceList->getMorphClass())
+            ->where('subject_id', $priceList->getKey())
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        return $log;
+    }
+
     public function clone(Request $request, PriceList $priceList): View
     {
         return $this->form($request, $priceList, clone: true);
@@ -140,15 +201,42 @@ class PriceListController extends Controller
         ]);
     }
 
+    public function review(Request $request, PriceList $priceList): JsonResponse
+    {
+        $record = $this->service->review($priceList, $this->companies->requireCompanyId($request));
+
+        return response()->json([
+            'success' => true,
+            'message' => __('price_lists.messages.reviewed'),
+            'data' => ['reviewed_at' => $record->reviewed_at?->toIso8601String()],
+        ]);
+    }
+
+    public function approve(Request $request, PriceList $priceList): JsonResponse
+    {
+        try {
+            $record = $this->service->approve($priceList, $this->companies->requireCompanyId($request));
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => __('price_lists.messages.approved'),
+            'data' => ['approved_at' => $record->approved_at?->toIso8601String()],
+        ]);
+    }
+
     private function form(Request $request, ?PriceList $record = null, bool $readOnly = false, bool $clone = false): View
     {
         $companyId = $this->companies->requireCompanyId($request);
         abort_if($record && (int) $record->company_id !== $companyId, 404);
-        $record?->load(['customer', 'currency', 'lines.product']);
+        $record?->load(['customer', 'currency', 'lines.product', 'reviewedBy', 'approvedBy']);
         $selectedCustomerDocNum = old('customer_doc_num', $record?->customer?->doc_num);
 
         return view('modules.sales.price-lists.form', [
             'record' => $record, 'readOnly' => $readOnly, 'clone' => $clone,
+            'companyId' => $companyId,
             'selectedCustomers' => Customer::query()->forCompany($companyId)->where('doc_num', $selectedCustomerDocNum)->get(),
             'currencies' => Currency::query()->forCompany($companyId)->active()->orderByDesc('is_main')->orderBy('code')->get(),
             'breadcrumbs' => [...$this->breadcrumbs->forMenuRoute('admin.sales.price-lists.index'), ['label' => $clone ? __('price_lists.clone') : ($record?->doc_num ?? __('price_lists.create')), 'active' => true]],
@@ -190,5 +278,67 @@ class PriceListController extends Controller
         };
 
         abort_if($permission !== null && ! $request->user()?->can($permission), 403);
+    }
+
+    private function authorizeOutput(Request $request, PriceList $priceList): void
+    {
+        abort_unless((int) $priceList->company_id === $this->companies->requireCompanyId($request), 404);
+        abort_if($priceList->trashed() && ! $request->user()?->can('price_lists.view_trashed'), 404);
+    }
+
+    private function pdfResponse(
+        Request $request,
+        PriceList $priceList,
+        PriceListReportData $reportData,
+        CompanyPrintIdentityService $printIdentity,
+        ReportPdfService $pdf,
+    ): Response {
+        $this->authorizeOutput($request, $priceList);
+        $report = $reportData->build($priceList);
+
+        return $pdf->stream('reports.sales.price-list', [
+            'title' => __('price_lists.print_title'),
+            'documentHeaderTitle' => __('price_lists.print_title'),
+            'printIdentityPolicy' => 'report',
+            'companyPrintIdentity' => $printIdentity->forCompany($priceList->company),
+            'record' => $priceList,
+            'report' => $report,
+        ], str('price-list-'.$priceList->doc_num)->slug().'.pdf', 'L');
+    }
+
+    private function export(Request $request, PriceList $priceList, PriceListReportData $reportData, bool $forCsv): BinaryFileResponse
+    {
+        $this->authorizeOutput($request, $priceList);
+        $report = $reportData->build($priceList);
+        $extension = $forCsv ? 'csv' : 'xlsx';
+
+        return Excel::download(
+            new PriceListExport($report, $forCsv),
+            str('price-list-'.$priceList->doc_num)->slug().'.'.$extension,
+            $forCsv ? ExcelWriter::CSV : ExcelWriter::XLSX,
+        );
+    }
+
+    public function select2PriceLists(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->canAny(['price_lists.view', 'inventory.reports.operational']), 403);
+
+        $term = trim((string) $request->input('term', ''));
+        $companyId = $this->companies->requireCompanyId($request);
+        $priceLists = PriceList::query()
+            ->where('company_id', $companyId)
+            ->whereNull('customer_id')
+            ->whereNull('deleted_at')
+            ->when($term !== '', fn ($query) => $query->where('doc_num', 'like', "%{$term}%"))
+            ->whereDate('valid_from', '<=', today())
+            ->orderBy('doc_num')
+            ->limit(100)
+            ->get(['id', 'doc_num']);
+
+        return response()->json($priceLists->map(fn (PriceList $pl) => [
+            'id' => $pl->id,
+            'doc_num' => $pl->doc_num,
+            'text' => $pl->doc_num,
+        ]));
     }
 }

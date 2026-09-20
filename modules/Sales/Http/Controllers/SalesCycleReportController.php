@@ -30,10 +30,12 @@ use Modules\Sales\Exports\SalesCycleReportExport;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\PriceList;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Services\Reports\SalesCostReportService;
 use Modules\Sales\Services\SalesCycleReadService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -42,6 +44,7 @@ class SalesCycleReportController extends Controller
     private const REPORT_TYPES = [
         'financial', 'period', 'customers', 'products', 'invoices', 'receivables',
         'collections', 'returns', 'quotations', 'fulfillment', 'pricing', 'operational',
+        'cost_of_sales',
     ];
 
     public function __construct(private readonly OperatingContextService $context) {}
@@ -164,6 +167,47 @@ class SalesCycleReportController extends Controller
                 ->when($paymentState === 'settled', fn ($builder) => $builder->where('customer_invoices.remaining_amount', '<=', 0));
         };
 
+        /** SAL-005: per-perspective summaries run only for the active report type. Each
+            aggregate reuses the exact filtered base of its displayed table, runs in SQL before
+            any display limit/pagination, and is shared by screen/PDF/XLSX/CSV. Existing
+            displayed columns only; return-analysis inclusion unchanged. All decimals exact-scale
+            via $money/$qty with BC math and no float round-trip. */
+        $money = static fn ($value): string => bcadd((string) ($value ?? 0), '0', 4);
+        $qty = static fn ($value): string => bcadd((string) ($value ?? 0), '0', 8);
+        /** Percentage as a scale-2 display value from exact decimal strings (round half up). */
+        $rate = static function (string $numerator, string $denominator): string {
+            if (bccomp($denominator, '0', 4) <= 0) {
+                return '0.00';
+            }
+
+            return bcadd(bcdiv(bcmul($numerator, '100', 6), $denominator, 4), '0.005', 2);
+        };
+        $needsFinancialSummary = in_array($reportType, ['financial', 'operational'], true);
+        $needsLedgerSummary = in_array($reportType, ['invoices', 'operational'], true);
+        $needsCustomerSummary = in_array($reportType, ['financial', 'customers'], true);
+        $needsProductSummaries = $reportType === 'products';
+        $needsPeriodSummary = $reportType === 'period';
+        $needsOutstandingSummary = in_array($reportType, ['financial', 'receivables'], true);
+        $needsInstallmentRows = in_array($reportType, ['receivables', 'financial', 'collections'], true);
+        $needsInstallmentSummary = $reportType === 'receivables';
+        $needsAging = in_array($reportType, ['receivables', 'financial'], true);
+        $needsCollectionSummary = $reportType === 'collections';
+        $needsUpcoming = $reportType === 'collections';
+        $needsReturnsSummaries = $reportType === 'returns';
+        $financialSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'credit_notes' => '0.0000', 'net_sales' => '0.0000', 'collections' => '0.0000', 'outstanding' => '0.0000', 'overdue_outstanding' => '0.0000', 'collection_rate' => '0.00', 'return_rate' => '0.00'];
+        $ledgerSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'returns_amount' => '0.0000', 'net_sales' => '0.0000', 'collected' => '0.0000', 'outstanding' => '0.0000'];
+        $customerSummary = ['customer_count' => 0, 'invoice_count' => 0, 'sales_value' => '0.0000', 'outstanding' => '0.0000'];
+        $productSummary = ['product_count' => 0, 'sold_quantity' => '0.00000000', 'sales_value' => '0.0000'];
+        $customerProductSummary = ['line_count' => 0, 'sold_quantity' => '0.00000000', 'sales_value' => '0.0000'];
+        $periodSummary = ['invoice_count' => 0, 'sales_value' => '0.0000'];
+        $outstandingSummary = ['invoice_count' => 0, 'total_value' => '0.0000', 'outstanding' => '0.0000'];
+        $installmentSummary = ['schedule_count' => 0, 'outstanding' => '0.0000'];
+        $agingTotals = ['current' => '0.0000', '1_30' => '0.0000', '31_60' => '0.0000', '61_90' => '0.0000', 'over_90' => '0.0000'];
+        $collectionSummary = ['receipt_count' => 0, 'amount' => '0.0000', 'unallocated' => '0.0000'];
+        $upcomingSummary = ['schedule_count' => 0, 'outstanding' => '0.0000'];
+        $returnsSummary = ['return_count' => 0, 'returned_quantity' => '0.00000000', 'saleable_quantity' => '0.00000000', 'rejected_quantity' => '0.00000000'];
+        $returnAnalysisSummary = ['line_count' => 0, 'returned_quantity' => '0.00000000'];
+
         $financialInvoiceQuery = $applyInvoiceFilters(CustomerInvoice::query())
             ->where('customer_invoices.company_id', $companyId)
             ->where('customer_invoices.financial_period_id', $periodId)
@@ -178,27 +222,31 @@ class SalesCycleReportController extends Controller
             ->where('customer_invoices.posting_status', CustomerInvoice::StatusPosted)
             ->when($from, fn ($query) => $query->whereDate('customer_invoices.invoice_date', '>=', $from))
             ->when($to, fn ($query) => $query->whereDate('customer_invoices.invoice_date', '<=', $to));
-        $invoiceTotals = (clone $financialInvoiceQuery)->selectRaw(
-            'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collections, coalesce(sum(remaining_amount), 0) as outstanding'
-        )->first();
-        $creditNotesTotal = (float) (clone $financialCreditQuery)->sum('total_amount');
-        $grossSales = (float) ($invoiceTotals?->gross_sales ?? 0);
-        $collections = (float) ($invoiceTotals?->collections ?? 0);
-        $netSales = $grossSales - $creditNotesTotal;
-        $financialSummary = [
-            'invoice_count' => (int) ($invoiceTotals?->invoice_count ?? 0),
-            'gross_sales' => $grossSales,
-            'credit_notes' => $creditNotesTotal,
-            'net_sales' => $netSales,
-            'collections' => $collections,
-            'outstanding' => (float) ($invoiceTotals?->outstanding ?? 0),
-            'overdue_outstanding' => (float) (clone $financialInvoiceQuery)
+        if ($needsFinancialSummary) {
+            $invoiceTotals = (clone $financialInvoiceQuery)->reorder()->selectRaw(
+                'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collections, coalesce(sum(remaining_amount), 0) as outstanding'
+            )->first();
+            $creditNotesRow = (clone $financialCreditQuery)->reorder()->selectRaw('coalesce(sum(total_amount), 0) as credit_notes_total')->first();
+            $overdueRow = (clone $financialInvoiceQuery)->reorder()
                 ->where('customer_invoices.remaining_amount', '>', 0)
                 ->whereDate('customer_invoices.due_date', '<', today())
-                ->sum('customer_invoices.remaining_amount'),
-            'collection_rate' => $netSales > 0 ? round(($collections / $netSales) * 100, 2) : 0,
-            'return_rate' => $grossSales > 0 ? round(($creditNotesTotal / $grossSales) * 100, 2) : 0,
-        ];
+                ->selectRaw('coalesce(sum(customer_invoices.remaining_amount), 0) as overdue_outstanding')->first();
+            $grossSales = $money($invoiceTotals?->gross_sales);
+            $creditNotesTotal = $money($creditNotesRow?->credit_notes_total);
+            $collections = $money($invoiceTotals?->collections);
+            $netSales = bcsub($grossSales, $creditNotesTotal, 4);
+            $financialSummary = [
+                'invoice_count' => (int) ($invoiceTotals?->invoice_count ?? 0),
+                'gross_sales' => $grossSales,
+                'credit_notes' => $creditNotesTotal,
+                'net_sales' => $netSales,
+                'collections' => $collections,
+                'outstanding' => $money($invoiceTotals?->outstanding),
+                'overdue_outstanding' => $money($overdueRow?->overdue_outstanding),
+                'collection_rate' => $rate($collections, $netSales),
+                'return_rate' => $rate($creditNotesTotal, $grossSales),
+            ];
+        }
 
         $quotations = Quotation::query()->with(['customer', 'currentRevision'])
             ->where('company_id', $companyId)->where('currency_id', $currencyId)
@@ -272,15 +320,30 @@ class SalesCycleReportController extends Controller
             ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
             ->groupBy('invoice_date')->selectRaw('invoice_date, count(*) as invoice_count, sum(total_amount) as sales_value')->orderBy('invoice_date')->get();
 
-        $installments = $applyInvoiceFilters(DB::table('customer_invoice_payment_schedules')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_payment_schedules.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
-            ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)->where('customer_invoices.posting_status', 'posted')
-            ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount')
-            ->selectRaw('customer_invoices.doc_num, customers.name, customer_invoice_payment_schedules.due_date, customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount as outstanding')
-            ->orderBy('customer_invoice_payment_schedules.due_date')->get();
+        $installments = $needsInstallmentRows
+            ? $applyInvoiceFilters(DB::table('customer_invoice_payment_schedules')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_payment_schedules.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
+                ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)->where('customer_invoices.posting_status', 'posted')
+                ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount')
+                ->selectRaw('customer_invoices.doc_num, customers.name, customer_invoice_payment_schedules.due_date, customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount as outstanding')
+                ->orderBy('customer_invoice_payment_schedules.due_date')->get()
+            : collect();
         $invoiceOutstanding = $applyInvoiceFilters(CustomerInvoice::query()->with('customer'))->where('company_id', $companyId)->where('financial_period_id', $periodId)
             ->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')->where('remaining_amount', '>', 0)
             ->orderBy('due_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
-        $upcomingCollections = $installments->filter(fn (object $row): bool => Carbon::parse($row->due_date)->isSameDay(today()) || Carbon::parse($row->due_date)->isFuture())->take(100);
+        $upcomingFull = $needsUpcoming
+            ? $installments->filter(fn (object $row): bool => Carbon::parse($row->due_date)->isSameDay(today()) || Carbon::parse($row->due_date)->isFuture())
+            : collect();
+        $upcomingOutstanding = '0.0000';
+        foreach ($upcomingFull as $upcomingRow) {
+            $upcomingOutstanding = bcadd($upcomingOutstanding, (string) $upcomingRow->outstanding, 4);
+        }
+        if ($needsUpcoming) {
+            $upcomingSummary = [
+                'schedule_count' => $upcomingFull->count(),
+                'outstanding' => $upcomingOutstanding,
+            ];
+        }
+        $upcomingCollections = $upcomingFull->take(100);
         $customerReceipts = CustomerReceipt::query()
             ->with(['customer', 'receivedByEmployee', 'currency', 'cashVoucher', 'cheque', 'bankAccount', 'allocations.invoice'])
             ->where('company_id', $companyId)
@@ -300,16 +363,25 @@ class SalesCycleReportController extends Controller
             ->latest('id')
             ->when(! $fullReport, fn (Builder $query) => $query->limit(100))
             ->get();
-        $aging = $installments->groupBy('name')->map(function ($rows, string $customer): array {
-            $buckets = ['current' => '0', '1_30' => '0', '31_60' => '0', '61_90' => '0', 'over_90' => '0'];
-            foreach ($rows as $row) {
-                $days = Carbon::parse($row->due_date)->diffInDays(today(), false);
-                $bucket = $days <= 0 ? 'current' : ($days <= 30 ? '1_30' : ($days <= 60 ? '31_60' : ($days <= 90 ? '61_90' : 'over_90')));
-                $buckets[$bucket] = bcadd($buckets[$bucket], (string) $row->outstanding, 4);
-            }
+        $aging = $needsAging
+            ? $installments->groupBy('name')->map(function ($rows, string $customer): array {
+                $buckets = ['current' => '0', '1_30' => '0', '31_60' => '0', '61_90' => '0', 'over_90' => '0'];
+                foreach ($rows as $row) {
+                    $days = Carbon::parse($row->due_date)->diffInDays(today(), false);
+                    $bucket = $days <= 0 ? 'current' : ($days <= 30 ? '1_30' : ($days <= 60 ? '31_60' : ($days <= 90 ? '61_90' : 'over_90')));
+                    $buckets[$bucket] = bcadd($buckets[$bucket], (string) $row->outstanding, 4);
+                }
 
-            return ['customer' => $customer, ...$buckets];
-        })->values();
+                return ['customer' => $customer, ...$buckets];
+            })->values()
+            : collect();
+        if ($needsAging) {
+            foreach ($aging as $agingRow) {
+                foreach (['current', '1_30', '31_60', '61_90', 'over_90'] as $bucket) {
+                    $agingTotals[$bucket] = bcadd($agingTotals[$bucket], (string) $agingRow[$bucket], 4);
+                }
+            }
+        }
 
         $returns = SalesReturn::query()->join('sales_return_lines', 'sales_return_lines.sales_return_id', '=', 'sales_returns.id')->join('customers', 'customers.id', '=', 'sales_returns.customer_id')
             ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)->where(function ($query) use ($currencyId): void {
@@ -344,12 +416,208 @@ class SalesCycleReportController extends Controller
             ->groupBy('customers.doc_num', 'customers.name', 'products.doc_num', 'products.name', 'sales_returns.reason_code', 'sales_return_lines.quality_disposition')
             ->selectRaw('customers.doc_num as customer_doc_num, customers.name as customer_name, products.doc_num as product_doc_num, products.name as product_name, sales_returns.reason_code, sales_return_lines.quality_disposition, sum(sales_return_lines.quantity) as returned_quantity')->orderByDesc('returned_quantity')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
+        $customerSummaryRow = $needsCustomerSummary ? $applyInvoiceFilters(CustomerInvoice::query())
+            ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
+            ->where('customer_invoices.document_type', CustomerInvoice::TypeInvoice)->where('customer_invoices.posting_status', 'posted')
+            ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
+            ->reorder()->selectRaw('count(distinct customer_invoices.customer_id) as customer_count, count(*) as invoice_count, coalesce(sum(customer_invoices.total_amount), 0) as sales_value, coalesce(sum(customer_invoices.remaining_amount), 0) as outstanding')->first()
+            : null;
+        $customerSummary = [
+            'customer_count' => (int) ($customerSummaryRow?->customer_count ?? 0),
+            'invoice_count' => (int) ($customerSummaryRow?->invoice_count ?? 0),
+            'sales_value' => $money($customerSummaryRow?->sales_value),
+            'outstanding' => $money($customerSummaryRow?->outstanding),
+        ];
+
+        $productSummaryRow = $needsProductSummaries ? $applyInvoiceFilters(DB::table('customer_invoice_lines')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_lines.customer_invoice_id')->join('products', 'products.id', '=', 'customer_invoice_lines.product_id'))
+            ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
+            ->where('customer_invoices.document_type', CustomerInvoice::TypeInvoice)->where('customer_invoices.posting_status', 'posted')->when($productId, fn ($query) => $query->where('customer_invoice_lines.product_id', $productId))
+            ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
+            ->reorder()->selectRaw('count(distinct customer_invoice_lines.product_id) as product_count, coalesce(sum(customer_invoice_lines.quantity), 0) as sold_quantity, coalesce(sum(customer_invoice_lines.line_total), 0) as sales_value')->first()
+            : null;
+        $productSummary = [
+            'product_count' => (int) ($productSummaryRow?->product_count ?? 0),
+            'sold_quantity' => $qty($productSummaryRow?->sold_quantity),
+            'sales_value' => $money($productSummaryRow?->sales_value),
+        ];
+
+        $customerProductSummaryRow = $needsProductSummaries ? $applyInvoiceFilters(DB::table('customer_invoice_lines')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_lines.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id')->join('products', 'products.id', '=', 'customer_invoice_lines.product_id'))
+            ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
+            ->where('customer_invoices.document_type', CustomerInvoice::TypeInvoice)->where('customer_invoices.posting_status', 'posted')->when($productId, fn ($query) => $query->where('customer_invoice_lines.product_id', $productId))
+            ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
+            ->reorder()->selectRaw('count(*) as line_count, coalesce(sum(customer_invoice_lines.quantity), 0) as sold_quantity, coalesce(sum(customer_invoice_lines.line_total), 0) as sales_value')->first()
+            : null;
+        $customerProductSummary = [
+            'line_count' => (int) ($customerProductSummaryRow?->line_count ?? 0),
+            'sold_quantity' => $qty($customerProductSummaryRow?->sold_quantity),
+            'sales_value' => $money($customerProductSummaryRow?->sales_value),
+        ];
+
+        $periodSummaryRow = $needsPeriodSummary ? $applyInvoiceFilters(CustomerInvoice::query())->where('company_id', $companyId)->where('financial_period_id', $periodId)
+            ->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')
+            ->when($from, fn ($query) => $query->whereDate('invoice_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('invoice_date', '<=', $to))
+            ->reorder()->selectRaw('count(*) as invoice_count, coalesce(sum(total_amount), 0) as sales_value')->first()
+            : null;
+        $periodSummary = [
+            'invoice_count' => (int) ($periodSummaryRow?->invoice_count ?? 0),
+            'sales_value' => $money($periodSummaryRow?->sales_value),
+        ];
+
+        $outstandingSummaryRow = $needsOutstandingSummary ? $applyInvoiceFilters(CustomerInvoice::query())->where('company_id', $companyId)->where('financial_period_id', $periodId)
+            ->where('document_type', CustomerInvoice::TypeInvoice)->where('posting_status', 'posted')->where('remaining_amount', '>', 0)
+            ->reorder()->selectRaw('count(*) as invoice_count, coalesce(sum(total_amount), 0) as total_value, coalesce(sum(remaining_amount), 0) as outstanding')->first()
+            : null;
+        $outstandingSummary = [
+            'invoice_count' => (int) ($outstandingSummaryRow?->invoice_count ?? 0),
+            'total_value' => $money($outstandingSummaryRow?->total_value),
+            'outstanding' => $money($outstandingSummaryRow?->outstanding),
+        ];
+
+        $installmentSummaryRow = $needsInstallmentSummary ? $applyInvoiceFilters(DB::table('customer_invoice_payment_schedules')->join('customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_payment_schedules.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
+            ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)->where('customer_invoices.posting_status', 'posted')
+            ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount')
+            ->reorder()->selectRaw('count(*) as schedule_count, coalesce(sum(customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount), 0) as outstanding')->first()
+            : null;
+        $installmentSummary = [
+            'schedule_count' => (int) ($installmentSummaryRow?->schedule_count ?? 0),
+            'outstanding' => $money($installmentSummaryRow?->outstanding),
+        ];
+
+        $collectionSummaryRow = $needsCollectionSummary ? CustomerReceipt::query()
+            ->where('company_id', $companyId)
+            ->where('financial_period_id', $periodId)
+            ->where('branch_id', $branchId)
+            ->where('currency_id', $currencyId)
+            ->when($customerId, fn (Builder $query) => $query->where('customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn (Builder $query) => $query->whereIn('customer_id', $geographyCustomerIds))
+            ->when($salesPersonId, fn (Builder $query) => $query->whereHas('order', fn (Builder $order) => $order->where('business_employee_id', $salesPersonId)))
+            ->when($orderId, fn (Builder $query) => $query->where(fn (Builder $source) => $source
+                ->where('sales_order_id', $orderId)
+                ->orWhereHas('allocations.invoice', fn (Builder $invoice) => $invoice->where('sales_order_id', $orderId))))
+            ->when($invoiceId, fn (Builder $query) => $query->whereHas('allocations', fn (Builder $allocation) => $allocation->where('customer_invoice_id', $invoiceId)))
+            ->when($from, fn (Builder $query) => $query->whereDate('receipt_date', '>=', $from))
+            ->when($to, fn (Builder $query) => $query->whereDate('receipt_date', '<=', $to))
+            ->reorder()->selectRaw('count(*) as receipt_count, coalesce(sum(amount), 0) as amount, coalesce(sum(unallocated_amount), 0) as unallocated')->first()
+            : null;
+        $collectionSummary = [
+            'receipt_count' => (int) ($collectionSummaryRow?->receipt_count ?? 0),
+            'amount' => $money($collectionSummaryRow?->amount),
+            'unallocated' => $money($collectionSummaryRow?->unallocated),
+        ];
+
+        $returnsSummaryRow = $needsReturnsSummaries ? SalesReturn::query()->join('sales_return_lines', 'sales_return_lines.sales_return_id', '=', 'sales_returns.id')->join('customers', 'customers.id', '=', 'sales_returns.customer_id')
+            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)->where(function ($query) use ($currencyId): void {
+                $query->whereExists(fn ($invoice) => $invoice->selectRaw('1')->from('customer_invoices')->whereColumn('customer_invoices.id', 'sales_returns.customer_invoice_id')->where('customer_invoices.currency_id', $currencyId))
+                    ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
+            })
+            ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('sales_returns.customer_id', $geographyCustomerIds))
+            ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
+            ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
+            ->when($orderId, fn ($query) => $query->where('sales_returns.sales_order_id', $orderId))
+            ->when($invoiceId, fn ($query) => $query->where('sales_returns.customer_invoice_id', $invoiceId))
+            ->when($returnReason, fn ($query) => $query->where('sales_returns.reason_code', $returnReason))
+            ->when($qualityDisposition, fn ($query) => $query->where('sales_return_lines.quality_disposition', 'like', "%{$qualityDisposition}%"))
+            ->when($from, fn ($query) => $query->whereDate('return_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('return_date', '<=', $to))
+            ->reorder()->selectRaw('count(distinct sales_returns.id) as return_count, coalesce(sum(sales_return_lines.quantity), 0) as returned_quantity, coalesce(sum(sales_return_lines.saleable_quantity), 0) as saleable_quantity, coalesce(sum(sales_return_lines.quarantine_quantity + sales_return_lines.rework_quantity + sales_return_lines.scrap_quantity), 0) as rejected_quantity')->first()
+            : null;
+        $returnsSummary = [
+            'return_count' => (int) ($returnsSummaryRow?->return_count ?? 0),
+            'returned_quantity' => $qty($returnsSummaryRow?->returned_quantity),
+            'saleable_quantity' => $qty($returnsSummaryRow?->saleable_quantity),
+            'rejected_quantity' => $qty($returnsSummaryRow?->rejected_quantity),
+        ];
+
+        $returnAnalysisSummaryRow = $needsReturnsSummaries ? DB::table('sales_return_lines')->join('sales_returns', 'sales_returns.id', '=', 'sales_return_lines.sales_return_id')->join('customers', 'customers.id', '=', 'sales_returns.customer_id')->leftJoin('products', 'products.id', '=', 'sales_return_lines.product_id')
+            ->where('sales_returns.company_id', $companyId)->where('sales_returns.financial_period_id', $periodId)->where(function ($query) use ($currencyId): void {
+                $query->whereExists(fn ($invoice) => $invoice->selectRaw('1')->from('customer_invoices')->whereColumn('customer_invoices.id', 'sales_returns.customer_invoice_id')->where('customer_invoices.currency_id', $currencyId))
+                    ->orWhereExists(fn ($order) => $order->selectRaw('1')->from('sales_orders')->whereColumn('sales_orders.id', 'sales_returns.sales_order_id')->where('sales_orders.currency_id', $currencyId));
+            })
+            ->when($customerId, fn ($query) => $query->where('sales_returns.customer_id', $customerId))
+            ->when($geographyCustomerIds !== null, fn ($query) => $query->whereIn('sales_returns.customer_id', $geographyCustomerIds))
+            ->when($productId, fn ($query) => $query->where('sales_return_lines.product_id', $productId))
+            ->when($branchId, fn ($query) => $query->where('sales_returns.branch_id', $branchId))
+            ->when($orderId, fn ($query) => $query->where('sales_returns.sales_order_id', $orderId))
+            ->when($invoiceId, fn ($query) => $query->where('sales_returns.customer_invoice_id', $invoiceId))
+            ->when($returnReason, fn ($query) => $query->where('sales_returns.reason_code', $returnReason))
+            ->when($qualityDisposition, fn ($query) => $query->where('sales_return_lines.quality_disposition', 'like', "%{$qualityDisposition}%"))
+            ->when($from, fn ($query) => $query->whereDate('return_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('return_date', '<=', $to))
+            ->reorder()->selectRaw('count(*) as line_count, coalesce(sum(sales_return_lines.quantity), 0) as returned_quantity')->first()
+            : null;
+        $returnAnalysisSummary = [
+            'line_count' => (int) ($returnAnalysisSummaryRow?->line_count ?? 0),
+            'returned_quantity' => $qty($returnAnalysisSummaryRow?->returned_quantity),
+        ];
+
+        $needsCostOfSalesSummary = $reportType === 'cost_of_sales';
+        $costOfSalesSummary = ['delivery_count' => 0, 'return_count' => 0, 'delivery_cost' => '0.0000', 'return_cost' => '0.0000', 'net_cost' => '0.0000', 'unreconciled_count' => 0];
+        $costOfSalesRows = collect();
+        if ($needsCostOfSalesSummary) {
+            $costReportService = app(SalesCostReportService::class);
+            $costReportResult = $costReportService->report($companyId, $branchId, [
+                'financial_period_id' => $periodId,
+                'customer_id' => $customerId,
+                'product_id' => $productId,
+                'order_id' => $orderId,
+                'invoice_id' => $invoiceId,
+                'from' => $from,
+                'to' => $to,
+            ]);
+            $costOfSalesSummary = $costReportResult->summary;
+            $costOfSalesRows = $costReportResult->rows;
+        }
+
         $readService = app(SalesCycleReadService::class);
         $readFilters = ['customer_id' => $customerId, 'product_id' => $productId, 'category_id' => $categoryId, 'currency_id' => $currencyId,
-            'customer_ids' => $geographyCustomerIds,
+            'customer_ids' => $geographyCustomerIds, 'financial_period_id' => $periodId,
             'branch_store_id' => $warehouseId, 'sales_person_id' => $salesPersonId, 'order_id' => $orderId, 'invoice_id' => $invoiceId,
+            'quotation_id' => $quotationId, 'order_status' => $orderStatus,
+            'has_order_filter' => $hasOrderFilter, 'filtered_order_ids' => $hasOrderFilter ? $filteredOrderIds : [],
             'overdue_state' => $overdueState, 'payment_state' => $paymentState, 'from' => $from, 'to' => $to];
-        $ledgerQuery = $readService->ledger($companyId, $branchId, $readFilters)->withSum(['creditNotes as returns_amount' => fn ($query) => $query->where('posting_status', 'posted')], 'total_amount');
+        $ledgerBaseQuery = $readService->ledger($companyId, $branchId, $readFilters);
+        $ledgerTotals = $needsLedgerSummary ? (clone $ledgerBaseQuery)->reorder()->selectRaw(
+            'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collected, coalesce(sum(remaining_amount), 0) as outstanding'
+        )->first() : null;
+        /** Posting-period semantics: a credit note contributes in its own financial period
+            and invoice date (consistent with $financialCreditQuery), matching only credit notes
+            that pass the same normalized company/branch/currency/customer/product/payment/date
+            filters. Order-derived filtering (warehouse/category/quotation/order/status/overdue)
+            flows through parent ledger membership via original_invoice_id. */
+        $constrainLedgerCreditNote = static function ($query) use ($companyId, $periodId, $branchId, $currencyId, $customerId, $geographyCustomerIds, $productId, $paymentState, $from, $to): void {
+            $query->where('company_id', $companyId)
+                ->where('financial_period_id', $periodId)
+                ->where('branch_id', $branchId)
+                ->where('currency_id', $currencyId)
+                ->where('document_type', CustomerInvoice::TypeCreditNote)
+                ->where('posting_status', CustomerInvoice::StatusPosted)
+                ->when($customerId, fn ($builder) => $builder->where('customer_id', $customerId))
+                ->when($geographyCustomerIds !== null, fn ($builder) => $builder->whereIn('customer_id', $geographyCustomerIds))
+                ->when($productId, fn ($builder) => $builder->whereHas('lines', fn ($lines) => $lines->where('product_id', $productId)))
+                ->when($paymentState === 'outstanding', fn ($builder) => $builder->where('remaining_amount', '>', 0))
+                ->when($paymentState === 'settled', fn ($builder) => $builder->where('remaining_amount', '<=', 0))
+                ->when($from, fn ($builder) => $builder->whereDate('invoice_date', '>=', $from))
+                ->when($to, fn ($builder) => $builder->whereDate('invoice_date', '<=', $to));
+        };
+        $ledgerReturnsRow = $needsLedgerSummary ? CustomerInvoice::query()
+            ->tap($constrainLedgerCreditNote)
+            ->whereIn('original_invoice_id', (clone $ledgerBaseQuery)->reorder()->select('customer_invoices.id'))
+            ->selectRaw('coalesce(sum(total_amount), 0) as returns_total')
+            ->first() : null;
+        if ($needsLedgerSummary) {
+            $ledgerGross = $money($ledgerTotals?->gross_sales);
+            $ledgerReturnsTotal = $money($ledgerReturnsRow?->returns_total);
+            $ledgerSummary = [
+                'invoice_count' => (int) ($ledgerTotals?->invoice_count ?? 0),
+                'gross_sales' => $ledgerGross,
+                'returns_amount' => $ledgerReturnsTotal,
+                'net_sales' => bcsub($ledgerGross, $ledgerReturnsTotal, 4),
+                'collected' => $money($ledgerTotals?->collected),
+                'outstanding' => $money($ledgerTotals?->outstanding),
+            ];
+        }
+        $ledgerQuery = (clone $ledgerBaseQuery)->withSum(['creditNotes as returns_amount' => function ($query) use ($constrainLedgerCreditNote): void {
+            $constrainLedgerCreditNote($query);
+        }], 'total_amount');
         $salesLedger = $fullReport ? $ledgerQuery->get() : $ledgerQuery->paginate(25, ['*'], 'ledger_page')->withQueryString();
 
         $pricingDate = ($to ?? today())->toDateString();
@@ -374,6 +642,7 @@ class SalesCycleReportController extends Controller
                 ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('price_lists as customer_price_lists')
                     ->whereColumn('customer_price_lists.customer_id', 'pricing_customers.id')
                     ->where('customer_price_lists.company_id', $companyId)->where('customer_price_lists.currency_id', $currencyId)
+                    ->tap(fn ($query) => PriceList::applyOperationalPricingEligibility($query, 'customer_price_lists'))
                     ->whereNull('customer_price_lists.deleted_at')->whereDate('customer_price_lists.valid_from', '<=', $pricingDate)
                     ->where(fn ($dates) => $dates->whereNull('customer_price_lists.valid_until')->orWhereDate('customer_price_lists.valid_until', '>=', $pricingDate)))
                 ->select('pricing_customers.doc_num', 'pricing_customers.name')->orderBy('pricing_customers.name')
@@ -391,6 +660,7 @@ class SalesCycleReportController extends Controller
                     $query->selectRaw('1')->from('price_list_lines as coverage_lines')->join('price_lists as coverage_lists', 'coverage_lists.id', '=', 'coverage_lines.price_list_id')
                         ->whereColumn('coverage_lines.product_id', 'coverage_products.id')->where('coverage_lists.company_id', $companyId)
                         ->where('coverage_lists.currency_id', $currencyId)->whereNull('coverage_lists.deleted_at')
+                        ->tap(fn ($query) => PriceList::applyOperationalPricingEligibility($query, 'coverage_lists'))
                         ->where(fn ($scope) => $scope->whereColumn('coverage_lists.customer_id', 'coverage_customers.id')->orWhereNull('coverage_lists.customer_id'))
                         ->whereDate('coverage_lists.valid_from', '<=', $pricingDate)
                         ->where(fn ($dates) => $dates->whereNull('coverage_lists.valid_until')->orWhereDate('coverage_lists.valid_until', '>=', $pricingDate));
@@ -413,7 +683,7 @@ class SalesCycleReportController extends Controller
             'area' => $areaId && $areaId > 0 ? HrArea::query()->find($areaId) : null,
         ];
 
-        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'ledgerSummary', 'customerSummary', 'productSummary', 'customerProductSummary', 'periodSummary', 'outstandingSummary', 'installmentSummary', 'agingTotals', 'collectionSummary', 'upcomingSummary', 'returnsSummary', 'returnAnalysisSummary', 'costOfSalesSummary', 'costOfSalesRows', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response
@@ -461,6 +731,7 @@ class SalesCycleReportController extends Controller
         $query->selectRaw('1')->from('price_list_lines as effective_lines')->join('price_lists as effective_lists', 'effective_lists.id', '=', 'effective_lines.price_list_id')
             ->whereColumn('effective_lines.product_id', $productColumn)->where('effective_lists.company_id', $companyId)
             ->where('effective_lists.currency_id', $currencyId)->where('effective_lists.customer_id', $customerId)
+            ->tap(fn ($query) => PriceList::applyOperationalPricingEligibility($query, 'effective_lists'))
             ->whereNull('effective_lists.deleted_at')->whereDate('effective_lists.valid_from', '<=', $date)
             ->where(fn ($dates) => $dates->whereNull('effective_lists.valid_until')->orWhereDate('effective_lists.valid_until', '>=', $date));
     }

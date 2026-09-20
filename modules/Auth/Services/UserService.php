@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use Modules\Auth\Exceptions\UserDeleteBlockedException;
 use Modules\Auth\Exceptions\UserRestoreBlockedException;
 use Modules\Auth\Models\Role;
@@ -17,6 +18,8 @@ class UserService
 {
     public function __construct(
         private readonly DocumentNumberService $documentNumberService,
+        private readonly PermissionDelegationService $permissionDelegation,
+        private readonly RoleService $roles,
         private readonly CrudAuditService $crudAudit,
     ) {}
 
@@ -26,6 +29,18 @@ class UserService
     public function create(array $data): User
     {
         return DB::transaction(function () use ($data): User {
+            if (array_key_exists('roles', $data)) {
+                $roleIds = Role::query()->whereIn('doc_num', $data['roles'])->pluck('id')->all();
+                $actor = $this->permissionDelegation->lockMutationState(
+                    $this->authenticatedActor(),
+                    additionalRoleIds: $roleIds,
+                );
+                $this->permissionDelegation->assertCanAssignRoles(
+                    $actor,
+                    $data['roles'],
+                );
+            }
+
             $documentNumber = array_key_exists('doc_number', $data)
                 ? $this->manualDocumentNumber((int) $data['doc_number'])
                 : $this->documentNumberService->next('users', User::class);
@@ -60,6 +75,27 @@ class UserService
     public function update(User $user, array $data): array
     {
         return DB::transaction(function () use ($user, $data): array {
+            if (array_key_exists('roles', $data)) {
+                $currentRoleDocNums = $user->roles()->pluck('roles.doc_num')->filter()->values()->all();
+                $roleIds = Role::query()
+                    ->whereIn('doc_num', array_values(array_unique([...$data['roles'], ...$currentRoleDocNums])))
+                    ->pluck('id')
+                    ->all();
+                $actor = $this->permissionDelegation->lockMutationState(
+                    $this->authenticatedActor(),
+                    $user,
+                    $roleIds,
+                );
+                $user->refresh();
+                $currentRoleDocNums = $user->roles()->pluck('roles.doc_num')->filter()->values()->all();
+                $this->ensureProtectedRolesAreNotRemoved($currentRoleDocNums, $data['roles']);
+                $this->permissionDelegation->assertCanAssignRoles(
+                    $actor,
+                    $data['roles'],
+                    $currentRoleDocNums,
+                );
+            }
+
             $oldDocNumber = $user->doc_number === null ? null : (int) $user->doc_number;
             $oldDocNum = $user->doc_num;
             $oldUserName = $user->name;
@@ -233,6 +269,43 @@ class UserService
 
         $user->syncRoles($roles);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+    }
+
+    private function authenticatedActor(): User
+    {
+        $actor = auth()->user();
+
+        if (! $actor instanceof User) {
+            throw ValidationException::withMessages([
+                'roles' => [__('users.validation.roles_not_delegable')],
+            ]);
+        }
+
+        return $actor;
+    }
+
+    /**
+     * @param  list<string>  $currentRoleDocNums
+     * @param  list<string>  $requestedRoleDocNums
+     */
+    private function ensureProtectedRolesAreNotRemoved(array $currentRoleDocNums, array $requestedRoleDocNums): void
+    {
+        $removedRoleDocNums = array_values(array_diff($currentRoleDocNums, $requestedRoleDocNums));
+
+        if ($removedRoleDocNums === []) {
+            return;
+        }
+
+        $hasProtectedRemoval = Role::query()
+            ->whereIn('doc_num', $removedRoleDocNums)
+            ->get()
+            ->contains(fn (Role $role): bool => $this->roles->isProtectedRole($role));
+
+        if ($hasProtectedRemoval) {
+            throw ValidationException::withMessages([
+                'roles' => [__('users.validation.roles_not_delegable')],
+            ]);
+        }
     }
 
     private function ensureUserCanBeDeleted(User $user, bool $single = false): void

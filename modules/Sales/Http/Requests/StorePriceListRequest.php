@@ -31,6 +31,7 @@ class StorePriceListRequest extends FormRequest
             }
         }
         $data['customer_doc_num'] = filled($data['customer_doc_num'] ?? null) ? trim((string) $data['customer_doc_num']) : null;
+        $data['is_print_only'] = array_key_exists('is_print_only', $data) ? $data['is_print_only'] : false;
         $data['notes'] = filled($data['notes'] ?? null) ? trim((string) $data['notes']) : null;
         $data['lines'] = collect($data['lines'] ?? [])->filter(fn (mixed $line): bool => is_array($line) && filled($line['product_doc_num'] ?? null))->values()->all();
         $this->replace($data);
@@ -43,6 +44,7 @@ class StorePriceListRequest extends FormRequest
             'customer_doc_num' => ['nullable', 'string'], 'currency_doc_num' => ['required', 'string'],
             'price_list_date' => ['required', 'date'], 'valid_from' => ['required', 'date'],
             'valid_until' => ['nullable', 'date', 'after_or_equal:valid_from'], 'notes' => ['nullable', 'string', 'max:4000'],
+            'is_print_only' => ['required', 'boolean'],
             'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new'])],
             'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string', 'distinct'],
             'lines.*.unit_price' => ['required', 'numeric', 'gt:0'],

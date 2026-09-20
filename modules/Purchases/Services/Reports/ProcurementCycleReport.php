@@ -430,9 +430,18 @@ class ProcurementCycleReport
         }
 
         $currencyCodes = Currency::query()->where('company_id', $companyId)->pluck('code', 'doc_num');
-        $rows = $rows->map(fn (array $row): array => [...$row,
-            'currency_doc_num' => $currencyCodes->has($row['currency']) ? $row['currency'] : $currencyCodes->search($row['currency'], true),
-            'currency' => $currencyCodes[$row['currency']] ?? $row['currency']]);
+        $rows = $rows->map(function (array $row) use ($currencyCodes): array {
+            $currency = $row['currency'] ?? null;
+
+            if (! is_string($currency) || $currency === '') {
+                return [...$row, 'currency_doc_num' => null, 'currency' => null];
+            }
+
+            return [...$row,
+                'currency_doc_num' => $currencyCodes->has($currency) ? $currency : $currencyCodes->search($currency, true),
+                'currency' => $currencyCodes[$currency] ?? $currency,
+            ];
+        });
         $rows = $this->applyFilters($rows, $filters);
         $documentTarget = match ($type) {
             self::PurchaseRequests, self::PendingPurchaseRequests, self::RequestedVsOrdered, self::OpenRequirements, self::ProductionAnalysis => ['admin.purchases.purchase-requisitions.show', 'purchases.purchase_requisitions.view'],
@@ -1121,7 +1130,13 @@ class ProcurementCycleReport
     /** @return Collection<int, array<string, mixed>> */
     private function returns(int $companyId, int $periodId): Collection
     {
-        return PurchaseReturnLine::query()->with(['purchaseReturn.supplier', 'purchaseReturn.purchaseOrder', 'purchaseReturn.receipt.branchStore', 'product'])
+        return PurchaseReturnLine::query()->with([
+            'purchaseReturn.supplier',
+            'purchaseReturn.purchaseOrder.currency',
+            'purchaseReturn.purchaseInvoice.currency',
+            'purchaseReturn.receipt.branchStore',
+            'product',
+        ])
             ->whereHas('purchaseReturn', fn ($query) => $query->where('company_id', $companyId)->where('financial_period_id', $periodId))
             ->get()->map(fn (PurchaseReturnLine $line): array => $this->row([
                 'date' => $line->purchaseReturn?->return_date?->toDateString(),
@@ -1132,6 +1147,9 @@ class ProcurementCycleReport
                 'product_doc_num' => $line->product?->doc_num,
                 'product' => $line->product?->name,
                 'purchase_order' => $line->purchaseReturn?->purchaseOrder?->doc_num,
+                'branch_id' => $line->purchaseReturn?->branch_id,
+                'currency' => $line->purchaseReturn?->purchaseInvoice?->currency?->doc_num
+                    ?? $line->purchaseReturn?->purchaseOrder?->currency?->doc_num,
                 'warehouse_uuid' => $line->purchaseReturn?->receipt?->branchStore?->public_uuid,
                 'warehouse' => $line->purchaseReturn?->receipt?->branchStore?->name,
                 'qc_status' => $line->from_quarantine ? 'quarantine_return' : 'usable_stock_return',

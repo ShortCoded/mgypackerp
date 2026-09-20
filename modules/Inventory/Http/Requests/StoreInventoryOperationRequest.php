@@ -18,7 +18,7 @@ class StoreInventoryOperationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['lines.*.quantity']);
+        $this->normalizeNumericInput(['lines.*.quantity', 'lines.*.unit_cost']);
 
         $dates = app(DateFormatService::class);
         $sourceStoreUuid = $this->input('branch_store_uuid');
@@ -119,6 +119,7 @@ class StoreInventoryOperationRequest extends FormRequest
                     ->whereNull('deleted_at')),
             ],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'lines.*.unit_cost' => ['nullable', 'numeric', 'min:0'],
             'lines.*.warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.destination_warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
             'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],

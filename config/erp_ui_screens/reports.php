@@ -1,6 +1,6 @@
 <?php
 
-$screen = static fn (string $domain, string $slug, string $en, string $ar): array => [
+$screen = static fn (string $domain, string $slug, string $en, string $ar, array $extra = []): array => [
     'key' => 'reports_'.$domain.'_'.str_replace('-', '_', $slug),
     'slug' => $domain.'/'.$slug,
     'permission_prefix' => 'reports.'.$domain.'.'.str_replace('-', '_', $slug),
@@ -8,10 +8,18 @@ $screen = static fn (string $domain, string $slug, string $en, string $ar): arra
     'group' => $domain,
     'profile' => 'report',
     'kind' => 'report',
+    'menu_visible' => false,
+    ...$extra,
 ];
 $financeScreen = static fn (string $slug, string $en, string $ar): array => [
     ...$screen('finance', $slug, $en, $ar),
     'shell_enabled' => false,
+    'menu_visible' => true,
+    'classification' => 'WORKING_REAL_SCREEN',
+    'canonical_route' => 'admin.reports.finance.'.$slug.'.index',
+    'subgroup' => 'finance_reports',
+    'group' => 'finance',
+    'menu_title' => ['en' => $en, 'ar' => $ar],
 ];
 
 return [
@@ -51,13 +59,13 @@ return [
         [...$screen('purchases', 'purchase-invoice-details', 'Purchase Invoice Details', 'تفاصيل فواتير المشتريات'), 'menu_visible' => false, 'shell_enabled' => false],
         [...$screen('purchases', 'goods-receipts', 'Goods Receipts', 'استلامات البضاعة'), 'menu_visible' => false, 'shell_enabled' => false],
         [...$screen('purchases', 'purchase-returns', 'Purchase Returns', 'مردودات المشتريات'), 'menu_visible' => false, 'shell_enabled' => false],
-        $screen('costing', 'product-cost', 'Product Cost', 'تكلفة المنتج'),
-        $screen('costing', 'work-order-cost', 'Work Order Cost', 'تكلفة أمر التشغيل'),
-        $screen('costing', 'estimated-vs-actual', 'Estimated vs Actual', 'التقديري مقابل الفعلي'),
-        $screen('costing', 'cost-variance', 'Cost Variance', 'انحراف التكلفة'),
-        $screen('costing', 'profitability', 'Profitability', 'الربحية'),
-        $screen('costing', 'work-in-progress', 'Work in Progress', 'الإنتاج تحت التشغيل'),
-        $screen('costing', 'finished-goods-cost', 'Finished Goods Cost', 'تكلفة الإنتاج التام'),
-        $screen('costing', 'allocation-analysis', 'Allocation Analysis', 'تحليل التحميل'),
+        $screen('costing', 'product-cost', 'Product Cost', 'تكلفة المنتج', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'work-order-cost', 'Work Order Cost', 'تكلفة أمر التشغيل', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'estimated-vs-actual', 'Estimated vs Actual', 'التقديري مقابل الفعلي', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'cost-variance', 'Cost Variance', 'انحراف التكلفة', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'profitability', 'Profitability', 'الربحية', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'work-in-progress', 'Work in Progress', 'الإنتاج تحت التشغيل', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'finished-goods-cost', 'Finished Goods Cost', 'تكلفة الإنتاج التام', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
+        $screen('costing', 'allocation-analysis', 'Allocation Analysis', 'تحليل التحميل', ['classification' => 'WORKING_REAL_SCREEN', 'menu_visible' => true]),
     ],
 ];

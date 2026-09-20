@@ -17,9 +17,9 @@ class HrAttendanceReportService
      * @param  array<string, mixed>  $filters
      * @return LengthAwarePaginator<int, HrAttendanceSession>
      */
-    public function paginate(int $companyId, array $filters, int $perPage = 30): LengthAwarePaginator
+    public function paginate(int $companyId, array $filters, ?array $branchIds, int $perPage = 30): LengthAwarePaginator
     {
-        return $this->sessionQuery($companyId, $filters)
+        return $this->sessionQuery($companyId, $filters, $branchIds)
             ->with([
                 'employee:id,doc_num,full_name',
                 'assignedBranch:id,doc_num,name',
@@ -36,9 +36,9 @@ class HrAttendanceReportService
      * @param  array<string, mixed>  $filters
      * @return array{session_count: int, employee_count: int, open_count: int, worked_minutes: int, break_minutes: int, late_minutes: int, early_leave_minutes: int, overtime_minutes: int}
      */
-    public function summary(int $companyId, array $filters): array
+    public function summary(int $companyId, array $filters, ?array $branchIds): array
     {
-        $sessionSummary = $this->sessionQuery($companyId, $filters)
+        $sessionSummary = $this->sessionQuery($companyId, $filters, $branchIds)
             ->toBase()
             ->selectRaw('COUNT(*) AS session_count')
             ->selectRaw('COUNT(DISTINCT employee_id) AS employee_count')
@@ -47,7 +47,7 @@ class HrAttendanceReportService
             ->selectRaw('COALESCE(SUM(total_break_minutes), 0) AS break_minutes')
             ->first();
 
-        $dailySummary = $this->dailyRecordQuery($companyId, $filters)
+        $dailySummary = $this->dailyRecordQuery($companyId, $filters, $branchIds)
             ->toBase()
             ->selectRaw('COALESCE(SUM(late_minutes), 0) AS late_minutes')
             ->selectRaw('COALESCE(SUM(early_leave_minutes), 0) AS early_leave_minutes')
@@ -69,9 +69,9 @@ class HrAttendanceReportService
     /**
      * @param  array<string, mixed>  $filters
      */
-    public function exportCsv(int $companyId, array $filters): StreamedResponse
+    public function exportCsv(int $companyId, array $filters, ?array $branchIds): StreamedResponse
     {
-        $sessions = $this->sessionQuery($companyId, $filters)
+        $sessions = $this->sessionQuery($companyId, $filters, $branchIds)
             ->with([
                 'employee:id,doc_num,full_name',
                 'assignedBranch:id,doc_num,name',
@@ -138,10 +138,11 @@ class HrAttendanceReportService
      * @param  array<string, mixed>  $filters
      * @return Builder<HrAttendanceSession>
      */
-    private function sessionQuery(int $companyId, array $filters): Builder
+    private function sessionQuery(int $companyId, array $filters, ?array $branchIds): Builder
     {
         return HrAttendanceSession::query()
             ->where('company_id', $companyId)
+            ->when($branchIds !== null, fn (Builder $query): Builder => $query->whereIn('assigned_branch_id', $branchIds !== [] ? $branchIds : [0]))
             ->when(filled($filters['employee'] ?? null), fn (Builder $query): Builder => $query->whereIn('employee_id', HrEmployee::query()
                 ->where('company_id', $companyId)
                 ->where('doc_num', $filters['employee'])
@@ -159,10 +160,11 @@ class HrAttendanceReportService
      * @param  array<string, mixed>  $filters
      * @return Builder<HrAttendanceDailyRecord>
      */
-    private function dailyRecordQuery(int $companyId, array $filters): Builder
+    private function dailyRecordQuery(int $companyId, array $filters, ?array $branchIds): Builder
     {
         return HrAttendanceDailyRecord::query()
             ->where('company_id', $companyId)
+            ->when($branchIds !== null, fn (Builder $query): Builder => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
             ->when(filled($filters['employee'] ?? null), fn (Builder $query): Builder => $query->whereIn('employee_id', HrEmployee::query()
                 ->where('company_id', $companyId)
                 ->where('doc_num', $filters['employee'])

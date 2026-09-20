@@ -18,6 +18,7 @@ class DashboardController extends Controller
     {
         return view('dashboard', [
             ...$dashboard->forRequest($request),
+            'summaryFilters' => $dashboard->summaryFilterOptions($request),
             'personalDashboard' => $personal->forRequest($request),
             'employeeAttendance' => $attendance->statusForUser($request->user()),
         ]);
@@ -29,6 +30,16 @@ class DashboardController extends Controller
             'success' => true,
             'data' => $personal->forRequest($request),
         ]);
+    }
+
+    public function salesSummary(Request $request, PlasticsDashboardService $dashboard): JsonResponse
+    {
+        return response()->json($dashboard->summaryForRequest($request, 'sales'));
+    }
+
+    public function purchasesSummary(Request $request, PlasticsDashboardService $dashboard): JsonResponse
+    {
+        return response()->json($dashboard->summaryForRequest($request, 'purchases'));
     }
 
     public function pendingDecisions(

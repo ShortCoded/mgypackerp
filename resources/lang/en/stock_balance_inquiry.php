@@ -70,11 +70,13 @@ return [
         'in_transit' => 'In transit',
     ],
     'columns' => [
+        'positions' => 'Stock positions',
         'branch' => 'Branch',
         'store' => 'Warehouse / store',
         'hall' => 'Hall',
         'location' => 'Location',
         'item' => 'Item',
+        'product' => 'Item',
         'item_code' => 'Item code',
         'item_name' => 'Item name',
         'classification' => 'Item type',

@@ -869,7 +869,7 @@ class MaintenanceController extends Controller
             ->forContext((int) $context['company_id'], (int) $context['financial_period_id'], (int) $context['branch_id'])
             ->with([
                 'asset', 'mold', 'supplier', 'request', 'maintenancePlanDue.plan',
-                'materialRequests.lines.product', 'materialRequests.issueDocument', 'materialRequests.returnDocument',
+                'materialRequests.lines.product', 'materialRequests.lines.unit', 'materialRequests.issueDocument.lines', 'materialRequests.returnDocument.lines',
                 'expenses.currency', 'expenses.cashVoucher', 'expenses.journalEntry',
             ])
             ->orderByDesc('planned_start_at')
@@ -911,7 +911,7 @@ class MaintenanceController extends Controller
             ->when(($filters['operational_focus'] ?? null) === 'overdue', fn ($query) => $query->overdue())
             ->with([
                 'asset', 'mold', 'supplier', 'request', 'maintenancePlanDue.plan',
-                'materialRequests.lines.product', 'materialRequests.issueDocument', 'materialRequests.returnDocument',
+                'materialRequests.lines.product', 'materialRequests.lines.unit', 'materialRequests.issueDocument.lines', 'materialRequests.returnDocument.lines',
                 'expenses.currency', 'expenses.cashVoucher', 'expenses.journalEntry',
             ])
             ->latest('created_at')
@@ -987,10 +987,10 @@ class MaintenanceController extends Controller
                 'downtime_hours' => round($downtimeMinutes / 60, 2),
                 'wait_hours' => round($waitMinutes / 60, 2),
                 'active_repair_hours' => round(max(0, $downtimeMinutes - $waitMinutes) / 60, 2),
-                'requested_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->requested_quantity),
-                'issued_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->issued_quantity),
-                'consumed_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->consumed_quantity),
-                'returned_material_quantity' => $materialLines->sum(fn ($line): float => (float) $line->returned_quantity),
+                'requested_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->requested_quantity, 8), '0.00000000'),
+                'issued_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->issued_quantity, 8), '0.00000000'),
+                'consumed_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->consumed_quantity, 8), '0.00000000'),
+                'returned_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->returned_quantity, 8), '0.00000000'),
             ],
         ];
     }

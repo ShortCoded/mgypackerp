@@ -23,24 +23,65 @@ class InventoryValuationService
         ?string $batchLot = null,
         ?int $productionRunId = null,
         mixed $asOfDate = null,
+        bool $exactDimensions = false,
     ): string {
+        return $this->bookUnitCostForPosition(
+            $companyId,
+            $branchStoreId,
+            $productId,
+            $stockStatus,
+            $warehouseLocationId,
+            $batchLot,
+            $productionRunId,
+            $asOfDate,
+            $exactDimensions,
+        ) ?? '0.00000000';
+    }
+
+    public function bookUnitCostForPosition(
+        int $companyId,
+        int $branchStoreId,
+        int $productId,
+        ?string $stockStatus = null,
+        ?int $warehouseLocationId = null,
+        ?string $batchLot = null,
+        ?int $productionRunId = null,
+        mixed $asOfDate = null,
+        bool $exactDimensions = false,
+    ): ?string {
         $totals = InventoryTransaction::query()
             ->where('company_id', $companyId)
             ->where('branch_store_id', $branchStoreId)
             ->where('product_id', $productId)
             ->when($stockStatus !== null, fn (Builder $query) => $query->where('stock_status', $stockStatus))
-            ->when($warehouseLocationId !== null, fn (Builder $query) => $query->where('warehouse_location_id', $warehouseLocationId))
-            ->when($batchLot !== null, fn (Builder $query) => $query->where('batch_lot', $batchLot))
-            ->when($productionRunId !== null, fn (Builder $query) => $query->where('production_run_id', $productionRunId))
+            ->when(
+                $warehouseLocationId !== null,
+                fn (Builder $query) => $query->where('warehouse_location_id', $warehouseLocationId),
+                fn (Builder $query) => $exactDimensions ? $query->whereNull('warehouse_location_id') : $query,
+            )
+            ->when(
+                $batchLot !== null,
+                fn (Builder $query) => $query->where('batch_lot', $batchLot),
+                fn (Builder $query) => $exactDimensions ? $query->whereNull('batch_lot') : $query,
+            )
+            ->when(
+                $productionRunId !== null,
+                fn (Builder $query) => $query->where('production_run_id', $productionRunId),
+                fn (Builder $query) => $exactDimensions ? $query->whereNull('production_run_id') : $query,
+            )
             ->when($asOfDate !== null, fn (Builder $query) => $query->whereDate('transaction_date', '<=', $asOfDate))
             ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as quantity')
-            ->selectRaw('coalesce(sum(case when quantity_in > 0 then total_cost else -total_cost end), 0) as value')
+            ->selectRaw('coalesce(sum(case
+                when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
+                else 0 end), 0) as value')
+            ->selectRaw('coalesce(sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end), 0) as unvalued_quantity')
             ->first();
 
         if ($totals === null
             || bccomp((string) $totals->quantity, '0', 8) <= 0
-            || bccomp((string) $totals->value, '0', 8) <= 0) {
-            return '0.00000000';
+            || bccomp((string) $totals->unvalued_quantity, '0', 8) !== 0
+            || bccomp((string) $totals->value, '0', 8) < 0) {
+            return null;
         }
 
         return bcdiv((string) $totals->value, (string) $totals->quantity, 8);

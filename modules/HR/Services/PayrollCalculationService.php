@@ -3,14 +3,20 @@
 namespace Modules\HR\Services;
 
 use DomainException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
+use Modules\Core\Services\NumericFormatService;
 use Modules\HR\Models\HrEmployee;
-use Modules\HR\Models\HrEmployeeServiceRequest;
 
 final class PayrollCalculationService
 {
+    public function __construct(
+        private readonly PayrollAttendanceEffectService $attendanceEffects,
+        private readonly NumericFormatService $numbers,
+    ) {}
+
     /**
      * @param  array{
      *     period_start: string,
@@ -62,8 +68,14 @@ final class PayrollCalculationService
 
                 $assignment = $this->salaryAssignment($employee, $data['period_start'], $data['period_end']);
                 $components = $this->components($assignment->components);
-                $attendance = $this->attendance((int) $run->id, $employee, $data['period_start'], $data['period_end']);
-                $requests = $this->approvedRequests($employee, $data['period_start'], $data['period_end']);
+                $effects = $this->attendanceEffects->calculate(
+                    $employee,
+                    $data['period_start'],
+                    $data['period_end'],
+                    $assignment->basic_salary,
+                    $components['overtime_hourly_rate'] ?: $employee->hourly_wage,
+                );
+                $this->storeAttendanceSnapshot((int) $run->id, $employee, $effects);
                 $employeeAdjustments = $adjustments->get($employee->doc_num, []);
                 $payslipId = DB::table('hr_payslips')->insertGetId([
                     'payroll_run_id' => $run->id,
@@ -108,20 +120,30 @@ final class PayrollCalculationService
                     }
                 }
 
-                $approvedOvertimeMinutes = (int) $requests->where('request_type', 'overtime')->sum('requested_minutes');
-                $overtimeMinutes = min($attendance['recorded_overtime_minutes'], $approvedOvertimeMinutes);
+                $overtimeMinutes = $effects['overtime']['minutes'];
                 if ($overtimeMinutes > 0) {
-                    $hourlyRate = $this->positiveMoney(
-                        $components['overtime_hourly_rate'] ?: $employee->hourly_wage,
-                        __('hr_payroll.messages.overtime_rate_required'),
-                    );
-                    $overtimeAmount = bcmul(bcdiv((string) $overtimeMinutes, '60', 8), $hourlyRate, 4);
+                    $hourlyRate = $this->positiveMoney($effects['overtime']['hourly_rate'], __('hr_payroll.messages.overtime_rate_required'));
+                    $overtimeAmount = $effects['overtime']['amount'];
                     $this->addItem($payslipId, 'OVERTIME', $overtimeAmount, 'earning', 'approved_overtime', null, [
-                        'request_ids' => $requests->where('request_type', 'overtime')->pluck('id')->values()->all(),
+                        'request_ids' => $effects['overtime']['request_ids'],
                         'approved_minutes' => $overtimeMinutes,
                         'hourly_rate' => $hourlyRate,
                     ]);
                     $gross = bcadd($gross, $overtimeAmount, 4);
+                }
+
+                foreach ($effects['deductions'] as $attendanceDeduction) {
+                    $amount = $this->positiveMoney($attendanceDeduction['amount'], __('hr_payroll.messages.deduction_amount_invalid'));
+                    $this->addItem(
+                        $payslipId,
+                        $attendanceDeduction['payroll_item_code'],
+                        $amount,
+                        'deduction',
+                        'attendance_policy',
+                        $attendanceDeduction['policy_id'],
+                        $attendanceDeduction['snapshot'],
+                    );
+                    $deductions = bcadd($deductions, $amount, 4);
                 }
 
                 foreach ($employeeAdjustments['deductions'] ?? [] as $deduction) {
@@ -211,7 +233,14 @@ final class PayrollCalculationService
                             'id' => $assignment->source_id,
                         ],
                         'salary_components' => $components,
-                        'approved_request_ids' => $requests->pluck('id')->values()->all(),
+                        'approved_request_ids' => $effects['approved_request_ids'],
+                        'canonical_leave_request_ids' => $effects['canonical_leave_request_ids'],
+                        'payroll_attendance_effects' => [
+                            'policies' => $effects['policy_snapshots'],
+                            'summary' => $effects['summary'],
+                            'deductions' => $effects['deductions'],
+                            'overtime' => $effects['overtime'],
+                        ],
                         'manual_adjustments' => $employeeAdjustments,
                         'gross' => $gross,
                         'deductions' => $deductions,
@@ -314,7 +343,7 @@ final class PayrollCalculationService
         return DB::table('hr_payroll_runs')->where('id', $id)->first();
     }
 
-    private function employees(int $companyId, ?int $branchId, string $start, string $end): \Illuminate\Support\Collection
+    private function employees(int $companyId, ?int $branchId, string $start, string $end): Collection
     {
         return HrEmployee::query()
             ->where('company_id', $companyId)
@@ -382,47 +411,21 @@ final class PayrollCalculationService
         ];
     }
 
-    private function attendance(int $runId, HrEmployee $employee, string $start, string $end): array
+    /** @param array<string, mixed> $effects */
+    private function storeAttendanceSnapshot(int $runId, HrEmployee $employee, array $effects): void
     {
-        $records = DB::table('hr_attendance_daily_records')
-            ->where('employee_id', $employee->getKey())
-            ->whereBetween('work_date', [$start, $end])
-            ->where('status', 'present')
-            ->whereNotNull('check_out_at')
-            ->where(fn ($query) => $query->whereNull('company_id')->orWhere('company_id', $employee->company_id))
-            ->when($employee->branch_id !== null, fn ($query) => $query->where(fn ($branch) => $branch->whereNull('branch_id')->orWhere('branch_id', $employee->branch_id)))
-            ->orderBy('work_date')
-            ->get(['id', 'work_date', 'branch_id', 'worked_minutes', 'late_minutes', 'early_leave_minutes', 'overtime_minutes', 'status']);
-        $snapshot = [
-            'record_ids' => $records->pluck('id')->all(),
-            'finalized_days' => $records->count(),
-            'worked_minutes' => (int) $records->sum('worked_minutes'),
-            'late_minutes' => (int) $records->sum('late_minutes'),
-            'early_leave_minutes' => (int) $records->sum('early_leave_minutes'),
-            'recorded_overtime_minutes' => (int) $records->sum('overtime_minutes'),
-        ];
         DB::table('hr_payroll_attendance_inputs')->insert([
             'payroll_run_id' => $runId,
             'employee_id' => $employee->getKey(),
-            'payload' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+            'payload' => json_encode([
+                ...$effects['attendance'],
+                'policy_snapshots' => $effects['policy_snapshots'],
+                'summary' => $effects['summary'],
+                'canonical_leave_request_ids' => $effects['canonical_leave_request_ids'],
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-
-        return $snapshot;
-    }
-
-    private function approvedRequests(HrEmployee $employee, string $start, string $end): \Illuminate\Support\Collection
-    {
-        return HrEmployeeServiceRequest::query()
-            ->where('employee_id', $employee->getKey())
-            ->where('company_id', $employee->company_id)
-            ->when($employee->branch_id !== null, fn ($query) => $query->where('branch_id', $employee->branch_id))
-            ->where('status', HrEmployeeServiceRequest::StatusApproved)
-            ->whereIn('request_type', ['leave', 'overtime'])
-            ->whereDate('requested_from', '<=', $end)
-            ->where(fn ($query) => $query->whereNull('requested_to')->orWhereDate('requested_to', '>=', $start))
-            ->get();
     }
 
     private function addItem(
@@ -469,6 +472,6 @@ final class PayrollCalculationService
 
     private function money(mixed $value): string
     {
-        return number_format((float) $value, 4, '.', '');
+        return $this->numbers->normalizeToScale($value, 4) ?? '0.0000';
     }
 }
