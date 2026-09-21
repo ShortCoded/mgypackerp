@@ -16,11 +16,9 @@
             <div class="row g-3">
                 <div class="col-md-4">
                     <label class="form-label" for="supplier_doc_num">{{ __('Supplier') }}</label>
-                    <x-forms.select class="form-select js-payment-supplier" id="supplier_doc_num" name="supplier_doc_num" required>
+                    <x-forms.select class="form-select js-select2-ajax js-payment-supplier" id="supplier_doc_num" name="supplier_doc_num" data-url="{{ route('admin.purchases.select2.suppliers') }}" data-placeholder="{{ __('Select') }}" required>
                         <option value="">{{ __('Select') }}</option>
-                        @foreach($suppliers as $supplier)
-                            <option value="{{ $supplier->doc_num }}" @selected(old('supplier_doc_num', $selectedInvoice?->supplier?->doc_num) === $supplier->doc_num)>{{ $supplier->doc_num }} / {{ $supplier->name }}</option>
-                        @endforeach
+                        @if($selectedSupplier)<option value="{{ $selectedSupplier->doc_num }}" selected>{{ $selectedSupplier->doc_num }} / {{ $selectedSupplier->name }}</option>@endif
                     </x-forms.select>
                 </div>
                 <div class="col-md-2">
@@ -94,7 +92,8 @@
                 @foreach($invoices as $invoice)
                     @forelse($invoice->paymentSchedules as $schedule)
                         @php
-                            $scheduleOutstanding = max(0, (float) $schedule->amount - (float) $schedule->paid_amount - (float) $schedule->credited_amount);
+                            $scheduleOutstanding = bcsub(bcsub((string) $schedule->amount, (string) $schedule->paid_amount, 4), (string) $schedule->credited_amount, 4);
+                            $scheduleOutstanding = bccomp($scheduleOutstanding, '0', 4) < 0 ? '0.0000' : $scheduleOutstanding;
                         @endphp
                         <tr class="js-allocation-row" data-supplier="{{ $invoice->supplier?->doc_num }}"><td>{{ $invoice->supplier?->name }}</td><td dir="ltr">{{ $invoice->doc_num }}<x-forms.input type="hidden" name="allocations[{{ $allocationIndex }}][purchase_invoice_doc_num]" value="{{ $invoice->doc_num }}" /></td><td>{{ $schedule->due_date?->format('Y-m-d') }}<x-forms.input type="hidden" name="allocations[{{ $allocationIndex }}][payment_schedule_public_id]" value="{{ $schedule->public_id }}" /></td><td class="text-end" dir="ltr">{{ $numbers->format($scheduleOutstanding) }}</td><td><x-forms.numeric-input name="allocations[{{ $allocationIndex }}][amount]" :value="old('allocations.'.$allocationIndex.'.amount', $selectedInvoice?->is($invoice) ? $scheduleOutstanding : null)" :scale="4" min="0.0001" step="0.0001" /></td></tr>
                         @php $allocationIndex++; @endphp

@@ -118,8 +118,10 @@ class HrSelect2Service
             ]);
         }
 
+        $useDocumentNumber = $request->string('identity')->toString() === 'doc_num';
+
         return $this->select2->paginated($query, $request, fn (HrEmployee $employee): array => [
-            'id' => (string) $employee->getKey(),
+            'id' => $useDocumentNumber ? (string) $employee->doc_num : (string) $employee->getKey(),
             'text' => trim(implode(' / ', array_filter([$employee->full_name, $employee->doc_num]))),
         ]);
     }

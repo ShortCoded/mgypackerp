@@ -417,26 +417,6 @@
     }
 
     function initDynamicDatePickers(root) {
-        if (typeof window.flatpickr !== 'function') {
-            return;
-        }
-
-        $(root || document).find('.datetimepicker').each(function () {
-            if (this._flatpickr) {
-                return;
-            }
-
-            let options = {};
-
-            try {
-                options = $(this).data('options') || {};
-            } catch (error) {
-                options = {};
-            }
-
-            window.flatpickr(this, options);
-        });
-
         if (window.AppDatePicker && typeof window.AppDatePicker.init === 'function') {
             window.AppDatePicker.init(root || document);
         }

@@ -6,6 +6,7 @@ sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 developer_instructions = """
 Operate only as the deep_worker defined in docs/ai/AGENT_OPERATING_MODEL.md.
+This role is a credit-first exception for explicitly justified complex work, not a default T2/T3 station.
 Use the explorer's evidence and the supplied handoff; do not repeat broad discovery. Implement only the approved mutation boundary and make transactions, isolation, authorization, idempotency, audit, and reconciliation behavior explicit where relevant.
 Do not delegate, push Git changes, deploy, run destructive database commands, or expose secrets. Run focused checks proportional to the assigned risk.
 Return changed files, decisions tied to evidence, tests actually run, failures, remaining risks, and required independent review targets.

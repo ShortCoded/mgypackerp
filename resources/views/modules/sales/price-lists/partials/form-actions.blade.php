@@ -11,10 +11,14 @@
     $canUseTrashed = ! $isTrashed || auth()->user()?->can('price_lists.view_trashed');
     $canPrint = $isView && $record && $canView && $canUseTrashed && auth()->user()?->can('price_lists.print');
     $canExport = $isView && $record && $canView && $canUseTrashed && auth()->user()?->can('price_lists.export');
-    $exportOptions = $canExport ? [
-        ['label' => __('price_lists.actions.excel'), 'url' => route('admin.sales.price-lists.export.xlsx', $record), 'icon' => 'file-excel', 'permission' => 'price_lists.export'],
-        ['label' => __('price_lists.actions.csv'), 'url' => route('admin.sales.price-lists.export.csv', $record), 'icon' => 'file-csv', 'permission' => 'price_lists.export'],
-    ] : [];
+    $exportOptions = [];
+    if ($canPrint) {
+        $exportOptions[] = ['label' => __('price_lists.actions.pdf'), 'url' => route('admin.sales.price-lists.pdf', $record), 'icon' => 'file-pdf', 'permission' => 'price_lists.print', 'newTab' => true];
+    }
+    if ($canExport) {
+        $exportOptions[] = ['label' => __('price_lists.actions.excel'), 'url' => route('admin.sales.price-lists.export.xlsx', $record), 'icon' => 'file-excel', 'permission' => 'price_lists.export'];
+        $exportOptions[] = ['label' => __('price_lists.actions.csv'), 'url' => route('admin.sales.price-lists.export.csv', $record), 'icon' => 'file-csv', 'permission' => 'price_lists.export'];
+    }
     $canReview = $isView && $record && ! $isTrashed && ! $record->reviewed_at && auth()->user()?->can('price_lists.review');
     $canApprove = $isView && $record && ! $isTrashed && $record->reviewed_at && ! $record->approved_at && auth()->user()?->can('price_lists.approve');
     $mainSubmitAction = $isCreate ? 'save_new' : 'save';
@@ -41,26 +45,19 @@
         </a>
     @endif
 
-    @if ($canClone)
-        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.clone', $record) }}"><span class="fas fa-copy me-1"></span>{{ __('price_lists.actions.clone') }}</a>
-    @endif
-
-    @if ($isView && $record && $canView && $canUseTrashed)
-        <button class="btn btn-falcon-default btn-sm" type="button" data-price-list-copy><span class="fas fa-copy me-1"></span>{{ __('price_lists.actions.copy_lines') }}</button>
-    @endif
-
     @if ($isView && $record && ! $isTrashed && $canEdit)
         <button type="button" class="btn btn-falcon-default btn-sm js-increase-price-list" data-doc-num="{{ $record->doc_num }}" data-increase-url="{{ route('admin.sales.price-lists.increase-by-percentage', $record) }}" data-success-url="{{ route('admin.sales.price-lists.show', $record) }}"><span class="fas fa-percent me-1"></span>{{ __('price_lists.actions.increase') }}</button>
+    @endif
+
+    @if ($canClone)
+        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.clone', $record) }}"><span class="fas fa-copy me-1"></span>{{ __('price_lists.actions.clone_record') }}</a>
     @endif
 
     @if ($isView && $record && $canView && $canUseTrashed)
         <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.history', $record) }}"><span class="fas fa-history me-1"></span>{{ __('price_lists.actions.history') }}</a>
     @endif
 
-    @if ($canPrint)
-        <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.price-lists.pdf', $record) }}"><span class="fas fa-print me-1"></span>{{ __('price_lists.actions.pdf') }}</a>
-    @endif
-    @if ($canExport)
+    @if ($exportOptions !== [])
         <x-admin.report.actions-toolbar
             :show-filters="false"
             :show-refresh="false"

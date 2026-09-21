@@ -480,7 +480,8 @@ test('payroll attendance policy http workflow enforces company and branch scope'
     $policyResponse = $this->actingAs($actor)->withSession($session)
         ->get(route('admin.hr.payroll-attendance-policies.index'))
         ->assertOk()
-        ->assertSee($fixture['branch']->name);
+        ->assertSee(route('admin.select2.branches'), false)
+        ->assertSee('js-select2-ajax', false);
     expect($policyResponse->viewData('branches')->pluck('doc_num')->all())->toBe([$fixture['branch']->doc_num]);
     $this->actingAs($actor)->withSession($session)
         ->post(route('admin.hr.payroll-attendance-policies.store'), $payload)

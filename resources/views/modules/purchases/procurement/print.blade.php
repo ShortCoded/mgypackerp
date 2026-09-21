@@ -143,7 +143,7 @@
                                 <div class="document-item-details">{{ $line->specification }}</div>
                             @endif
                         </td>
-                        @if($showUnitOrDueDate)<td>{{ $line->unit?->name ?? $line->paymentSchedule?->due_date?->format('Y-m-d') ?? '—' }}</td>@endif
+                        @if($showUnitOrDueDate)<td>{{ $line->unit?->name ?? $dates->formatDate($line->paymentSchedule?->due_date, '—') }}</td>@endif
                         @if($showReceiptReference)<td dir="ltr">{{ $line->receiptLine?->receipt?->doc_num }}</td>@endif
                         @if($isReceipt)<td dir="ltr">{{ $numbers->format($line->supplyOrderLine?->ordered_quantity ?? $line->purchaseOrderLine?->ordered_quantity) }}</td><td dir="ltr">{{ $numbers->format($previouslyReceived) }}</td>@endif
                         @if($isReturn)

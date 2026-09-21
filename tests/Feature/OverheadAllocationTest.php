@@ -460,7 +460,16 @@ test('canonical allocation screens render with scoped permissions instead of the
         ->assertOk()
         ->assertSee('Overhead Allocation Rules')
         ->assertSee('New allocation rule')
+        ->assertSee('js-select2-ajax', false)
         ->assertDontSee('New UI Shell');
+
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
+        ->getJson(route('admin.costing.overhead-allocation-rules.select2.source-accounts', [
+            'source_cost_center_id' => $fixture['sourceCenter']->id,
+            'q' => $fixture['sourceAccount']->account_code,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $fixture['sourceAccount']->id);
 
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.costing.overhead-allocation-run.index'))

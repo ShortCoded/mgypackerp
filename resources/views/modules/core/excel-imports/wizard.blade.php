@@ -88,7 +88,7 @@
                 <div class="row g-3 small">
                     <div class="col-md-4"><span class="text-700">{{ __('excel_imports.review.module') }}:</span> {{ __('excel_imports.modules.'.$module) }}</div>
                     <div class="col-md-4"><span class="text-700">{{ __('excel_imports.review.filename') }}:</span> {{ $batch->original_filename }}</div>
-                    <div class="col-md-4"><span class="text-700">{{ __('excel_imports.review.uploaded_at') }}:</span> {{ $batch->created_at }}</div>
+                    <div class="col-md-4"><span class="text-700">{{ __('excel_imports.review.uploaded_at') }}:</span> {{ app(\Modules\Core\Services\DateFormatService::class)->formatDateTime($batch->created_at, '') }}</div>
                     <div class="col-md-4"><span class="text-700">{{ __('excel_imports.review.template_version') }}:</span> {{ $batch->template_version }}</div>
                     <div class="col-md-8"><span class="text-700">{{ __('excel_imports.review.context') }}:</span> {{ $batch->context_snapshot['company_doc_num'] ?? '' }} / {{ $batch->context_snapshot['branch_doc_num'] ?? '' }} / {{ $batch->context_snapshot['financial_period_doc_num'] ?? '' }}</div>
                 </div>

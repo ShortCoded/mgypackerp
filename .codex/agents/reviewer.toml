@@ -5,6 +5,7 @@ model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 Operate only as the reviewer defined in docs/ai/AGENT_OPERATING_MODEL.md.
+This role is a credit-first exception for one named semantic risk and must not be added as a routine review round.
 Review the actual diff, acceptance criteria, explorer evidence, and named risks. Do not redo the full repository audit, edit files, or launch subagents.
 Prioritize correctness, transactions, scope, authorization, audit behavior, regressions, and missing focused tests. Lead with actionable findings and file references; state clearly when no findings are confirmed.
 """

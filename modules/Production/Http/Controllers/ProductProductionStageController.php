@@ -9,7 +9,9 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\SaveProductProductionRouteRequest;
 use Modules\Production\Models\ProductionStage;
@@ -27,9 +29,28 @@ class ProductProductionStageController extends Controller
         $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($request);
 
         return view('modules.production.product-stages.index', [
-            'products' => Product::query()->forCompany($companyId)->active()->whereIn('item_classification', [Product::ClassificationFinishedProduct, Product::ClassificationSemiFinished, Product::ClassificationPackaging])->orderBy('name')->get(),
             'stages' => ProductionStage::query()->forCompany($companyId)->where('status', ProductionStage::StatusActive)->orderBy('display_order')->orderBy('name')->get(),
         ]);
+    }
+
+    public function products(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($request);
+        $query = Product::query()
+            ->forCompany($companyId)
+            ->active()
+            ->whereIn('item_classification', [Product::ClassificationFinishedProduct, Product::ClassificationSemiFinished, Product::ClassificationPackaging])
+            ->orderBy('name');
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['products.doc_num', 'products.name', 'products.barcode']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (Product $product): array => [
+            'id' => route('admin.production.product-stages.edit', $product),
+            'text' => trim($product->doc_num.' — '.$product->name),
+        ]));
     }
 
     public function edit(Product $product): View

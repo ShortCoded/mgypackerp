@@ -1,3 +1,6 @@
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
 <div class="chat-transcript-report" dir="{{ $direction ?? config('languages.available.'.app()->getLocale().'.dir', 'rtl') }}">
     @if (! empty($filters))
         <div class="report-filter-summary">
@@ -25,7 +28,7 @@
                 </tr>
                 <tr>
                     <th>{{ __('chat.report.columns.created_at') }}</th>
-                    <td>{{ $conversation->created_at?->format('Y-m-d H:i:s') }}</td>
+                    <td>{{ $dates->formatDateTime($conversation->created_at, '') }}</td>
                     <th>{{ __('chat.report.columns.status') }}</th>
                     <td>{{ $conversation->trashed() ? __('chat.report.deleted') : __('chat.report.active') }}</td>
                 </tr>
@@ -69,10 +72,10 @@
                                 <small>{{ __('chat.report.columns.read_by') }}: {{ $readBy ? implode('، ', $readBy) : __('chat.report.no_read_receipt') }}</small><br>
                                 <small>{{ __('chat.report.columns.message_id') }}: {{ $message->public_uuid }}</small>
                                 @if ($message->trashed())
-                                    <div class="deleted-label">{{ __('chat.report.deleted') }} · {{ $message->deleted_at?->format('Y-m-d H:i:s') }}</div>
+                                    <div class="deleted-label">{{ __('chat.report.deleted') }} · {{ $dates->formatDateTime($message->deleted_at, '') }}</div>
                                 @endif
                             </td>
-                            <td>{{ $message->sent_at?->format('Y-m-d H:i:s') }}</td>
+                            <td>{{ $dates->formatDateTime($message->sent_at, '') }}</td>
                         </tr>
                     @empty
                         <tr><td colspan="3">{{ __('chat.report.empty_messages') }}</td></tr>

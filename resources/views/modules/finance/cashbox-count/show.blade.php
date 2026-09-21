@@ -58,8 +58,8 @@
                         @csrf
                         @method('PUT')
                         <div class="col-md-4">
-                            <label class="form-label">{{ __('cashbox_count.columns.counted_balance') }}</label>
-                            <x-forms.input class="form-control" name="actual_amount" type="number" min="0" step="0.0001" value="{{ $count->actual_amount }}" required />
+                            <x-forms.label :label="__('cashbox_count.columns.counted_balance')" required />
+                            <x-forms.numeric-input name="actual_amount" :value="$count->actual_amount" :scale="4" min="0" step="0.0001" required />
                         </div>
                         <div class="col-md-8">
                             <label class="form-label">{{ __('cashbox_count.columns.notes') }}</label>

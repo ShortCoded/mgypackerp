@@ -215,6 +215,10 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain("\$line['system_quantity'] ?? 0")
         ->toContain('arrow-step="1"')
         ->not->toContain('type="number" step="0.00000001"');
+    expect(file_get_contents(resource_path('views/modules/production/product-stages/index.blade.php')))
+        ->toContain('js-select2-ajax')
+        ->toContain('admin.production.product-stages.select2.products')
+        ->not->toContain('@foreach($products as $product)');
     expect(trans('roles.permission_labels.labor', [], 'ar'))->toBe('تسجيل العمالة والساعات')
         ->and(trans('roles.permission_labels.labor', [], 'en'))->toBe('Record labor and hours')
         ->and(trans('roles.permission_labels.account_materials', [], 'ar'))->toBe('تسوية الخامات')

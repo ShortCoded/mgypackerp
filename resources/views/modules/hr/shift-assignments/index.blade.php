@@ -2,6 +2,10 @@
 
 @section('title', __('hr_shift_assignments.title'))
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('content')
     <div class="container-fluid px-0 px-sm-3">
         @if (session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
@@ -15,14 +19,14 @@
                         @csrf
                         <div class="col-12 col-lg-5">
                             <label class="form-label" for="shift_assignment_employees">{{ __('hr_shift_assignments.labels.employees') }}</label>
-                            <select id="shift_assignment_employees" name="employee_ids[]" class="form-select" multiple required></select>
+                            <x-forms.select variant="ajax" id="shift_assignment_employees" name="employee_ids[]" :url="route('admin.hr.select2.employees')" :allow-clear="false" multiple required :placeholder="__('hr_shift_assignments.labels.employees')" />
                         </div>
                         <div class="col-12 col-lg-3">
                             <label class="form-label" for="shift_assignment_shift">{{ __('hr_shift_assignments.labels.shift') }}</label>
-                            <select id="shift_assignment_shift" name="shift_doc_num" class="form-select" required>
+                            <x-forms.select variant="local" id="shift_assignment_shift" name="shift_doc_num" :allow-clear="false" required>
                                 <option value="">{{ __('common.placeholders.select') }}</option>
                                 @foreach ($shifts as $shift)<option value="{{ $shift->doc_num }}" @selected(old('shift_doc_num') === $shift->doc_num)>{{ $shift->name }} / {{ $shift->doc_num }}</option>@endforeach
-                            </select>
+                            </x-forms.select>
                         </div>
                         <div class="col-6 col-lg-2">
                             <label class="form-label" for="shift_assignment_from">{{ __('hr_shift_assignments.labels.effective_from') }}</label>
@@ -50,8 +54,8 @@
                             <td>{{ $assignment->employee?->full_name }} <span class="text-muted" dir="ltr">{{ $assignment->employee?->doc_num }}</span></td>
                             <td>{{ $assignment->employee?->branch?->name ?: '—' }}</td>
                             <td>{{ $assignment->shift?->name ?: '—' }}</td>
-                            <td dir="ltr">{{ $assignment->effective_from?->toDateString() }}</td>
-                            <td dir="ltr">{{ $assignment->effective_to?->toDateString() ?: '—' }}</td>
+                            <td dir="ltr">{{ $dates->formatDate($assignment->effective_from, '') }}</td>
+                            <td dir="ltr">{{ $dates->formatDate($assignment->effective_to, '—') }}</td>
                             <td><span class="badge badge-subtle-{{ $effective ? 'success' : 'secondary' }}">{{ __('hr_shift_assignments.status.'.($effective ? 'effective' : 'historical')) }}</span></td>
                             <td>
                                 @can('hr.shift_assignments.manage')
@@ -76,23 +80,3 @@
         </div>
     </div>
 @endsection
-
-@push('scripts')
-<script>
-    (() => {
-        const element = $('#shift_assignment_employees');
-        if (!element.length || !$.fn.select2) return;
-        element.select2({
-            width: '100%',
-            minimumInputLength: 1,
-            ajax: {
-                url: @json(route('admin.hr.select2.employees')),
-                dataType: 'json',
-                delay: 250,
-                data: params => ({q: params.term || '', page: params.page || 1}),
-                processResults: data => data,
-            },
-        });
-    })();
-</script>
-@endpush

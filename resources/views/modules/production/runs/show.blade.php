@@ -5,6 +5,7 @@
 @section('content')
     <div class="production-mobile-workflow">
     @php
+        $dates = app(\Modules\Core\Services\DateFormatService::class);
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
         $laborRows = collect($record->labor_details ?? []);
         $requiredStages = $record->orderLine?->stageSnapshots?->where('is_required', true)->sortBy('sequence') ?? collect();
@@ -36,10 +37,10 @@
             <div class="col-md-3"><strong>{{ __('Good / Received') }}:</strong> {{ $numbers->format($record->good_base_quantity) }} / {{ $numbers->format($record->received_base_quantity) }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_labor_count') }}:</strong> {{ $record->planned_labor_count ?? '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_labor_count') }}:</strong> {{ $record->actual_labor_count ?? '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_start_at') }}:</strong> {{ $record->planned_start_at?->format('Y-m-d H:i') ?? '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_end_at') }}:</strong> {{ $record->planned_end_at?->format('Y-m-d H:i') ?? '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_start_at') }}:</strong> {{ $record->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</div>
-            <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_end_at') }}:</strong> {{ $record->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</div>
+            <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_start_at') }}:</strong> {{ $dates->formatDateTime($record->planned_start_at, '—') }}</div>
+            <div class="col-md-3"><strong>{{ __('production_execution.fields.planned_end_at') }}:</strong> {{ $dates->formatDateTime($record->planned_end_at, '—') }}</div>
+            <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_start_at') }}:</strong> {{ $dates->formatDateTime($record->actual_start_at, '—') }}</div>
+            <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_end_at') }}:</strong> {{ $dates->formatDateTime($record->actual_end_at, '—') }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.actual_duration') }}:</strong> {{ $record->actualDurationHours() !== null ? __('production_execution.labor.hours_value', ['hours' => $record->actualDurationHours()]) : '—' }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.total_labor_hours') }}:</strong> {{ $numbers->format($record->totalLaborHours()) }}</div>
             <div class="col-12"><strong>{{ __('production_execution.fields.work_description') }}:</strong> {{ $record->work_description ?: '—' }}</div>

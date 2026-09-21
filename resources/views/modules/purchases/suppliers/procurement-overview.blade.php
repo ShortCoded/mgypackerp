@@ -1,4 +1,7 @@
-@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+@php
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
 @if($procurementOverview)
 <section class="card mb-3">
     <div class="card-header"><h5 class="mb-0">{{ __('Supplier activity') }}</h5></div>
@@ -9,7 +12,7 @@
             <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Total purchases') }} · {{ $metric['currency'] }}</div><strong>{{ $numbers->format($metric['purchases']) }}</strong></div>
             <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Outstanding balance') }} · {{ $metric['currency'] }}</div><strong>{{ $numbers->format($metric['outstanding']) }}</strong></div>
             <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Overdue balance') }} · {{ $metric['currency'] }}</div><strong>{{ $numbers->format($metric['overdue']) }}</strong></div>
-            <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Last purchase date') }}</div><strong>{{ $metric['last_purchase_date'] ?: '—' }}</strong></div>
+            <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Last purchase date') }}</div><strong>{{ $dates->formatDate($metric['last_purchase_date'] ?? null, '—') }}</strong></div>
         </div>
         @endforeach
         @can('reports.purchases.view')
@@ -22,7 +25,7 @@
         @if($procurementOverview['cheques']->isNotEmpty())
         <h6>{{ __('Cheques') }}</h6>
         <div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Document') }}</th><th>{{ __('Cheque number') }}</th><th>{{ __('Bank') }}</th><th>{{ __('Due date') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>
-        @foreach($procurementOverview['cheques'] as $cheque)<tr><td><a href="{{ route('admin.finance.cheques.show', $cheque) }}">{{ $cheque->doc_num }}</a></td><td>{{ $cheque->cheque_number }}</td><td>{{ $cheque->bankAccount?->account_name }}</td><td>{{ $cheque->due_date?->format('Y-m-d') }}</td><td>{{ __('cheques.statuses.'.$cheque->status) }}</td></tr>@endforeach
+        @foreach($procurementOverview['cheques'] as $cheque)<tr><td><a href="{{ route('admin.finance.cheques.show', $cheque) }}">{{ $cheque->doc_num }}</a></td><td>{{ $cheque->cheque_number }}</td><td>{{ $cheque->bankAccount?->account_name }}</td><td>{{ $dates->formatDate($cheque->due_date, '') }}</td><td>{{ __('cheques.statuses.'.$cheque->status) }}</td></tr>@endforeach
         </tbody></table></div>
         @endif
         @if($procurementOverview['attachments']->isNotEmpty())
@@ -37,7 +40,7 @@
                 <div id="supplier-documents-{{ $loop->index }}" class="accordion-collapse collapse"><div class="accordion-body">
                     <div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Document') }}</th><th>{{ __('Date') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>
                     @forelse($section['records'] as $document)
-                        <tr><td><a href="{{ route($section['route'], $document->doc_num) }}">{{ $document->doc_num }}</a></td><td>{{ ($document->document_date ?? $document->quotation_date ?? $document->invoice_date ?? $document->return_date ?? $document->payment_date)?->format('Y-m-d') }}</td><td>{{ __('procurement.statuses.'.$document->status) }}</td></tr>
+                        <tr><td><a href="{{ route($section['route'], $document->doc_num) }}">{{ $document->doc_num }}</a></td><td>{{ $dates->formatDate($document->document_date ?? $document->quotation_date ?? $document->invoice_date ?? $document->return_date ?? $document->payment_date, '') }}</td><td>{{ __('procurement.statuses.'.$document->status) }}</td></tr>
                     @empty<tr><td colspan="3">{{ __('No matching records.') }}</td></tr>@endforelse
                     </tbody></table></div>
                 </div></div>

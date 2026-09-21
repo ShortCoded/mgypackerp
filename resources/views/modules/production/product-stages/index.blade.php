@@ -7,7 +7,7 @@
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('production_execution.product_stages.configure') }}</h5></div>
         <div class="card-body">
-            <div class="row g-3 align-items-end"><div class="col-md-8"><label class="form-label">{{ __('production_execution.fields.product') }}</label><x-forms.select class="form-select" id="product-route-selector"><option value="">{{ __('common.placeholders.select') }}</option>@foreach($products as $product)<option value="{{ route('admin.production.product-stages.edit', $product) }}">{{ $product->doc_num }} — {{ $product->name }}</option>@endforeach</x-forms.select></div><div class="col-md-4"><button class="btn btn-primary" type="button" data-navigate-select="#product-route-selector">{{ __('production_execution.actions.configure_route') }}</button></div></div>
+            <div class="row g-3 align-items-end"><div class="col-md-8"><label class="form-label">{{ __('production_execution.fields.product') }}</label><x-forms.select class="form-select js-select2-ajax" id="product-route-selector" data-url="{{ route('admin.production.product-stages.select2.products') }}" data-placeholder="{{ __('common.placeholders.select') }}"><option value=""></option></x-forms.select></div><div class="col-md-4"><button class="btn btn-primary" type="button" data-navigate-select="#product-route-selector">{{ __('production_execution.actions.configure_route') }}</button></div></div>
         </div>
     </div>
     <div class="card erp-datatable-card">

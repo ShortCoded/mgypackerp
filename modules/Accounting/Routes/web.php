@@ -20,6 +20,12 @@ Route::middleware(['auth', 'erp.expanded'])
         Route::get('/overhead-allocation-rules', 'rules')
             ->middleware('can:costing.overhead_allocation_rules.view')
             ->name('overhead-allocation-rules.index');
+        Route::get('/overhead-allocation-rules/select2/cost-centers', 'costCenters')
+            ->middleware('can:costing.overhead_allocation_rules.create')
+            ->name('overhead-allocation-rules.select2.cost-centers');
+        Route::get('/overhead-allocation-rules/select2/source-accounts', 'sourceAccounts')
+            ->middleware('can:costing.overhead_allocation_rules.create')
+            ->name('overhead-allocation-rules.select2.source-accounts');
         Route::post('/overhead-allocation-rules', 'storeRule')
             ->middleware('can:costing.overhead_allocation_rules.create')
             ->name('overhead-allocation-rules.store');

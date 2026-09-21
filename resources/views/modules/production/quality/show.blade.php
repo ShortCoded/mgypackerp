@@ -4,6 +4,7 @@
 
 @section('content')
     @php
+        $dates = app(\Modules\Core\Services\DateFormatService::class);
         $lifecycle = [
             ['status' => 'draft', 'label' => __('production_execution.quality.lifecycle.requested'), 'at' => $record->requested_at],
             ['status' => 'received', 'label' => __('production_execution.quality.lifecycle.received'), 'at' => $record->received_at],
@@ -74,14 +75,14 @@
                 <div class="quality-lifecycle-step {{ $step['at'] ? 'is-complete' : '' }}">
                     <span class="quality-lifecycle-marker" aria-hidden="true"><span class="fas {{ $step['at'] ? 'fa-check' : 'fa-circle' }}"></span></span>
                     <span class="quality-lifecycle-label">{{ $step['label'] }}</span>
-                    <small>{{ $step['at']?->format('Y-m-d H:i') ?? '—' }}</small>
+                    <small>{{ $dates->formatDateTime($step['at'], '—') }}</small>
                 </div>
             @endforeach
         </div>
 
         <div class="quality-summary-grid mb-3">
-            <div class="quality-summary-item"><span>{{ __('production_execution.fields.requested_at') }}</span><strong>{{ $record->requested_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('production_execution.fields.sampled_at') }}</span><strong>{{ $record->sampled_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('production_execution.fields.requested_at') }}</span><strong>{{ $dates->formatDateTime($record->requested_at, '—') }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('production_execution.fields.sampled_at') }}</span><strong>{{ $dates->formatDateTime($record->sampled_at, '—') }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.inspection_subject') }}</span><strong>{{ __('production_execution.quality_subjects.'.$record->subject_type) }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.run') }}</span><strong>@if($record->run)<a href="{{ route('admin.production.runs.show', $record->run) }}">{{ $record->run->run_number }}</a>@else—@endif</strong></div>
             <div class="quality-summary-item"><span>{{ __('production_execution.fields.product') }}</span><strong>{{ $record->run?->product?->name ?? $record->product?->name ?? '—' }}</strong></div>
@@ -214,7 +215,7 @@
             @else
                 <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>#</th><th>{{ __('production_execution.fields.reported_at') }}</th><th>{{ __('production_execution.fields.result') }}</th><th>{{ __('production_execution.fields.observations') }}</th><th>{{ __('production_execution.fields.corrective_action') }}</th><th>{{ __('production_execution.fields.attachments') }}</th><th>{{ __('production_execution.fields.submitted_by') }}</th></tr></thead><tbody>
                     @foreach($record->reports as $report)
-                        <tr><td>{{ $report->sequence }}</td><td>{{ $report->reported_at?->format('Y-m-d H:i') }}</td><td><span class="badge rounded-pill {{ $report->result === 'passed' ? 'badge-subtle-success' : ($report->result === 'failed' ? 'badge-subtle-danger' : 'badge-subtle-warning') }}">{{ __('production_execution.quality_results.'.$report->result) }}</span></td><td class="text-break">{{ $report->observations }}</td><td class="text-break">{{ $report->corrective_action ?: '—' }}</td><td><div class="d-flex flex-wrap gap-1">@foreach(($report->evidence ?? []) as $index => $file)<a class="btn btn-sm btn-falcon-default" href="{{ route('admin.production.quality.reports.evidence', [$record->getKey(), $report->getKey(), $index]) }}" target="_blank">{{ $index + 1 }}</a>@endforeach @if(empty($report->evidence))—@endif</div></td><td>{{ $report->submittedBy?->name ?? '—' }}</td></tr>
+                        <tr><td>{{ $report->sequence }}</td><td>{{ $dates->formatDateTime($report->reported_at, '') }}</td><td><span class="badge rounded-pill {{ $report->result === 'passed' ? 'badge-subtle-success' : ($report->result === 'failed' ? 'badge-subtle-danger' : 'badge-subtle-warning') }}">{{ __('production_execution.quality_results.'.$report->result) }}</span></td><td class="text-break">{{ $report->observations }}</td><td class="text-break">{{ $report->corrective_action ?: '—' }}</td><td><div class="d-flex flex-wrap gap-1">@foreach(($report->evidence ?? []) as $index => $file)<a class="btn btn-sm btn-falcon-default" href="{{ route('admin.production.quality.reports.evidence', [$record->getKey(), $report->getKey(), $index]) }}" target="_blank">{{ $index + 1 }}</a>@endforeach @if(empty($report->evidence))—@endif</div></td><td>{{ $report->submittedBy?->name ?? '—' }}</td></tr>
                     @endforeach
                 </tbody></table></div>
             @endif
@@ -257,8 +258,8 @@
                             <dt class="col-sm-5">{{ __('production_execution.fields.defect_code') }}</dt><dd class="col-sm-7">{{ $record->defect_code ?: '—' }}</dd>
                             <dt class="col-sm-5">{{ __('production_execution.fields.corrective_action') }}</dt><dd class="col-sm-7">{{ $record->corrective_action ?: '—' }}</dd>
                             <dt class="col-sm-5">{{ __('production_execution.fields.rework_notes') }}</dt><dd class="col-sm-7">{{ $record->rework_notes ?: '—' }}</dd>
-                            <dt class="col-sm-5">{{ __('production_execution.fields.reviewed_at') }}</dt><dd class="col-sm-7">{{ $record->reviewed_at?->format('Y-m-d H:i') ?? '—' }}</dd>
-                            <dt class="col-sm-5">{{ __('production_execution.fields.closed_at') }}</dt><dd class="col-sm-7">{{ $record->closed_at?->format('Y-m-d H:i') ?? '—' }}</dd>
+                            <dt class="col-sm-5">{{ __('production_execution.fields.reviewed_at') }}</dt><dd class="col-sm-7">{{ $dates->formatDateTime($record->reviewed_at, '—') }}</dd>
+                            <dt class="col-sm-5">{{ __('production_execution.fields.closed_at') }}</dt><dd class="col-sm-7">{{ $dates->formatDateTime($record->closed_at, '—') }}</dd>
                             @if($record->rejection_reason)<dt class="col-sm-5 text-danger">{{ __('production_execution.fields.reason') }}</dt><dd class="col-sm-7 text-danger">{{ $record->rejection_reason }}</dd>@endif
                             @if($record->close_notes)<dt class="col-sm-5">{{ __('production_execution.fields.close_notes') }}</dt><dd class="col-sm-7">{{ $record->close_notes }}</dd>@endif
                         </dl>
@@ -300,7 +301,7 @@
                                         <td>{{ $chainInspection->reinspection_number }}</td>
                                         <td>{{ __('production_execution.statuses.'.$chainInspection->status) }}</td>
                                         <td>{{ __('production_execution.quality_results.'.$chainInspection->result) }}</td>
-                                        <td>{{ $chainInspection->requested_at?->format('Y-m-d H:i') ?? '—' }}</td>
+                                        <td>{{ $dates->formatDateTime($chainInspection->requested_at, '—') }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>

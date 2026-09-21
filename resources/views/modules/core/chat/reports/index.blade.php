@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('title', __('chat.report.title'))
 
 @push('styles')
@@ -73,11 +77,11 @@
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="chat-report-from">{{ __('chat.report.filters.date_from') }}</label>
-                <x-forms.input id="chat-report-from" name="date_from" type="date" :value="$filters['date_from'] ?? ''" />
+                <x-forms.date-input id="chat-report-from" name="date_from" :value="$filters['date_from'] ?? ''" />
             </div>
             <div class="col-6 col-md-3 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="chat-report-to">{{ __('chat.report.filters.date_to') }}</label>
-                <x-forms.input id="chat-report-to" name="date_to" type="date" :value="$filters['date_to'] ?? ''" />
+                <x-forms.date-input id="chat-report-to" name="date_to" :value="$filters['date_to'] ?? ''" />
             </div>
             <div class="col-6 col-md-3 col-xl-1 report-filter-field">
                 <label class="form-label mb-1" for="chat-report-attachments">{{ __('chat.report.filters.has_attachments') }}</label>
@@ -157,7 +161,7 @@
                                     </td>
                                     <td class="text-center fw-semibold">{{ number_format($conversation->messages_count) }}</td>
                                     <td class="text-center fw-semibold">{{ number_format($conversation->attachments_count) }}</td>
-                                    <td class="text-nowrap fs-10">{{ $conversation->last_message_at?->format('Y-m-d H:i') ?: '—' }}</td>
+                                    <td class="text-nowrap fs-10">{{ $dates->formatDateTime($conversation->last_message_at, '—') }}</td>
                                     <td>
                                         <span class="badge rounded-pill {{ $conversation->trashed() ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success' }}">
                                             {{ $conversation->trashed() ? __('chat.report.deleted') : __('chat.report.active') }}
@@ -178,7 +182,7 @@
                             <div class="d-flex align-items-start justify-content-between gap-2">
                                 <div class="min-w-0">
                                     <a class="fw-semibold d-block text-truncate" href="{{ route('admin.chat.reports.show', $conversation) }}">{{ $report->title($conversation) }}</a>
-                                    <div class="text-500 fs-11">{{ $conversation->last_message_at?->format('Y-m-d H:i') ?: '—' }}</div>
+                                    <div class="text-500 fs-11">{{ $dates->formatDateTime($conversation->last_message_at, '—') }}</div>
                                 </div>
                                 <span class="badge rounded-pill {{ $conversation->trashed() ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success' }}">
                                     {{ $conversation->trashed() ? __('chat.report.deleted') : __('chat.report.active') }}

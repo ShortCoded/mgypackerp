@@ -32,7 +32,7 @@
                 @php($currency = $filterOptions['currencies']->firstWhere('id', $row['_currency_id'] ?? null))
                 <tr data-cashbox-count-row data-book-balance="{{ $row['balance'] }}">
                     <td>{{ $row['cashbox'] }}</td><td>{{ $row['branch'] }}</td><td>{{ $row['currency'] }}</td><td class="text-end" dir="ltr">{{ $numbers->format($row['balance']) }}</td>
-                    <td><form id="cashbox-count-form-{{ $index }}" method="POST" action="{{ route('admin.finance.cashbox-count.store') }}">@csrf<x-forms.input type="hidden" name="count_date" value="{{ $filters['as_of_date'] }}" /><x-forms.input type="hidden" name="cashbox_doc_num" value="{{ $cashbox?->doc_num }}" /><x-forms.input type="hidden" name="currency_doc_num" value="{{ $currency?->doc_num }}" /><x-forms.input class="form-control form-control-sm text-end js-cashbox-counted" name="actual_amount" type="number" min="0" step="0.0001" required /></form></td>
+                    <td><form id="cashbox-count-form-{{ $index }}" method="POST" action="{{ route('admin.finance.cashbox-count.store') }}">@csrf<x-forms.input type="hidden" name="count_date" value="{{ $filters['as_of_date'] }}" /><x-forms.input type="hidden" name="cashbox_doc_num" value="{{ $cashbox?->doc_num }}" /><x-forms.input type="hidden" name="currency_doc_num" value="{{ $currency?->doc_num }}" /><x-forms.numeric-input class="form-control-sm text-end js-cashbox-counted" name="actual_amount" :scale="4" min="0" step="0.0001" required /></form></td>
                     <td class="text-end js-cashbox-variance" dir="ltr">—</td><td><x-forms.input class="form-control form-control-sm" name="notes" form="cashbox-count-form-{{ $index }}" maxlength="2000" /></td>
                     <td>@can('finance.cashbox_count.create')<button class="btn btn-falcon-primary btn-sm" form="cashbox-count-form-{{ $index }}" type="submit">{{ __('cashbox_count.actions.save') }}</button>@endcan</td>
                 </tr>
@@ -53,8 +53,8 @@ document.querySelectorAll('[data-cashbox-count-row]').forEach((row) => {
     const input = row.querySelector('.js-cashbox-counted');
     const output = row.querySelector('.js-cashbox-variance');
     input?.addEventListener('input', () => {
-        const actual = Number(input.value); const book = Number(row.dataset.bookBalance || 0);
-        output.textContent = input.value === '' ? '—' : (actual - book).toFixed(4);
+        const difference = window.AppNumbers?.subtract(input.value, row.dataset.bookBalance || '0', 4);
+        output.textContent = input.value === '' || difference === null ? '—' : window.AppNumbers.format(difference);
     });
 });
 </script>

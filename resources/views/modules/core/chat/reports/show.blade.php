@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('title', __('chat.report.single_title', ['conversation' => $report->title($conversation)]))
 
 @push('styles')
@@ -61,7 +65,7 @@
                                                 @endif
                                             </td>
                                             <td class="text-nowrap fs-10">
-                                                {{ $participant->pivot?->last_read_at ? \Illuminate\Support\Carbon::parse($participant->pivot->last_read_at)->format('Y-m-d H:i:s') : __('chat.report.never_read') }}
+                                                {{ $participant->pivot?->last_read_at ? $dates->formatDateTime($participant->pivot->last_read_at, '') : __('chat.report.never_read') }}
                                             </td>
                                         </tr>
                                     @endforeach
@@ -80,9 +84,9 @@
                             <dt class="col-5">{{ __('chat.report.columns.created_by') }}</dt>
                             <dd class="col-7">{{ $conversation->creator?->name ?: '—' }}</dd>
                             <dt class="col-5">{{ __('chat.report.columns.created_at') }}</dt>
-                            <dd class="col-7">{{ $conversation->created_at?->format('Y-m-d H:i:s') ?: '—' }}</dd>
+                            <dd class="col-7">{{ $dates->formatDateTime($conversation->created_at, '—') }}</dd>
                             <dt class="col-5">{{ __('chat.report.columns.last_message_at') }}</dt>
-                            <dd class="col-7">{{ $conversation->last_message_at?->format('Y-m-d H:i:s') ?: '—' }}</dd>
+                            <dd class="col-7">{{ $dates->formatDateTime($conversation->last_message_at, '—') }}</dd>
                             <dt class="col-5">{{ __('chat.report.columns.message_count') }}</dt>
                             <dd class="col-7">{{ number_format($conversation->messages_count) }}</dd>
                             <dt class="col-5">{{ __('chat.report.columns.attachment_count') }}</dt>
@@ -106,7 +110,7 @@
                                 <span class="fw-semibold">{{ $message->sender?->name ?: '—' }}</span>
                                 <span class="text-500 fs-11">{{ $message->sender?->doc_num }}</span>
                             </div>
-                            <time class="text-500 fs-11 text-nowrap">{{ $message->sent_at?->format('Y-m-d H:i:s') }}</time>
+                            <time class="text-500 fs-11 text-nowrap">{{ $dates->formatDateTime($message->sent_at, '') }}</time>
                         </div>
 
                         @if ($message->forwardedFromMessage || $message->forwardedFromUser)
@@ -135,7 +139,7 @@
                         <div class="d-flex flex-wrap align-items-center gap-2 mt-2 text-500 fs-11">
                             <span class="font-monospace">{{ $message->public_uuid }}</span>
                             @if ($message->trashed())
-                                <span class="badge bg-danger-subtle text-danger">{{ __('chat.report.deleted') }} · {{ $message->deleted_at?->format('Y-m-d H:i:s') }}</span>
+                                <span class="badge bg-danger-subtle text-danger">{{ __('chat.report.deleted') }} · {{ $dates->formatDateTime($message->deleted_at, '') }}</span>
                             @endif
                             @php($readBy = $report->readBy($message, $conversation))
                             <span><span class="fas fa-check-double me-1"></span>{{ $readBy ? implode('، ', $readBy) : __('chat.report.no_read_receipt') }}</span>

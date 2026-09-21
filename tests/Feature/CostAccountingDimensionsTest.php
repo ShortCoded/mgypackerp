@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\Query\Grammars\PostgresGrammar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\Account;
@@ -227,17 +229,59 @@ test('payroll preview and posting resolve department defaults before exact split
         ['cost_center_doc_num' => $supportCenter->doc_num, 'percentage' => '-10.0000', 'allocation_type' => 'indirect'],
     ]))->toThrow(DomainException::class, __('Each payroll allocation percentage must be greater than zero and at most 100%.'));
 
+    $transactionLevelBeforeSync = DB::transactionLevel();
+    $allocationQueries = [];
+    $captureAllocationQueries = true;
+    DB::listen(function (QueryExecuted $query) use (&$allocationQueries, &$captureAllocationQueries): void {
+        if ($captureAllocationQueries) {
+            $allocationQueries[] = [
+                'sql' => strtolower($query->sql),
+                'transaction_level' => DB::transactionLevel(),
+            ];
+        }
+    });
+
     $service->syncAllocations($payslipItemId, [
         ['cost_center_doc_num' => $directCenter->doc_num, 'percentage' => '60.0000', 'allocation_type' => 'direct'],
         ['cost_center_doc_num' => $supportCenter->doc_num, 'percentage' => '40.0000', 'allocation_type' => 'indirect'],
     ]);
+    $captureAllocationQueries = false;
     $splitPreview = $service->previewRun($runId);
+    $lockedPayrollRows = collect($allocationQueries)
+        ->filter(function (array $query): bool {
+            if (! str_starts_with($query['sql'], 'select') || str_contains($query['sql'], ' join ')) {
+                return false;
+            }
+
+            return collect(['hr_payroll_periods', 'hr_payroll_runs', 'hr_payslips', 'hr_payslip_items', 'hr_payroll_items'])
+                ->contains(fn (string $table): bool => str_contains($query['sql'], 'from "'.$table.'"'));
+        })
+        ->values();
+    $lockedPayrollTables = $lockedPayrollRows->map(function (array $query): string {
+        return collect(['hr_payroll_periods', 'hr_payroll_runs', 'hr_payslips', 'hr_payslip_items', 'hr_payroll_items'])
+            ->first(fn (string $table): bool => str_contains($query['sql'], 'from "'.$table.'"'));
+    });
+    $postgresLockQuery = DB::table('hr_payslip_items')->where('id', $payslipItemId)->lockForUpdate();
+    $postgresLockQuery->grammar = new PostgresGrammar(DB::connection());
 
     expect($splitPreview['lines'])->toHaveCount(2)
+        ->and($lockedPayrollTables->all())->toBe(['hr_payroll_periods', 'hr_payroll_runs', 'hr_payslips', 'hr_payslip_items', 'hr_payroll_items'])
+        ->and($lockedPayrollRows->every(fn (array $query): bool => $query['transaction_level'] > $transactionLevelBeforeSync))->toBeTrue()
+        ->and($postgresLockQuery->toSql())->toEndWith('for update')
+        ->and(DB::getDriverName() !== 'pgsql' || $lockedPayrollRows->every(fn (array $query): bool => str_ends_with($query['sql'], 'for update')))->toBeTrue()
         ->and(collect($splitPreview['lines'])->pluck('classification')->all())->toBe(['direct_labor_cost', 'indirect_labor_cost'])
         ->and(collect($splitPreview['lines'])->sum(fn (array $line): float => (float) $line['percentage']))->toBe(100.0)
         ->and(collect($splitPreview['lines'])->sum(fn (array $line): float => (float) $line['amount']))->toBe(1000.0)
         ->and(collect($splitPreview['lines'])->every(fn (array $line): bool => $line['stored']))->toBeTrue();
+
+    $storedAllocations = DB::table('hr_payroll_cost_allocations')->where('payslip_item_id', $payslipItemId)->orderBy('id')->get();
+    $transactionLevelBeforeMissingItem = DB::transactionLevel();
+    expect(fn () => $service->syncAllocations($payslipItemId + 999999, [
+        ['cost_center_doc_num' => $directCenter->doc_num, 'percentage' => '100.0000', 'allocation_type' => 'direct'],
+    ]))->toThrow(DomainException::class, __('Payroll item not found.'))
+        ->and(DB::transactionLevel())->toBe($transactionLevelBeforeMissingItem)
+        ->and(DB::table('hr_payroll_cost_allocations')->where('payslip_item_id', $payslipItemId)->orderBy('id')->get()->toArray())
+        ->toEqual($storedAllocations->toArray());
 
     dimensionsAccount($company, '2111', 'payroll_payable', 2111);
     FinancialPeriod::query()->create([

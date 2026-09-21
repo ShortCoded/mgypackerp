@@ -1,6 +1,7 @@
 @extends('layouts.app')
 
 @php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
     $showPrices = $commercial && auth()->user()?->can('purchases.prices.view');
     $document = $record->doc_num ?? $record->cashVoucher?->doc_num;
     $status = $record->status ?? $record->cashVoucher?->status ?? '—';
@@ -345,7 +346,7 @@
                 @endif
                 @if($type === 'supplier_payment')
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __('procurement.statuses.'.$record->payment_method) }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment date') }}</div><div dir="ltr">{{ $record->payment_date?->format('Y-m-d') ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment date') }}</div><div dir="ltr">{{ $dates->formatDate($record->payment_date, '—') }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Amount') }}</div><div class="fw-semibold" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($record->amount) }}</div></div>
                     @if($record->bankAccount)
                         <div class="col-md-6"><div class="text-600 fs-10">{{ __('Bank / branch / account') }}</div><div>{{ $record->bankAccount->bank?->name ?? $record->bankAccount->bank?->name_en }} / {{ $record->bankAccount->bank_branch_name ?: '—' }} / <span dir="ltr">{{ $record->bankAccount->account_number }}</span></div></div>
@@ -359,11 +360,11 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Source document') }}</div><div dir="ltr">{{ $record->source_doc_num }}</div></div>
                 @endif
                 @if($type === 'purchase_requisition')
-                    @foreach([__('Company') => $record->company?->name, __('Branch') => $record->branch?->name, __('Warehouse') => $record->branchStore?->name, __('procurement.ui.requester_employee') => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name, __('Submitted By') => $record->submittedBy?->name, __('Submitted At') => $record->submitted_at?->format('Y-m-d H:i'), __('Approved By') => $record->approvedBy?->name, __('Approved At') => $record->approved_at?->format('Y-m-d H:i'), __('Rejected By') => $record->rejectedBy?->name, __('Rejected At') => $record->rejected_at?->format('Y-m-d H:i'), __('Rejection reason') => $record->rejection_reason, __('Notes') => $record->notes] as $label => $value)
+                    @foreach([__('Company') => $record->company?->name, __('Branch') => $record->branch?->name, __('Warehouse') => $record->branchStore?->name, __('procurement.ui.requester_employee') => $record->requesterEmployee?->full_name ?: $record->requesterEmployee?->name, __('Submitted By') => $record->submittedBy?->name, __('Submitted At') => $dates->formatDateTime($record->submitted_at, ''), __('Approved By') => $record->approvedBy?->name, __('Approved At') => $dates->formatDateTime($record->approved_at, ''), __('Rejected By') => $record->rejectedBy?->name, __('Rejected At') => $dates->formatDateTime($record->rejected_at, ''), __('Rejection reason') => $record->rejection_reason, __('Notes') => $record->notes] as $label => $value)
                         @if(filled($value))<div class="col-md-3"><div class="text-600 fs-10">{{ $label }}</div><div>{{ $value }}</div></div>@endif
                     @endforeach
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Department') }}</div><div>{{ $record->department ?: '—' }}</div></div>
-                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Required by') }}</div><div>{{ $record->required_by_date?->format('Y-m-d') ?: '—' }}</div></div>
+                    <div class="col-md-3"><div class="text-600 fs-10">{{ __('Required by') }}</div><div>{{ $dates->formatDate($record->required_by_date, '—') }}</div></div>
                 @endif
                 @if($showPrices && isset($record->total_amount))
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Total') }}</div><div class="fw-semibold" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($record->total_amount) }}</div></div>

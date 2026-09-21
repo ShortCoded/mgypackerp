@@ -2040,3 +2040,78 @@ test('HrEmployee list and branch validation are restricted to the operating comp
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['biometric_mappings.0.device_doc_num']);
 });
+
+test('monthly salary create rejects missing basic_salary with a field-level 422 and never persists', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
+    $beforeCount = HrEmployee::query()->count();
+
+    $response = $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
+            'full_name' => 'Missing Basic Salary Employee',
+            'national_id' => '29104152000001',
+            'email' => 'missing.basic@example.test',
+            'work_email' => 'missing.basic@company.example.test',
+            'pay_basis' => 'monthly_salary',
+            'basic_salary' => null,
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['basic_salary']);
+
+    $body = $response->json();
+
+    expect($body['message'] ?? '')->not->toBe('')
+        ->and(HrEmployee::query()->count())->toBe($beforeCount)
+        ->and(data_get($body, 'errors.basic_salary'))->not->toBeNull()
+        ->and(json_encode($body, JSON_THROW_ON_ERROR))->not->toContain('tracking_id')
+        ->and(json_encode($body, JSON_THROW_ON_ERROR))->not->toContain('unexpected_error');
+});
+
+test('monthly salary update rejects missing basic_salary with a field-level 422 and does not overwrite', function (): void {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures))
+        ->assertOk();
+
+    $employee = HrEmployee::query()->firstOrFail();
+    $originalSalary = $employee->basic_salary;
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'basic_salary' => null,
+            'biometric_mappings' => [],
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['basic_salary']);
+
+    $employee->refresh();
+    expect($employee->basic_salary)->toBe($originalSalary);
+});
+
+test('salary tab pay amount labels render the shared required marker', function (): void {
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $actor = hrEmployeeActor([
+        ...hrEmployeePermissions(),
+        'file_manager.view',
+        ...hrEmployeeLookupCreatePermissions(),
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->get(route('admin.hr.employees.create'))
+        ->assertOk()
+        ->assertSee('text-danger', false)
+        ->assertSee('aria-hidden="true"', false)
+        ->assertSee('hr-employee-basic-salary', false)
+        ->assertSee('hr-employee-hourly-wage', false);
+});

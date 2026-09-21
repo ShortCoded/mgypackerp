@@ -2,6 +2,7 @@
     $isTrashed = $record->trashed();
     $canView = auth()->user()?->can('price_lists.view') && $record->doc_num !== null;
     $canEdit = ! $isTrashed && auth()->user()?->can('price_lists.edit') && $record->doc_num !== null;
+    $canClone = ! $isTrashed && auth()->user()?->can('price_lists.clone') && $record->doc_num !== null;
     $canDelete = ! $isTrashed && auth()->user()?->can('price_lists.delete') && $record->doc_num !== null;
     $canRestore = $isTrashed && auth()->user()?->can('price_lists.restore') && $record->doc_num !== null;
 @endphp
@@ -27,6 +28,11 @@
                 @if ($canEdit)
                     <a class="dropdown-item js-edit-record" href="{{ route('admin.sales.price-lists.edit', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">
                         {{ __('common.actions.edit') }}
+                    </a>
+                @endif
+                @if ($canClone)
+                    <a class="dropdown-item" href="{{ route('admin.sales.price-lists.clone', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">
+                        {{ __('price_lists.actions.clone_record') }}
                     </a>
                 @endif
                 @if ($canDelete)

@@ -6,6 +6,7 @@ sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 developer_instructions = """
 Operate only as the worker defined in docs/ai/AGENT_OPERATING_MODEL.md.
+This role is a credit-first exception and must never be inserted automatically into ordinary ERP work.
 Implement the supplied bounded change within the allowed files and acceptance criteria. Preserve all ERP invariants named in AGENTS.md and the handoff.
 Do not expand scope, delegate, push Git changes, deploy, run destructive database commands, or expose secrets. Run only targeted safe checks.
 Return changed files, the exact behavior implemented, tests actually run, failures, and unverified items.

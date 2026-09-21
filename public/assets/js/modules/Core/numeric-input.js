@@ -220,6 +220,28 @@
         return (negative ? '-' : '') + decimal;
     }
 
+    function subtract(left, right, scale) {
+        if (typeof BigInt !== 'function') {
+            return null;
+        }
+
+        var normalizedLeft = normalize(left);
+        var normalizedRight = normalize(right);
+
+        if (normalizedLeft === null || normalizedRight === null || normalizedLeft === '' || normalizedRight === '') {
+            return null;
+        }
+
+        var resultScale = Math.max(
+            scale === undefined || scale === null ? 0 : Number(scale),
+            decimalPlaces(normalizedLeft),
+            decimalPlaces(normalizedRight)
+        );
+        var difference = scaledInteger(normalizedLeft, resultScale) - scaledInteger(normalizedRight, resultScale);
+
+        return normalize(decimalFromScaledInteger(difference, resultScale));
+    }
+
     function incrementInput(input, direction) {
         if (typeof BigInt !== 'function' || input.disabled || input.readOnly) {
             return;
@@ -445,6 +467,7 @@
         refresh: refresh,
         same: same,
         stepAligned: stepAligned,
+        subtract: subtract,
         validateInput: validateInput
     };
 

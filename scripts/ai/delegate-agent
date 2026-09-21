@@ -5,12 +5,19 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  delegate-agent --role <role> --repo <path> --title <title> --prompt-file <path>
-      [--mode <read-only|edit>] [--prefer <auto|opencode|hermes>]
+  delegate-agent --task-class <class> [--dry-run] [--allow-fallback]
+  delegate-agent --task-class <class> --role <role> --repo <path> --title <title>
+      --prompt-file <path> [--mode <read-only|edit>]
+      [--prefer <auto|opencode|hermes>] [--allow-fallback]
       [--allow-shared-tree]
 
-Selects the configured local worker and prints one JSON result. OpenCode is
-used only when enabled and healthy; failures fall back once to Hermes.
+Task classes: tiny, lookup, mechanical, parallel-mechanical, t3, verification,
+semantic-review, explicit.
+
+Credit-first router. Tiny, lookup, T3, and verification plans do not call a
+provider. Mechanical work gets one OpenCode attempt by default. A second free
+Hermes attempt requires --allow-fallback and is still subject to the circuit
+breaker. --dry-run prints the route without calling any provider.
 EOF
 }
 
@@ -25,7 +32,10 @@ title=""
 prompt_file=""
 mode="read-only"
 prefer="auto"
+task_class="explicit"
 allow_shared_tree=0
+allow_fallback=0
+dry_run=0
 
 while (($# > 0)); do
     case "$1" in
@@ -35,26 +45,99 @@ while (($# > 0)); do
         --prompt-file) (($# >= 2)) || fail '--prompt-file requires a value'; prompt_file=$2; shift 2 ;;
         --mode) (($# >= 2)) || fail '--mode requires a value'; mode=$2; shift 2 ;;
         --prefer) (($# >= 2)) || fail '--prefer requires a value'; prefer=$2; shift 2 ;;
+        --task-class) (($# >= 2)) || fail '--task-class requires a value'; task_class=$2; shift 2 ;;
         --allow-shared-tree) allow_shared_tree=1; shift ;;
+        --allow-fallback) allow_fallback=1; shift ;;
+        --dry-run) dry_run=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
 
-case "$role" in
-    explorer|worker|deep_worker|reviewer|critical_reviewer|qa) ;;
-    *) fail 'unsupported --role' ;;
+case "$task_class" in
+    tiny|lookup|mechanical|parallel-mechanical|t3|verification|semantic-review|explicit) ;;
+    *) fail 'unsupported --task-class' ;;
 esac
 [[ "$prefer" == auto || "$prefer" == opencode || "$prefer" == hermes ]] || fail '--prefer must be auto, opencode, or hermes'
 [[ "$mode" == read-only || "$mode" == edit ]] || fail '--mode must be read-only or edit'
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=delegation.conf
+source "$script_dir/delegation.conf"
+
+route_plan() {
+    local station provider fallback max_parallel review_required max_attempts
+    max_attempts=0
+    case "$task_class" in
+        tiny)
+            station=codex_primary; provider=null; fallback=none; max_parallel=1; review_required=false ;;
+        lookup)
+            station=local_tools; provider=null; fallback=codex_primary; max_parallel=1; review_required=false ;;
+        mechanical)
+            station=delegated_implementation; provider=opencode; fallback=codex_primary; max_parallel=1; review_required=false; max_attempts=1 ;;
+        parallel-mechanical)
+            station=delegated_implementation; provider=opencode; fallback=codex_primary; max_parallel=2; review_required=false; max_attempts=1 ;;
+        t3)
+            station=codex_primary; provider=null; fallback=optional_risk_justified_model_review; max_parallel=1; review_required=false ;;
+        verification)
+            station=local_deterministic_qa; provider=null; fallback=codex_primary; max_parallel=1; review_required=false ;;
+        semantic-review)
+            station=optional_model_review; provider=explicit; fallback=codex_primary; max_parallel=1; review_required=true; max_attempts=1 ;;
+        explicit)
+            station=explicit_delegation; provider="$prefer"; fallback=codex_primary; max_parallel=1; review_required=false; max_attempts=1 ;;
+    esac
+
+    if ((allow_fallback)) && [[ "$station" == delegated_implementation || "$station" == explicit_delegation ]]; then
+        fallback=one_explicit_hermes_attempt_then_codex_primary
+        max_attempts=2
+    fi
+
+    jq -n \
+        --arg task_class "$task_class" \
+        --arg station "$station" \
+        --arg provider "$provider" \
+        --arg fallback "$fallback" \
+        --argjson max_parallel "$max_parallel" \
+        --argjson max_attempts "$max_attempts" \
+        --argjson review_required "$review_required" \
+        '{task_class:$task_class,execution_station:$station,provider:(if $provider == "null" then null else $provider end),fallback:$fallback,max_parallel:$max_parallel,max_delegated_attempts:$max_attempts,automatic_codex_subagents:false,automatic_model_qa:false,review_required:$review_required}'
+}
+
+if ((dry_run)); then
+    command -v jq >/dev/null 2>&1 || fail 'jq is required'
+    route_plan
+    exit 0
+fi
+
+case "$task_class" in
+    tiny|lookup|t3|verification)
+        command -v jq >/dev/null 2>&1 || fail 'jq is required'
+        route_plan | jq -c '. + {status:"no_delegation"}'
+        exit 0
+        ;;
+esac
+
+if [[ -z "$role" && ("$task_class" == mechanical || "$task_class" == parallel-mechanical) ]]; then
+    role=worker
+fi
+case "$role" in
+    explorer|worker|deep_worker|reviewer|critical_reviewer|qa) ;;
+    *) fail 'unsupported or missing --role' ;;
+esac
+if [[ "$task_class" == semantic-review && "$role" != reviewer && "$role" != critical_reviewer ]]; then
+    fail 'semantic-review requires reviewer or critical_reviewer'
+fi
 [[ -n "$repo" && -d "$repo" ]] || fail '--repo must name an existing directory'
 [[ -n "$title" ]] || fail '--title is required'
 [[ -n "$prompt_file" && -r "$prompt_file" && -f "$prompt_file" ]] || fail '--prompt-file must be a readable file'
 command -v jq >/dev/null 2>&1 || fail 'jq is required'
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-# shellcheck source=delegation.conf
-source "$script_dir/delegation.conf"
+prompt_bytes=$(wc -c <"$prompt_file")
+[[ "$DELEGATION_PROMPT_MAX_BYTES" =~ ^[1-9][0-9]*$ ]] || fail 'DELEGATION_PROMPT_MAX_BYTES must be a positive integer'
+((prompt_bytes <= DELEGATION_PROMPT_MAX_BYTES)) || fail "prompt exceeds credit-first limit of $DELEGATION_PROMPT_MAX_BYTES bytes; map and narrow it first"
+[[ "$DELEGATION_CIRCUIT_FAILURE_THRESHOLD" =~ ^[1-9][0-9]*$ ]] || fail 'DELEGATION_CIRCUIT_FAILURE_THRESHOLD must be a positive integer'
+[[ "$DELEGATION_CIRCUIT_WINDOW_SECONDS" =~ ^[1-9][0-9]*$ ]] || fail 'DELEGATION_CIRCUIT_WINDOW_SECONDS must be a positive integer'
+
 repo=$(cd -- "$repo" && pwd -P)
 opencode_enabled=${DELEGATION_OPENCODE_ENABLED:-$OPENCODE_ENABLED}
 
@@ -67,102 +150,151 @@ fi
 case "$role" in
     explorer|qa)
         hermes_class=cheap
+        hermes_model=$HERMES_CHEAP_MODEL
         opencode_model=$OPENCODE_CHEAP_MODEL
         ;;
     worker|deep_worker|reviewer|critical_reviewer)
         hermes_class=strong
+        hermes_model=$HERMES_STRONG_MODEL
         opencode_model=$OPENCODE_STRONG_MODEL
         ;;
 esac
 
+state_dir=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/mgypack-agent-$UID}
+state_file=${DELEGATION_RELIABILITY_FILE:-$state_dir/reliability.tsv}
+mkdir -p -- "$(dirname -- "$state_file")"
+chmod 700 "$(dirname -- "$state_file")" 2>/dev/null || true
+touch "$state_file"
+chmod 600 "$state_file" 2>/dev/null || true
+
+record_attempt() {
+    local provider=$1 model=$2 outcome=$3 duration=$4
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$provider" "$model" "$task_class" "$outcome" "$duration" >>"$state_file"
+}
+
+circuit_open() {
+    local provider=$1 model=$2 cutoff
+    cutoff=$(( $(date +%s) - DELEGATION_CIRCUIT_WINDOW_SECONDS ))
+    awk -F '\t' \
+        -v cutoff="$cutoff" -v provider="$provider" -v model="$model" -v category="$task_class" \
+        -v threshold="$DELEGATION_CIRCUIT_FAILURE_THRESHOLD" '
+        $1 >= cutoff && $2 == provider && $3 == model && $4 == category {
+            if ($5 == "success") failures = 0
+            else if ($5 == "failure" || $5 == "timeout") failures++
+        }
+        END { exit !(failures >= threshold) }
+    ' "$state_file"
+}
+
+run_hermes() {
+    local fallback_from=$1 start_time duration status outcome result
+    if circuit_open hermes "$hermes_model"; then
+        jq -n --arg role "$role" --arg model "$hermes_model" --arg category "$task_class" --arg fallback_from "$fallback_from" \
+            '{runtime:"hermes",role:$role,model:$model,task_category:$category,status:"circuit_open",exit_code:75,attempts:0,fallback_from:$fallback_from}'
+        return 75
+    fi
+
+    local hermes_args=(--class "$hermes_class" --repo "$repo" --prompt-file "$prompt_file" --mode "$mode" --title "$title")
+    if ((allow_shared_tree)); then hermes_args+=(--allow-shared-tree); fi
+    start_time=$(date +%s)
+    set +e
+    result=$("$script_dir/delegate-hermes" "${hermes_args[@]}")
+    status=$?
+    set -e
+    duration=$(( $(date +%s) - start_time ))
+    if ((status == 0)); then outcome=success; elif ((status == 124)); then outcome=timeout; else outcome=failure; fi
+    record_attempt hermes "$hermes_model" "$outcome" "$duration"
+    if ! jq -e . >/dev/null 2>&1 <<<"$result"; then
+        result=$(jq -n --arg model "$hermes_model" --arg status "$outcome" --argjson exit_code "$status" \
+            '{runtime:"hermes",model:$model,status:$status,exit_code:$exit_code,output:"",error:"delegate-hermes returned no valid JSON"}')
+    fi
+    jq -c --arg role "$role" --arg category "$task_class" --arg fallback_from "$fallback_from" --argjson duration "$duration" \
+        '. + {role:$role,task_category:$category,duration_seconds:$duration,attempts:1,fallback_from:(if $fallback_from == "" then null else $fallback_from end)}' <<<"$result"
+    return "$status"
+}
+
 try_opencode=0
 if [[ "$prefer" == opencode ]]; then
     try_opencode=1
-elif [[ "$prefer" == auto && ("$role" == worker || "$role" == deep_worker) ]]; then
+elif [[ "$prefer" == auto && ("$task_class" == mechanical || "$task_class" == parallel-mechanical || "$role" == worker || "$role" == deep_worker) ]]; then
     try_opencode=1
 fi
 
-fallback_reason=""
-if ((try_opencode)); then
-    if [[ "$opencode_enabled" == 1 ]] && "$script_dir/delegate-opencode" --health --repo "$repo" >/dev/null 2>&1; then
-        opencode_dir=$(mktemp -d "${TMPDIR:-/tmp}/mgypack-opencode-route.XXXXXX")
-        if [[ "$mode" == read-only ]]; then
-            opencode_mutation_rule='Do not create, edit, move, or delete files. Do not change Git state.'
-        else
-            opencode_mutation_rule='Edit only the files explicitly allowed by the task. Do not commit, push, deploy, migrate, or alter unrelated files.'
-        fi
-        {
-            printf '%s\n' \
-                'You are a bounded delegated worker. Do not delegate or spawn another agent.' \
-                "Repository: $repo" \
-                "Mode: $mode" \
-                "$opencode_mutation_rule" \
-                'End with: status, summary, files inspected, files changed, checks run, failures or blockers, and important observations.' \
-                '' \
-                'Task:'
-            printf '%s\n' "$(<"$prompt_file")"
-        } >"$opencode_dir/prompt.md"
-        set +e
-        "$script_dir/delegate-opencode" --agent "$role" --title "$title" --prompt-file "$opencode_dir/prompt.md" --repo "$repo" >"$opencode_dir/output.jsonl" 2>"$opencode_dir/error.txt"
-        opencode_status=$?
-        set -e
-        if ((opencode_status == 0)); then
-            jq -n \
-                --arg runtime opencode \
-                --arg role "$role" \
-                --arg model "$opencode_model" \
-                --arg status completed \
-                --arg repo "$repo" \
-                --arg mode "$mode" \
-                --arg output "$(<"$opencode_dir/output.jsonl")" \
-                --arg error "$(sed -E 's/sk-[A-Za-z0-9_-]+/[REDACTED]/g' "$opencode_dir/error.txt" | tail -c 4000)" \
-                '{runtime:$runtime,role:$role,model:$model,status:$status,exit_code:0,repo:$repo,mode:$mode,output:$output,error:$error,fallback_from:null}'
+if ((try_opencode == 0)); then
+    run_hermes ""
+    exit $?
+fi
+
+opencode_status=75
+opencode_reason=opencode_circuit_open
+opencode_duration=0
+opencode_error=""
+opencode_attempts=0
+if ! circuit_open opencode "$opencode_model"; then
+    if [[ "$opencode_enabled" == 1 ]]; then
+        opencode_attempts=1
+        health_start=$(date +%s)
+        if "$script_dir/delegate-opencode" --health --repo "$repo" >/dev/null 2>&1; then
+            opencode_dir=$(mktemp -d "${TMPDIR:-/tmp}/mgypack-opencode-route.XXXXXX")
+            if [[ "$mode" == read-only ]]; then
+                mutation_rule='Do not create, edit, move, or delete files. Do not change Git state.'
+            else
+                mutation_rule='Edit only the files explicitly named by the task. Do not commit, push, deploy, migrate, or alter unrelated files.'
+            fi
+            {
+                printf '%s\n' \
+                    'You are one bounded implementation worker. Do not delegate or remap the project.' \
+                    "Repository: $repo" \
+                    "Mode: $mode" \
+                    "$mutation_rule" \
+                    'Use only the exact paths, reference, invariants, and verification named below.' \
+                    'End with: status, files changed, checks run, failures or blockers, and unverified items.' \
+                    '' \
+                    'Task:'
+                printf '%s\n' "$(<"$prompt_file")"
+            } >"$opencode_dir/prompt.md"
+            set +e
+            "$script_dir/delegate-opencode" --agent "$role" --title "$title" --prompt-file "$opencode_dir/prompt.md" --repo "$repo" >"$opencode_dir/output.jsonl" 2>"$opencode_dir/error.txt"
+            opencode_status=$?
+            set -e
+            opencode_duration=$(( $(date +%s) - health_start ))
+            opencode_error=$(sed -E 's/(sk-[A-Za-z0-9_-]+|Bearer [A-Za-z0-9._-]+)/[REDACTED]/g' "$opencode_dir/error.txt" | tail -c 4000)
+            if ((opencode_status == 0)); then
+                record_attempt opencode "$opencode_model" success "$opencode_duration"
+                jq -n \
+                    --arg role "$role" --arg model "$opencode_model" --arg category "$task_class" \
+                    --arg repo "$repo" --arg mode "$mode" --arg output "$(<"$opencode_dir/output.jsonl")" \
+                    --arg error "$opencode_error" --argjson duration "$opencode_duration" \
+                    '{runtime:"opencode",role:$role,model:$model,task_category:$category,status:"completed",exit_code:0,repo:$repo,mode:$mode,output:$output,error:$error,duration_seconds:$duration,attempts:1,fallback_from:null}'
+                rm -rf -- "$opencode_dir"
+                exit 0
+            fi
+            if ((opencode_status == 124)); then opencode_reason=opencode_timeout; else opencode_reason="opencode_failed_exit_$opencode_status"; fi
+            if ((opencode_status == 124)); then outcome=timeout; else outcome=failure; fi
+            record_attempt opencode "$opencode_model" "$outcome" "$opencode_duration"
             rm -rf -- "$opencode_dir"
-            exit 0
+        else
+            opencode_duration=$(( $(date +%s) - health_start ))
+            opencode_reason=opencode_health_failed
+            record_attempt opencode "$opencode_model" failure "$opencode_duration"
         fi
-        fallback_reason="opencode_failed_exit_$opencode_status"
-        rm -rf -- "$opencode_dir"
-    elif [[ "$opencode_enabled" == 1 ]]; then
-        fallback_reason=opencode_health_failed
     else
-        fallback_reason=opencode_disabled
+        opencode_reason=opencode_disabled
     fi
 fi
 
-hermes_args=(
-    --class "$hermes_class"
-    --repo "$repo"
-    --prompt-file "$prompt_file"
-    --mode "$mode"
-    --title "$title"
-)
-if ((allow_shared_tree)); then
-    hermes_args+=(--allow-shared-tree)
-fi
-
-set +e
-hermes_result=$("$script_dir/delegate-hermes" "${hermes_args[@]}")
-hermes_status=$?
-set -e
-
-if ((hermes_status != 0)) && [[ "$hermes_class" == cheap ]]; then
-    fallback_reason="hermes_cheap_exit_$hermes_status"
-    strong_args=(
-        --class strong
-        --repo "$repo"
-        --prompt-file "$prompt_file"
-        --mode "$mode"
-        --title "$title"
-    )
-    if ((allow_shared_tree)); then
-        strong_args+=(--allow-shared-tree)
-    fi
-
+if ((allow_fallback)); then
     set +e
-    hermes_result=$("$script_dir/delegate-hermes" "${strong_args[@]}")
-    hermes_status=$?
+    fallback_result=$(run_hermes "$opencode_reason")
+    fallback_status=$?
     set -e
+    jq -c --argjson prior_attempts "$opencode_attempts" '.attempts = (.attempts + $prior_attempts)' <<<"$fallback_result"
+    exit "$fallback_status"
 fi
 
-jq -c --arg role "$role" --arg fallback_from "$fallback_reason" '. + {role:$role,fallback_from:(if $fallback_from == "" then null else $fallback_from end)}' <<<"$hermes_result"
-exit "$hermes_status"
+jq -n \
+    --arg role "$role" --arg model "$opencode_model" --arg category "$task_class" \
+    --arg reason "$opencode_reason" --arg error "$opencode_error" \
+    --argjson exit_code "$opencode_status" --argjson duration "$opencode_duration" --argjson attempts "$opencode_attempts" \
+    '{runtime:"opencode",role:$role,model:$model,task_category:$category,status:(if $reason == "opencode_timeout" then "timeout" else "failed" end),exit_code:$exit_code,error:$error,duration_seconds:$duration,attempts:$attempts,fallback_from:null,next_station:"codex_primary",reason:$reason}'
+exit "$opencode_status"

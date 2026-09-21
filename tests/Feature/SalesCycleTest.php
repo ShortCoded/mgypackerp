@@ -1612,9 +1612,11 @@ test('sales analysis keeps filtered browser drilldown and export totals consiste
         ->and((int) $summary->getCell('B2')->getValue())->toBe(1)
         ->and((float) $summary->getCell('B3')->getValue())->toBe(105.0)
         ->and($ledger)->not->toBeNull()
-        ->and($ledger->getHighestDataRow())->toBe(2)
+        ->and($ledger->getHighestDataRow())->toBe(3)
         ->and($ledger->getCell('C2')->getValue())->toBe($invoice->doc_num)
-        ->and((float) $ledger->getCell('J2')->getValue())->toBe(105.0);
+        ->and((float) $ledger->getCell('J2')->getValue())->toBe(105.0)
+        ->and($ledger->getCell('C3')->getValue())->toBe('TOTAL (1)')
+        ->and((float) $ledger->getCell('J3')->getValue())->toBe(105.0);
 
     $fixture['customer']->update(['country_id' => null]);
     $this->actingAs($fixture['user'])->withSession($session)

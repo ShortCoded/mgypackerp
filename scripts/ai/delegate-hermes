@@ -104,8 +104,8 @@ worker_prompt=$(printf '%s\n' \
     "Repository: $repo" \
     "Mode: $mode" \
     "$mutation_rule" \
-    'Read the repository AGENTS.md before acting, then follow the minimum relevant project context it names.' \
-    'Respect repository instructions and report evidence, not confidence theater.' \
+    'Follow repository instructions that apply to the named files, but do not remap unrelated project areas.' \
+    'Use the exact references in the task and report evidence, not confidence theater.' \
     'End with a concise report containing: status, summary, files inspected, files changed, checks run, failures or blockers, and important observations.' \
     '' \
     'Task:' \

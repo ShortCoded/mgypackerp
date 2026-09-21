@@ -631,7 +631,9 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
     $this->withSession($session)->get(route('admin.hr.reports.payments'))
         ->assertOk()->assertSee($payment['voucher']->doc_num)->assertSee('EGP');
     $this->withSession($session)->get(route('admin.hr.payslips.show', $payslip->id))
-        ->assertOk()->assertSee($fixture['employee']->full_name)->assertSee('BASIC');
+        ->assertOk()->assertSee($fixture['employee']->full_name)->assertSee('BASIC')
+        ->assertSee(app(NumericFormatService::class)->format($payslip->net_amount))
+        ->assertDontSee(number_format((float) $payslip->net_amount, 2));
     $this->withSession($session)->get(route('admin.hr.payslips.show', $otherPayslip))->assertNotFound();
     $this->withSession($session)->get(route('admin.hr.payslips.show', $foreignPayslip))->assertNotFound();
 

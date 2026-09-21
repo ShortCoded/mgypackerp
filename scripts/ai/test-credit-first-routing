@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+router="$script_dir/delegate-agent"
+repo=$(cd -- "$script_dir/../.." && pwd -P)
+# shellcheck source=delegation.conf
+source "$script_dir/delegation.conf"
+
+assert_plan() {
+    local label=$1 task_class=$2 filter=$3
+    local plan
+    plan=$("$router" --task-class "$task_class" --dry-run)
+    if ! jq -e "$filter" >/dev/null <<<"$plan"; then
+        printf 'FAIL %s: %s\n' "$label" "$plan" >&2
+        exit 1
+    fi
+    printf 'PASS %s\n' "$label"
+}
+
+assert_plan 'CASE A tiny Blade change stays with Codex Primary' tiny \
+    '.execution_station == "codex_primary" and .max_delegated_attempts == 0'
+
+assert_plan 'CASE B four-file mechanical task gets one OpenCode attempt' mechanical \
+    '.provider == "opencode" and .max_delegated_attempts == 1 and .max_parallel == 1'
+
+assert_plan 'CASE C OpenCode failure returns to Codex without an automatic chain' mechanical \
+    '.fallback == "codex_primary" and .max_delegated_attempts == 1'
+
+assert_plan 'CASE D accounting posting remains Codex-owned' t3 \
+    '.execution_station == "codex_primary" and .provider == null'
+
+assert_plan 'CASE E repository lookup uses local tools' lookup \
+    '.execution_station == "local_tools" and .max_delegated_attempts == 0'
+
+assert_plan 'CASE F passing deterministic QA does not start model review' verification \
+    '.execution_station == "local_deterministic_qa" and .automatic_model_qa == false and .automatic_codex_subagents == false'
+
+fallback_plan=$("$router" --task-class mechanical --allow-fallback --dry-run)
+jq -e '.max_delegated_attempts == 2 and .fallback == "one_explicit_hermes_attempt_then_codex_primary"' >/dev/null <<<"$fallback_plan"
+printf 'PASS explicit free fallback is capped at two attempts\n'
+
+test_dir=$(mktemp -d "${TMPDIR:-/tmp}/mgypack-routing-test.XXXXXX")
+trap 'rm -rf -- "$test_dir"' EXIT
+printf '%s\n' 'Exact file: scripts/ai/delegate-agent' >"$test_dir/prompt.md"
+now=$(date +%s)
+printf '%s\topencode\t%s\tmechanical\tfailure\t1\n' "$now" "$OPENCODE_STRONG_MODEL" >"$test_dir/reliability.tsv"
+printf '%s\topencode\t%s\tmechanical\ttimeout\t1\n' "$now" "$OPENCODE_STRONG_MODEL" >>"$test_dir/reliability.tsv"
+set +e
+circuit_result=$(DELEGATION_RELIABILITY_FILE="$test_dir/reliability.tsv" "$router" \
+    --task-class mechanical --role worker --repo "$repo" --title 'Circuit dry simulation' \
+    --prompt-file "$test_dir/prompt.md" --mode read-only)
+circuit_status=$?
+set -e
+[[ $circuit_status -eq 75 ]]
+jq -e '.reason == "opencode_circuit_open" and .next_station == "codex_primary" and .attempts == 0' >/dev/null <<<"$circuit_result"
+printf 'PASS repeated provider failures open the category circuit without a live call\n'

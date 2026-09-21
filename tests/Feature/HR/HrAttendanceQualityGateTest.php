@@ -342,6 +342,10 @@ test('attendance report is tenant-isolated standardized responsive filterable an
     $response->assertSee(route('admin.hr.employee-attendance.export.csv', $response->viewData('filters')));
     expect($response->viewData('summary')['session_count'])->toBe(1)
         ->and($response->viewData('summary')['employee_count'])->toBe(1);
+    $this->withSession($session)
+        ->getJson(route('admin.hr.select2.employees', ['identity' => 'doc_num', 'q' => $first['employee']->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $first['employee']->doc_num);
 
     $this->withSession($session)
         ->get(route('admin.hr.employee-attendance.index', ['date_from' => '2026-09-14', 'date_to' => '2026-09-13']))

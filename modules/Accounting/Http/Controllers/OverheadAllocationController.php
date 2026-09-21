@@ -4,6 +4,7 @@ namespace Modules\Accounting\Http\Controllers;
 
 use DomainException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -15,7 +16,9 @@ use Modules\Accounting\Models\OverheadAllocationRun;
 use Modules\Accounting\Services\OverheadAllocationService;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Select2ResponseService;
 
 final class OverheadAllocationController extends Controller
 {
@@ -28,6 +31,9 @@ final class OverheadAllocationController extends Controller
     public function rules(Request $request): View
     {
         $context = $this->requiredContext($request);
+        $sourceCostCenterId = (int) $request->old('source_cost_center_id', 0);
+        $sourceAccountIds = array_map('intval', (array) $request->old('source_account_ids', []));
+        $targetCostCenterIds = array_map('intval', (array) $request->old('target_cost_center_ids', []));
 
         return view('modules.accounting.overhead-allocations.rules', [
             'rules' => OverheadAllocationRule::query()
@@ -36,15 +42,66 @@ final class OverheadAllocationController extends Controller
                 ->with(['sourceCostCenter', 'branch'])
                 ->latest('id')
                 ->paginate(25),
-            'accounts' => Account::query()->forCompany($context['company_id'])->eligibleForDirectPosting()
-                ->whereHas('costCenters', fn ($query) => $query->where('cost_centers.status', 'active'))
-                ->with('costCenters:id,cost_center_code,name')
-                ->ordered()
-                ->get(),
-            'costCenters' => CostCenter::query()->forCompany($context['company_id'])->active()->where('is_group', false)->ordered()->get(),
+            'selectedSourceCostCenter' => $sourceCostCenterId === 0 ? null : CostCenter::query()
+                ->forCompany($context['company_id'])->active()->where('is_group', false)->find($sourceCostCenterId),
+            'selectedSourceAccounts' => $sourceAccountIds === [] ? collect() : Account::query()
+                ->forCompany($context['company_id'])->eligibleForDirectPosting()->whereIn('id', $sourceAccountIds)->ordered()->get(),
+            'selectedTargetCostCenters' => $targetCostCenterIds === [] ? collect() : CostCenter::query()
+                ->forCompany($context['company_id'])->active()->where('is_group', false)->whereIn('id', $targetCostCenterIds)->ordered()->get(),
             'period' => FinancialPeriod::query()->forCompany($context['company_id'])->findOrFail($context['financial_period_id']),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.costing.overhead-allocation-rules.index'),
         ]);
+    }
+
+    public function costCenters(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $query = CostCenter::query()
+            ->forCompany($context['company_id'])
+            ->active()
+            ->where('is_group', false)
+            ->ordered();
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['cost_centers.doc_num', 'cost_centers.cost_center_code', 'cost_centers.name', 'cost_centers.name_en']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (CostCenter $costCenter): array => [
+            'id' => (string) $costCenter->getKey(),
+            'text' => $costCenter->codeNameLabel(),
+        ]));
+    }
+
+    public function sourceAccounts(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $sourceCostCenterId = $request->integer('source_cost_center_id');
+        $sourceCostCenterExists = $sourceCostCenterId > 0 && CostCenter::query()
+            ->forCompany($context['company_id'])
+            ->active()
+            ->where('is_group', false)
+            ->whereKey($sourceCostCenterId)
+            ->exists();
+        $query = Account::query()
+            ->forCompany($context['company_id'])
+            ->eligibleForDirectPosting()
+            ->when(
+                $sourceCostCenterExists,
+                fn ($query) => $query->whereHas('costCenters', fn ($costCenters) => $costCenters->whereKey($sourceCostCenterId)->where('cost_centers.status', 'active')),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
+            ->ordered();
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['accounts.doc_num', 'accounts.account_code', 'accounts.name', 'accounts.name_en']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (Account $account): array => [
+            'id' => (string) $account->getKey(),
+            'text' => $account->codeNameLabel(),
+        ]));
     }
 
     public function storeRule(Request $request): RedirectResponse

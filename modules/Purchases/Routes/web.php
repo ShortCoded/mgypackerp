@@ -57,6 +57,7 @@ Route::middleware('auth')
                 || (bool) $request->user()?->can('purchase_orders.view')
                 || (bool) $request->user()?->can('purchase_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.edit')
+                || (bool) $request->user()?->can('supplier_payments.create')
                 || (bool) $request->user()?->can('purchases.supply_orders.create')
                 || (bool) $request->user()?->can('suppliers.view')
                 || (bool) $request->user()?->can('reports.purchases.view'),

@@ -103,7 +103,7 @@
                     <thead><tr><th>{{ __('Run') }}</th><th>{{ __('Product') }}</th><th>{{ __('Status') }}</th><th class="text-end">{{ __('Planned') }}</th><th class="text-end">{{ __('Received') }}</th></tr></thead>
                     <tbody>
                         @forelse($record->runs as $run)
-                            <tr><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->doc_num }}</a></td><td>{{ $run->product?->name }}</td><td>{{ __(str($run->status)->replace('_', ' ')->title()->toString()) }}</td><td class="text-end">{{ $run->planned_base_quantity }}</td><td class="text-end">{{ $run->received_base_quantity }}</td></tr>
+                            <tr><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->doc_num }}</a></td><td>{{ $run->product?->name }}</td><td>{{ __(str($run->status)->replace('_', ' ')->title()->toString()) }}</td><td class="text-end">{{ $numbers->format($run->planned_base_quantity) }}</td><td class="text-end">{{ $numbers->format($run->received_base_quantity) }}</td></tr>
                         @empty
                             <tr><td colspan="5" class="text-center text-600">{{ __('No production runs have been planned yet.') }}</td></tr>
                         @endforelse

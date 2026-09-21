@@ -952,6 +952,8 @@ test('supplier payment form compiles all fields and Arabic labels', function ():
         ->assertSee('دفعة / دفعة مقدمة لمورد')
         ->assertSee('تخصيصات الفواتير / الأقساط')
         ->assertSee('name="supplier_doc_num"', false)
+        ->assertSee('js-select2-ajax js-payment-supplier', false)
+        ->assertSee(route('admin.purchases.select2.suppliers'), false)
         ->assertSee('name="payment_method"', false)
         ->assertDontSee('@csrf')
         ->assertDontSee("{{ __('Supplier') }}", false);

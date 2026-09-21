@@ -942,9 +942,12 @@ class ProcurementWorkflowController extends Controller
         $context = $this->context();
         $invoices = PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'currency', 'paymentSchedules'])->get();
         $selectedInvoice = $invoices->firstWhere('doc_num', $request->string('invoice')->trim()->toString());
+        $selectedSupplierDocNum = (string) $request->old('supplier_doc_num', $selectedInvoice?->supplier?->doc_num ?? '');
 
         return view('modules.purchases.procurement.payment-form', [
-            'suppliers' => $this->suppliers(),
+            'selectedSupplier' => $selectedSupplierDocNum === ''
+                ? null
+                : Supplier::query()->active()->forCompany($context['company_id'])->where('doc_num', $selectedSupplierDocNum)->first(['doc_num', 'name']),
             'cashboxes' => Cashbox::query()->forCompany($context['company_id'])->active()->get(),
             'bankAccounts' => BankAccount::query()->forCompany($context['company_id'])->active()->with(['bank', 'account', 'currency'])->get(),
             'currencies' => $this->currencies(),
@@ -1408,12 +1411,6 @@ class ProcurementWorkflowController extends Controller
             ->when($model !== PurchaseRequisition::class, fn ($query) => $query->where('branch_id', $context['branch_id']))
             ->where('doc_num', $sourceDocument)
             ->firstOrFail();
-    }
-
-    /** @return Collection<int, Supplier> */
-    private function suppliers(): Collection
-    {
-        return Supplier::query()->active()->forCompany($this->context()['company_id'])->orderBy('name')->get();
     }
 
     /** @return Collection<int, Currency> */

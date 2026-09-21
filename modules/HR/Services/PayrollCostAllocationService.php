@@ -389,17 +389,64 @@ final class PayrollCostAllocationService
 
     private function payslipItem(int $payslipItemId, bool $lock = false): object
     {
-        return DB::table('hr_payslip_items as item')
+        $query = DB::table('hr_payslip_items as item')
             ->join('hr_payslips as payslip', 'payslip.id', '=', 'item.payslip_id')
             ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->leftJoin('hr_payroll_items as payroll_item', 'payroll_item.id', '=', 'item.payroll_item_id')
-            ->where('item.id', $payslipItemId)
-            ->when($lock, fn ($query) => $query->lockForUpdate())
-            ->first([
+            ->where('item.id', $payslipItemId);
+
+        if (! $lock) {
+            return $query->first([
                 'item.id', 'item.amount', 'item.direction', 'payslip.employee_id', 'period.company_id',
                 'payroll_item.code as payroll_item_code', 'payroll_item.account_classification_id', 'payroll_item.account_id',
             ]) ?? throw new DomainException(__('Payroll item not found.'));
+        }
+
+        $references = $query->first([
+            'period.id as period_id', 'run.id as run_id', 'payslip.id as payslip_id',
+        ]) ?? throw new DomainException(__('Payroll item not found.'));
+        $period = DB::table('hr_payroll_periods')
+            ->where('id', $references->period_id)
+            ->lockForUpdate()
+            ->first(['id', 'company_id']);
+        $run = DB::table('hr_payroll_runs')
+            ->where('id', $references->run_id)
+            ->where('payroll_period_id', $references->period_id)
+            ->lockForUpdate()
+            ->first(['id']);
+        $payslip = DB::table('hr_payslips')
+            ->where('id', $references->payslip_id)
+            ->where('payroll_run_id', $references->run_id)
+            ->lockForUpdate()
+            ->first(['id', 'employee_id']);
+        $item = DB::table('hr_payslip_items')
+            ->where('id', $payslipItemId)
+            ->where('payslip_id', $references->payslip_id)
+            ->lockForUpdate()
+            ->first(['id', 'amount', 'direction', 'payroll_item_id']);
+
+        if ($period === null || $run === null || $payslip === null || $item === null) {
+            throw new DomainException(__('Payroll item not found.'));
+        }
+
+        $payrollItem = $item->payroll_item_id === null
+            ? null
+            : DB::table('hr_payroll_items')
+                ->where('id', $item->payroll_item_id)
+                ->lockForUpdate()
+                ->first(['code', 'account_classification_id', 'account_id']);
+
+        return (object) [
+            'id' => $item->id,
+            'amount' => $item->amount,
+            'direction' => $item->direction,
+            'employee_id' => $payslip->employee_id,
+            'company_id' => $period->company_id,
+            'payroll_item_code' => $payrollItem?->code,
+            'account_classification_id' => $payrollItem?->account_classification_id,
+            'account_id' => $payrollItem?->account_id,
+        ];
     }
 
     private function payrollRun(int $payrollRunId, bool $lock = false): object

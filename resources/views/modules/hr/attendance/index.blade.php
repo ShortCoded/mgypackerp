@@ -52,20 +52,16 @@
                 :reset-url="route('admin.hr.employee-attendance.index')">
                 <div class="col-12 col-md-6 col-xl-3">
                     <x-forms.label for="attendance_employee" :label="__('hr_attendance.labels.employee')" />
-                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="attendance_employee" name="employee">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="attendance_employee" name="employee" data-url="{{ route('admin.hr.select2.employees', ['identity' => 'doc_num']) }}" data-placeholder="{{ __('common.trash.all') }}" data-allow-clear="true">
                         <option value="">{{ __('common.trash.all') }}</option>
-                        @foreach ($employees as $employee)
-                            <option value="{{ $employee->doc_num }}" @selected(($filters['employee'] ?? null) === $employee->doc_num)>{{ $employee->full_name }} / {{ $employee->doc_num }}</option>
-                        @endforeach
+                        @if ($selectedFilterEmployee)<option value="{{ $selectedFilterEmployee->doc_num }}" selected>{{ $selectedFilterEmployee->full_name }} / {{ $selectedFilterEmployee->doc_num }}</option>@endif
                     </x-forms.select>
                 </div>
                 <div class="col-12 col-md-6 col-xl-2">
                     <x-forms.label for="attendance_branch" :label="__('hr_attendance.report.columns.branch')" />
-                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="attendance_branch" name="branch">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="attendance_branch" name="branch" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('common.trash.all') }}" data-allow-clear="true">
                         <option value="">{{ __('common.trash.all') }}</option>
-                        @foreach ($branches as $branch)
-                            <option value="{{ $branch->doc_num }}" @selected(($filters['branch'] ?? null) === $branch->doc_num)>{{ $branch->name }} / {{ $branch->doc_num }}</option>
-                        @endforeach
+                        @if ($selectedBranch)<option value="{{ $selectedBranch->doc_num }}" selected>{{ $selectedBranch->name }} / {{ $selectedBranch->doc_num }}</option>@endif
                     </x-forms.select>
                 </div>
                 <div class="col-6 col-md-3 col-xl-2">
@@ -108,11 +104,9 @@
                             <x-forms.input type="hidden" name="idempotency_key" value="{{ $manualIdempotencyKey }}" />
                             <div class="col-12 col-md-4">
                                 <x-forms.label for="manual_employee" :label="__('hr_attendance.labels.employee')" :required="true" />
-                                <x-forms.select class="form-select" id="manual_employee" name="employee_doc_num" required>
+                                <x-forms.select class="form-select js-select2-ajax" id="manual_employee" name="employee_doc_num" data-url="{{ route('admin.hr.select2.employees', ['identity' => 'doc_num']) }}" data-placeholder="{{ __('common.placeholders.select') }}" required>
                                     <option value="">{{ __('common.placeholders.select') }}</option>
-                                    @foreach ($employees as $employee)
-                                        <option value="{{ $employee->doc_num }}">{{ $employee->full_name }} / {{ $employee->doc_num }}</option>
-                                    @endforeach
+                                    @if ($selectedManualEmployee)<option value="{{ $selectedManualEmployee->doc_num }}" selected>{{ $selectedManualEmployee->full_name }} / {{ $selectedManualEmployee->doc_num }}</option>@endif
                                 </x-forms.select>
                             </div>
                             <div class="col-6 col-md-2">

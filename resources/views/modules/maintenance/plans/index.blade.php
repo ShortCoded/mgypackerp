@@ -2,6 +2,10 @@
 
 @section('title', __('maintenance.plans.title'))
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('content')
     <div class="production-mobile-workflow">
         @if ($errors->any())
@@ -41,7 +45,7 @@
                     <tr>
                         <td>{{ $plan->doc_num }}</td><td>{{ $plan->name }}</td><td>{{ $plan->asset ? $plan->asset->doc_num.' — '.$plan->asset->asset_name : ($plan->mold ? $plan->mold->code.' — '.$plan->mold->name : '—') }}</td>
                         <td>{{ __('maintenance.frequency_bases.'.$plan->frequency_basis) }} · {{ $plan->interval_value ?: '—' }} · {{ __('maintenance.schedule_anchors.'.$plan->schedule_anchor) }}</td>
-                        <td>{{ $plan->frequency_basis === 'calendar' ? ($plan->next_due_at?->format('Y-m-d H:i') ?? '—') : ($plan->next_meter_value ?? __('maintenance.frequency_bases.condition')) }}</td>
+                        <td>{{ $plan->frequency_basis === 'calendar' ? $dates->formatDateTime($plan->next_due_at, '—') : ($plan->next_meter_value ?? __('maintenance.frequency_bases.condition')) }}</td>
                         <td>{{ __('maintenance.plan_statuses.'.$plan->status) }}</td>
                         <td><div class="d-flex flex-wrap gap-1">
                             @if($plan->status === 'draft')@can('maintenance.plans.approve')<button class="btn btn-sm btn-primary" type="button" data-action="post" data-url="{{ route('admin.maintenance.plans.approve', $plan) }}">{{ __('maintenance.actions.approve') }}</button>@endcan @endif
@@ -72,7 +76,7 @@
         <div class="card">
             <div class="card-header"><h5 class="mb-0">{{ __('maintenance.plans.due_title') }}</h5></div>
             <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('maintenance.fields.plan_name') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.due_at') }}</th><th>{{ __('maintenance.fields.meter_target') }}</th><th>{{ __('maintenance.fields.work_order') }}</th><th>{{ __('maintenance.fields.status') }}</th><th></th></tr></thead><tbody>
-                @forelse($dues as $due)<tr><td>{{ $due->plan->doc_num }} — {{ $due->plan->name }}</td><td>{{ $due->plan->asset?->asset_name ?? $due->plan->mold?->name ?? '—' }}</td><td>{{ $due->due_at->format('Y-m-d H:i') }}</td><td>{{ $due->meter_target ?? '—' }}</td><td>@if($due->workOrder)<a href="{{ route('admin.maintenance.orders.show', $due->workOrder) }}">{{ $due->workOrder->doc_num }}</a>@else—@endif</td><td>{{ __('maintenance.due_statuses.'.$due->status) }}</td><td>@if($due->status === 'open')@can('maintenance.plans.execute')<button class="btn btn-sm btn-primary" type="button" data-action="post" data-url="{{ route('admin.maintenance.plans.dues.convert', $due) }}">{{ __('maintenance.actions.create_order') }}</button>@endcan @endif</td></tr>@empty<tr><td colspan="7" class="text-center text-600">{{ __('maintenance.plans.no_dues') }}</td></tr>@endforelse
+                @forelse($dues as $due)<tr><td>{{ $due->plan->doc_num }} — {{ $due->plan->name }}</td><td>{{ $due->plan->asset?->asset_name ?? $due->plan->mold?->name ?? '—' }}</td><td>{{ $dates->formatDateTime($due->due_at, '') }}</td><td>{{ $due->meter_target ?? '—' }}</td><td>@if($due->workOrder)<a href="{{ route('admin.maintenance.orders.show', $due->workOrder) }}">{{ $due->workOrder->doc_num }}</a>@else—@endif</td><td>{{ __('maintenance.due_statuses.'.$due->status) }}</td><td>@if($due->status === 'open')@can('maintenance.plans.execute')<button class="btn btn-sm btn-primary" type="button" data-action="post" data-url="{{ route('admin.maintenance.plans.dues.convert', $due) }}">{{ __('maintenance.actions.create_order') }}</button>@endcan @endif</td></tr>@empty<tr><td colspan="7" class="text-center text-600">{{ __('maintenance.plans.no_dues') }}</td></tr>@endforelse
             </tbody></table></div>
         </div>
     </div>

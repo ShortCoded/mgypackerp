@@ -4,16 +4,24 @@ namespace Modules\Sales\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Sales\Models\CustomerCreditRefund;
 
 class RefundCustomerCreditRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
     {
         return (bool) $this->user()?->can('customer_credits.refund');
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeNumericInput(['amount']);
     }
 
     /**

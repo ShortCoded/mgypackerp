@@ -40,25 +40,28 @@ class HrAttendanceController extends Controller
             ? null
             : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->pluck('branches.id')->all();
         $filters = $request->filters();
-        $employees = HrEmployee::query()
-            ->active()
-            ->where('company_id', $effectiveCompanyId)
-            ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
-            ->orderBy('full_name')
-            ->get(['doc_num', 'full_name']);
-        $branches = $company === null
-            ? Branch::query()->whereRaw('1 = 0')->get(['doc_num', 'name'])
+        $employeeOption = fn (?string $docNum): ?HrEmployee => blank($docNum)
+            ? null
+            : HrEmployee::query()
+                ->active()
+                ->where('company_id', $effectiveCompanyId)
+                ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
+                ->where('doc_num', $docNum)
+                ->first(['doc_num', 'full_name']);
+        $selectedBranch = blank($filters['branch'] ?? null) || $company === null
+            ? null
             : ($branchIds === null
-                ? Branch::query()->where('company_id', $company->getKey())->orderBy('name')->get(['doc_num', 'name'])
-                : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['doc_num', 'name']));
+                ? Branch::query()->where('company_id', $company->getKey())->where('doc_num', $filters['branch'])->first(['doc_num', 'name'])
+                : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->where('branches.doc_num', $filters['branch'])->first(['branches.doc_num', 'branches.name']));
 
         return view('modules.hr.attendance.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.employee-attendance.index'),
             'sessions' => $this->reports->paginate($effectiveCompanyId, $filters, $branchIds),
             'summary' => $this->reports->summary($effectiveCompanyId, $filters, $branchIds),
             'filters' => $filters,
-            'employees' => $employees,
-            'branches' => $branches,
+            'selectedFilterEmployee' => $employeeOption($filters['employee'] ?? null),
+            'selectedManualEmployee' => $employeeOption($request->old('employee_doc_num')),
+            'selectedBranch' => $selectedBranch,
             'manualIdempotencyKey' => (string) Str::uuid(),
         ]);
     }

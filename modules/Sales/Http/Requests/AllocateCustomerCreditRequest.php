@@ -3,15 +3,23 @@
 namespace Modules\Sales\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 
 class AllocateCustomerCreditRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
     {
         return (bool) $this->user()?->can('customer_credits.allocate');
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeNumericInput(['amount']);
     }
 
     /**

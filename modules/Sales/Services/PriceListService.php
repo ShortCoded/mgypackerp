@@ -27,7 +27,7 @@ class PriceListService
     {
         return DB::transaction(function () use ($data, $companyId, $cloneSource): PriceList {
             if ($cloneSource instanceof PriceList) {
-                return $this->cloneLocked($cloneSource, $companyId);
+                return $this->cloneLocked($cloneSource, $data, $companyId);
             }
 
             $record = PriceList::query()->create([
@@ -42,36 +42,20 @@ class PriceListService
         });
     }
 
-    private function cloneLocked(PriceList $source, int $companyId): PriceList
+    /** @param array<string, mixed> $data */
+    private function cloneLocked(PriceList $source, array $data, int $companyId): PriceList
     {
         $source = PriceList::query()
             ->forCompany($companyId)
             ->whereKey($source->getKey())
             ->lockForUpdate()
             ->firstOrFail();
-        $sourceLines = $source->lines()->lockForUpdate()->get();
         $record = PriceList::query()->create([
-            'company_id' => $source->company_id,
-            'customer_id' => $source->customer_id,
-            'currency_id' => $source->currency_id,
-            'price_list_date' => $source->getRawOriginal('price_list_date'),
-            'valid_from' => $source->getRawOriginal('valid_from'),
-            'valid_until' => $source->getRawOriginal('valid_until'),
-            'notes' => $source->notes,
-            'is_print_only' => $source->getRawOriginal('is_print_only'),
+            ...$this->headerValues($data, $companyId),
             ...$this->documents->nextForCompany('price_lists', PriceList::class, $companyId),
             'created_by' => auth()->id(),
         ]);
-
-        foreach ($sourceLines as $sourceLine) {
-            $record->lines()->create([
-                'product_id' => $sourceLine->product_id,
-                'line_number' => $sourceLine->getRawOriginal('line_number'),
-                'unit_price' => $sourceLine->getRawOriginal('unit_price'),
-                'allowed_discount_type' => $sourceLine->allowed_discount_type,
-                'allowed_discount_value' => $sourceLine->getRawOriginal('allowed_discount_value'),
-            ]);
-        }
+        $this->syncLines($record, $data['lines']);
 
         $this->audit->clearCreationUpdateAudit($record);
         $this->activities->log(request(), 'sales', 'price_lists.clone', 'success', [

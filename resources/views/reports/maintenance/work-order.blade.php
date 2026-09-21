@@ -1,3 +1,6 @@
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
 <h1>{{ $reportTitle }}</h1>
 
 <table>
@@ -6,10 +9,10 @@
         <tr><th>{{ __('maintenance.fields.asset') }}</th><td>{{ $order->asset ? $order->asset->doc_num.' — '.$order->asset->asset_name : ($order->mold ? $order->mold->code.' — '.$order->mold->name : '—') }}</td><th>{{ __('maintenance.fields.priority') }}</th><td>{{ __('maintenance.priorities.'.$order->priority) }}</td></tr>
         <tr><th>{{ __('maintenance.fields.maintenance_type') }}</th><td>{{ __('maintenance.maintenance_types.'.$order->maintenance_type) }}</td><th>{{ __('maintenance.fields.service_mode') }}</th><td>{{ __('maintenance.service_modes.'.$order->service_mode) }}</td></tr>
         <tr><th>{{ __('maintenance.fields.provider') }}</th><td>{{ $order->supplier?->name ?: $order->external_provider_name ?: __('maintenance.internal') }}</td><th>{{ __('maintenance.fields.external_provider_contact') }}</th><td>{{ $order->external_provider_contact ?: '—' }}</td></tr>
-        <tr><th>{{ __('maintenance.fields.planned_start') }}</th><td>{{ $order->planned_start_at?->format('Y-m-d H:i') ?? '—' }}</td><th>{{ __('maintenance.fields.planned_end') }}</th><td>{{ $order->planned_end_at?->format('Y-m-d H:i') ?? '—' }}</td></tr>
-        <tr><th>{{ __('maintenance.fields.actual_start') }}</th><td>{{ $order->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</td><th>{{ __('maintenance.fields.actual_end') }}</th><td>{{ $order->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</td></tr>
-        <tr><th>{{ __('maintenance.fields.machine_released_at') }}</th><td>{{ $order->machine_released_at?->format('Y-m-d H:i') ?? '—' }}</td><th>{{ __('maintenance.fields.cost_closed_at') }}</th><td>{{ $order->cost_closed_at?->format('Y-m-d H:i') ?? '—' }}</td></tr>
-        <tr><th>{{ __('maintenance.fields.next_due_date') }}</th><td>{{ $order->next_due_date?->toDateString() ?? '—' }}</td><th>{{ __('maintenance.fields.external_cost') }}</th><td class="number">{{ $order->external_cost ?? '—' }}</td></tr>
+        <tr><th>{{ __('maintenance.fields.planned_start') }}</th><td>{{ $dates->formatDateTime($order->planned_start_at, '—') }}</td><th>{{ __('maintenance.fields.planned_end') }}</th><td>{{ $dates->formatDateTime($order->planned_end_at, '—') }}</td></tr>
+        <tr><th>{{ __('maintenance.fields.actual_start') }}</th><td>{{ $dates->formatDateTime($order->actual_start_at, '—') }}</td><th>{{ __('maintenance.fields.actual_end') }}</th><td>{{ $dates->formatDateTime($order->actual_end_at, '—') }}</td></tr>
+        <tr><th>{{ __('maintenance.fields.machine_released_at') }}</th><td>{{ $dates->formatDateTime($order->machine_released_at, '—') }}</td><th>{{ __('maintenance.fields.cost_closed_at') }}</th><td>{{ $dates->formatDateTime($order->cost_closed_at, '—') }}</td></tr>
+        <tr><th>{{ __('maintenance.fields.next_due_date') }}</th><td>{{ $dates->formatDate($order->next_due_date, '—') }}</td><th>{{ __('maintenance.fields.external_cost') }}</th><td class="number">{{ $order->external_cost ?? '—' }}</td></tr>
     </tbody>
 </table>
 
@@ -17,7 +20,7 @@
     <h2>{{ __('maintenance.fields.execution_events') }}</h2>
     <table>
         <thead><tr><th>{{ __('maintenance.fields.occurred_at') }}</th><th>{{ __('maintenance.fields.event_type') }}</th><th>{{ __('maintenance.fields.reason') }}</th><th>{{ __('maintenance.fields.notes') }}</th><th>{{ __('maintenance.fields.participant_name') }}</th></tr></thead>
-        <tbody>@foreach($order->events as $event)<tr><td>{{ $event->occurred_at?->format('Y-m-d H:i') }}</td><td>{{ __('maintenance.event_types.'.$event->event_type) }}</td><td>{{ $event->reason ?: '—' }}</td><td>{{ collect($event->details ?? [])->filter()->implode(' — ') ?: '—' }}</td><td>{{ $event->recordedBy?->name ?? '—' }}</td></tr>@endforeach</tbody>
+        <tbody>@foreach($order->events as $event)<tr><td>{{ $dates->formatDateTime($event->occurred_at, '') }}</td><td>{{ __('maintenance.event_types.'.$event->event_type) }}</td><td>{{ $event->reason ?: '—' }}</td><td>{{ collect($event->details ?? [])->filter()->implode(' — ') ?: '—' }}</td><td>{{ $event->recordedBy?->name ?? '—' }}</td></tr>@endforeach</tbody>
     </table>
 @endif
 

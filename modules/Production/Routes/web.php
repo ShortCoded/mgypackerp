@@ -26,6 +26,7 @@ Route::middleware('auth')
             Route::delete('/{productionStage}', 'destroy')->middleware('can:production.stages.delete')->name('destroy');
         });
         Route::get('/product-stages', [ProductProductionStageController::class, 'index'])->middleware('can:production.product_stages.view')->name('product-stages.index');
+        Route::get('/product-stages/select2/products', [ProductProductionStageController::class, 'products'])->middleware('can:production.product_stages.view')->name('product-stages.select2.products');
         Route::get('/product-stages/{product}/edit', [ProductProductionStageController::class, 'edit'])->middleware('can:production.product_stages.manage')->name('product-stages.edit');
         Route::put('/product-stages/{product}', [ProductProductionStageController::class, 'update'])->name('product-stages.update');
 

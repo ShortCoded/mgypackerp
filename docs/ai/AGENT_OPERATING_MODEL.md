@@ -1,12 +1,12 @@
 # Agent Operating Model
 
-This repository uses Codex as the master orchestrator and verified local workers as bounded execution runtimes. Hermes is the active reliable delegation path; OpenCode V2 is optional and is used only when its provider health check succeeds. `AGENTS.md` remains the mandatory project instruction layer, and `docs/erp/INDEX.md` is the current ERP navigation index. `CODEX_PROJECT_CONTEXT.md` is historical architectural context, not a source for current path or runtime versions. Agents load only the sections and files relevant to the assigned task.
+This repository uses Codex Primary as the coordinator and applies a credit-first execution policy. Local deterministic tools are the first station, OpenCode is the preferred optional free executor for coherent mechanical work, and Hermes is selective rather than an automatic cascade. `AGENTS.md` remains the mandatory project instruction layer, and `docs/erp/INDEX.md` is the current ERP navigation index. `CODEX_PROJECT_CONTEXT.md` is historical architectural context, not a source for current path or runtime versions. Load only the sections and files relevant to the assigned task.
 
 ## Roles
 
 | Role | Responsibility | Mutation authority |
 | --- | --- | --- |
-| `orchestrator` | Classify risk, choose roles and model tier, define boundaries, coordinate handoffs, and own final verification. It should not normally implement non-trivial features. | Coordination; direct edits only for genuinely trivial work or agent infrastructure. |
+| `orchestrator` | Classify risk, map the bounded path once, choose whether delegation is economic, integrate, and own final verification. | Normal direct work plus coordination of optional free executors. |
 | `explorer` | Trace the smallest relevant execution path and return evidence, likely risk, affected files, and focused verification targets. | Read-only. |
 | `worker` | Implement a bounded T1 change with a known or confirmed cause. | Scoped project edits; no delegation. |
 | `deep_worker` | Implement a bounded T2/T3 change that needs deeper reasoning across layers. | Scoped project edits; no delegation. |
@@ -18,26 +18,26 @@ There is no model-router agent. Model selection is a deterministic orchestrator 
 
 ## Operating Contract
 
-1. Record `risk_class`, `selected_role`, `selected_model_tier`, and `review_required` before delegation. Record `reason_for_escalation` only when escalation occurs.
+1. Record `risk_class`, `execution_station`, `selected_provider`, and `review_required` before delegation. Record `delegation_savings_reason` and `reason_for_escalation` only when applicable.
 2. Inspect existing infrastructure or behavior before changing it. For ERP work, use `docs/erp/INDEX.md` to select the minimum relevant context, then inspect the actual implementation, the closest working reference, and focused tests.
-3. Use one writer. Parallel work is allowed only for independent tracks with non-overlapping mutation boundaries. Normal tasks should not consume all available concurrency.
-4. Pass a concise handoff contract: objective, proven evidence with file or symbol references, allowed files or areas, invariants, acceptance criteria, tests to run, and known unknowns.
+3. Prefer Codex Primary for tiny work and local tools for lookup/verification. Use one delegated writer for one coherent mechanical concern. At most two free writers may run concurrently, and only for independent tracks with non-overlapping mutation boundaries.
+4. Pass a concise mapped handoff: exact files, exact modifications, exact reference, invariants, and one focused verification command. Never forward the full parent prompt or unrelated history.
 5. Do not repeat discovery already supported by evidence. Reviewers inspect the diff and named risk areas; they do not redo the explorer's entire scan.
 6. The orchestrator inspects the integrated diff and verification output. Agent completion is not proof of correctness.
 
 ## Codex Delegation Contract
 
-Before substantial implementation, Codex must classify the task, define the mutation boundary, and decide whether delegation is useful. Use `scripts/ai/delegate-agent` for automatic local routing. T0 discovery normally uses Hermes cheap. T1/T2 implementation normally tries the health-gated OpenCode Personal route first and falls back once to Hermes strong; independent review and QA may use a distinct Hermes worker where useful. T3 remains Codex-owned, though bounded discovery, safe implementation subparts, independent review, and tests may still be delegated.
+Before implementation, Codex must classify the task, define the mutation boundary, and ask whether delegation will likely save more Codex work than its overhead. Local search and deterministic verification do not use a model. Tiny tasks stay with Codex Primary. Small/medium mechanical tasks may use one health-gated OpenCode Personal attempt. T3 remains Codex-owned. Codex platform subagents are policy-disabled by default because the repository cannot technically remove intrinsic platform capabilities; `.codex/config.toml` additionally caps exceptional Codex subagent concurrency at one.
 
-When review finds defects, resume the same writer session when supported. A cheap-worker failure or low-confidence result escalates once to Hermes strong. An unavailable or failed OpenCode route falls back once to Hermes strong. Avoid provider loops. Escalate implementation to Codex only after the usable local route fails, a material reviewer NO-GO remains unresolved, the safe budget is exhausted, or critical-domain evidence requires Codex ownership.
+An unavailable, stalled, or failed delegated route normally returns work to Codex Primary. A single explicit free fallback may be selected only from fresh evidence that it is likely to succeed and save meaningful work. There is no automatic OpenCode-to-Hermes or Hermes-Cheap-to-Strong escalation. One slice has at most two delegated attempts. The router records lightweight provider/model/category outcomes and opens a temporary circuit after repeated failures or timeouts.
 
-Codex must inspect the worker process exit status, structured result, exact changed files, Git diff, targeted tests, syntax, and scope drift. It stays read-only on business files assigned to an active writer. Worker completion prose alone is never acceptance evidence.
+Codex must inspect the worker process exit status, structured result, exact changed files, Git diff, targeted tests, syntax, and scope drift. Normal QA is performed directly with deterministic tools. Model QA/review requires a concrete complex semantic risk; it is not a default station. Stop after acceptance passes.
 
 Local Qwen 27B is available only as an optional manual experiment. It is excluded from automatic routing and must not be auto-started because measured latency on this CPU is operationally impractical.
 
 ## Safety Boundaries
 
-- T3 domain rules override apparent task size. Financial, inventory, production, migration, authorization, concurrency, idempotency, and tenant/company/branch isolation risks require critical routing.
+- T3 domain rules override apparent task size. Financial, inventory, production, migration, authorization, concurrency, idempotency, and tenant/company/branch isolation risks require T3 routing and Codex Primary ownership.
 - Git status, diff, and log inspection are allowed. Git push and production deployment never run automatically.
 - Destructive database operations and business migrations require explicit authorization and T3 routing.
 - Do not broadly expose `.env`, secrets, credentials, customer data, or production extracts.

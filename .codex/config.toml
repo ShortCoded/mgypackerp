@@ -4,28 +4,28 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 
 [agents]
-max_concurrent_threads_per_session = 4
+max_concurrent_threads_per_session = 1
 
 [agents.explorer]
-description = "Read-only targeted repository explorer that returns concise evidence without duplicating the project context index."
+description = "Explicit credit-first exception only: read-only targeted repository explorer when local tools are insufficient."
 config_file = "agents/explorer.toml"
 
 [agents.worker]
-description = "Bounded implementation worker for localized T1 changes with a confirmed cause and explicit file boundaries."
+description = "Explicit credit-first exception only: bounded implementation worker when free execution is unsuitable."
 config_file = "agents/worker.toml"
 
 [agents.deep_worker]
-description = "Bounded implementation worker for confirmed T2 or T3 work spanning multiple layers or material invariants."
+description = "Explicit credit-first exception only: deep implementation worker for justified complex risk."
 config_file = "agents/deep_worker.toml"
 
 [agents.reviewer]
-description = "Read-only independent reviewer for integration, transaction, regression, and test risks."
+description = "Explicit credit-first exception only: read-only semantic reviewer for a named complex risk."
 config_file = "agents/reviewer.toml"
 
 [agents.critical_reviewer]
-description = "Read-only independent reviewer for T3 financial, inventory, migration, security, concurrency, and isolation risks."
+description = "Explicit credit-first exception only: read-only T3 reviewer when deterministic proof is insufficient."
 config_file = "agents/critical_reviewer.toml"
 
 [agents.qa]
-description = "Targeted verification agent; workspace write supports test artifacts, while avoiding ERP business-code edits is a policy constraint."
+description = "Explicit credit-first exception only: model QA when deterministic verification is insufficient."
 config_file = "agents/qa.toml"

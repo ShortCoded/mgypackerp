@@ -2,6 +2,10 @@
 
 @section('title', __('maintenance.orders.details').' — '.$order->doc_num)
 
+@php
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
+
 @section('content')
     <div class="production-mobile-workflow">
         <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 mb-3">
@@ -29,13 +33,13 @@
             <div class="quality-summary-item"><span>{{ __('maintenance.fields.mold') }}</span><strong>{{ $order->mold ? $order->mold->code.' — '.$order->mold->name : '—' }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('maintenance.fields.service_mode') }}</span><strong>{{ __('maintenance.service_modes.'.$order->service_mode) }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('maintenance.fields.provider') }}</span><strong>{{ $order->supplier?->name ?: $order->external_provider_name ?: __('maintenance.internal') }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('maintenance.fields.planned_start') }}</span><strong>{{ $order->planned_start_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('maintenance.fields.actual_start') }}</span><strong>{{ $order->actual_start_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('maintenance.fields.machine_released_at') }}</span><strong>{{ $order->machine_released_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('maintenance.fields.cost_closed_at') }}</span><strong>{{ $order->cost_closed_at?->format('Y-m-d H:i') ?? '—' }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('maintenance.fields.planned_start') }}</span><strong>{{ $dates->formatDateTime($order->planned_start_at, '—') }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('maintenance.fields.actual_start') }}</span><strong>{{ $dates->formatDateTime($order->actual_start_at, '—') }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('maintenance.fields.machine_released_at') }}</span><strong>{{ $dates->formatDateTime($order->machine_released_at, '—') }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('maintenance.fields.cost_closed_at') }}</span><strong>{{ $dates->formatDateTime($order->cost_closed_at, '—') }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('maintenance.fields.total_paused_minutes') }}</span><strong>{{ $order->total_paused_minutes }}</strong></div>
             <div class="quality-summary-item"><span>{{ __('maintenance.fields.external_transit') }}</span><strong>{{ $order->external_in_transit ? __('common.yes') : __('common.no') }}</strong></div>
-            <div class="quality-summary-item"><span>{{ __('maintenance.fields.next_due_date') }}</span><strong>{{ $order->next_due_date?->toDateString() ?? '—' }}</strong></div>
+            <div class="quality-summary-item"><span>{{ __('maintenance.fields.next_due_date') }}</span><strong>{{ $dates->formatDate($order->next_due_date, '—') }}</strong></div>
         </div>
 
         @if($order->status === 'in_progress')
@@ -81,13 +85,13 @@
 
         <div class="row g-3">
             <div class="col-12 col-lg-6"><div class="card h-100"><div class="card-header"><h5 class="mb-0">{{ __('maintenance.fields.work_description') }}</h5></div><div class="card-body"><p class="mb-0 text-break">{{ $order->work_description }}</p>@if($order->request)<hr><div class="small text-600 mb-1">{{ __('maintenance.fields.source_report') }} — {{ $order->request->doc_num }}</div><p class="mb-0 text-break">{{ $order->request->symptoms }}</p>@if($order->request->qualityInspection)<a class="btn btn-sm btn-falcon-default mt-2" href="{{ route('admin.production.quality.show', $order->request->qualityInspection) }}">{{ __('maintenance.actions.open_source_inspection') }} — {{ $order->request->qualityInspection->doc_num }}</a>@endif @elseif($order->maintenancePlanDue)<hr><div class="small text-600">{{ __('maintenance.fields.source_plan') }} — {{ $order->maintenancePlanDue->plan->doc_num }} / {{ $order->maintenancePlanDue->plan->name }}</div>@endif</div></div></div>
-            <div class="col-12 col-lg-6"><div class="card h-100"><div class="card-header"><h5 class="mb-0">{{ __('maintenance.orders.complete') }}</h5></div><div class="card-body"><dl class="row mb-0 quality-detail-list"><dt class="col-sm-4">{{ __('maintenance.fields.diagnosis') }}</dt><dd class="col-sm-8">{{ $order->diagnosis ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.root_cause') }}</dt><dd class="col-sm-8">{{ $order->root_cause ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.work_performed') }}</dt><dd class="col-sm-8">{{ $order->work_performed ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.test_result') }}</dt><dd class="col-sm-8">{{ $order->test_result ? __('maintenance.test_results.'.$order->test_result) : '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.repair_outcome') }}</dt><dd class="col-sm-8">{{ $order->repair_outcome ? __('maintenance.repair_outcomes.'.$order->repair_outcome) : '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.follow_up_due_at') }}</dt><dd class="col-sm-8">{{ $order->follow_up_due_at?->format('Y-m-d H:i') ?? '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.completion_notes') }}</dt><dd class="col-sm-8">{{ $order->completion_notes ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.actual_end') }}</dt><dd class="col-sm-8">{{ $order->actual_end_at?->format('Y-m-d H:i') ?? '—' }}</dd></dl></div></div></div>
+            <div class="col-12 col-lg-6"><div class="card h-100"><div class="card-header"><h5 class="mb-0">{{ __('maintenance.orders.complete') }}</h5></div><div class="card-body"><dl class="row mb-0 quality-detail-list"><dt class="col-sm-4">{{ __('maintenance.fields.diagnosis') }}</dt><dd class="col-sm-8">{{ $order->diagnosis ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.root_cause') }}</dt><dd class="col-sm-8">{{ $order->root_cause ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.work_performed') }}</dt><dd class="col-sm-8">{{ $order->work_performed ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.test_result') }}</dt><dd class="col-sm-8">{{ $order->test_result ? __('maintenance.test_results.'.$order->test_result) : '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.repair_outcome') }}</dt><dd class="col-sm-8">{{ $order->repair_outcome ? __('maintenance.repair_outcomes.'.$order->repair_outcome) : '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.follow_up_due_at') }}</dt><dd class="col-sm-8">{{ $dates->formatDateTime($order->follow_up_due_at, '—') }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.completion_notes') }}</dt><dd class="col-sm-8">{{ $order->completion_notes ?: '—' }}</dd><dt class="col-sm-4">{{ __('maintenance.fields.actual_end') }}</dt><dd class="col-sm-8">{{ $dates->formatDateTime($order->actual_end_at, '—') }}</dd></dl></div></div></div>
         </div>
 
         <div class="card mt-3">
             <div class="card-header"><h5 class="mb-0">{{ __('maintenance.fields.execution_events') }}</h5></div>
             <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>{{ __('maintenance.fields.occurred_at') }}</th><th>{{ __('maintenance.fields.event_type') }}</th><th>{{ __('maintenance.fields.reason') }}</th><th>{{ __('maintenance.fields.notes') }}</th><th>{{ __('maintenance.fields.participant_name') }}</th></tr></thead><tbody>
-                @forelse($order->events as $event)<tr><td>{{ $event->occurred_at?->format('Y-m-d H:i') }}</td><td>{{ __('maintenance.event_types.'.$event->event_type) }}</td><td>{{ $event->reason ?: '—' }}</td><td>{{ collect($event->details ?? [])->filter()->implode(' — ') ?: '—' }}</td><td>{{ $event->recordedBy?->name ?? '—' }}</td></tr>@empty<tr><td colspan="5" class="text-center text-600">—</td></tr>@endforelse
+                @forelse($order->events as $event)<tr><td>{{ $dates->formatDateTime($event->occurred_at, '') }}</td><td>{{ __('maintenance.event_types.'.$event->event_type) }}</td><td>{{ $event->reason ?: '—' }}</td><td>{{ collect($event->details ?? [])->filter()->implode(' — ') ?: '—' }}</td><td>{{ $event->recordedBy?->name ?? '—' }}</td></tr>@empty<tr><td colspan="5" class="text-center text-600">—</td></tr>@endforelse
             </tbody></table></div>
         </div>
 
