@@ -9,16 +9,17 @@
 - Review Git status before editing and preserve unrelated uncommitted work. Keep changes focused, use the existing UI and architectural conventions, and verify every change with targeted tests.
 - Use Laravel Boost documentation and inspection tools when they cover the question. Prefer database aggregates, scoped queries, and paginated lists over loading records into memory.
 
-# Codex-led OpenCode Delegation
+# Codex-led Local Delegation
 
-- Codex owns diagnosis, task boundaries, review, integration, and final verification. OpenCode is a single scoped implementation worker, not a second lead, and must not delegate the assigned work again.
-- OpenCode is the default execution runtime for eligible T0, T1, and T2 work. Codex must classify risk, define the mutation boundary, and use `scripts/ai/delegate-opencode` without requiring the user to open the OpenCode TUI or request delegation explicitly.
-- Before relying on OpenCode, Codex must verify the installed CLI version, configuration, authorized provider, permissions, and a small safe invocation. A local attached server must remain bound to loopback; do not disable approvals or change billing/provider configuration.
+- Codex owns diagnosis, task boundaries, worker selection, review, integration, and final verification. Delegated workers are bounded executors, not second leads, and must not delegate again.
+- Codex should choose delegation automatically when it improves speed, context use, isolation, or cost. Use `scripts/ai/delegate-agent` as the normal entry point; it routes to the verified Hermes cheap or strong worker and may use OpenCode only when `scripts/ai/delegation.conf` enables it and its health probe passes.
+- OpenCode is optional. Before enabling it, verify the installed CLI version, configuration, authenticated provider, permissions, and a safe repository-aware invocation. Its failure must fall back once to Hermes rather than aborting the user task.
+- KiosAPI is disabled and non-blocking. It must not be loaded, probed, or used as an active delegation dependency unless a future user explicitly reopens that work.
 - Every implementation delegation must state the concrete problem, expected behavior, allowed files or areas, existing patterns and invariants, acceptance criteria, and requested report of edits, tests actually run, and unverified items. Never include secrets or customer data.
 - Start with one writer. Do not overlap writers on the same files. After each delegation, Codex must inspect the diff for scope drift and run the relevant tests on the integrated working tree. Tool completion or an agent claim is not proof of correctness.
-- Resume the same OpenCode writer session after review corrections whenever possible. Start another writer only when new evidence, a distinct boundary, or an explicit tier escalation justifies it.
+- Resume the same writer session after review corrections when the runtime supports it. Start another writer only when new evidence, a distinct boundary, or an explicit tier escalation justifies it.
 - Codex remains the T3 owner for accounting, inventory integrity, security privilege boundaries, migrations, concurrency, closing, reconciliation, and release gates. It may delegate bounded discovery, safe subparts, review, or QA, but retains architecture and GO / NO-GO responsibility.
-- If delegation is unavailable or fails, report the exact limitation and continue safe in-scope work directly; do not claim OpenCode wrote changes it did not produce.
+- If one delegation target is unavailable or fails, follow `docs/ai/MODEL_ROUTING.md` fallback rules and continue safely; do not claim a worker wrote changes it did not produce.
 
 # Local Agent Infrastructure v1
 

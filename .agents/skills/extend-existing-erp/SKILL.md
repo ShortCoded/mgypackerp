@@ -78,3 +78,9 @@ After consolidation, only one writer modifies the working tree at a time. Separa
 - Do not assume a route, menu item, or report exists in working form just because it is defined. A route can point to a missing controller method; a menu item can point to a route that 404s; a report can render numbers from the wrong query.
 - When a shared component or service is the root cause of multiple symptoms, fix it centrally rather than patching each consumer independently.
 - A green test suite is not sufficient if browser routes still throw JavaScript or runtime errors — verify the rendered application too.
+
+## Permission Registry Auditing
+
+When the audit scope includes permissions — discovering which permission keys referenced by the application are missing from the canonical registry, adding them to the correct config source, running the sync, and verifying — follow the dedicated procedure.
+
+See `references/permission-registry-audit.md` for the full workflow: discovery sources, scanning methodology, categorization rules, how to add permissions to menu config vs ERP UI screen config, the `$screen()` helper signature, running `erp:permissions:sync`, verification, and the regression test template at `templates/permission-registry-coverage-test.php`.

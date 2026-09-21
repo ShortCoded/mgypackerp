@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  delegate-agent --role <role> --repo <path> --title <title> --prompt-file <path>
+      [--mode <read-only|edit>] [--prefer <auto|opencode|hermes>]
+      [--allow-shared-tree]
+
+Selects the configured local worker and prints one JSON result. OpenCode is
+used only when enabled and healthy; failures fall back once to Hermes.
+EOF
+}
+
+fail() {
+    printf 'delegate-agent: %s\n' "$1" >&2
+    exit 2
+}
+
+role=""
+repo=""
+title=""
+prompt_file=""
+mode="read-only"
+prefer="auto"
+allow_shared_tree=0
+
+while (($# > 0)); do
+    case "$1" in
+        --role) (($# >= 2)) || fail '--role requires a value'; role=$2; shift 2 ;;
+        --repo) (($# >= 2)) || fail '--repo requires a value'; repo=$2; shift 2 ;;
+        --title) (($# >= 2)) || fail '--title requires a value'; title=$2; shift 2 ;;
+        --prompt-file) (($# >= 2)) || fail '--prompt-file requires a value'; prompt_file=$2; shift 2 ;;
+        --mode) (($# >= 2)) || fail '--mode requires a value'; mode=$2; shift 2 ;;
+        --prefer) (($# >= 2)) || fail '--prefer requires a value'; prefer=$2; shift 2 ;;
+        --allow-shared-tree) allow_shared_tree=1; shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) fail "unknown argument: $1" ;;
+    esac
+done
+
+case "$role" in
+    explorer|worker|deep_worker|reviewer|critical_reviewer|qa) ;;
+    *) fail 'unsupported --role' ;;
+esac
+[[ "$prefer" == auto || "$prefer" == opencode || "$prefer" == hermes ]] || fail '--prefer must be auto, opencode, or hermes'
+[[ "$mode" == read-only || "$mode" == edit ]] || fail '--mode must be read-only or edit'
+[[ -n "$repo" && -d "$repo" ]] || fail '--repo must name an existing directory'
+[[ -n "$title" ]] || fail '--title is required'
+[[ -n "$prompt_file" && -r "$prompt_file" && -f "$prompt_file" ]] || fail '--prompt-file must be a readable file'
+command -v jq >/dev/null 2>&1 || fail 'jq is required'
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=delegation.conf
+source "$script_dir/delegation.conf"
+repo=$(cd -- "$repo" && pwd -P)
+opencode_enabled=${DELEGATION_OPENCODE_ENABLED:-$OPENCODE_ENABLED}
+
+if [[ "$mode" == edit && $allow_shared_tree -eq 0 ]]; then
+    if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || [[ -d "$repo/.git" ]]; then
+        fail 'edit mode requires an isolated linked worktree or --allow-shared-tree for a harmless temporary target'
+    fi
+fi
+
+case "$role" in
+    explorer|qa)
+        hermes_class=cheap
+        opencode_model=$OPENCODE_CHEAP_MODEL
+        ;;
+    worker|deep_worker|reviewer|critical_reviewer)
+        hermes_class=strong
+        opencode_model=$OPENCODE_STRONG_MODEL
+        ;;
+esac
+
+try_opencode=0
+if [[ "$prefer" == opencode ]]; then
+    try_opencode=1
+elif [[ "$prefer" == auto && ("$role" == worker || "$role" == deep_worker) ]]; then
+    try_opencode=1
+fi
+
+fallback_reason=""
+if ((try_opencode)); then
+    if [[ "$opencode_enabled" == 1 ]] && "$script_dir/delegate-opencode" --health --repo "$repo" >/dev/null 2>&1; then
+        opencode_dir=$(mktemp -d "${TMPDIR:-/tmp}/mgypack-opencode-route.XXXXXX")
+        if [[ "$mode" == read-only ]]; then
+            opencode_mutation_rule='Do not create, edit, move, or delete files. Do not change Git state.'
+        else
+            opencode_mutation_rule='Edit only the files explicitly allowed by the task. Do not commit, push, deploy, migrate, or alter unrelated files.'
+        fi
+        {
+            printf '%s\n' \
+                'You are a bounded delegated worker. Do not delegate or spawn another agent.' \
+                "Repository: $repo" \
+                "Mode: $mode" \
+                "$opencode_mutation_rule" \
+                'End with: status, summary, files inspected, files changed, checks run, failures or blockers, and important observations.' \
+                '' \
+                'Task:'
+            printf '%s\n' "$(<"$prompt_file")"
+        } >"$opencode_dir/prompt.md"
+        set +e
+        "$script_dir/delegate-opencode" --agent "$role" --title "$title" --prompt-file "$opencode_dir/prompt.md" --repo "$repo" >"$opencode_dir/output.jsonl" 2>"$opencode_dir/error.txt"
+        opencode_status=$?
+        set -e
+        if ((opencode_status == 0)); then
+            jq -n \
+                --arg runtime opencode \
+                --arg role "$role" \
+                --arg model "$opencode_model" \
+                --arg status completed \
+                --arg repo "$repo" \
+                --arg mode "$mode" \
+                --arg output "$(<"$opencode_dir/output.jsonl")" \
+                --arg error "$(sed -E 's/sk-[A-Za-z0-9_-]+/[REDACTED]/g' "$opencode_dir/error.txt" | tail -c 4000)" \
+                '{runtime:$runtime,role:$role,model:$model,status:$status,exit_code:0,repo:$repo,mode:$mode,output:$output,error:$error,fallback_from:null}'
+            rm -rf -- "$opencode_dir"
+            exit 0
+        fi
+        fallback_reason="opencode_failed_exit_$opencode_status"
+        rm -rf -- "$opencode_dir"
+    elif [[ "$opencode_enabled" == 1 ]]; then
+        fallback_reason=opencode_health_failed
+    else
+        fallback_reason=opencode_disabled
+    fi
+fi
+
+hermes_args=(
+    --class "$hermes_class"
+    --repo "$repo"
+    --prompt-file "$prompt_file"
+    --mode "$mode"
+    --title "$title"
+)
+if ((allow_shared_tree)); then
+    hermes_args+=(--allow-shared-tree)
+fi
+
+set +e
+hermes_result=$("$script_dir/delegate-hermes" "${hermes_args[@]}")
+hermes_status=$?
+set -e
+
+if ((hermes_status != 0)) && [[ "$hermes_class" == cheap ]]; then
+    fallback_reason="hermes_cheap_exit_$hermes_status"
+    strong_args=(
+        --class strong
+        --repo "$repo"
+        --prompt-file "$prompt_file"
+        --mode "$mode"
+        --title "$title"
+    )
+    if ((allow_shared_tree)); then
+        strong_args+=(--allow-shared-tree)
+    fi
+
+    set +e
+    hermes_result=$("$script_dir/delegate-hermes" "${strong_args[@]}")
+    hermes_status=$?
+    set -e
+fi
+
+jq -c --arg role "$role" --arg fallback_from "$fallback_reason" '. + {role:$role,fallback_from:(if $fallback_from == "" then null else $fallback_from end)}' <<<"$hermes_result"
+exit "$hermes_status"

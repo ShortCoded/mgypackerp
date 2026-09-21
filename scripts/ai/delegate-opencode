@@ -5,8 +5,9 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  delegate-opencode --agent <role> --title <title> --prompt-file <path>
-  delegate-opencode --session <session-id> --prompt-file <path>
+  delegate-opencode --agent <role> --title <title> --prompt-file <path> [--repo <path>]
+  delegate-opencode --session <session-id> --prompt-file <path> [--repo <path>]
+  delegate-opencode --health [--refresh] [--repo <path>]
 
 Runs OpenCode non-interactively from the ERP project root. Raw JSONL remains on
 stdout. The discovered session ID is printed to stderr after the run.
@@ -23,6 +24,9 @@ agent_model=""
 title=""
 prompt_file=""
 session_id=""
+repo=""
+health_only=0
+refresh_health=0
 
 while (($# > 0)); do
     case "$1" in
@@ -46,6 +50,19 @@ while (($# > 0)); do
             session_id=$2
             shift 2
             ;;
+        --repo)
+            (($# >= 2)) || fail '--repo requires a value'
+            repo=$2
+            shift 2
+            ;;
+        --health)
+            health_only=1
+            shift
+            ;;
+        --refresh)
+            refresh_health=1
+            shift
+            ;;
         --help|-h)
             usage
             exit 0
@@ -55,6 +72,72 @@ while (($# > 0)); do
             ;;
     esac
 done
+
+command -v opencode >/dev/null 2>&1 || fail 'opencode is not available on PATH'
+command -v jq >/dev/null 2>&1 || fail 'jq is required to extract the OpenCode session ID'
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+project_root=$(cd -- "$script_dir/../.." && pwd -P)
+# shellcheck source=delegation.conf
+source "$script_dir/delegation.conf"
+repo=${repo:-$project_root}
+[[ -d "$repo" ]] || fail "repository path does not exist: $repo"
+repo=$(cd -- "$repo" && pwd -P)
+[[ -f "$repo/opencode.json" ]] || fail "repository does not contain opencode.json: $repo"
+
+if ((health_only)); then
+    health_model=$OPENCODE_HEALTH_MODEL
+    health_ttl=$OPENCODE_HEALTH_TTL_SECONDS
+    [[ "$health_ttl" =~ ^[0-9]+$ ]] || fail 'OPENCODE_HEALTH_TTL_SECONDS must be a non-negative integer'
+
+    cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/mgypack-agent
+    cache_file=$cache_dir/opencode-health.json
+    now=$(date +%s)
+
+    if ((refresh_health == 0)) && [[ -s "$cache_file" ]]; then
+        cached_at=$(jq -r --arg repo "$repo" --arg model "$health_model" \
+            'select(.repo == $repo and .model == $model and .status == "operational") | .checked_at // 0' \
+            "$cache_file" 2>/dev/null || printf '0')
+        if [[ "$cached_at" =~ ^[0-9]+$ ]] && ((now - cached_at >= 0 && now - cached_at < health_ttl)); then
+            jq -n --arg status operational --arg model "$health_model" --argjson checked_at "$cached_at" \
+                '{status:$status,method:"completion_probe",cached:true,model:$model,checked_at:$checked_at}'
+            exit 0
+        fi
+    fi
+
+    health_output=$(mktemp "${TMPDIR:-/tmp}/mgypack-opencode-health.XXXXXX")
+    health_error=$(mktemp "${TMPDIR:-/tmp}/mgypack-opencode-health-error.XXXXXX")
+    trap 'rm -f -- "$health_output" "$health_error"' EXIT
+
+    set +e
+    (
+        cd -- "$repo"
+        opencode run --standalone --agent build --model "$health_model" --format json \
+            --title 'Delegation health check' \
+            'Reply with exactly OPENCODE_HEALTH_OK. Do not use tools.'
+    ) >"$health_output" 2>"$health_error"
+    health_status=$?
+    set -e
+
+    if ((health_status == 0)) && jq -e -s \
+        'any(.[]; .type == "text" and .part.text == "OPENCODE_HEALTH_OK")' \
+        "$health_output" >/dev/null 2>&1; then
+        mkdir -p -- "$cache_dir"
+        chmod 700 "$cache_dir"
+        jq -n --arg status operational --arg repo "$repo" --arg model "$health_model" --argjson checked_at "$now" \
+            '{status:$status,repo:$repo,model:$model,checked_at:$checked_at}' >"$cache_file"
+        chmod 600 "$cache_file"
+        jq -n --arg status operational --arg model "$health_model" --argjson checked_at "$now" \
+            '{status:$status,method:"completion_probe",cached:false,model:$model,checked_at:$checked_at}'
+        exit 0
+    fi
+
+    error_tail=$(sed -E 's/(sk-[A-Za-z0-9_-]+|Bearer [A-Za-z0-9._-]+)/[REDACTED]/g' "$health_error" | tail -c 1000)
+    jq -n --arg status unavailable --arg reason completion_probe_failed --arg model "$health_model" \
+        --arg error "$error_tail" --argjson exit_code "$health_status" \
+        '{status:$status,reason:$reason,method:"completion_probe",model:$model,exit_code:$exit_code,error:$error}'
+    exit 1
+fi
 
 [[ -n "$prompt_file" ]] || fail '--prompt-file is required'
 [[ -r "$prompt_file" && -f "$prompt_file" ]] || fail "prompt file is not a readable regular file: $prompt_file"
@@ -68,37 +151,30 @@ else
 
     case "$agent" in
         orchestrator)
-            agent_model="opencode/muse-spark-1.3-contributor-free#medium"
+            agent_model=$OPENCODE_ORCHESTRATOR_MODEL
             ;;
         explorer|qa)
-            agent_model="opencode/ling-3.0-flash-fin-free"
+            agent_model=$OPENCODE_CHEAP_MODEL
             ;;
         worker|deep_worker|reviewer|critical_reviewer)
-            agent_model="opencode/mimo-v2.5-free"
+            agent_model=$OPENCODE_STRONG_MODEL
             ;;
         *) fail "unsupported agent: $agent" ;;
     esac
 fi
 
-command -v opencode >/dev/null 2>&1 || fail 'opencode is not available on PATH'
-command -v jq >/dev/null 2>&1 || fail 'jq is required to extract the OpenCode session ID'
-
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-project_root=$(cd -- "$script_dir/../.." && pwd -P)
-[[ -f "$project_root/opencode.json" ]] || fail "project root does not contain opencode.json: $project_root"
-
 prompt=$(<"$prompt_file")
 output_file=$(mktemp "${TMPDIR:-/tmp}/mgypack-opencode-output.XXXXXX")
 trap 'rm -f -- "$output_file"' EXIT
 
-cd -- "$project_root"
+cd -- "$repo"
 
 set +e
 if [[ -n "$session_id" ]]; then
     opencode run --standalone --session "$session_id" --format json "$prompt" | tee "$output_file"
     opencode_status=${PIPESTATUS[0]}
 else
-    # OpenCode 2.0.8 applies a selected subagent's prompt and permissions but can
+    # OpenCode V2 applies a selected subagent's prompt and permissions but can
     # otherwise retain the default primary model. Pin the role's configured model
     # explicitly so session metadata and the live provider call match the route.
     opencode run --standalone --agent "$agent" --model "$agent_model" --format json --title "$title" "$prompt" | tee "$output_file"

@@ -12,6 +12,8 @@ return [
         'keywords' => ['home', 'start', 'لوحة', 'الرئيسية'],
         'actions' => [
             'view' => 'dashboard.view',
+            'sales_summary' => 'dashboard.summaries.sales.view',
+            'purchases_summary' => 'dashboard.summaries.purchases.view',
         ],
         'active' => [
             'dashboard',

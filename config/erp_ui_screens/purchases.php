@@ -40,6 +40,7 @@ return [
         $screen('purchase-order-approvals', 'Purchase Order Approvals', 'اعتمادات أوامر الشراء', 'orders', 'inquiry', ['classification' => 'WORKING_REAL_SCREEN']),
         $screen('purchase-order-change-requests', 'Purchase Order Change Requests', 'طلبات تغيير أوامر الشراء', 'orders', 'document', ['classification' => 'WORKING_REAL_SCREEN']),
         $screen('purchase-order-delivery-schedule', 'Purchase Order Delivery Schedule', 'جدول تسليم أمر الشراء', 'orders', 'document', ['classification' => 'WORKING_REAL_SCREEN']),
+        $screen('purchase-order-clone', 'Purchase Order Clone', 'نسخ أمر الشراء', 'orders', 'document', ['classification' => 'OUT_OF_SCOPE', 'menu_visible' => false, 'shell_enabled' => false, 'permission_prefix' => 'purchase_orders', 'actions' => ['clone']]),
         $screen('goods-receipt-inspection', 'Purchase Inspections', 'فحص المشتريات', 'receiving', 'document', ['classification' => 'CANONICAL']),
         $screen('goods-receipt-notes', 'Goods Receipts', 'أذون استلام المشتريات', 'receiving', 'document', ['classification' => 'CANONICAL']),
         $screen('goods-receipt-lines', 'Goods Receipt Lines', 'سطور أذون الاستلام', 'receiving', 'document', ['classification' => 'CHILD_ENTITY_NOT_A_SCREEN', 'menu_visible' => false, 'shell_enabled' => false]),

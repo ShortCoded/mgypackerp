@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  delegate-hermes --class <cheap|strong> --repo <path> --prompt-file <path>
+      [--mode <read-only|edit>] [--title <title>] [--allow-shared-tree]
+
+Runs one bounded Hermes worker and prints one JSON result object. Edit mode is
+accepted only in a linked Git worktree unless --allow-shared-tree is supplied
+for an explicitly harmless temporary target.
+EOF
+}
+
+fail() {
+    printf 'delegate-hermes: %s\n' "$1" >&2
+    exit 2
+}
+
+worker_class=""
+repo=""
+prompt_file=""
+mode="read-only"
+title="Delegated task"
+allow_shared_tree=0
+
+while (($# > 0)); do
+    case "$1" in
+        --class)
+            (($# >= 2)) || fail '--class requires a value'
+            worker_class=$2
+            shift 2
+            ;;
+        --repo)
+            (($# >= 2)) || fail '--repo requires a value'
+            repo=$2
+            shift 2
+            ;;
+        --prompt-file)
+            (($# >= 2)) || fail '--prompt-file requires a value'
+            prompt_file=$2
+            shift 2
+            ;;
+        --mode)
+            (($# >= 2)) || fail '--mode requires a value'
+            mode=$2
+            shift 2
+            ;;
+        --title)
+            (($# >= 2)) || fail '--title requires a value'
+            title=$2
+            shift 2
+            ;;
+        --allow-shared-tree)
+            allow_shared_tree=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            fail "unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ "$worker_class" == cheap || "$worker_class" == strong ]] || fail '--class must be cheap or strong'
+[[ "$mode" == read-only || "$mode" == edit ]] || fail '--mode must be read-only or edit'
+[[ -n "$repo" && -d "$repo" ]] || fail '--repo must name an existing directory'
+[[ -n "$prompt_file" && -r "$prompt_file" && -f "$prompt_file" ]] || fail '--prompt-file must be a readable file'
+command -v hermes >/dev/null 2>&1 || fail 'hermes is not available on PATH'
+command -v jq >/dev/null 2>&1 || fail 'jq is required'
+command -v timeout >/dev/null 2>&1 || fail 'timeout is required'
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=delegation.conf
+source "$script_dir/delegation.conf"
+
+repo=$(cd -- "$repo" && pwd -P)
+if [[ "$mode" == edit && $allow_shared_tree -eq 0 ]]; then
+    if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || [[ -d "$repo/.git" ]]; then
+        fail 'edit mode requires an isolated linked worktree or --allow-shared-tree for a harmless temporary target'
+    fi
+fi
+
+case "$worker_class" in
+    cheap) model=$HERMES_CHEAP_MODEL ;;
+    strong) model=$HERMES_STRONG_MODEL ;;
+esac
+
+if [[ "$mode" == read-only ]]; then
+    mutation_rule='Do not create, edit, move, or delete files. Do not change Git state.'
+else
+    mutation_rule='Edit only the files explicitly allowed by the task. Do not commit, push, deploy, migrate, or alter unrelated files.'
+fi
+
+task=$(<"$prompt_file")
+worker_prompt=$(printf '%s\n' \
+    'You are a bounded delegated worker. Do not delegate or spawn another agent.' \
+    "Title: $title" \
+    "Repository: $repo" \
+    "Mode: $mode" \
+    "$mutation_rule" \
+    'Read the repository AGENTS.md before acting, then follow the minimum relevant project context it names.' \
+    'Respect repository instructions and report evidence, not confidence theater.' \
+    'End with a concise report containing: status, summary, files inspected, files changed, checks run, failures or blockers, and important observations.' \
+    '' \
+    'Task:' \
+    "$task")
+
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/mgypack-hermes.XXXXXX")
+trap 'rm -rf -- "$run_dir"' EXIT
+output_file="$run_dir/output.txt"
+error_file="$run_dir/error.txt"
+usage_file="$run_dir/usage.json"
+
+set +e
+timeout "$HERMES_TIMEOUT_SECONDS" hermes \
+    --safe-mode \
+    --in "$repo" \
+    --provider "$HERMES_PROVIDER" \
+    --model "$model" \
+    --toolsets file,terminal \
+    --usage-file "$usage_file" \
+    -z "$worker_prompt" >"$output_file" 2>"$error_file"
+worker_status=$?
+set -e
+
+output=$(<"$output_file")
+error=$(sed -E 's/sk-[A-Za-z0-9_-]+/[REDACTED]/g' "$error_file" | tail -c 4000)
+usage=null
+if [[ -s "$usage_file" ]] && jq -e . "$usage_file" >/dev/null 2>&1; then
+    usage=$(jq -c . "$usage_file")
+fi
+
+case "$worker_status" in
+    0) status=completed ;;
+    124) status=timeout ;;
+    *) status=failed ;;
+esac
+
+jq -n \
+    --arg runtime hermes \
+    --arg class "$worker_class" \
+    --arg model "$model" \
+    --arg provider "$HERMES_PROVIDER" \
+    --arg status "$status" \
+    --arg repo "$repo" \
+    --arg mode "$mode" \
+    --arg output "$output" \
+    --arg error "$error" \
+    --argjson exit_code "$worker_status" \
+    --argjson usage "$usage" \
+    '{runtime:$runtime,class:$class,model:$model,provider:$provider,status:$status,exit_code:$exit_code,repo:$repo,mode:$mode,output:$output,error:$error,usage:$usage}'
+
+exit "$worker_status"

@@ -1,6 +1,6 @@
 # Agent Operating Model
 
-This repository uses Codex as the master orchestrator and OpenCode V2 as the default execution runtime for eligible T0, T1, and T2 work. `AGENTS.md` remains the mandatory project instruction layer, and `docs/erp/INDEX.md` is the current ERP navigation index. `CODEX_PROJECT_CONTEXT.md` is historical architectural context, not a source for current path or runtime versions. Agents load only the sections and files relevant to the assigned task.
+This repository uses Codex as the master orchestrator and verified local workers as bounded execution runtimes. Hermes is the active reliable delegation path; OpenCode V2 is optional and is used only when its provider health check succeeds. `AGENTS.md` remains the mandatory project instruction layer, and `docs/erp/INDEX.md` is the current ERP navigation index. `CODEX_PROJECT_CONTEXT.md` is historical architectural context, not a source for current path or runtime versions. Agents load only the sections and files relevant to the assigned task.
 
 ## Roles
 
@@ -25,13 +25,13 @@ There is no model-router agent. Model selection is a deterministic orchestrator 
 5. Do not repeat discovery already supported by evidence. Reviewers inspect the diff and named risk areas; they do not redo the explorer's entire scan.
 6. The orchestrator inspects the integrated diff and verification output. Agent completion is not proof of correctness.
 
-## Codex Self-Delegation Contract
+## Codex Delegation Contract
 
-Before substantial implementation, Codex must classify the task, define the mutation boundary, and decide whether OpenCode can own it. T0, T1, and T2 work is delegated by default using `scripts/ai/delegate-opencode`; T3 remains Codex-owned, though bounded discovery, safe implementation subparts, independent review, and tests may still be delegated.
+Before substantial implementation, Codex must classify the task, define the mutation boundary, and decide whether delegation is useful. Use `scripts/ai/delegate-agent` for automatic local routing. T0 discovery normally uses Hermes cheap. T1/T2 implementation normally tries the health-gated OpenCode Personal route first and falls back once to Hermes strong; independent review and QA may use a distinct Hermes worker where useful. T3 remains Codex-owned, though bounded discovery, safe implementation subparts, independent review, and tests may still be delegated.
 
-When review finds defects, resume the same OpenCode writer session with `--session` whenever possible. Escalate implementation to Codex only after repeated provider or runtime failure, unresolved material reviewer NO-GO, a safe budget exhaustion, or discovery of accounting, inventory, migration, concurrency, security, closing, reconciliation, or release-gate risk.
+When review finds defects, resume the same writer session when supported. A cheap-worker failure or low-confidence result escalates once to Hermes strong. An unavailable or failed OpenCode route falls back once to Hermes strong. Avoid provider loops. Escalate implementation to Codex only after the usable local route fails, a material reviewer NO-GO remains unresolved, the safe budget is exhausted, or critical-domain evidence requires Codex ownership.
 
-Codex must inspect the OpenCode process exit status, raw JSON, session/model metadata, exact changed files, Git diff, targeted tests, syntax, and scope drift. It stays read-only on business files assigned to an active writer. OpenCode completion prose alone is never acceptance evidence.
+Codex must inspect the worker process exit status, structured result, exact changed files, Git diff, targeted tests, syntax, and scope drift. It stays read-only on business files assigned to an active writer. Worker completion prose alone is never acceptance evidence.
 
 Local Qwen 27B is available only as an optional manual experiment. It is excluded from automatic routing and must not be auto-started because measured latency on this CPU is operationally impractical.
 
@@ -50,8 +50,9 @@ Step limits and the no-bypass rule are defined in `EXECUTION_BUDGETS.md`.
 
 ## Enforcement Model
 
-- OpenCode V2 ordered permissions and step limits are runtime-enforced. The last matching permission rule wins.
+- OpenCode V2 ordered permissions and step limits are runtime-enforced when OpenCode is enabled. The last matching permission rule wins.
 - OpenCode implementation and QA roles default unknown shell commands to approval, allowlist single routine inspection and verification commands, and finish with explicit anywhere-match denies for shell composition, push, destructive Git/filesystem actions, deployment, migrations, production-environment commands, and direct database clients. These command patterns are enforcement controls, not a general-purpose process sandbox; Codex must still inspect tool calls, diffs, and database-sensitive scope.
+- Hermes one-shot constraints are policy controls, not a filesystem sandbox. Read-only work may run in the main checkout; edit work should use a linked worktree. `delegate-hermes` rejects edit mode on a primary working tree unless Codex explicitly marks a harmless temporary target with `--allow-shared-tree`.
 - Codex `sandbox_mode = "read-only"` is sandbox-enforced for explorer and reviewer profiles. `sandbox_workspace_write.network_access = false` is sandbox-enforced for workspace-write profiles.
 - Codex role prompts that forbid delegation, business-code edits, push, deploy, or destructive commands are policy constraints unless the active Codex runtime exposes a corresponding hard permission control. Do not describe those prompt-only restrictions as technical impossibility.
 - Codex QA uses `workspace-write` because the real Laravel/Pest/frontend verification workflow can create cache, build, coverage, and other runtime artifacts. It is instructed not to edit business logic, but Codex does not provide project-local path-level write denial for business-code directories in this profile.
