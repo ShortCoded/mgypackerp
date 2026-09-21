@@ -1357,6 +1357,70 @@ test('HrEmployee pay fields use grouped presentation and canonical decimal persi
         ->assertJsonValidationErrors(['hourly_wage']);
 });
 
+test('employee create and update reject a missing conditional pay amount as field validation', function (string $payBasis, string $payField) {
+    $actor = hrEmployeeActor(hrEmployeePermissions());
+    $fixtures = hrEmployeeFixtures();
+    $session = hrOperatingSession($fixtures);
+    $payFields = ['basic_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'];
+    $payload = hrEmployeePayload($fixtures, [
+        'pay_basis' => $payBasis,
+        'biometric_mappings' => [],
+        ...array_fill_keys($payFields, null),
+        $payField => $payField === 'basic_salary' ? '1250.50' : '1250.5000',
+    ]);
+
+    $this->actingAs($actor)
+        ->withSession($session)
+        ->get(route('admin.hr.employees.create'))
+        ->assertOk()
+        ->assertSee('for="hr-employee-'.str_replace('_', '-', $payField).'"', false)
+        ->assertSee('<span class="text-danger" aria-hidden="true">*</span>', false);
+
+    $createResponse = $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), [
+            ...$payload,
+            $payField => null,
+        ]);
+
+    $createResponse
+        ->assertUnprocessable()
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonValidationErrors([$payField])
+        ->assertJsonMissingValidationErrors(array_values(array_diff($payFields, [$payField])))
+        ->assertJsonMissingPath('correlation_id');
+
+    expect(HrEmployee::query()->count())->toBe(0);
+
+    $this->withSession($session)
+        ->postJson(route('admin.hr.employees.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $employee = HrEmployee::query()->sole();
+    $originalPayAmount = $employee->{$payField};
+    $updateResponse = $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), [
+            ...$payload,
+            $payField => null,
+        ]);
+
+    $updateResponse
+        ->assertUnprocessable()
+        ->assertJsonPath('error_code', 'validation_failed')
+        ->assertJsonValidationErrors([$payField])
+        ->assertJsonMissingValidationErrors(array_values(array_diff($payFields, [$payField])))
+        ->assertJsonMissingPath('correlation_id');
+
+    expect($employee->refresh()->{$payField})->toBe($originalPayAmount);
+})->with([
+    'monthly salary' => ['monthly_salary', 'basic_salary'],
+    'weekly wage' => ['weekly_wage', 'weekly_wage'],
+    'daily wage' => ['daily_wage', 'daily_wage'],
+    'hourly wage' => ['hourly_wage', 'hourly_wage'],
+    'shift wage' => ['shift_wage', 'shift_wage'],
+    'piece rate' => ['piece_rate', 'piece_rate'],
+]);
+
 test('employee document alert days use grouped input display and canonical integer validation on both save paths', function () {
     $actor = hrEmployeeActor(hrEmployeePermissions());
     $fixtures = hrEmployeeFixtures();

@@ -1,5 +1,7 @@
 @extends('layouts.app')
 
+@inject('numbers', 'Modules\Core\Services\NumericFormatService')
+
 @section('title', __('hr_payroll.title'))
 
 @section('content')
@@ -59,9 +61,9 @@
                                     <td dir="ltr">{{ $run->period_start }} — {{ $run->period_end }}</td>
                                     <td>{{ $run->branch_name ?: __('hr_payroll.labels.all_branches') }}</td>
                                     <td class="text-end" dir="ltr">{{ $run->employee_count }}</td>
-                                    <td class="text-end" dir="ltr">{{ number_format((float) $run->gross_amount, 2) }}</td>
-                                    <td class="text-end" dir="ltr">{{ number_format((float) $run->deduction_amount, 2) }}</td>
-                                    <td class="text-end fw-semibold" dir="ltr">{{ number_format((float) $run->net_amount, 2) }}</td>
+                                    <td class="text-end" dir="ltr">{{ $numbers->format($run->gross_amount) }}</td>
+                                    <td class="text-end" dir="ltr">{{ $numbers->format($run->deduction_amount) }}</td>
+                                    <td class="text-end fw-semibold" dir="ltr">{{ $numbers->format($run->net_amount) }}</td>
                                     <td><span class="badge bg-secondary-subtle text-secondary-emphasis">{{ __('hr_payroll.status.'.$run->status) }}</span></td>
                                     <td class="text-nowrap text-end">
                                         @can('hr.payroll_reconciliation.view')
@@ -101,7 +103,7 @@
                                 <div class="card h-100">
                                     <div class="card-body py-3 text-center">
                                         <div class="small text-muted">{{ __('hr_payroll.labels.'.($key === 'cash_bank_difference' ? 'cash_difference' : $key)) }}</div>
-                                        <strong dir="ltr">{{ number_format((float) $summary[$key], 2) }}</strong>
+                                        <strong dir="ltr">{{ $numbers->format($summary[$key]) }}</strong>
                                     </div>
                                 </div>
                             </div>
@@ -155,7 +157,7 @@
                                         </div>
                                         <div class="col-6 col-md-2">
                                             <x-forms.label for="payroll_payment_amount" :label="__('hr_payroll.labels.amount')" :required="true" />
-                                            <x-forms.input id="payroll_payment_amount" name="amount" type="number" step="0.0001" min="0.0001" :value="$summary['remaining']" required />
+                                            <x-forms.numeric-input id="payroll_payment_amount" name="amount" :scale="4" step="0.0001" min="0.0001" :value="$summary['remaining']" required />
                                         </div>
                                         <div class="col-6 col-md-2">
                                             <x-forms.label for="payroll_payment_date" :label="__('hr_payroll.labels.payment_date')" :required="true" />
@@ -186,7 +188,7 @@
                                     <tr>
                                         <td><a href="{{ route('admin.finance.cash-payment-vouchers.show', $payment->voucher_doc_num) }}">{{ $payment->voucher_doc_num }}</a></td>
                                         <td dir="ltr">{{ $payment->voucher_date }}</td>
-                                        <td class="text-end" dir="ltr">{{ number_format((float) $payment->amount, 2) }}</td>
+                                        <td class="text-end" dir="ltr">{{ $numbers->format($payment->amount) }}</td>
                                         <td>{{ __('hr_payroll.status.'.$payment->status) }}</td>
                                         <td dir="ltr">{{ $payment->journal_doc_num ?: ($payment->reversal_journal_doc_num ?: '—') }}</td>
                                     </tr>

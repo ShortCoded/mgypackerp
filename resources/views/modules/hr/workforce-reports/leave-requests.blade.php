@@ -1,5 +1,7 @@
 @extends('layouts.app')
 
+@inject('numbers', 'Modules\Core\Services\NumericFormatService')
+
 @section('title', __('hr_workforce_reports.leave_requests.title'))
 
 @section('content')
@@ -21,13 +23,13 @@
                 <div class="col-6 col-lg-2"><x-forms.label for="date_to" :label="__('hr_workforce_reports.filters.date_to')" /><x-forms.date-input id="date_to" name="date_to" :value="$filters['date_to'] ?? null" /></div>
             </x-admin.report.filter-panel>
 
-            <div class="row g-2 mb-3">@foreach($report['totals'] as $key => $value)<div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_workforce_reports.totals.'.$key) }}</div><strong dir="ltr">{{ in_array($key, ['leave_days', 'paid_leave_days', 'unpaid_leave_days'], true) ? number_format((float)$value, 3) : $value }}</strong></div></div></div>@endforeach</div>
+            <div class="row g-2 mb-3">@foreach($report['totals'] as $key => $value)<div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_workforce_reports.totals.'.$key) }}</div><strong dir="ltr">{{ in_array($key, ['leave_days', 'paid_leave_days', 'unpaid_leave_days'], true) ? $numbers->format($value) : $value }}</strong></div></div></div>@endforeach</div>
 
             <div class="card report-table-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
                 <thead><tr>@foreach(['document_number', 'employee', 'request_type', 'leave_type', 'from', 'to', 'days_duration', 'balance_impact', 'status', 'approver', 'approval_date'] as $column)<th>{{ __('hr_workforce_reports.columns.'.$column) }}</th>@endforeach</tr></thead>
                 <tbody>
                     @forelse($report['rows'] as $row)
-                        <tr><td dir="ltr">{{ $row->public_uuid }}</td><td>{{ $row->employee_name }}</td><td>{{ __('hr_requests.types.'.$row->request_type) }}</td><td>{{ $row->leave_type_name ?: '—' }}</td><td dir="ltr">{{ $row->requested_from ?: '—' }}</td><td dir="ltr">{{ $row->requested_to ?: '—' }}</td><td dir="ltr">{{ $row->request_type === 'leave' ? number_format((float)$row->leave_days, 3) : ($row->requested_minutes === null ? '—' : __('hr_workforce_reports.units.minutes_value', ['value' => $row->requested_minutes])) }}</td><td dir="ltr">{{ number_format((float)$row->balance_impact, 3) }}</td><td>{{ __('hr_requests.statuses.'.$row->status) }}</td><td>{{ $row->approver_name ?: '—' }}</td><td dir="ltr">{{ $row->resolved_at ?: '—' }}</td></tr>
+                        <tr><td dir="ltr">{{ $row->public_uuid }}</td><td>{{ $row->employee_name }}</td><td>{{ __('hr_requests.types.'.$row->request_type) }}</td><td>{{ $row->leave_type_name ?: '—' }}</td><td dir="ltr">{{ $row->requested_from ?: '—' }}</td><td dir="ltr">{{ $row->requested_to ?: '—' }}</td><td dir="ltr">{{ $row->request_type === 'leave' ? $numbers->format($row->leave_days) : ($row->requested_minutes === null ? '—' : __('hr_workforce_reports.units.minutes_value', ['value' => $row->requested_minutes])) }}</td><td dir="ltr">{{ $numbers->format($row->balance_impact) }}</td><td>{{ __('hr_requests.statuses.'.$row->status) }}</td><td>{{ $row->approver_name ?: '—' }}</td><td dir="ltr">{{ $row->resolved_at ?: '—' }}</td></tr>
                     @empty<tr><td colspan="11" class="text-center text-muted py-4">{{ __('hr_workforce_reports.empty') }}</td></tr>@endforelse
                 </tbody>
             </table></div>@if($report['rows']->hasPages())<div class="card-footer">{{ $report['rows']->links() }}</div>@endif</div>

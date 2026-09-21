@@ -173,7 +173,7 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:price_lists.view')->name('index');
             Route::get('/data', 'data')->middleware('can:price_lists.view')->name('data');
             Route::get('/create', 'create')->middleware('can:price_lists.create')->name('create');
-            Route::post('/', 'store')->middleware(['can:price_lists.create', IdempotentDocumentSubmission::class])->name('store');
+            Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:price_lists.delete')->name('bulk-delete');
             Route::patch('/{priceList}/restore', 'restore')->withTrashed()->middleware('can:price_lists.restore')->name('restore');
             Route::get('/{priceList}/clone', 'clone')->middleware('can:price_lists.clone')->name('clone');

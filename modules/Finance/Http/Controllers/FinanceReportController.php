@@ -84,6 +84,7 @@ class FinanceReportController extends Controller
 
         return $pdf->stream('reports.finance', [
             'report' => $report,
+            'title' => $report['title'],
             'companyPrintIdentity' => $printIdentities->forCompany($company),
         ], 'finance-'.$report['type'].'.pdf', 'L');
     }

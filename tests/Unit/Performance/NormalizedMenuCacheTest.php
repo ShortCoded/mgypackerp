@@ -8,12 +8,11 @@ use Illuminate\Foundation\Application;
 use Modules\Core\Services\NormalizedMenuCache;
 
 function normalizedMenuCacheApplication(
-    bool $production = true,
     bool $configurationCached = true,
     bool $routesCached = true,
 ): Application {
     $application = Mockery::mock(Application::class);
-    $application->shouldReceive('isProduction')->andReturn($production);
+    $application->shouldNotReceive('isProduction');
     $application->shouldReceive('configurationIsCached')->andReturn($configurationCached);
     $application->shouldReceive('routesAreCached')->andReturn($routesCached);
 
@@ -23,10 +22,12 @@ function normalizedMenuCacheApplication(
 function normalizedMenuCacheConfig(
     ?string $releaseIdentifier = 'release-1',
     string $applicationUrl = 'https://erp.example.test',
+    string $environment = 'production',
 ): ConfigRepository {
     return new ConfigRepository([
         'app' => [
             'asset_version' => $releaseIdentifier,
+            'env' => $environment,
             'url' => $applicationUrl,
         ],
     ]);
@@ -123,9 +124,12 @@ test('it bypasses shared cache unless production config routes and release ident
 ): void {
     $store = new ArrayStore(true);
     $service = new NormalizedMenuCache(
-        normalizedMenuCacheApplication($production, $configurationCached, $routesCached),
+        normalizedMenuCacheApplication($configurationCached, $routesCached),
         new Repository($store),
-        normalizedMenuCacheConfig($releaseIdentifier),
+        normalizedMenuCacheConfig(
+            releaseIdentifier: $releaseIdentifier,
+            environment: $production ? 'production' : 'local',
+        ),
     );
     $resolutions = 0;
     $resolver = function () use (&$resolutions): array {

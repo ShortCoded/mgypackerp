@@ -16,6 +16,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\Cashbox;
@@ -32,6 +33,8 @@ use Modules\HR\Services\PayrollLifecycleService;
 use Modules\HR\Services\PayrollPaymentService;
 use Modules\HR\Services\PayrollReconciliationService;
 use Modules\HR\Services\PayrollReportService;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -594,7 +597,7 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
     $permissionNames = [
         'hr.payslips.view', 'hr.payroll_reports.view', 'hr.payroll_reports.export',
         'hr.payroll_payment_reports.view', 'hr.payroll_payment_reports.export',
-        'hr.payroll_reconciliation.view',
+        'hr.payroll_reconciliation.view', 'hr.payroll_preparation.view',
         'cash_payment_vouchers.view', 'cash_payment_vouchers.edit',
         'cash_payment_vouchers.approve', 'cash_payment_vouchers.cancel',
     ];
@@ -623,7 +626,8 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
         ->assertDontSee($foreignEmployee->full_name)
         ->assertSee($foreignCurrencyEmployee->full_name)
         ->assertSee('EGP')->assertSee('USD')
-        ->assertSee(number_format((float) $payslip->net_amount, 2));
+        ->assertSee(app(NumericFormatService::class)->format($payslip->net_amount))
+        ->assertDontSee(number_format((float) $payslip->net_amount, 2));
     $this->withSession($session)->get(route('admin.hr.reports.payments'))
         ->assertOk()->assertSee($payment['voucher']->doc_num)->assertSee('EGP');
     $this->withSession($session)->get(route('admin.hr.payslips.show', $payslip->id))
@@ -631,19 +635,79 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
     $this->withSession($session)->get(route('admin.hr.payslips.show', $otherPayslip))->assertNotFound();
     $this->withSession($session)->get(route('admin.hr.payslips.show', $foreignPayslip))->assertNotFound();
 
+    $originalPayslipAmounts = [
+        'gross_amount' => (string) $payslip->gross_amount,
+        'deduction_amount' => (string) $payslip->deduction_amount,
+        'net_amount' => (string) $payslip->net_amount,
+    ];
+    $largeAmount = DB::getDriverName() === 'sqlite' ? '123456789.1234' : '99999999999999.9999';
+    $largeNetAmount = DB::getDriverName() === 'sqlite' ? '123456789.1233' : '99999999999999.9998';
+    $largeFormattedAmount = app(NumericFormatService::class)->format($largeAmount);
+    $largeFormattedNetAmount = app(NumericFormatService::class)->format($largeNetAmount);
+    DB::table('hr_payslips')->where('id', $payslip->id)->update([
+        'gross_amount' => $largeAmount,
+        'deduction_amount' => '0.0001',
+        'net_amount' => $largeNetAmount,
+    ]);
+    DB::table('hr_payroll_payments')->where('id', $payment['payment']->id)->update([
+        'amount' => $largeAmount,
+    ]);
+
+    $this->withSession($session)->get(route('admin.hr.payroll-preparation.index', ['run' => $calculated['run_id']]))
+        ->assertOk()
+        ->assertSee($largeFormattedAmount);
+    $this->withSession($session)->get(route('admin.hr.reports.payroll'))
+        ->assertOk()
+        ->assertSee($largeFormattedAmount)
+        ->assertSee($largeFormattedNetAmount);
+    $this->withSession($session)->get(route('admin.hr.reports.payments'))
+        ->assertOk()
+        ->assertSee($largeFormattedAmount);
+    $this->withSession($session)->get(route('admin.hr.payslips.show', $payslip->id))
+        ->assertOk()
+        ->assertSee($largeFormattedAmount)
+        ->assertSee($largeFormattedNetAmount);
+
     $csv = $this->withSession($session)->get(route('admin.hr.reports.payroll.export', ['format' => 'csv']));
     $csv->assertOk();
     expect($csv->headers->get('content-disposition'))->toContain('payroll-report.csv');
     $csvContents = file_get_contents($csv->baseResponse->getFile()->getPathname());
-    expect($csvContents)->toContain('EGP')->toContain('USD');
-    $this->withSession($session)->get(route('admin.hr.reports.payroll.export', ['format' => 'xlsx']))
-        ->assertOk()->assertDownload('payroll-report.xlsx');
+    expect($csvContents)->toContain('EGP')->toContain('USD')->toContain($largeAmount)->toContain($largeNetAmount);
+    $payrollXlsx = $this->withSession($session)->get(route('admin.hr.reports.payroll.export', ['format' => 'xlsx']));
+    $payrollXlsx->assertOk()->assertDownload('payroll-report.xlsx');
+    $payrollSheet = IOFactory::load($payrollXlsx->baseResponse->getFile()->getPathname())->getActiveSheet();
+    $largeAmountCell = collect($payrollSheet->getCellCollection()->getCoordinates())
+        ->map(fn (string $coordinate) => $payrollSheet->getCell($coordinate))
+        ->first(fn ($cell): bool => $cell->getValue() === $largeAmount);
+    expect($largeAmountCell)->not->toBeNull()
+        ->and($largeAmountCell->getDataType())->toBe(DataType::TYPE_STRING)
+        ->and(collect($payrollSheet->toArray())->flatten()->all())->toContain($largeNetAmount);
+
+    $paymentCsv = $this->withSession($session)->get(route('admin.hr.reports.payments.export', ['format' => 'csv']));
+    $paymentCsv->assertOk()->assertDownload('payroll-payment-report.csv');
+    expect(file_get_contents($paymentCsv->baseResponse->getFile()->getPathname()))->toContain($largeAmount);
+    $paymentXlsx = $this->withSession($session)->get(route('admin.hr.reports.payments.export', ['format' => 'xlsx']));
+    $paymentXlsx->assertOk()->assertDownload('payroll-payment-report.xlsx');
+    $paymentSheet = IOFactory::load($paymentXlsx->baseResponse->getFile()->getPathname())->getActiveSheet();
+    $largePaymentCell = collect($paymentSheet->getCellCollection()->getCoordinates())
+        ->map(fn (string $coordinate) => $paymentSheet->getCell($coordinate))
+        ->first(fn ($cell): bool => $cell->getValue() === $largeAmount);
+    expect($largePaymentCell)->not->toBeNull()
+        ->and($largePaymentCell->getDataType())->toBe(DataType::TYPE_STRING);
+
+    $reportPdf = Mockery::mock(ReportPdfService::class);
+    $reportPdf->shouldReceive('stream')->twice()->withArgs(function (string $view, array $data, string $filename, string $orientation) use ($largeAmount, $largeNetAmount): bool {
+        $values = collect($data['rows'])->flatten();
+
+        return $view === 'reports.hr.payroll'
+            && $orientation === 'L'
+            && ($filename === 'payroll-report.pdf'
+                ? $values->contains($largeAmount) && $values->contains($largeNetAmount)
+                : $filename === 'payroll-payment-report.pdf' && $values->contains($largeAmount));
+    })->andReturn(response('%PDF-1.4', 200, ['Content-Type' => 'application/pdf']));
+    $this->app->instance(ReportPdfService::class, $reportPdf);
     $this->withSession($session)->get(route('admin.hr.reports.payroll.export', ['format' => 'pdf']))
         ->assertOk()->assertHeader('content-type', 'application/pdf');
-    $this->withSession($session)->get(route('admin.hr.reports.payments.export', ['format' => 'csv']))
-        ->assertOk()->assertDownload('payroll-payment-report.csv');
-    $this->withSession($session)->get(route('admin.hr.reports.payments.export', ['format' => 'xlsx']))
-        ->assertOk()->assertDownload('payroll-payment-report.xlsx');
     $this->withSession($session)->get(route('admin.hr.reports.payments.export', ['format' => 'pdf']))
         ->assertOk()->assertHeader('content-type', 'application/pdf');
     $this->withSession($session)->get(route('admin.hr.reports.payroll.export'))->assertUnprocessable();
@@ -651,11 +715,21 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
     $currencyTotals = collect(app(PayrollReportService::class)->payroll($fixture['company']->getKey(), $reviewer, [])['totals'])
         ->keyBy('currency_code');
     expect($currencyTotals)->toHaveCount(2)
-        ->and($currencyTotals['EGP']['gross'])->toBe((float) $payslip->gross_amount)
-        ->and($currencyTotals['EGP']['net'])->toBe((float) $payslip->net_amount)
-        ->and($currencyTotals['USD']['gross'])->toBe(100.0)
-        ->and($currencyTotals['USD']['deductions'])->toBe(10.0)
-        ->and($currencyTotals['USD']['net'])->toBe(90.0);
+        ->and($currencyTotals['EGP']['gross'])->toBe($largeAmount)
+        ->and($currencyTotals['EGP']['deductions'])->toBe('0.0001')
+        ->and($currencyTotals['EGP']['net'])->toBe($largeNetAmount)
+        ->and($currencyTotals['USD']['gross'])->toBe('100.0000')
+        ->and($currencyTotals['USD']['deductions'])->toBe('10.0000')
+        ->and($currencyTotals['USD']['net'])->toBe('90.0000');
+    expect(app(PayrollReportService::class)->payments($fixture['company']->getKey(), $reviewer, [])['totals'])
+        ->toMatchArray([
+            'amount' => $largeAmount,
+            'approved' => $largeAmount,
+            'cancelled' => '0.0000',
+        ]);
+
+    DB::table('hr_payslips')->where('id', $payslip->id)->update($originalPayslipAmounts);
+    DB::table('hr_payroll_payments')->where('id', $payment['payment']->id)->update(['amount' => '1000.0000']);
 
     $outsidePaymentPeriod = FinancialPeriod::query()->create([
         'company_id' => $fixture['company']->getKey(),
@@ -756,7 +830,7 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
         ->and($maskedPayment->cancelled_at)->toBeNull()
         ->and($maskedPayment->reversal_journal_doc_num)->toBeNull();
     expect(app(PayrollReportService::class)->payments($fixture['company']->getKey(), $periodRestrictedReviewer, [])['totals'])
-        ->toMatchArray(['amount' => 1000.0, 'approved' => 1000.0, 'cancelled' => 0.0]);
+        ->toMatchArray(['amount' => '1000.0000', 'approved' => '1000.0000', 'cancelled' => '0.0000']);
     $this->withSession($session)->get(route('admin.hr.reports.payments'))
         ->assertOk()
         ->assertDontSee($reversalJournalDocNum);
@@ -794,7 +868,7 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
         ->and($visiblePayment->cancelled_at)->not->toBeNull()
         ->and($visiblePayment->reversal_journal_doc_num)->toBe($reversalJournalDocNum);
     expect(app(PayrollReportService::class)->payments($fixture['company']->getKey(), $reversalVisibleReviewer, [])['totals'])
-        ->toMatchArray(['amount' => 1000.0, 'approved' => 0.0, 'cancelled' => 1000.0]);
+        ->toMatchArray(['amount' => '1000.0000', 'approved' => '0.0000', 'cancelled' => '1000.0000']);
     $this->actingAs($reversalVisibleReviewer)->withSession($session)
         ->getJson(route('admin.hr.payroll-runs.reconciliation', $calculated['run_id']))
         ->assertOk()
@@ -934,11 +1008,28 @@ test('payroll lifecycle audit is company scoped safe and idempotent on retried t
     $paymentKey = (string) Str::uuid();
     $paymentPayload = [
         'cashbox_doc_num' => $fixture['cashbox']->doc_num,
-        'amount' => '1000.0000',
+        'amount' => '1,000.0000',
         'payment_date' => '2026-09-17',
         'idempotency_key' => $paymentKey,
         'reference' => 'Sensitive payroll reference',
     ];
+    foreach (['0', '1,2,3', '1000.00001'] as $invalidAmount) {
+        $this->withSession($session)->postJson(route('admin.hr.payroll-runs.payments.store', $runId), [
+            ...$paymentPayload,
+            'amount' => $invalidAmount,
+            'idempotency_key' => (string) Str::uuid(),
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('amount');
+    }
+    $this->withSession($session)->postJson(route('admin.hr.payroll-runs.payments.store', $runId), [
+        ...$paymentPayload,
+        'amount' => '99,999,999,999,999.9999',
+        'idempotency_key' => (string) Str::uuid(),
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('payroll')
+        ->assertJsonMissingValidationErrors('amount');
     $this->withSession($session)->postJson(route('admin.hr.payroll-runs.payments.store', $runId), $paymentPayload)->assertOk();
     $this->withSession($session)->postJson(route('admin.hr.payroll-runs.payments.store', $runId), $paymentPayload)->assertOk();
     $this->withSession($session)->postJson(route('admin.hr.payroll-runs.payments.store', $runId), [

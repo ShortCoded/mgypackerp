@@ -20,13 +20,16 @@
             <h4 class="mb-1">{{ __('inventory_accounting.book_valuation.title') }}</h4>
             <p class="text-muted mb-0">{{ __('inventory_accounting.book_valuation.description', ['currency' => $currencyCode]) }}</p>
         </div>
-        <div class="btn-group d-print-none">
-            @can('inventory.reports.export')
-                <a class="btn btn-outline-success" href="{{ route('admin.inventory.reports.valuation.export.excel', $exportQuery) }}">{{ __('reports.export_excel') }}</a>
-                <a class="btn btn-outline-secondary" href="{{ route('admin.inventory.reports.valuation.export.csv', $exportQuery) }}">{{ __('reports.export_csv') }}</a>
-                <a class="btn btn-outline-danger" href="{{ route('admin.inventory.reports.valuation.export.pdf', $exportQuery) }}" target="_blank">{{ __('reports.export_pdf') }}</a>
-            @endcan
-        </div>
+        <x-admin.report.actions-toolbar
+            class="d-print-none"
+            :show-filters="false"
+            :show-refresh="false"
+            :export-options="[
+                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $exportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $exportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
+            ]"
+        />
     </div>
 
     @if($totals['has_unvalued'])
@@ -56,7 +59,7 @@
 
     <div class="row g-3 mb-3">
         @foreach([['positions', $totals['positions']], ['quantity', $totals['quantity']], ['book_value', $totals['book_value'].' '.$currencyCode], ['unvalued_quantity', $totals['unvalued_quantity']], ['negative_positions', $totals['negative_positions']]] as [$key, $value])
-            <div class="col"><div class="card h-100"><div class="card-body"><div class="text-muted small">{{ __('inventory_accounting.book_valuation.metrics.'.$key) }}</div><div class="fs-5 fw-semibold" dir="ltr">{{ $value }}</div></div></div></div>
+            <div class="col-12 col-md-4 col-xl"><div class="card h-100"><div class="card-body"><div class="text-muted small">{{ __('inventory_accounting.book_valuation.metrics.'.$key) }}</div><div class="fs-5 fw-semibold" dir="ltr">{{ $value }}</div></div></div></div>
         @endforeach
     </div>
 
@@ -84,7 +87,16 @@
                 <div class="col-md-2"><button class="btn btn-outline-primary w-100">{{ __('inventory_accounting.valuation_report.run') }}</button></div>
             </form>
             @if($comparisonError)<div class="alert alert-danger">{{ $comparisonError }}</div>@elseif($comparison)
-                @can('inventory.reports.export')<div class="btn-group mb-3"><a class="btn btn-sm btn-outline-success" href="{{ route('admin.inventory.reports.valuation.export.excel', $comparisonExportQuery) }}">{{ __('reports.export_excel') }}</a><a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.inventory.reports.valuation.export.csv', $comparisonExportQuery) }}">{{ __('reports.export_csv') }}</a><a class="btn btn-sm btn-outline-danger" href="{{ route('admin.inventory.reports.valuation.export.pdf', $comparisonExportQuery) }}">{{ __('reports.export_pdf') }}</a></div>@endcan
+                <x-admin.report.actions-toolbar
+                    class="mb-3"
+                    :show-filters="false"
+                    :show-refresh="false"
+                    :export-options="[
+                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $comparisonExportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $comparisonExportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $comparisonExportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf'],
+                    ]"
+                />
                 <div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('inventory_accounting.valuation_report.method') }}</th><th>{{ __('inventory_accounting.valuation_report.ending_value') }}</th><th>{{ __('inventory_accounting.valuation_report.classification') }}</th></tr></thead><tbody>@foreach($comparison['methods'] as $method => $result)<tr><td>{{ __('inventory_accounting.valuation_methods.'.$method) }}</td><td>{{ $numbers->format($result['ending_value']) }}</td><td>{{ $result['book_method'] ? __('inventory_accounting.valuation_report.book_method') : ($result['reference_only'] ? __('inventory_accounting.valuation_report.reference_only') : __('inventory_accounting.valuation_report.simulation')) }}</td></tr>@endforeach</tbody></table></div>
             @else<p class="text-muted mb-0">{{ __('inventory_accounting.valuation_report.empty') }}</p>@endif
         </div>

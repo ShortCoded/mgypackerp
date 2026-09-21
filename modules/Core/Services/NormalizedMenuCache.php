@@ -67,7 +67,7 @@ class NormalizedMenuCache
 
     private function shouldUseSharedCache(): bool
     {
-        return $this->application->isProduction()
+        return $this->config->get('app.env') === 'production'
             && $this->application->configurationIsCached()
             && $this->application->routesAreCached();
     }

@@ -112,12 +112,12 @@ class StoreHrEmployeeRequest extends FormRequest
             'pay_basis' => ['required', 'string', Rule::in(['monthly_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate'])],
             'payroll_currency_doc_num' => ['required', 'string', Rule::exists('currencies', 'doc_num')->whereNull('deleted_at')],
             'exchange_rate' => ['required', 'numeric', 'gt:0', 'regex:/^(?:\d{1,12}|\d{0,12}\.\d{1,6})$/D'],
-            'basic_salary' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'],
-            'weekly_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
-            'daily_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
-            'hourly_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
-            'shift_wage' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
-            'piece_rate' => ['nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'basic_salary' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'monthly_salary'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'],
+            'weekly_wage' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'weekly_wage'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'daily_wage' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'daily_wage'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'hourly_wage' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'hourly_wage'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'shift_wage' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'shift_wage'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
+            'piece_rate' => [Rule::requiredIf(fn (): bool => $this->input('pay_basis') === 'piece_rate'), 'nullable', 'numeric', 'min:0', 'regex:/^(?:\d{1,11}|\d{0,11}\.\d{1,4})$/D'],
             'payment_method' => ['nullable', 'string', Rule::in(['cash', 'bank_transfer', 'wallet', 'other'])],
             'biometric_mappings' => ['nullable', 'array'],
             'biometric_mappings.*' => ['array:id,device_doc_num,biometric_code,is_active,_delete,notes'],
@@ -399,19 +399,6 @@ class StoreHrEmployeeRequest extends FormRequest
             $validator->errors()->add('exchange_rate', __('hr.employees.messages.main_currency_exchange_rate_must_be_one'));
         }
 
-        $payBasisField = match ((string) $this->input('pay_basis')) {
-            'monthly_salary' => 'basic_salary',
-            'weekly_wage' => 'weekly_wage',
-            'daily_wage' => 'daily_wage',
-            'hourly_wage' => 'hourly_wage',
-            'shift_wage' => 'shift_wage',
-            'piece_rate' => 'piece_rate',
-            default => null,
-        };
-
-        if ($payBasisField && ! $this->filled($payBasisField)) {
-            $validator->errors()->add($payBasisField, __('validation.required', ['attribute' => __("hr.employees.attributes.{$payBasisField}")]));
-        }
     }
 
     protected function validateBiometricMappings(Validator $validator): void

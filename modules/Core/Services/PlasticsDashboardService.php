@@ -173,12 +173,20 @@ class PlasticsDashboardService
 
         $period['from'] = $from;
         $period['to'] = $to;
+        $currencyDocNum = $request->exists('currency_doc_num')
+            ? ($validated['currency_doc_num'] ?? null)
+            : Currency::query()
+                ->forCompany((int) $context['company_id'])
+                ->active()
+                ->where('is_main', true)
+                ->value('doc_num');
+
         $currency = null;
-        if (filled($validated['currency_doc_num'] ?? null)) {
+        if (filled($currencyDocNum)) {
             $currency = Currency::query()
-                ->where('company_id', $context['company_id'])
-                ->where('doc_num', $validated['currency_doc_num'])
-                ->where('status', 'active')
+                ->forCompany((int) $context['company_id'])
+                ->active()
+                ->where('doc_num', $currencyDocNum)
                 ->first();
 
             if (! $currency) {
@@ -277,18 +285,20 @@ class PlasticsDashboardService
     {
         $options = $this->operatingContext->options($request);
         $companyId = $this->operatingContext->selectedCompanyId($request);
+        $currencies = $companyId ? Currency::query()
+            ->forCompany($companyId)
+            ->active()
+            ->orderByDesc('is_main')
+            ->orderBy('code')
+            ->get(['doc_num', 'code', 'is_main']) : collect();
 
         return [
             'branches' => $options['branches'],
             'financial_periods' => $options['financial_periods'],
-            'currencies' => $companyId ? Currency::query()
-                ->where('company_id', $companyId)
-                ->where('status', 'active')
-                ->orderByDesc('is_main')
-                ->orderBy('code')
-                ->get(['doc_num', 'code'])
+            'currencies' => $currencies
                 ->map(fn (Currency $currency): array => ['id' => $currency->doc_num, 'text' => $currency->code])
-                ->all() : [],
+                ->all(),
+            'default_currency_doc_num' => $currencies->firstWhere('is_main', true)?->doc_num,
             'current' => $options['current'],
         ];
     }

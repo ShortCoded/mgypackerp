@@ -19,11 +19,12 @@ return [
         'items' => 'المنتجات', 'product' => 'المنتج', 'price' => 'السعر', 'discount_type' => 'نوع الخصم المسموح',
         'discount_value' => 'حد الخصم', 'notes' => 'ملاحظات', 'is_print_only' => 'للطباعة فقط', 'pricing_use' => 'استخدام التسعير',
         'prepared_by' => 'أعدها', 'reviewed_by' => 'راجعها', 'approved_by' => 'اعتمدها', 'lifecycle_status' => 'حالة دورة المستند',
+        'clone_document' => 'المستند المصدر / الجديد',
     ],
     'operational' => 'تشغيلية', 'print_only' => 'للطباعة فقط', 'active' => 'نشطة', 'deleted' => 'محذوفة', 'reviewed' => 'تمت المراجعة', 'approved' => 'تم الاعتماد', 'pending_identity' => 'قيد الانتظار', 'print_title' => 'قائمة أسعار',
     'history' => 'سجل التغييرات',
     'history_fields' => ['date' => 'التاريخ', 'actor' => 'عدّله', 'action' => 'التغيير', 'details' => 'التفاصيل', 'percentage' => 'نسبة الزيادة'],
-    'history_actions' => ['manual' => 'تعديل يدوي', 'percentage' => 'زيادة بنسبة', 'review' => 'مراجعة', 'approve' => 'اعتماد'],
+    'history_actions' => ['manual' => 'تعديل يدوي', 'clone' => 'نسخ قائمة الأسعار', 'percentage' => 'زيادة بنسبة', 'review' => 'مراجعة', 'approve' => 'اعتماد'],
     'export' => [
         'price_list_code' => 'كود قائمة الأسعار', 'price_list_date' => 'تاريخ قائمة الأسعار', 'customer_code' => 'كود العميل', 'customer_name' => 'اسم العميل / عام',
         'currency_code' => 'كود العملة', 'currency_name' => 'اسم العملة', 'valid_from' => 'سارية من', 'valid_until' => 'سارية حتى / مفتوحة',
@@ -37,7 +38,7 @@ return [
         'increase_percentage_max' => 'يجب ألا تتجاوز النسبة 1000%.',
     ],
     'messages' => [
-        'created' => 'تم إنشاء قائمة الأسعار.', 'updated' => 'تم تحديث قائمة الأسعار.', 'deleted' => 'تم حذف قائمة الأسعار.',
+        'created' => 'تم إنشاء قائمة الأسعار.', 'cloned' => 'تم نسخ قائمة الأسعار.', 'clone_not_allowed' => 'لم يعد من الممكن نسخ قائمة الأسعار هذه. افتح صفحة النسخ مرة أخرى.', 'updated' => 'تم تحديث قائمة الأسعار.', 'deleted' => 'تم حذف قائمة الأسعار.',
         'restored' => 'تم استرجاع قائمة الأسعار.', 'restore_not_allowed' => 'قائمة الأسعار غير محذوفة.',
         'increased' => 'تمت زيادة أسعار القائمة.', 'no_lines_to_increase' => 'لا تحتوي قائمة الأسعار على أسعار لزيادتها.',
         'increase_title' => 'زيادة كل الأسعار؟', 'increase_text' => 'أدخل نسبة الزيادة للقائمة :document. ستتغير جميع أسعار هذه القائمة.',

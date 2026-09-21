@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Excel as ExcelWriter;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Currency;
@@ -57,10 +59,20 @@ class PriceListController extends Controller
 
     public function store(StorePriceListRequest $request): RedirectResponse
     {
-        $this->authorizeSubmitAction($request, $this->submitAction($request));
-        $record = $this->service->create($request->validated(), $this->companies->requireCompanyId($request));
+        $cloning = $request->filled('clone_source_token');
+        $this->authorizeSubmitAction($request, $this->submitAction($request), $cloning);
+        $companyId = $this->companies->requireCompanyId($request);
+        $cloneSource = $this->cloneSourceFromRequest($request, $companyId);
+        $record = $this->service->create($request->validated(), $companyId, $cloneSource);
 
-        return $this->redirectAfterSave($request, $record, creating: true);
+        if ($cloneSource instanceof PriceList) {
+            $request->session()->forget($this->cloneSourceSessionKey(
+                $companyId,
+                $request->string('clone_source_token')->trim()->toString(),
+            ));
+        }
+
+        return $this->redirectAfterSave($request, $record, creating: true, cloned: $cloneSource instanceof PriceList);
     }
 
     public function show(Request $request, PriceList $priceList): View
@@ -172,7 +184,16 @@ class PriceListController extends Controller
 
     public function clone(Request $request, PriceList $priceList): View
     {
-        return $this->form($request, $priceList, clone: true);
+        $companyId = $this->companies->requireCompanyId($request);
+        abort_unless((int) $priceList->company_id === $companyId, 404);
+
+        $cloneSourceToken = (string) Str::uuid();
+        $request->session()->put(
+            $this->cloneSourceSessionKey($companyId, $cloneSourceToken),
+            $priceList->doc_num,
+        );
+
+        return $this->form($request, $priceList, clone: true, cloneSourceToken: $cloneSourceToken);
     }
 
     public function increaseByPercentage(IncreasePriceListPercentageRequest $request, PriceList $priceList): JsonResponse
@@ -227,7 +248,7 @@ class PriceListController extends Controller
         ]);
     }
 
-    private function form(Request $request, ?PriceList $record = null, bool $readOnly = false, bool $clone = false): View
+    private function form(Request $request, ?PriceList $record = null, bool $readOnly = false, bool $clone = false, ?string $cloneSourceToken = null): View
     {
         $companyId = $this->companies->requireCompanyId($request);
         abort_if($record && (int) $record->company_id !== $companyId, 404);
@@ -235,7 +256,7 @@ class PriceListController extends Controller
         $selectedCustomerDocNum = old('customer_doc_num', $record?->customer?->doc_num);
 
         return view('modules.sales.price-lists.form', [
-            'record' => $record, 'readOnly' => $readOnly, 'clone' => $clone,
+            'record' => $record, 'readOnly' => $readOnly, 'clone' => $clone, 'cloneSourceToken' => $cloneSourceToken,
             'companyId' => $companyId,
             'selectedCustomers' => Customer::query()->forCompany($companyId)->where('doc_num', $selectedCustomerDocNum)->get(),
             'currencies' => Currency::query()->forCompany($companyId)->active()->orderByDesc('is_main')->orderBy('code')->get(),
@@ -243,9 +264,14 @@ class PriceListController extends Controller
         ]);
     }
 
-    private function redirectAfterSave(Request $request, PriceList $record, bool $creating = false): RedirectResponse
+    private function redirectAfterSave(Request $request, PriceList $record, bool $creating = false, bool $cloned = false): RedirectResponse
     {
         $action = $this->submitAction($request);
+
+        if ($cloned && $action === 'save_new' && ! $request->user()?->can('price_lists.create')) {
+            return redirect()->route('admin.sales.price-lists.clone', $record)->with('success', __('price_lists.messages.cloned'));
+        }
+
         $route = match ($action) {
             'save_view' => 'admin.sales.price-lists.show',
             'save_edit' => 'admin.sales.price-lists.edit',
@@ -257,8 +283,43 @@ class PriceListController extends Controller
 
         return redirect()->route($route, $parameters)->with(
             'success',
-            $creating ? __('price_lists.messages.created') : __('price_lists.messages.updated'),
+            $cloned ? __('price_lists.messages.cloned') : ($creating ? __('price_lists.messages.created') : __('price_lists.messages.updated')),
         );
+    }
+
+    private function cloneSourceFromRequest(StorePriceListRequest $request, int $companyId): ?PriceList
+    {
+        $token = $request->string('clone_source_token')->trim()->toString();
+
+        if ($token === '') {
+            return null;
+        }
+
+        $sourceDocNum = (string) $request->session()->get($this->cloneSourceSessionKey($companyId, $token), '');
+
+        if ($sourceDocNum === '') {
+            throw ValidationException::withMessages([
+                'clone_source_token' => __('price_lists.messages.clone_not_allowed'),
+            ]);
+        }
+
+        $source = PriceList::query()
+            ->forCompany($companyId)
+            ->where('doc_num', $sourceDocNum)
+            ->first();
+
+        if (! $source instanceof PriceList) {
+            throw ValidationException::withMessages([
+                'clone_source_token' => __('price_lists.messages.clone_not_allowed'),
+            ]);
+        }
+
+        return $source;
+    }
+
+    private function cloneSourceSessionKey(int $companyId, string $token): string
+    {
+        return "price_lists.clone_sources.{$companyId}.{$token}";
     }
 
     private function submitAction(Request $request): string
@@ -268,12 +329,12 @@ class PriceListController extends Controller
         return in_array($action, ['save', 'save_view', 'save_edit', 'save_back', 'save_new'], true) ? $action : 'save';
     }
 
-    private function authorizeSubmitAction(Request $request, string $action): void
+    private function authorizeSubmitAction(Request $request, string $action, bool $cloning = false): void
     {
         $permission = match ($action) {
             'save_view', 'save_back' => 'price_lists.view',
             'save_edit' => 'price_lists.edit',
-            'save_new' => 'price_lists.create',
+            'save_new' => $cloning ? 'price_lists.clone' : 'price_lists.create',
             default => null,
         };
 

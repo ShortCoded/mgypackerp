@@ -19,11 +19,12 @@ return [
         'items' => 'Products', 'product' => 'Product', 'price' => 'Price', 'discount_type' => 'Allowed discount type',
         'discount_value' => 'Discount limit', 'notes' => 'Notes', 'is_print_only' => 'Print only', 'pricing_use' => 'Pricing use',
         'prepared_by' => 'Prepared by', 'reviewed_by' => 'Reviewed by', 'approved_by' => 'Approved by', 'lifecycle_status' => 'Lifecycle status',
+        'clone_document' => 'Source / new document',
     ],
     'operational' => 'Operational', 'print_only' => 'Print only', 'active' => 'Active', 'deleted' => 'Deleted', 'reviewed' => 'Reviewed', 'approved' => 'Approved', 'pending_identity' => 'Pending', 'print_title' => 'Price List',
     'history' => 'Change history',
     'history_fields' => ['date' => 'Date', 'actor' => 'Changed by', 'action' => 'Change', 'details' => 'Details', 'percentage' => 'Percentage increase'],
-    'history_actions' => ['manual' => 'Manual edit', 'percentage' => 'Percentage increase', 'review' => 'Reviewed', 'approve' => 'Approved'],
+    'history_actions' => ['manual' => 'Manual edit', 'clone' => 'Cloned price list', 'percentage' => 'Percentage increase', 'review' => 'Reviewed', 'approve' => 'Approved'],
     'export' => [
         'price_list_code' => 'Price List Code', 'price_list_date' => 'Price List Date', 'customer_code' => 'Customer Code', 'customer_name' => 'Customer Name / General',
         'currency_code' => 'Currency Code', 'currency_name' => 'Currency Name', 'valid_from' => 'Valid From', 'valid_until' => 'Valid Until / Open-ended',
@@ -37,7 +38,7 @@ return [
         'increase_percentage_max' => 'The percentage may not exceed 1000%.',
     ],
     'messages' => [
-        'created' => 'Price list created.', 'updated' => 'Price list updated.', 'deleted' => 'Price list deleted.',
+        'created' => 'Price list created.', 'cloned' => 'Price list cloned.', 'clone_not_allowed' => 'This price list can no longer be cloned. Open the clone page again.', 'updated' => 'Price list updated.', 'deleted' => 'Price list deleted.',
         'restored' => 'Price list restored.', 'restore_not_allowed' => 'The price list is not deleted.',
         'increased' => 'Price list prices increased.', 'no_lines_to_increase' => 'The price list has no prices to increase.',
         'increase_title' => 'Increase all prices?', 'increase_text' => 'Enter the percentage for :document. Every price in this list will be changed.',

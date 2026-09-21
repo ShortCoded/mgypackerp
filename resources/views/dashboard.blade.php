@@ -40,9 +40,9 @@
                         <div class="col-12 col-md-6 col-xl-2">
                             <label class="form-label" for="summary-currency">{{ __('dashboard.summaries.currency') }}</label>
                             <x-forms.select id="summary-currency" name="currency_doc_num">
-                                <option value="">{{ __('dashboard.summaries.all_currencies') }}</option>
+                                <option value="" @selected(blank($summaryFilters['default_currency_doc_num']))>{{ __('dashboard.summaries.all_currencies') }}</option>
                                 @foreach ($summaryFilters['currencies'] as $option)
-                                    <option value="{{ $option['id'] }}">{{ $option['text'] }}</option>
+                                    <option value="{{ $option['id'] }}" @selected($summaryFilters['default_currency_doc_num'] === $option['id'])>{{ $option['text'] }}</option>
                                 @endforeach
                             </x-forms.select>
                         </div>

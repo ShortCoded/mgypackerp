@@ -19,11 +19,20 @@ class StorePriceListRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('price_lists.create');
+        return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'price_lists.clone' : 'price_lists.create');
     }
 
     protected function prepareForValidation(): void
     {
+        if ($this->filled('clone_source_token')) {
+            $this->merge([
+                'clone_source_token' => $this->string('clone_source_token')->trim()->toString(),
+                '_submission_token' => $this->string('_submission_token')->trim()->toString(),
+            ]);
+
+            return;
+        }
+
         $data = $this->all();
         foreach (['price_list_date', 'valid_from', 'valid_until'] as $field) {
             if (filled($data[$field] ?? null)) {
@@ -40,11 +49,20 @@ class StorePriceListRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->filled('clone_source_token')) {
+            return [
+                'clone_source_token' => ['required', 'uuid'],
+                '_submission_token' => ['required', 'uuid', 'same:clone_source_token'],
+                'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new'])],
+            ];
+        }
+
         return [
             'customer_doc_num' => ['nullable', 'string'], 'currency_doc_num' => ['required', 'string'],
             'price_list_date' => ['required', 'date'], 'valid_from' => ['required', 'date'],
             'valid_until' => ['nullable', 'date', 'after_or_equal:valid_from'], 'notes' => ['nullable', 'string', 'max:4000'],
             'is_print_only' => ['required', 'boolean'],
+            'clone_source_token' => ['nullable', 'uuid'],
             'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new'])],
             'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string', 'distinct'],
             'lines.*.unit_price' => ['required', 'numeric', 'gt:0'],
@@ -55,6 +73,10 @@ class StorePriceListRequest extends FormRequest
 
     public function withValidator(Validator $validator): void
     {
+        if ($this->filled('clone_source_token')) {
+            return;
+        }
+
         $validator->after(function (Validator $validator): void {
             $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($this);
             if ($this->filled('customer_doc_num') && ! Customer::query()->forCompany($companyId)->active()->where('doc_num', $this->input('customer_doc_num'))->exists()) {

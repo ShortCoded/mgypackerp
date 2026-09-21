@@ -394,7 +394,11 @@ test('leave report routes enforce permissions and preserve scoped paid unpaid to
         ->get(route('admin.hr.reports.leave-requests', $filters));
     $screen->assertOk()
         ->assertSee($paidRequest->public_uuid)
-        ->assertDontSee($unpaidRequest->public_uuid);
+        ->assertDontSee($unpaidRequest->public_uuid)
+        ->assertSee('<strong dir="ltr">2</strong>', false)
+        ->assertSee('<strong dir="ltr">0</strong>', false)
+        ->assertDontSee('<strong dir="ltr">2.000</strong>', false)
+        ->assertDontSee('<strong dir="ltr">0.000</strong>', false);
     expect($screen->viewData('report')['totals'])->toBe([
         'request_count' => 1,
         'leave_days' => 2.0,

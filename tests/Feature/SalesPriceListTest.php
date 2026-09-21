@@ -6,9 +6,12 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Currency;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\OperatingContextService;
@@ -460,37 +463,72 @@ test('price list create and edit forms expose and honor the standard save destin
 
 test('price list clone copies business data and ordered lines into an independent new document', function (): void {
     $fixture = salesCycleFixture();
-    foreach (['price_lists.view', 'price_lists.create', 'price_lists.clone'] as $permission) {
-        Permission::findOrCreate($permission, 'web');
-        $fixture['user']->givePermissionTo($permission);
-    }
+    Permission::findOrCreate('price_lists.clone', 'web');
+    $fixture['user']->givePermissionTo('price_lists.clone');
     $sourceCreator = User::factory()->create();
     $source = createSalesPriceList($fixture, $fixture['customer']->getKey(), [
         ['product' => $fixture['finished'], 'price' => '10.0050', 'discount_type' => 'percentage', 'discount_value' => '7.5'],
         ['product' => $fixture['service'], 'price' => '20', 'discount_type' => 'fixed', 'discount_value' => '2'],
     ], '2026-09-01');
-    $source->forceFill(['valid_until' => '2026-12-31', 'notes' => 'Source notes', 'created_by' => $sourceCreator->getKey()])->save();
-    $source->forceFill(['is_print_only' => true])->save();
-    $sourceSnapshot = $source->fresh()->toArray();
+    $source->forceFill([
+        'valid_until' => '2026-12-31',
+        'notes' => 'Source notes',
+        'is_print_only' => true,
+        'created_by' => $sourceCreator->getKey(),
+        'updated_by' => $sourceCreator->getKey(),
+        'reviewed_by' => $sourceCreator->getKey(),
+        'reviewed_at' => now(),
+        'approved_by' => $sourceCreator->getKey(),
+        'approved_at' => now(),
+    ])->save();
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
 
-    $this->get(route('admin.sales.price-lists.clone', $source))
+    $ordinaryPayload = priceListStorePayload($fixture, [[
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_price' => '10.0050',
+        'allowed_discount_type' => null,
+        'allowed_discount_value' => 0,
+    ]]);
+    $this->post(route('admin.sales.price-lists.store'), $ordinaryPayload)->assertForbidden();
+
+    $clonePage = $this->get(route('admin.sales.price-lists.clone', $source))
         ->assertOk()
         ->assertSee(__('price_lists.clone_from', ['document' => $source->doc_num]))
         ->assertSee(__('price_lists.automatic_code'))
         ->assertSee('10.005');
+    $cloneToken = Str::match('/name="clone_source_token" value="([^"]+)"/', (string) $clonePage->getContent());
+    $submissionToken = Str::match('/name="_submission_token" value="([^"]+)"/', (string) $clonePage->getContent());
+    expect(Str::isUuid($cloneToken))->toBeTrue()
+        ->and($submissionToken)->toBe($cloneToken)
+        ->and((string) $clonePage->getContent())->toContain('<fieldset disabled')
+        ->not->toContain('data-price-list-add');
 
-    $payload = priceListStorePayload($fixture, [
-        ['product_doc_num' => $fixture['finished']->doc_num, 'unit_price' => '10.0050', 'allowed_discount_type' => 'percentage', 'allowed_discount_value' => '7.5'],
-        ['product_doc_num' => $fixture['service']->doc_num, 'unit_price' => '20', 'allowed_discount_type' => 'fixed', 'allowed_discount_value' => '2'],
-    ]);
-    $payload['price_list_date'] = '2026-09-01';
-    $payload['valid_from'] = '2026-09-01';
-    $payload['notes'] = 'Source notes';
-    $payload['is_print_only'] = '1';
-    $this->post(route('admin.sales.price-lists.store'), $payload)->assertRedirect();
+    $source->forceFill(['notes' => 'Current locked source notes', 'valid_until' => '2027-01-31'])->save();
+    $source->lines()->where('line_number', 1)->update(['unit_price' => '12.3456']);
+    $source = $source->fresh();
+    $sourceSnapshot = $source->toArray();
+
+    $payload = priceListStorePayload($fixture, [[
+        'product_doc_num' => 'tampered-product',
+        'unit_price' => '999.9999',
+        'allowed_discount_type' => null,
+        'allowed_discount_value' => 0,
+    ]]);
+    $payload['customer_doc_num'] = null;
+    $payload['currency_doc_num'] = 'tampered-currency';
+    $payload['price_list_date'] = '2035-01-01';
+    $payload['valid_from'] = '2035-01-01';
+    $payload['valid_until'] = null;
+    $payload['notes'] = 'Tampered client notes';
+    $payload['is_print_only'] = '0';
+    $payload['clone_source_token'] = $cloneToken;
+    $payload['_submission_token'] = $cloneToken;
+    $payload['submit_action'] = 'save_new';
+    $cloneResponse = $this->post(route('admin.sales.price-lists.store'), $payload)
+        ->assertSessionHas('success', __('price_lists.messages.cloned'));
 
     $clone = PriceList::query()->whereKeyNot($source->getKey())->sole();
+    $cloneResponse->assertRedirect(route('admin.sales.price-lists.clone', $clone));
     expect($clone->getKey())->not->toBe($source->getKey())
         ->and($clone->doc_num)->not->toBe($source->doc_num)
         ->and($clone->company_id)->toBe($source->company_id)
@@ -503,13 +541,38 @@ test('price list clone copies business data and ordered lines into an independen
         ->and($clone->is_print_only)->toBeTrue()
         ->and($clone->created_by)->toBe($fixture['user']->getKey())
         ->and($clone->updated_by)->toBeNull()
+        ->and($clone->reviewed_by)->toBeNull()
+        ->and($clone->reviewed_at)->toBeNull()
+        ->and($clone->approved_by)->toBeNull()
+        ->and($clone->approved_at)->toBeNull()
         ->and($clone->lines->pluck('product_id')->all())->toBe([$fixture['finished']->getKey(), $fixture['service']->getKey()])
-        ->and($clone->lines->pluck('unit_price')->all())->toBe(['10.0050', '20.0000'])
+        ->and($clone->lines->pluck('line_number')->all())->toBe([1, 2])
+        ->and($clone->lines->pluck('unit_price')->all())->toBe(['12.3456', '20.0000'])
+        ->and($clone->lines->pluck('allowed_discount_type')->all())->toBe(['percentage', 'fixed'])
         ->and($clone->lines->pluck('allowed_discount_value')->all())->toBe(['7.5000', '2.0000'])
         ->and($source->fresh()->toArray())->toBe($sourceSnapshot);
 
+    $activity = Activity::query()
+        ->where('subject_type', $clone->getMorphClass())
+        ->where('subject_id', $clone->getKey())
+        ->where('event', 'price_lists.clone')
+        ->sole();
+    expect(data_get($activity->properties, 'change_type'))->toBe('clone')
+        ->and(data_get($activity->properties, 'action.type'))->toBe('clone')
+        ->and(data_get($activity->properties, 'related.source.doc_num'))->toBe($source->doc_num)
+        ->and(data_get($activity->properties, 'record.doc_num'))->toBe($clone->doc_num)
+        ->and(data_get($activity->properties, 'header_changes.clone_document.old'))->toBe($source->doc_num)
+        ->and(data_get($activity->properties, 'header_changes.clone_document.new'))->toBe($clone->doc_num);
+    Permission::findOrCreate('price_lists.view', 'web');
+    $fixture['user']->givePermissionTo('price_lists.view');
+    $this->get(route('admin.sales.price-lists.history', $clone))
+        ->assertOk()
+        ->assertSee(__('price_lists.history_actions.clone'))
+        ->assertSee($source->doc_num)
+        ->assertSee($clone->doc_num);
+
     $clone->lines()->firstOrFail()->update(['unit_price' => '99']);
-    expect($source->lines()->firstOrFail()->unit_price)->toBe('10.0050');
+    expect($source->lines()->firstOrFail()->unit_price)->toBe('12.3456');
 });
 
 test('price list clone is authorized company scoped and create rollback is atomic', function (): void {
@@ -534,6 +597,151 @@ test('price list clone is authorized company scoped and create rollback is atomi
         ->toThrow(ModelNotFoundException::class);
     expect(PriceList::query()->count())->toBe($beforeLists)
         ->and(PriceListLine::query()->count())->toBe($beforeLines);
+});
+
+test('price list clone rejects forged stale and cross company provenance tokens', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('price_lists.clone', 'web');
+    $fixture['user']->givePermissionTo('price_lists.clone');
+    $source = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $payload = priceListStorePayload($fixture, [[
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_price' => '10',
+        'allowed_discount_type' => null,
+        'allowed_discount_value' => 0,
+    ]]);
+    $payload['customer_doc_num'] = null;
+    $payload['submit_action'] = 'save_new';
+    $activeSource = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '11']]);
+
+    $forgedToken = (string) Str::uuid();
+    $this->post(route('admin.sales.price-lists.store'), [
+        ...$payload,
+        'clone_source_token' => $forgedToken,
+        '_submission_token' => $forgedToken,
+    ])->assertSessionHasErrors(['clone_source_token' => __('price_lists.messages.clone_not_allowed')]);
+
+    $stalePage = $this->get(route('admin.sales.price-lists.clone', $source))->assertOk();
+    $staleToken = Str::match('/name="clone_source_token" value="([^"]+)"/', (string) $stalePage->getContent());
+    $source->delete();
+    $this->post(route('admin.sales.price-lists.store'), [
+        ...$payload,
+        'clone_source_token' => $staleToken,
+        '_submission_token' => $staleToken,
+    ])->assertSessionHasErrors(['clone_source_token' => __('price_lists.messages.clone_not_allowed')]);
+
+    $crossCompanyPage = $this->get(route('admin.sales.price-lists.clone', $activeSource))->assertOk();
+    $crossCompanyToken = Str::match('/name="clone_source_token" value="([^"]+)"/', (string) $crossCompanyPage->getContent());
+    $otherCompany = Company::factory()->create();
+    $otherCurrency = Currency::query()->create([
+        'company_id' => $otherCompany->getKey(),
+        'doc_number' => 98001,
+        'doc_num' => 'Currency-98001',
+        'name' => 'Clone Boundary Currency',
+        'code' => 'CBC',
+        'is_main' => false,
+        'status' => 'active',
+    ]);
+    $otherProduct = Product::query()->create([
+        'company_id' => $otherCompany->getKey(),
+        'doc_number' => 98001,
+        'doc_num' => 'Product-CLONE-BOUNDARY',
+        'name' => 'Clone Boundary Product',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'status' => 'active',
+    ]);
+    $crossCompanyPayload = [
+        ...$payload,
+        'currency_doc_num' => $otherCurrency->doc_num,
+        'lines' => [[
+            'product_doc_num' => $otherProduct->doc_num,
+            'unit_price' => '12.3456',
+            'allowed_discount_type' => null,
+            'allowed_discount_value' => 0,
+        ]],
+        'clone_source_token' => $crossCompanyToken,
+        '_submission_token' => $crossCompanyToken,
+    ];
+    $otherCompanySession = [
+        ...salesCycleSession($fixture),
+        OperatingContextService::CompanyIdKey => $otherCompany->getKey(),
+        OperatingContextService::CompanyDocNumKey => $otherCompany->doc_num,
+    ];
+
+    $this->withSession($otherCompanySession)
+        ->post(route('admin.sales.price-lists.store'), $crossCompanyPayload)
+        ->assertSessionHasErrors(['clone_source_token' => __('price_lists.messages.clone_not_allowed')]);
+    expect(PriceList::query()->where('company_id', $otherCompany->getKey())->exists())->toBeFalse();
+});
+
+test('price list clone token survives transactional failure and is consumed only after success', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('price_lists.clone', 'web');
+    $fixture['user']->givePermissionTo('price_lists.clone');
+    $source = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $clonePage = $this->get(route('admin.sales.price-lists.clone', $source))->assertOk();
+    $cloneToken = Str::match('/name="clone_source_token" value="([^"]+)"/', (string) $clonePage->getContent());
+    $payload = priceListStorePayload($fixture, [[
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_price' => '10.2500',
+        'allowed_discount_type' => 'percentage',
+        'allowed_discount_value' => '3.5000',
+    ]]);
+    $payload['customer_doc_num'] = null;
+    $payload['clone_source_token'] = $cloneToken;
+    $payload['_submission_token'] = $cloneToken;
+    $payload['submit_action'] = 'save_new';
+    $beforeLists = PriceList::query()->count();
+    $beforeLines = PriceListLine::query()->count();
+    $realLogger = app(ActivityLogger::class);
+    $logAttempts = 0;
+    $logger = Mockery::mock(ActivityLogger::class);
+    $logger->shouldReceive('log')->twice()->andReturnUsing(function (...$arguments) use (&$logAttempts, $realLogger): mixed {
+        $logAttempts++;
+
+        if ($logAttempts === 1) {
+            throw new RuntimeException('Simulated clone audit failure.');
+        }
+
+        return $realLogger->log(...$arguments);
+    });
+    $this->app->instance(ActivityLogger::class, $logger);
+
+    $exception = null;
+    $this->withoutExceptionHandling();
+    try {
+        $this->post(route('admin.sales.price-lists.store'), $payload);
+    } catch (RuntimeException $caught) {
+        $exception = $caught;
+    } finally {
+        $this->withExceptionHandling();
+    }
+
+    expect($exception?->getMessage())->toBe('Simulated clone audit failure.')
+        ->and(PriceList::query()->count())->toBe($beforeLists)
+        ->and(PriceListLine::query()->count())->toBe($beforeLines)
+        ->and(DB::table('document_submissions')->count())->toBe(0);
+
+    $success = $this->post(route('admin.sales.price-lists.store'), $payload)->assertRedirect();
+    expect(PriceList::query()->count())->toBe($beforeLists + 1)
+        ->and(PriceListLine::query()->count())->toBe($beforeLines + 1)
+        ->and(DB::table('document_submissions')->count())->toBe(1);
+
+    $replay = $this->post(route('admin.sales.price-lists.store'), $payload)->assertRedirect();
+    expect($replay->headers->get('Location'))->toBe($success->headers->get('Location'))
+        ->and(PriceList::query()->count())->toBe($beforeLists + 1)
+        ->and(PriceListLine::query()->count())->toBe($beforeLines + 1);
+
+    $this->post(route('admin.sales.price-lists.store'), [...$payload, 'notes' => 'Changed replay payload'])
+        ->assertConflict();
+
+    $this->post(route('admin.sales.price-lists.store'), [
+        ...$payload,
+        '_submission_token' => (string) Str::uuid(),
+    ])->assertSessionHasErrors(['_submission_token']);
+    expect(DB::table('document_submissions')->count())->toBe(1);
 });
 
 test('price list percentage increase uses canonical four decimal rounding and updates audit only', function (): void {
@@ -1276,7 +1484,7 @@ test('price list export has matching localized headings text codes and canonical
 test('price list output UI follows backend permissions', function (): void {
     $fixture = salesCycleFixture();
     $priceList = createSalesPriceList($fixture, null, []);
-    foreach (['price_lists.view', 'price_lists.print'] as $permission) {
+    foreach (['price_lists.view', 'price_lists.edit', 'price_lists.clone', 'price_lists.delete', 'price_lists.restore', 'price_lists.print'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }
@@ -1287,6 +1495,38 @@ test('price list output UI follows backend permissions', function (): void {
         ->assertDontSee(route('admin.sales.price-lists.print', $priceList), false)
         ->assertDontSee(route('admin.sales.price-lists.export.xlsx', $priceList), false)
         ->assertDontSee(route('admin.sales.price-lists.export.csv', $priceList), false);
+
+    Permission::findOrCreate('price_lists.export', 'web');
+    $fixture['user']->givePermissionTo('price_lists.export');
+    $exportPage = $this->get(route('admin.sales.price-lists.show', $priceList))->assertOk();
+    $exportPage->assertSee(route('admin.sales.price-lists.pdf', $priceList), false)
+        ->assertSee(route('admin.sales.price-lists.export.xlsx', $priceList), false)
+        ->assertSee(route('admin.sales.price-lists.export.csv', $priceList), false)
+        ->assertSee('report-actions-toolbar', false);
+    expect(substr_count((string) $exportPage->getContent(), 'js-report-export'))->toBe(2);
+
+    $rowActions = view('modules.sales.price-lists.partials.actions', ['record' => $priceList])->render();
+    expect($rowActions)
+        ->toContain(route('admin.sales.price-lists.show', $priceList))
+        ->toContain(route('admin.sales.price-lists.edit', $priceList))
+        ->toContain(route('admin.sales.price-lists.destroy', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.pdf', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.export.xlsx', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.export.csv', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.clone', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.increase-by-percentage', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.history', $priceList));
+
+    Permission::findOrCreate('price_lists.view_trashed', 'web');
+    $fixture['user']->givePermissionTo('price_lists.view_trashed');
+    $priceList->delete();
+    $trashedRowActions = view('modules.sales.price-lists.partials.actions', ['record' => $priceList])->render();
+    expect($trashedRowActions)
+        ->toContain(route('admin.sales.price-lists.show', $priceList))
+        ->toContain(route('admin.sales.price-lists.restore', $priceList))
+        ->not->toContain(route('admin.sales.price-lists.edit', $priceList))
+        ->not->toContain('data-delete-url="'.route('admin.sales.price-lists.destroy', $priceList).'"');
+
     $priceListUi = file_get_contents(resource_path('views/modules/sales/price-lists/partials/actions.blade.php'))
         .file_get_contents(resource_path('views/modules/sales/price-lists/partials/form-actions.blade.php'))
         .file_get_contents(public_path('assets/js/modules/Sales/price-lists-index.js'));

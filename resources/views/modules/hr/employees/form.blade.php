@@ -733,7 +733,7 @@
                                     $payAmountStep = $fieldName === 'basic_salary' ? '0.01' : '0.0001';
                                 @endphp
                                 <div class="col-12 col-md-6 col-xl-4 col-xxl-3 js-hr-pay-amount-field" data-pay-basis="{{ $basis }}">
-                                    <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>
+                                    <x-forms.label :for="$inputId" :label="__('hr.employees.attributes.' . $fieldName)" required />
                                     @if ($isView)
                                         <x-forms.view-field :for="$inputId" :value="$fieldValue($fieldName)" numeric dir="ltr" />
                                     @else

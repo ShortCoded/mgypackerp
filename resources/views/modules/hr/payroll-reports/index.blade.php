@@ -1,5 +1,7 @@
 @extends('layouts.app')
 
+@inject('numbers', 'Modules\Core\Services\NumericFormatService')
+
 @section('title', __('hr_payroll_reports.'.$type.'.title'))
 
 @section('content')
@@ -40,12 +42,12 @@
                 @if ($isPayroll)
                     @foreach ($report['totals'] as $currencyTotals)
                         @foreach (['gross', 'deductions', 'net'] as $key)
-                            <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ number_format((float) $currencyTotals[$key], 2) }} {{ $currencyTotals['currency_code'] ?: __('hr_payroll_reports.unknown_currency') }}</strong></div></div></div>
+                            <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ $numbers->format($currencyTotals[$key]) }} {{ $currencyTotals['currency_code'] ?: __('hr_payroll_reports.unknown_currency') }}</strong></div></div></div>
                         @endforeach
                     @endforeach
                 @else
                     @foreach ($report['totals'] as $key => $value)
-                        <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ number_format((float) $value, 2) }} {{ $report['currency_code'] }}</strong></div></div></div>
+                        <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ $numbers->format($value) }} {{ $report['currency_code'] }}</strong></div></div></div>
                     @endforeach
                 @endif
             </div>
@@ -65,16 +67,16 @@
                             @if ($isPayroll)
                                 <td>{{ $row->employee_name }} <span class="text-muted" dir="ltr">{{ $row->employee_doc_num }}</span></td>
                                 <td dir="ltr">{{ $row->currency_code ?: __('hr_payroll_reports.unknown_currency') }}</td>
-                                <td class="text-end" dir="ltr">{{ number_format((float) $row->gross_amount, 2) }}</td>
-                                <td class="text-end" dir="ltr">{{ number_format((float) $row->deduction_amount, 2) }}</td>
-                                <td class="text-end fw-semibold" dir="ltr">{{ number_format((float) $row->net_amount, 2) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($row->gross_amount) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($row->deduction_amount) }}</td>
+                                <td class="text-end fw-semibold" dir="ltr">{{ $numbers->format($row->net_amount) }}</td>
                                 <td>{{ __('hr_payroll.status.'.$row->status) }}</td>
                                 <td>@can('hr.payslips.view')<a class="btn btn-sm btn-outline-primary" href="{{ route('admin.hr.payslips.show', $row->id) }}">{{ __('hr_payroll_reports.actions.view_payslip') }}</a>@else—@endcan</td>
                             @else
                                 <td>@can('cash_payment_vouchers.view')<a href="{{ route('admin.finance.cash-payment-vouchers.show', $row->voucher_doc_num) }}">{{ $row->voucher_doc_num }}</a>@else<span dir="ltr">{{ $row->voucher_doc_num }}</span>@endcan</td>
                                 <td dir="ltr">{{ $row->voucher_date }}</td>
                                 <td dir="ltr">{{ $row->currency_code }}</td>
-                                <td class="text-end" dir="ltr">{{ number_format((float) $row->amount, 2) }}</td>
+                                <td class="text-end" dir="ltr">{{ $numbers->format($row->amount) }}</td>
                                 <td>{{ __('hr_payroll.status.'.$row->status) }}</td>
                                 <td dir="ltr">{{ $row->journal_doc_num ?: ($row->reversal_journal_doc_num ?: '—') }}</td>
                             @endif

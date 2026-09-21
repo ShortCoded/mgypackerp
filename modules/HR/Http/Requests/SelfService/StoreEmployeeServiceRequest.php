@@ -4,10 +4,13 @@ namespace Modules\HR\Http\Requests\SelfService;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\HR\Models\HrEmployeeServiceRequest;
 
 class StoreEmployeeServiceRequest extends FormRequest
 {
+    use NormalizesNumericInput;
+
     public function authorize(): bool
     {
         return $this->user() !== null;
@@ -15,6 +18,8 @@ class StoreEmployeeServiceRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->normalizeNumericInput(['amount']);
+
         $payload = $this->input('payload');
 
         if (is_array($payload) && filled($payload['leave_type'] ?? null)) {
@@ -33,7 +38,7 @@ class StoreEmployeeServiceRequest extends FormRequest
             'requested_from' => [Rule::requiredIf(fn (): bool => in_array($this->input('request_type'), ['leave', 'attendance_adjustment', 'overtime', 'remote_work'], true)), 'nullable', 'date'],
             'requested_to' => [Rule::requiredIf(fn (): bool => in_array($this->input('request_type'), ['leave', 'remote_work'], true)), 'nullable', 'date', 'after_or_equal:requested_from'],
             'requested_minutes' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'overtime'), 'nullable', 'integer', 'min:1', 'max:1440'],
-            'amount' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'salary_advance'), 'nullable', 'numeric', 'gt:0', 'max:9999999999999.99'],
+            'amount' => [Rule::requiredIf(fn (): bool => $this->input('request_type') === 'salary_advance'), 'nullable', 'numeric', 'gt:0', 'max:9999999999999.99', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'],
             'currency_doc_num' => [
                 Rule::requiredIf(fn (): bool => $this->input('request_type') === 'salary_advance'),
                 'nullable',

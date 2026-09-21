@@ -140,6 +140,10 @@ class FinanceReportService
             $filters[$field] = $this->dates->normalizeForStorage(trim((string) ($filters[$field] ?? '')));
         }
 
+        if ($filters['type'] === self::CashboxStatement) {
+            $filters['to_date'] ??= now()->toDateString();
+        }
+
         if (in_array('as_of_date', $applicableFilters, true)) {
             $filters['as_of_date'] ??= $filters['to_date'] ?? now()->toDateString();
         }

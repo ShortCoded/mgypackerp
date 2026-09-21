@@ -19,15 +19,18 @@
             <h4 class="mb-1">@lang('inventory_accounting.sales_valuation.title')</h4>
             <p class="text-muted mb-0">@lang('inventory_accounting.sales_valuation.description')</p>
         </div>
-        <div class="btn-group d-print-none">
-            @can('inventory.reports.export')
-                @if($priceList)
-                <a class="btn btn-outline-success" href="{{ route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$exportQuery]) }}">@lang('reports.export_excel')</a>
-                <a class="btn btn-outline-secondary" href="{{ route('admin.inventory.sales-valuation.export', ['format' => 'csv', ...$exportQuery]) }}">@lang('reports.export_csv')</a>
-                <a class="btn btn-outline-danger" href="{{ route('admin.inventory.sales-valuation.print', $exportQuery) }}" target="_blank">@lang('reports.export_pdf')</a>
-                @endif
-            @endcan
-        </div>
+        @if($priceList)
+            <x-admin.report.actions-toolbar
+                class="d-print-none"
+                :show-filters="false"
+                :show-refresh="false"
+                :export-options="[
+                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$exportQuery]), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'csv', ...$exportQuery]), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.print', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
+                ]"
+            />
+        @endif
     </div>
 
     <form class="card card-body mb-3 d-print-none" method="GET" action="{{ route('admin.inventory.sales-valuation') }}">

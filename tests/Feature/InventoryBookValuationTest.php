@@ -427,7 +427,7 @@ test('posting rejects a linked source issue from another product', function (): 
             'source_line_type' => 'inventory-book-line', 'source_line_id' => 88,
             'product_snapshot' => ['source_issue_transaction_id' => $sourceIssue->getKey()],
         ]],
-    ))->toThrow(DomainException::class, 'The linked source issue does not match this inventory return line.');
+    ))->toThrow(DomainException::class, __('The linked source issue does not match this inventory return line.'));
 });
 
 test('sales return resolves the canonical issue for a later delivery line without trusting its snapshot id', function (): void {
@@ -716,11 +716,24 @@ test('valuation screen and exports share aggregate rows totals filters currency 
     foreach (['inventory.reports.financial', 'inventory.reports.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
-    $fixture['user']->givePermissionTo(['inventory.reports.financial', 'inventory.reports.export']);
+    $fixture['user']->givePermissionTo('inventory.reports.financial');
 
     $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
         ->get(route('admin.inventory.reports.valuation', $query))
-        ->assertOk()->assertSee('Book valuation item')->assertSee('21.00000000', false)->assertSee((string) $currency);
+        ->assertOk()
+        ->assertDontSee(route('admin.inventory.reports.valuation.export.excel', $query));
+
+    $fixture['user']->givePermissionTo('inventory.reports.export');
+
+    $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
+        ->get(route('admin.inventory.reports.valuation', $query))
+        ->assertOk()
+        ->assertSee('Book valuation item')
+        ->assertSee('21.00000000', false)
+        ->assertSee((string) $currency)
+        ->assertSee('report-actions-toolbar', false)
+        ->assertSee('data-bs-toggle="dropdown"', false)
+        ->assertSee('data-open-in-new-tab="true"', false);
     $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
         ->get(route('admin.inventory.reports.valuation.export.excel', $query))
         ->assertOk()->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

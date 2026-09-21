@@ -1,5 +1,6 @@
 <?php
 
+use Modules\Core\Models\Currency;
 use Modules\Core\Services\OperatingContextService;
 use Spatie\Permission\Models\Permission;
 
@@ -15,6 +16,7 @@ test('dashboard summaries are lazy in the collapsed container and independently 
     $page = $this->get(route('dashboard'))->assertOk();
     $page->assertSee('data-dashboard-summaries', false)
         ->assertSee('AppDashboardSummaries', false)
+        ->assertSee('value="'.$fixture['currency']->doc_num.'" selected', false)
         ->assertDontSee('purchases:', false);
     expect($page->getContent())->toContain('<details class="card mb-3" data-dashboard-summaries>')
         ->not->toContain('<details class="card mb-3" data-dashboard-summaries open>');
@@ -24,7 +26,8 @@ test('dashboard summaries are lazy in the collapsed container and independently 
         ->assertOk()
         ->assertJsonPath('empty', false)
         ->assertJsonPath('filters.branch', $fixture['branch']->doc_num)
-        ->assertJsonPath('filters.financial_period', $fixture['period']->doc_num);
+        ->assertJsonPath('filters.financial_period', $fixture['period']->doc_num)
+        ->assertJsonPath('filters.currency', $fixture['currency']->code);
     expect(collect($sales->json('metrics'))->pluck('title')->all())->toContain(
         __('dashboard.summaries.metrics.sales_orders'),
         __('dashboard.summaries.metrics.sales_invoices'),
@@ -42,6 +45,17 @@ test('dashboard summary filters are scope checked and currency is applied withou
     }
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     salesPostedServiceInvoice($fixture, '125.0000');
+    $otherCurrency = Currency::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 99001,
+        'doc_num' => 'Currency-DASHBOARD-USD',
+        'name' => 'US Dollar',
+        'code' => 'USD',
+        'minor_unit_name' => 'Cent',
+        'minor_unit_factor' => 100,
+        'is_main' => false,
+        'status' => 'active',
+    ]);
     $filters = [
         'branch_doc_num' => $fixture['branch']->doc_num,
         'financial_period_doc_num' => $fixture['period']->doc_num,
@@ -66,6 +80,16 @@ test('dashboard summary filters are scope checked and currency is applied withou
     $this->getJson(route('dashboard.summaries.sales', [...$filters, 'currency_doc_num' => 'OTHER-CURRENCY']))
         ->assertUnprocessable()
         ->assertJsonValidationErrors('currency_doc_num');
+
+    $this->getJson(route('dashboard.summaries.sales', [...$filters, 'currency_doc_num' => $otherCurrency->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('filters.currency', $otherCurrency->code);
+
+    $allCurrencies = $this->getJson(route('dashboard.summaries.sales', [...$filters, 'currency_doc_num' => '']))
+        ->assertOk()
+        ->assertJsonPath('filters.currency', null);
+    expect(collect($allCurrencies->json('metrics'))->keyBy('key')['sales_value']['value'])
+        ->toBe(__('dashboard.summaries.select_currency_for_value'));
 });
 
 test('dashboard summary endpoint returns the context-required empty state without an operating selection', function (): void {

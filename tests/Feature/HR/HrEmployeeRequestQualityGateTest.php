@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
@@ -127,6 +128,49 @@ test('all employee self-service request types persist their validated details un
 
     $advance = HrEmployeeServiceRequest::query()->where('request_type', 'salary_advance')->sole();
     expect($advance->amount)->toBe('1250.50')->and($advance->currency_id)->toBe($fixture['currency']->getKey());
+});
+
+test('salary advance amounts normalize localized grouping and preserve decimal scale validation', function (): void {
+    $fixture = employeeRequestQualityFixture();
+
+    $this->actingAs($fixture['user'])
+        ->post(route('employee.hr.requests.store'), [
+            'request_type' => 'salary_advance',
+            'details' => 'Localized grouped salary advance',
+            'amount' => '١٬٢٥٠٫٥٠',
+            'currency_doc_num' => $fixture['currency']->doc_num,
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect(HrEmployeeServiceRequest::query()->sole()->amount)->toBe('1250.50');
+
+    foreach (['0', '1,2,3', '1.234', '10000000000000'] as $invalidAmount) {
+        $this->post(route('employee.hr.requests.store'), [
+            'request_type' => 'salary_advance',
+            'details' => 'Invalid salary advance amount',
+            'amount' => $invalidAmount,
+            'currency_doc_num' => $fixture['currency']->doc_num,
+        ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('amount')
+            ->assertSessionHasInput('amount', $invalidAmount);
+    }
+
+    $this->post(route('employee.hr.requests.store'), [
+        'request_type' => 'salary_advance',
+        'details' => 'Maximum salary advance amount',
+        'amount' => '9,999,999,999,999.99',
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect(HrEmployeeServiceRequest::query()->count())->toBe(2);
+
+    if (DB::getDriverName() !== 'sqlite') {
+        expect(HrEmployeeServiceRequest::query()->latest('id')->value('amount'))->toBe('9999999999999.99');
+    }
 });
 
 test('conditional validation rejects incomplete request-specific details', function (): void {

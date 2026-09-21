@@ -91,7 +91,7 @@ class PayrollReportController extends Controller
         }
 
         return Excel::download(
-            new PayrollReportExport($headings, $exportRows),
+            new PayrollReportExport($headings, $exportRows, $type === 'payroll' ? [7, 8, 9] : [7]),
             $filename.'.'.$format,
             $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX,
         );
@@ -118,9 +118,9 @@ class PayrollReportController extends Controller
                 $row->employee_doc_num,
                 $row->employee_name,
                 $row->currency_code,
-                (float) $row->gross_amount,
-                (float) $row->deduction_amount,
-                (float) $row->net_amount,
+                (string) $row->gross_amount,
+                (string) $row->deduction_amount,
+                (string) $row->net_amount,
                 __('hr_payroll.status.'.$row->status),
             ];
         }
@@ -132,7 +132,7 @@ class PayrollReportController extends Controller
             $row->voucher_doc_num,
             $row->voucher_date,
             $row->currency_code,
-            (float) $row->amount,
+            (string) $row->amount,
             __('hr_payroll.status.'.$row->status),
             $row->journal_doc_num ?: $row->reversal_journal_doc_num,
         ];
@@ -149,9 +149,9 @@ class PayrollReportController extends Controller
 
                     return [
                         __('hr_payroll_reports.totals.export_label'), '', '', '', '', $currency,
-                        (float) $currencyRows->sum('gross_amount'),
-                        (float) $currencyRows->sum('deduction_amount'),
-                        (float) $currencyRows->sum('net_amount'),
+                        $this->sumDecimalColumn($currencyRows, 'gross_amount'),
+                        $this->sumDecimalColumn($currencyRows, 'deduction_amount'),
+                        $this->sumDecimalColumn($currencyRows, 'net_amount'),
                         '',
                     ];
                 })
@@ -161,13 +161,22 @@ class PayrollReportController extends Controller
 
         return collect(['amount' => null, 'approved' => 'approved', 'cancelled' => 'cancelled'])
             ->map(function (?string $status, string $label) use ($rows): array {
-                $amount = $status === null ? $rows->sum('amount') : $rows->where('status', $status)->sum('amount');
+                $amount = $this->sumDecimalColumn($status === null ? $rows : $rows->where('status', $status), 'amount');
 
                 $currency = $rows->first()?->currency_code;
 
-                return [__('hr_payroll_reports.totals.'.$label), '', '', '', '', $currency, (float) $amount, '', ''];
+                return [__('hr_payroll_reports.totals.'.$label), '', '', '', '', $currency, $amount, '', ''];
             })
             ->values()
             ->all();
+    }
+
+    /** @param Collection<int, object> $rows */
+    private function sumDecimalColumn(Collection $rows, string $column): string
+    {
+        return $rows->reduce(
+            fn (string $total, object $row): string => bcadd($total, (string) $row->{$column}, 4),
+            '0.0000',
+        );
     }
 }

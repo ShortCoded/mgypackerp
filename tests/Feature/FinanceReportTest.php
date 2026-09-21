@@ -5,6 +5,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Models\Role;
@@ -13,6 +14,8 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Finance\Exports\FinanceReportExport;
 use Modules\Finance\Http\Controllers\FinanceReportController;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
@@ -375,8 +378,13 @@ test('cashbox statement defaults its through date and renders without explicit d
     Carbon::setTestNow(Carbon::create(2026, 9, 30, 10));
 
     try {
-        financeReportFixture($this);
+        $fixture = financeReportFixture($this);
         $actor = financeReportActor();
+        $expectedExportFilters = [
+            'type' => FinanceReportService::CashboxStatement,
+            'to_date' => '2026-09-30',
+            'branch_id' => $fixture['branch']->getKey(),
+        ];
 
         $response = $this->actingAs($actor)->get(route('admin.reports.finance.index', [
             'type' => FinanceReportService::CashboxStatement,
@@ -384,12 +392,179 @@ test('cashbox statement defaults its through date and renders without explicit d
 
         $response->assertOk()
             ->assertSee(__('finance_reports.types.cashbox_statement.title'))
+            ->assertSee('id="finance-report-to"', false)
+            ->assertSee('value="2026-09-30"', false)
+            ->assertSee(__('finance_reports.filters.to_date').':')
+            ->assertSee(route('admin.reports.finance.export.excel', $expectedExportFilters))
+            ->assertSee(route('admin.reports.finance.export.csv', $expectedExportFilters))
+            ->assertSee(route('admin.reports.finance.export.pdf', $expectedExportFilters))
             ->assertSee('CRV-9701')
             ->assertDontSee('CRV-9702-DRAFT');
 
     } finally {
         Carbon::setTestNow();
     }
+});
+
+test('finance report screen uses the shared report toolbar filter panel and localized date controls', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $parameters = [
+        'type' => FinanceReportService::CashboxStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+    ];
+    $expectedExportFilters = [...$parameters, 'branch_id' => $fixture['branch']->getKey()];
+
+    $response = $this->actingAs($actor)
+        ->get(route('admin.reports.finance.index', $parameters))
+        ->assertOk()
+        ->assertSee('admin-report-page', false)
+        ->assertSee('report-actions-toolbar', false)
+        ->assertSee('data-bs-target="#finance-report-filters"', false)
+        ->assertSee('id="finance-report-filters"', false)
+        ->assertSee(route('admin.reports.finance.export.excel', $expectedExportFilters))
+        ->assertSee(route('admin.reports.finance.export.csv', $expectedExportFilters))
+        ->assertSee(route('admin.reports.finance.export.pdf', $expectedExportFilters));
+
+    $html = $response->getContent();
+    $balanceHtml = $this->actingAs($actor)
+        ->get(route('admin.reports.finance.index', [
+            'type' => FinanceReportService::CashboxBalances,
+            'as_of_date' => '2026-09-30',
+        ]))
+        ->assertOk()
+        ->getContent();
+
+    expect(substr_count($html, 'js-report-export'))->toBe(3)
+        ->and(substr_count($html, 'fas fa-download me-1'))->toBe(1)
+        ->and(preg_match('/<input(?=[^>]*id="finance-report-from")(?=[^>]*name="from_date")(?=[^>]*type="text")(?=[^>]*js-date-picker)[^>]*>/', $html))->toBe(1)
+        ->and(preg_match('/<input(?=[^>]*id="finance-report-to")(?=[^>]*name="to_date")(?=[^>]*type="text")(?=[^>]*js-date-picker)[^>]*>/', $html))->toBe(1)
+        ->and(preg_match('/<input(?=[^>]*id="finance-report-as-of")(?=[^>]*name="as_of_date")(?=[^>]*type="text")(?=[^>]*js-date-picker)[^>]*>/', $balanceHtml))->toBe(1);
+});
+
+test('finance spreadsheet exports retain report rows and append matching currency totals in both formats', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $filters = [
+        'type' => FinanceReportService::CashboxStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+        'branch_id' => $fixture['branch']->getKey(),
+    ];
+    $report = app(FinanceReportService::class)->report($filters);
+    $originalRows = $report['rows']->values();
+    $export = new FinanceReportExport($report);
+    $exportRows = $export->collection();
+    $totalRows = $exportRows->where('_is_total', true)->values();
+    $currencyTotals = $report['currency_totals']['EGP'];
+    $totalRow = $totalRows->sole();
+
+    expect($exportRows->take($originalRows->count())->all())->toBe($originalRows->all())
+        ->and($totalRows)->toHaveCount(count($report['currency_totals']))
+        ->and($totalRow['date'])->toBe(__('common.total'))
+        ->and($totalRow['currency'])->toBe('EGP')
+        ->and($totalRow['receipt'])->toBe($currencyTotals[__('finance_reports.columns.receipt')])
+        ->and($totalRow['payment'])->toBe($currencyTotals[__('finance_reports.columns.payment')])
+        ->and($totalRow['balance'])->toBe($currencyTotals[__('finance_reports.columns.balance')]);
+
+    $mappedTotal = array_combine($export->headings(), $export->map($totalRow));
+    expect($mappedTotal[__('finance_reports.columns.date')])->toBe(__('common.total'))
+        ->and($mappedTotal[__('finance_reports.columns.currency')])->toBe('EGP')
+        ->and($mappedTotal[__('finance_reports.columns.balance')])->toBe($currencyTotals[__('finance_reports.columns.balance')]);
+
+    Excel::fake();
+    $structures = [];
+    $structure = fn (FinanceReportExport $financeExport): array => [
+        'headings' => $financeExport->headings(),
+        'rows' => $financeExport->collection()
+            ->map(fn (array $row): array => $financeExport->map($row))
+            ->all(),
+    ];
+
+    $this->actingAs($actor)->get(route('admin.reports.finance.export.excel', $filters))->assertOk();
+    Excel::assertDownloaded('finance-cashbox_statement.xlsx', function (FinanceReportExport $financeExport) use (&$structures, $structure): bool {
+        $structures['xlsx'] = $structure($financeExport);
+
+        return true;
+    });
+
+    $this->actingAs($actor)->get(route('admin.reports.finance.export.csv', $filters))->assertOk();
+    Excel::assertDownloaded('finance-cashbox_statement.csv', function (FinanceReportExport $financeExport) use (&$structures, $structure): bool {
+        $structures['csv'] = $structure($financeExport);
+
+        return true;
+    });
+
+    expect($structures['xlsx'])->toBe($structures['csv']);
+});
+
+test('finance PDF view renders criteria currency totals and cashbox statement rows with common report structure', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $originalLocale = app()->getLocale();
+
+    try {
+        foreach (['en' => 'ltr', 'ar' => 'rtl'] as $locale => $direction) {
+            app()->setLocale($locale);
+            $report = app(FinanceReportService::class)->report([
+                'type' => FinanceReportService::CashboxStatement,
+                'from_date' => '2026-09-01',
+                'to_date' => '2026-09-30',
+                'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+            ]);
+
+            $html = view('reports.finance', [
+                'report' => $report,
+                'direction' => $direction,
+            ])->render();
+
+            expect($html)
+                ->toContain('<html lang="'.$locale.'" dir="'.$direction.'">')
+                ->toContain('report-filter-summary')
+                ->toContain('document-totals-table finance-report-totals')
+                ->toContain('report-table finance-report-table')
+                ->toContain(__('finance_reports.types.cashbox_statement.title'))
+                ->toContain(__('finance_reports.active_filters'))
+                ->toContain($fixture['cashboxOne']->doc_num)
+                ->toContain('CRV-9701')
+                ->toContain('TRF-9701')
+                ->toContain('class="text-end" dir="ltr"')
+                ->not->toContain('CRV-9702-DRAFT');
+        }
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+
+    $pdfResponse = $this->actingAs($actor)->get(route('admin.reports.finance.export.pdf', [
+        'type' => FinanceReportService::CashboxStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+    ]));
+
+    $pdfResponse->assertOk()->assertHeader('content-type', 'application/pdf');
+    expect($pdfResponse->getContent())->toStartWith('%PDF');
+
+    $pdf = Mockery::mock(ReportPdfService::class);
+    $pdf->shouldReceive('stream')->once()->withArgs(function (string $view, array $data, string $filename, string $orientation): bool {
+        expect($view)->toBe('reports.finance')
+            ->and($data['title'])->toBe($data['report']['title'])
+            ->and($filename)->toBe('finance-cashbox_statement.pdf')
+            ->and($orientation)->toBe('L');
+
+        return true;
+    })->andReturn(response('%PDF-1.4', 200, ['Content-Type' => 'application/pdf']));
+    $this->app->instance(ReportPdfService::class, $pdf);
+
+    $this->actingAs($actor)->get(route('admin.reports.finance.export.pdf', [
+        'type' => FinanceReportService::CashboxStatement,
+        'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30',
+        'cashbox_doc_num' => $fixture['cashboxOne']->doc_num,
+    ]))->assertOk()->assertHeader('content-type', 'application/pdf');
 });
 
 test('legacy finance report route renders the actual unified report and unsupported guarantee navigation is absent', function (): void {
@@ -489,6 +664,11 @@ test('named finance report routes lock their report mode and cashbox count opens
         ->assertSee('name="type"', false)
         ->assertSee('value="cashbox_balances"', false)
         ->assertDontSee('value="guarantee_cheques" selected', false)
+        ->assertSee(route('admin.reports.finance.export.excel', [
+            'type' => FinanceReportService::CashboxBalances,
+            'as_of_date' => '2026-09-30',
+            'branch_id' => $fixture['branch']->getKey(),
+        ]))
         ->assertSee('80');
 
     $this->actingAs($actor)

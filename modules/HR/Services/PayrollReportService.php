@@ -14,7 +14,7 @@ class PayrollReportService
 {
     public function __construct(private readonly OperatingScopeAccessService $scope) {}
 
-    /** @param array<string, mixed> $filters @return array{rows: LengthAwarePaginator, totals: list<array{currency_id: int|null, currency_code: string|null, gross: float, deductions: float, net: float}>} */
+    /** @param array<string, mixed> $filters @return array{rows: LengthAwarePaginator, totals: list<array{currency_id: int|null, currency_code: string|null, gross: string, deductions: string, net: string}>} */
     public function payroll(int $companyId, User $user, array $filters): array
     {
         $query = $this->payrollQuery($companyId, $user, $filters);
@@ -29,9 +29,9 @@ class PayrollReportService
             ->map(fn (object $row): array => [
                 'currency_id' => $row->currency_id === null ? null : (int) $row->currency_id,
                 'currency_code' => $row->currency_code,
-                'gross' => (float) $row->gross,
-                'deductions' => (float) $row->deductions,
-                'net' => (float) $row->net,
+                'gross' => bcadd((string) $row->gross, '0', 4),
+                'deductions' => bcadd((string) $row->deductions, '0', 4),
+                'net' => bcadd((string) $row->net, '0', 4),
             ])
             ->all();
 
@@ -41,7 +41,7 @@ class PayrollReportService
         ];
     }
 
-    /** @param array<string, mixed> $filters @return array{rows: LengthAwarePaginator, totals: array<string, float>, currency_code: string|null} */
+    /** @param array<string, mixed> $filters @return array{rows: LengthAwarePaginator, totals: array<string, string>, currency_code: string|null} */
     public function payments(int $companyId, User $user, array $filters): array
     {
         $query = $this->paymentQuery($companyId, $user, $filters);
@@ -49,9 +49,9 @@ class PayrollReportService
         return [
             'rows' => (clone $query)->orderByDesc('voucher_date')->orderByDesc('id')->paginate(30)->withQueryString(),
             'totals' => [
-                'amount' => (float) (clone $query)->sum('amount'),
-                'approved' => (float) (clone $query)->where('status', 'approved')->sum('amount'),
-                'cancelled' => (float) (clone $query)->where('status', 'cancelled')->sum('amount'),
+                'amount' => $this->decimalAggregate(clone $query, 'amount'),
+                'approved' => $this->decimalAggregate((clone $query)->where('status', 'approved'), 'amount'),
+                'cancelled' => $this->decimalAggregate((clone $query)->where('status', 'cancelled'), 'amount'),
             ],
             'currency_code' => DB::table('currencies')
                 ->where('company_id', $companyId)
@@ -70,6 +70,16 @@ class PayrollReportService
     public function paymentRows(int $companyId, User $user, array $filters): Collection
     {
         return $this->paymentQuery($companyId, $user, $filters)->orderByDesc('voucher_date')->orderByDesc('id')->get();
+    }
+
+    private function decimalAggregate(Builder $query, string $column): string
+    {
+        $value = $query
+            ->select([])
+            ->selectRaw("COALESCE(SUM({$column}), 0) as aggregate")
+            ->value('aggregate');
+
+        return bcadd((string) $value, '0', 4);
     }
 
     /** @return array<string, mixed> */

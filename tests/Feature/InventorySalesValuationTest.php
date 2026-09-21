@@ -156,16 +156,25 @@ test('sales valuation screen export and pdf use canonical routes and permissions
     $this->get(route('admin.inventory.sales-valuation'))
         ->assertOk()
         ->assertSee(__('inventory_accounting.sales_valuation.title'));
-    $this->get(route('admin.inventory.sales-valuation', ['price_list_id' => $priceList->getKey()]))
+    $reportUrl = route('admin.inventory.sales-valuation', ['price_list_id' => $priceList->getKey()]);
+    $this->get($reportUrl)
         ->assertOk()
         ->assertSee($fixture['finished']->name)
-        ->assertSee($fixture['currency']->code);
+        ->assertSee($fixture['currency']->code)
+        ->assertDontSee(route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', 'price_list_id' => $priceList->getKey()]), false);
 
     $query = ['price_list_id' => $priceList->getKey(), 'as_of' => now()->toDateString()];
     $this->get(route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$query]))->assertForbidden();
     $this->get(route('admin.inventory.sales-valuation.print', $query))->assertForbidden();
     Permission::findOrCreate('inventory.reports.export', 'web');
     $fixture['user']->givePermissionTo('inventory.reports.export');
+
+    $this->get($reportUrl)
+        ->assertOk()
+        ->assertSee('report-actions-toolbar', false)
+        ->assertSee(route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', 'price_list_id' => $priceList->getKey()]), false)
+        ->assertSee(route('admin.inventory.sales-valuation.export', ['format' => 'csv', 'price_list_id' => $priceList->getKey()]), false)
+        ->assertSee(route('admin.inventory.sales-valuation.print', ['price_list_id' => $priceList->getKey()]), false);
 
     $this->get(route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$query]))->assertOk()->assertDownload();
     $this->get(route('admin.inventory.sales-valuation.export', ['format' => 'csv', ...$query]))->assertOk()->assertDownload();
