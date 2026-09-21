@@ -290,6 +290,9 @@ test('price list select2 is permission guarded and company scoped for approved c
     $fixture['user']->givePermissionTo('inventory.reports.operational');
     $this->getJson(route('admin.sales.select2.price-lists'))
         ->assertOk()
+        ->assertJsonPath('results.0.id', (string) $current->getKey())
+        ->assertJsonPath('results.0.text', $current->doc_num)
+        ->assertJsonPath('pagination.more', false)
         ->assertJsonFragment(['doc_num' => $current->doc_num])
         ->assertJsonMissing(['doc_num' => $other->doc_num]);
 

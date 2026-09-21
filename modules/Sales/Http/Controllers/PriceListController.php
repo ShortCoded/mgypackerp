@@ -20,6 +20,7 @@ use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\PriceListsDataTable;
 use Modules\Sales\Exports\PriceListExport;
@@ -40,6 +41,7 @@ class PriceListController extends Controller
         private readonly OperatingCompanyContextService $companies,
         private readonly PriceListService $service,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly Select2ResponseService $select2,
     ) {}
 
     public function index(): View
@@ -413,21 +415,24 @@ class PriceListController extends Controller
     {
         abort_unless($request->user()?->canAny(['price_lists.view', 'inventory.reports.operational']), 403);
 
-        $term = trim((string) $request->input('term', ''));
+        $term = trim((string) $request->input('q', $request->input('term', '')));
         $companyId = $this->companies->requireCompanyId($request);
-        $priceLists = PriceList::query()
+        $query = PriceList::query()
             ->where('company_id', $companyId)
             ->whereNotNull('approved_at')
             ->whereNull('deleted_at')
             ->when($term !== '', fn ($query) => $query->where('doc_num', 'like', "%{$term}%"))
             ->orderBy('doc_num')
-            ->limit(100)
-            ->get(['id', 'doc_num']);
+            ->select(['id', 'doc_num']);
 
-        return response()->json($priceLists->map(fn (PriceList $pl) => [
-            'id' => $pl->id,
-            'doc_num' => $pl->doc_num,
-            'text' => $pl->doc_num,
-        ]));
+        return response()->json($this->select2->paginated(
+            $query,
+            $request,
+            fn (PriceList $priceList): array => [
+                'id' => (string) $priceList->getKey(),
+                'doc_num' => $priceList->doc_num,
+                'text' => $priceList->doc_num,
+            ],
+        ));
     }
 }
