@@ -236,11 +236,7 @@ class InventoryReportController extends Controller
             ->whereIn('item_classification', Product::stockableItemClassifications())
             ->orderBy('name')
             ->get(['id', 'doc_num', 'name']);
-        $stores = BranchStore::query()
-            ->where('branch_id', $context['branch_id'])
-            ->orderBy('position')
-            ->orderBy('name')
-            ->get(['id', 'name']);
+        $stores = $aggregateStores;
         $selectedProduct = filled($filters['product_id'] ?? null)
             ? $products->firstWhere('id', (int) $filters['product_id'])
             : null;
@@ -264,7 +260,7 @@ class InventoryReportController extends Controller
                 $comparison = $this->valuation->comparisonForStockPosition(
                     (int) $context['company_id'],
                     (int) $context['financial_period_id'],
-                    (int) $context['branch_id'],
+                    (int) $selectedStore->branch_id,
                     (int) $selectedStore->getKey(),
                     (int) $selectedProduct->getKey(),
                     $asOf,
@@ -397,7 +393,7 @@ class InventoryReportController extends Controller
                 __('inventory_accounting.sales_valuation.price_list') => $valuation['priceList']
                     ? $valuation['priceList']->doc_num
                     : __('stock_balance_inquiry.options.all'),
-                __('stock_balance_inquiry.filters.branch') => $options['selected_branch']?->name ?? __('stock_balance_inquiry.options.all'),
+                __('stock_balance_inquiry.filters.store') => $options['selected_store']?->name ?? __('stock_balance_inquiry.options.all'),
             ],
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
             'printIdentityPolicy' => 'report',
@@ -411,47 +407,31 @@ class InventoryReportController extends Controller
         $context = $this->context->snapshot($request);
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
         $filters = $request->validate([
-            'as_of' => ['nullable', 'date'], 'branch_doc_num' => ['nullable', 'string'],
+            'as_of' => ['nullable', 'date'],
             'branch_store_uuid' => ['nullable', 'string'], 'branch_hall_uuid' => ['nullable', 'string'],
-            'warehouse_location_uuid' => ['nullable', 'string'], 'product_doc_num' => ['nullable', 'string'],
+            'product_doc_num' => ['nullable', 'string'],
+            'item_classification' => ['nullable', 'string'], 'item_category_doc_num' => ['nullable', 'string'],
+            'item_group_doc_num' => ['nullable', 'string'], 'item_unit_doc_num' => ['nullable', 'string'],
             'stock_status' => ['nullable', 'string'], 'quantity_state' => ['nullable', 'string', 'in:positive,negative'],
-            'price_list_id' => [$priceListRequired ? 'required' : 'nullable', 'integer', Rule::exists('price_lists', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->whereNull('deleted_at'))],
+            'price_list_id' => [$priceListRequired ? 'required' : 'nullable', 'integer', Rule::exists('price_lists', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->whereNotNull('approved_at')->whereNull('deleted_at'))],
         ]);
         $branches = $this->context->allowedBranchQueryForCurrentCompany($request)->whereIn('branches.type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])->get();
         $branchIds = $branches->modelKeys();
         $stores = BranchStore::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
         $halls = BranchHall::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
-        $locations = WarehouseLocation::query()->whereIn('branch_store_id', $stores->modelKeys() ?: [0])->with('branchStore.branch:id,doc_num,name,type')->orderBy('branch_store_id')->orderBy('position')->orderBy('code')->get();
-        $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
         $selectedStore = $this->selectedOption($stores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
         $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
-        $selectedLocation = $this->selectedOption($locations, 'public_id', $filters['warehouse_location_uuid'] ?? null, 'warehouse_location_uuid');
-        if ($selectedBranch && $selectedStore && (int) $selectedStore->branch_id !== (int) $selectedBranch->getKey()) {
-            throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
-        }
-        if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
-            throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
-        }
-        if ($selectedStore && $selectedLocation && (int) $selectedLocation->branch_store_id !== (int) $selectedStore->getKey()) {
-            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.location_store')]);
-        }
-        if ($selectedLocation && $selectedBranch && (int) $selectedLocation->branchStore?->branch_id !== (int) $selectedBranch->getKey()) {
-            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.invalid_scope')]);
-        }
         if ($selectedStore && $selectedHall && (int) $selectedStore->branch_id !== (int) $selectedHall->branch_id) {
             throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
         }
-        if ($selectedHall && $selectedLocation && (int) $selectedLocation->branchStore?->branch_id !== (int) $selectedHall->branch_id) {
-            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.invalid_scope')]);
-        }
-        $queryFilters = [...$filters, 'branch_id' => $selectedBranch?->getKey(), 'branch_store_id' => $selectedStore?->getKey(), 'branch_hall_id' => $selectedHall?->getKey(), 'warehouse_location_id' => $selectedLocation?->getKey()];
+        $queryFilters = [...$filters, 'branch_store_id' => $selectedStore?->getKey(), 'branch_hall_id' => $selectedHall?->getKey()];
         $valuation = filled($filters['price_list_id'] ?? null) ? $this->reports->salesValuation((int) $context['company_id'], $branchIds, $queryFilters) : null;
         $options = [
-            'branches' => $branches, 'stores' => $stores, 'halls' => $halls, 'locations' => $locations,
-            'selected_branch' => $selectedBranch, 'selected_store' => $selectedStore, 'selected_hall' => $selectedHall, 'selected_location' => $selectedLocation,
+            'branches' => $branches, 'stores' => $stores, 'halls' => $halls,
+            'selected_store' => $selectedStore, 'selected_hall' => $selectedHall,
             'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
             'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
-            'priceLists' => PriceList::query()->forCompany((int) $context['company_id'])->orderBy('doc_num')->get(['id', 'doc_num', 'currency_id']),
+            'priceLists' => PriceList::query()->forCompany((int) $context['company_id'])->whereNotNull('approved_at')->orderBy('doc_num')->get(['id', 'doc_num', 'currency_id']),
             'selected_price_list' => $valuation['priceList'] ?? null,
             'currencies' => Currency::query()->forCompany((int) $context['company_id'])->active()->get(['id', 'doc_num', 'code', 'name']),
         ];

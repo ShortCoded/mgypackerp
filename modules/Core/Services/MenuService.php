@@ -43,7 +43,7 @@ class MenuService
      * @param  list<array<string, mixed>>  $items
      * @return list<array<string, mixed>>
      */
-    private function nestNavigationItems(array $items): array
+    private function nestNavigationItems(array $items, bool $includeActions = false): array
     {
         $configuredChildren = config('menu_sections.navigation_children', []);
         $configuredContentGroups = config('menu_sections.navigation_content_groups', []);
@@ -93,7 +93,7 @@ class MenuService
             }
         }
 
-        $buildItem = function (string $label, array $ancestors = []) use (&$buildItem, $childrenByParent, $configuredChildOrder, $configuredContentGroups, $itemsByLabel): array {
+        $buildItem = function (string $label, array $ancestors = []) use (&$buildItem, $childrenByParent, $configuredChildOrder, $configuredContentGroups, $includeActions, $itemsByLabel): array {
             if (in_array($label, $ancestors, true)) {
                 throw new LogicException("Circular navigation hierarchy detected at [{$label}].");
             }
@@ -116,7 +116,7 @@ class MenuService
                         'route' => null,
                         'permission' => null,
                         'children' => $item['children'],
-                    ], includeActions: false)];
+                    ], includeActions: $includeActions)];
                 }
             }
 
@@ -192,6 +192,7 @@ class MenuService
                     fn (array $item): array => $this->normalizeItem($item, includeActions: true),
                     $this->domainMenuItems(includeExpanded: true),
                 ),
+                includeActions: true,
             ),
         );
     }

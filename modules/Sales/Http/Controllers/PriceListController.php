@@ -2,6 +2,7 @@
 
 namespace Modules\Sales\Http\Controllers;
 
+use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,7 @@ use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\SettingService;
 use Modules\Sales\DataTables\PriceListsDataTable;
 use Modules\Sales\Exports\PriceListExport;
 use Modules\Sales\Http\Requests\BulkDeletePriceListsRequest;
@@ -252,7 +254,7 @@ class PriceListController extends Controller
     {
         $companyId = $this->companies->requireCompanyId($request);
         abort_if($record && (int) $record->company_id !== $companyId, 404);
-        $record?->load(['customer', 'currency', 'lines.product', 'reviewedBy', 'approvedBy']);
+        $record?->load(['customer', 'currency', 'lines.product', 'reviewedBy', 'approvedBy', 'createdBy', 'updatedBy', 'deletedBy', 'restoredBy']);
         $selectedCustomerDocNum = old('customer_doc_num', $record?->customer?->doc_num);
 
         return view('modules.sales.price-lists.form', [
@@ -260,8 +262,35 @@ class PriceListController extends Controller
             'companyId' => $companyId,
             'selectedCustomers' => Customer::query()->forCompany($companyId)->where('doc_num', $selectedCustomerDocNum)->get(),
             'currencies' => Currency::query()->forCompany($companyId)->active()->orderByDesc('is_main')->orderBy('code')->get(),
+            'metadata' => $this->metadata($record),
             'breadcrumbs' => [...$this->breadcrumbs->forMenuRoute('admin.sales.price-lists.index'), ['label' => $clone ? __('price_lists.clone') : ($record?->doc_num ?? __('price_lists.create')), 'active' => true]],
         ]);
+    }
+
+    /** @return array<string, string|null> */
+    private function metadata(?PriceList $record): array
+    {
+        if (! $record instanceof PriceList) {
+            return [];
+        }
+
+        $settings = app(SettingService::class);
+
+        return [
+            'created_by' => $this->auditUserLabel($record->createdBy),
+            'created_at' => $settings->formatDateTime($record->created_at, ''),
+            'updated_by' => $this->auditUserLabel($record->updatedBy),
+            'updated_at' => $settings->formatDateTime($record->updated_at, ''),
+            'deleted_by' => $this->auditUserLabel($record->deletedBy),
+            'deleted_at' => $settings->formatDateTime($record->deleted_at, ''),
+            'restored_by' => $this->auditUserLabel($record->restoredBy),
+            'restored_at' => $settings->formatDateTime($record->restored_at, ''),
+        ];
+    }
+
+    private function auditUserLabel(?User $user): ?string
+    {
+        return $user instanceof User ? trim(implode(' / ', array_filter([$user->name, $user->doc_num]))) : null;
     }
 
     private function redirectAfterSave(Request $request, PriceList $record, bool $creating = false, bool $cloned = false): RedirectResponse
@@ -388,10 +417,9 @@ class PriceListController extends Controller
         $companyId = $this->companies->requireCompanyId($request);
         $priceLists = PriceList::query()
             ->where('company_id', $companyId)
-            ->whereNull('customer_id')
+            ->whereNotNull('approved_at')
             ->whereNull('deleted_at')
             ->when($term !== '', fn ($query) => $query->where('doc_num', 'like', "%{$term}%"))
-            ->whereDate('valid_from', '<=', today())
             ->orderBy('doc_num')
             ->limit(100)
             ->get(['id', 'doc_num']);

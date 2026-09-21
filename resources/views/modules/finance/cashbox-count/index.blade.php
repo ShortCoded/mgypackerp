@@ -1,6 +1,9 @@
 @extends('layouts.app')
 
-@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+@php
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
 @section('title', __('cashbox_count.title'))
 
 @section('content')
@@ -16,8 +19,8 @@
         <div class="card-body">
             <form method="GET" action="{{ route('admin.finance.cashbox-count.index') }}" class="row g-3">
                 <div class="col-12 col-md-4"><label class="form-label" for="cashbox-count-as-of">{{ __('cashbox_count.filters.as_of_date') }}</label><x-forms.date-input class="form-control" id="cashbox-count-as-of" name="as_of_date" value="{{ $filters['as_of_date'] ?? '' }}" /></div>
-                <div class="col-12 col-md-4"><label class="form-label" for="cashbox-count-cashbox">{{ __('cashbox_count.filters.cashbox') }}</label><x-forms.select class="form-select js-select2-local" id="cashbox-count-cashbox" name="cashbox_doc_num" data-allow-clear="true"><option value=""></option>@foreach($filterOptions['cashboxes'] as $cashbox)<option value="{{ $cashbox->doc_num }}" @selected(($filters['cashbox_doc_num'] ?? null) === $cashbox->doc_num)>{{ $cashbox->doc_num }} / {{ $cashbox->name }}</option>@endforeach</x-forms.select></div>
-                <div class="col-12 col-md-4"><label class="form-label" for="cashbox-count-currency">{{ __('cashbox_count.filters.currency') }}</label><x-forms.select class="form-select js-select2-local" id="cashbox-count-currency" name="currency_doc_num" data-allow-clear="true"><option value=""></option>@foreach($filterOptions['currencies'] as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? null) === $currency->doc_num)>{{ $currency->code }} / {{ $currency->name }}</option>@endforeach</x-forms.select></div>
+                <div class="col-12 col-md-4"><label class="form-label" for="cashbox-count-cashbox">{{ __('cashbox_count.filters.cashbox') }}</label><x-forms.select id="cashbox-count-cashbox" name="cashbox_doc_num" variant="local"><option value=""></option>@foreach($filterOptions['cashboxes'] as $cashbox)<option value="{{ $cashbox->doc_num }}" @selected(($filters['cashbox_doc_num'] ?? null) === $cashbox->doc_num)>{{ $cashbox->doc_num }} / {{ $cashbox->name }}</option>@endforeach</x-forms.select></div>
+                <div class="col-12 col-md-4"><label class="form-label" for="cashbox-count-currency">{{ __('cashbox_count.filters.currency') }}</label><x-forms.select id="cashbox-count-currency" name="currency_doc_num" variant="local"><option value=""></option>@foreach($filterOptions['currencies'] as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? null) === $currency->doc_num)>{{ $currency->code }} / {{ $currency->name }}</option>@endforeach</x-forms.select></div>
                 <div class="col-12 d-flex gap-2"><button class="btn btn-falcon-primary" type="submit">{{ __('common.actions.apply') }}</button><a class="btn btn-falcon-default" href="{{ route('admin.finance.cashbox-count.index') }}">{{ __('common.actions.reset') }}</a></div>
             </form>
         </div>
@@ -42,7 +45,7 @@
 
     <div class="card">
         <div class="card-header"><h2 class="h6 mb-0">{{ __('cashbox_count.history_title') }}</h2></div>
-        <div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>{{ __('cashbox_count.columns.document') }}</th><th>{{ __('cashbox_count.columns.count_date') }}</th><th>{{ __('cashbox_count.columns.cashbox') }}</th><th>{{ __('cashbox_count.columns.currency') }}</th><th class="text-end">{{ __('cashbox_count.columns.variance') }}</th><th>{{ __('cashbox_count.columns.status') }}</th></tr></thead><tbody>@forelse($counts as $count)<tr><td><a href="{{ route('admin.finance.cashbox-count.show', $count) }}">{{ $count->doc_num }}</a></td><td>{{ $count->count_date?->format('Y-m-d') }}</td><td>{{ $count->cashbox?->name }}</td><td>{{ $count->currency?->code }}</td><td class="text-end" dir="ltr">{{ $numbers->format($count->variance) }}</td><td>{{ __('cashbox_count.statuses.'.$count->status) }}</td></tr>@empty<tr><td colspan="6" class="text-center text-600 py-4">{{ __('cashbox_count.no_history') }}</td></tr>@endforelse</tbody></table></div>
+        <div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>{{ __('cashbox_count.columns.document') }}</th><th>{{ __('cashbox_count.columns.count_date') }}</th><th>{{ __('cashbox_count.columns.cashbox') }}</th><th>{{ __('cashbox_count.columns.currency') }}</th><th class="text-end">{{ __('cashbox_count.columns.variance') }}</th><th>{{ __('cashbox_count.columns.status') }}</th></tr></thead><tbody>@forelse($counts as $count)<tr><td><a href="{{ route('admin.finance.cashbox-count.show', $count) }}">{{ $count->doc_num }}</a></td><td>{{ $dates->formatDate($count->count_date, '') }}</td><td>{{ $count->cashbox?->name }}</td><td>{{ $count->currency?->code }}</td><td class="text-end" dir="ltr">{{ $numbers->format($count->variance) }}</td><td>{{ __('cashbox_count.statuses.'.$count->status) }}</td></tr>@empty<tr><td colspan="6" class="text-center text-600 py-4">{{ __('cashbox_count.no_history') }}</td></tr>@endforelse</tbody></table></div>
     </div>
 </div>
 @endsection

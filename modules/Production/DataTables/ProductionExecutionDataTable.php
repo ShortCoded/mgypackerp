@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
@@ -73,11 +74,25 @@ class ProductionExecutionDataTable
     public function orders(Request $request): JsonResponse
     {
         $context = $this->context->snapshot($request);
+        $branchType = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->value('type');
+        $canManage = $branchType === Branch::TypeFactory;
         $query = $this->trashQuery($request, ProductionOrder::class, 'production.orders.view_trashed')
             ->when($this->hasContext($context), fn ($query) => $query
                 ->where('production_orders.company_id', $context['company_id'])
                 ->where('production_orders.financial_period_id', $context['financial_period_id'])
-                ->where('production_orders.branch_id', $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))
+                ->when(
+                    $branchType === Branch::TypeAdministrative,
+                    fn ($query) => $query->whereIn('production_orders.branch_id', Branch::query()
+                        ->where('company_id', $context['company_id'])
+                        ->where('type', Branch::TypeFactory)
+                        ->select('id')),
+                    fn ($query) => $canManage
+                        ? $query->where('production_orders.branch_id', $context['branch_id'])
+                        : $query->whereRaw('1 = 0'),
+                ), fn ($query) => $query->whereRaw('1 = 0'))
             ->leftJoin('sales_orders', 'sales_orders.id', '=', 'production_orders.sales_order_id')
             ->leftJoin('customer_invoices', function ($join): void {
                 $join->on('customer_invoices.id', '=', 'production_orders.source_id')
@@ -96,7 +111,7 @@ class ProductionExecutionDataTable
 
         return DataTables::eloquent($query)
             ->filter(fn ($query) => $this->filter($query, $request, ['production_orders.doc_num', 'sales_orders.doc_num', 'customer_invoices.doc_num', 'production_orders.status', 'production_orders.source_type', 'created_users.name', 'updated_users.name']))
-            ->addColumn('checkbox', fn (ProductionOrder $order): string => view('modules.production.work-orders.partials.checkbox', ['record' => $order])->render())
+            ->addColumn('checkbox', fn (ProductionOrder $order): string => view('modules.production.work-orders.partials.checkbox', ['record' => $order, 'canManage' => $canManage])->render())
             ->editColumn('doc_num', fn (ProductionOrder $order): string => '<a class="fw-semibold" data-row-primary-link href="'.e(route('admin.production.work-orders.show', $order)).'">'.e($order->doc_num).'</a>')
             ->addColumn('source_document_number', function (ProductionOrder $order): string {
                 $sourceType = __('production_execution.source_types.'.$order->source_type);
@@ -111,7 +126,7 @@ class ProductionExecutionDataTable
             ->editColumn('created_at', fn (ProductionOrder $order): string => $this->dates->formatDateTime($order->created_at, ''))
             ->addColumn('updated_by', fn (ProductionOrder $order): string => $order->updated_by_name ?: __('common.empty_value'))
             ->editColumn('updated_at', fn (ProductionOrder $order): string => $this->dates->formatDateTime($order->updated_at, ''))
-            ->addColumn('actions', fn (ProductionOrder $order): string => view('modules.production.work-orders.partials.actions', ['record' => $order])->render())
+            ->addColumn('actions', fn (ProductionOrder $order): string => view('modules.production.work-orders.partials.actions', ['record' => $order, 'canManage' => $canManage])->render())
             ->orderColumn('doc_num', 'production_orders.doc_number $1')
             ->orderColumn('source_document_number', 'production_orders.source_type $1')
             ->orderColumn('lines_count', 'lines_count $1')

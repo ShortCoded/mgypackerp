@@ -43,6 +43,27 @@ Route::middleware(['auth', 'erp.expanded'])
             ->name('overhead-allocation-run.reverse');
     });
 
+Route::middleware(['auth', 'erp.expanded'])
+    ->prefix('admin/reports/costing')
+    ->as('admin.reports.costing.')
+    ->controller(CostingReportController::class)
+    ->group(function (): void {
+        foreach ([
+            'product-cost' => 'product_cost',
+            'work-order-cost' => 'work_order_cost',
+            'estimated-vs-actual' => 'estimated_vs_actual',
+            'cost-variance' => 'cost_variance',
+            'profitability' => 'profitability',
+            'work-in-progress' => 'work_in_progress',
+            'finished-goods-cost' => 'finished_goods_cost',
+            'allocation-analysis' => 'allocation_analysis',
+        ] as $slug => $type) {
+            Route::get($slug, 'index')
+                ->defaults('costing_report_type', $type)
+                ->name("{$slug}.index");
+        }
+    });
+
 Route::middleware('auth')
     ->prefix('admin/accounting')
     ->as('admin.accounting.')

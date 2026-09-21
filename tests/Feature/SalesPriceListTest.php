@@ -13,6 +13,7 @@ use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\ActivityLogger;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Exports\PriceListExport;
@@ -267,6 +268,7 @@ test('price list screen and pricing coverage report are available in sales', fun
 test('price list select2 is permission guarded and company scoped for approved consumers', function (): void {
     $fixture = salesCycleFixture();
     $current = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    $current->update(['approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
     $otherCompany = Company::factory()->create();
     $other = PriceList::query()->create([
         'doc_number' => 99001,
@@ -379,7 +381,13 @@ test('price lists use the standard data table with audited soft delete bulk dele
     expect($priceList->refresh()->trashed())->toBeTrue()
         ->and($priceList->deleted_by)->toBe($fixture['user']->getKey());
 
-    $this->get(route('admin.sales.price-lists.show', $priceList))->assertOk();
+    $this->get(route('admin.sales.price-lists.show', $priceList))
+        ->assertOk()
+        ->assertSee(__('common.sections.audit_information'))
+        ->assertSee(__('common.fields.deleted_by'))
+        ->assertSee($fixture['user']->name)
+        ->assertSee('value="'.app(DateFormatService::class)->formatDate($priceList->price_list_date, '').'"', false)
+        ->assertDontSee($priceList->price_list_date->toDateString().' 00:00:00', false);
     $this->getJson(route('admin.sales.price-lists.data', priceListDataTableQuery('trashed')))
         ->assertOk()
         ->assertJsonPath('recordsTotal', 1)

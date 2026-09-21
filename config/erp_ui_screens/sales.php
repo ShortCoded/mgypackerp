@@ -6,8 +6,8 @@ $screen = static fn (string $slug, string $en, string $ar, string $group = 'orde
     'title' => ['en' => $en, 'ar' => $ar],
     'group' => $group,
     'profile' => $profile,
-    'shell_enabled' => true,
-    'classification' => 'UI_SURFACE_PENDING_DEEP_WORKFLOW',
+    'shell_enabled' => false,
+    'classification' => 'CANONICAL',
     ...$extra,
 ];
 

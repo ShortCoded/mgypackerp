@@ -52,14 +52,14 @@
                 :reset-url="route('admin.hr.employee-attendance.index')">
                 <div class="col-12 col-md-6 col-xl-3">
                     <x-forms.label for="attendance_employee" :label="__('hr_attendance.labels.employee')" />
-                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="attendance_employee" name="employee" data-url="{{ route('admin.hr.select2.employees', ['identity' => 'doc_num']) }}" data-placeholder="{{ __('common.trash.all') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select-sm js-report-filter-control" id="attendance_employee" name="employee" variant="ajax" :url="route('admin.hr.select2.employees', ['identity' => 'doc_num'])" :placeholder="__('common.trash.all')">
                         <option value="">{{ __('common.trash.all') }}</option>
                         @if ($selectedFilterEmployee)<option value="{{ $selectedFilterEmployee->doc_num }}" selected>{{ $selectedFilterEmployee->full_name }} / {{ $selectedFilterEmployee->doc_num }}</option>@endif
                     </x-forms.select>
                 </div>
                 <div class="col-12 col-md-6 col-xl-2">
                     <x-forms.label for="attendance_branch" :label="__('hr_attendance.report.columns.branch')" />
-                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="attendance_branch" name="branch" data-url="{{ route('admin.select2.branches', ['access_scope' => 'operating_scope']) }}" data-placeholder="{{ __('common.trash.all') }}" data-allow-clear="true">
+                    <x-forms.select class="form-select-sm js-report-filter-control" id="attendance_branch" name="branch" variant="ajax" :url="route('admin.select2.branches', ['access_scope' => 'operating_scope'])" :placeholder="__('common.trash.all')">
                         <option value="">{{ __('common.trash.all') }}</option>
                         @if ($selectedBranch)<option value="{{ $selectedBranch->doc_num }}" selected>{{ $selectedBranch->name }} / {{ $selectedBranch->doc_num }}</option>@endif
                     </x-forms.select>
@@ -74,7 +74,7 @@
                 </div>
                 <div class="col-12 col-md-6 col-xl-2">
                     <x-forms.label for="attendance_status" :label="__('hr_attendance.labels.status')" />
-                    <x-forms.select class="form-select form-select-sm js-report-filter-control" id="attendance_status" name="status">
+                    <x-forms.select class="form-select-sm js-report-filter-control" id="attendance_status" name="status" variant="local">
                         <option value="">{{ __('common.trash.all') }}</option>
                         <option value="open" @selected(($filters['status'] ?? null) === 'open')>{{ __('hr_attendance.session_status.open') }}</option>
                         <option value="closed" @selected(($filters['status'] ?? null) === 'closed')>{{ __('hr_attendance.session_status.closed') }}</option>
@@ -104,14 +104,14 @@
                             <x-forms.input type="hidden" name="idempotency_key" value="{{ $manualIdempotencyKey }}" />
                             <div class="col-12 col-md-4">
                                 <x-forms.label for="manual_employee" :label="__('hr_attendance.labels.employee')" :required="true" />
-                                <x-forms.select class="form-select js-select2-ajax" id="manual_employee" name="employee_doc_num" data-url="{{ route('admin.hr.select2.employees', ['identity' => 'doc_num']) }}" data-placeholder="{{ __('common.placeholders.select') }}" required>
+                                <x-forms.select id="manual_employee" name="employee_doc_num" variant="ajax" :url="route('admin.hr.select2.employees', ['identity' => 'doc_num'])" :placeholder="__('common.placeholders.select')" :allow-clear="false" required>
                                     <option value="">{{ __('common.placeholders.select') }}</option>
                                     @if ($selectedManualEmployee)<option value="{{ $selectedManualEmployee->doc_num }}" selected>{{ $selectedManualEmployee->full_name }} / {{ $selectedManualEmployee->doc_num }}</option>@endif
                                 </x-forms.select>
                             </div>
                             <div class="col-6 col-md-2">
                                 <x-forms.label for="manual_event_type" :label="__('hr_attendance.labels.event')" :required="true" />
-                                <x-forms.select class="form-select" id="manual_event_type" name="event_type" required>
+                                <x-forms.select id="manual_event_type" name="event_type" variant="local" :allow-clear="false" required>
                                     @foreach (\Modules\HR\Models\HrAttendanceEvent::types() as $eventType)
                                         <option value="{{ $eventType }}">{{ __('hr_attendance.actions.'.$eventType) }}</option>
                                     @endforeach

@@ -46,7 +46,10 @@ class PurchaseOrdersDataTable
             $query
                 ->where('purchase_orders.company_id', (int) $context['company_id'])
                 ->where('purchase_orders.financial_period_id', (int) $context['financial_period_id'])
-                ->where('purchase_orders.branch_id', (int) $context['branch_id']);
+                ->when(
+                    ! $isAdministrativeBranch,
+                    fn ($query) => $query->where('purchase_orders.branch_id', (int) $context['branch_id']),
+                );
         }
 
         $query

@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
@@ -54,6 +55,7 @@ class ProductionOrderController extends Controller
 
         return view('modules.production.work-orders.index', [
             'documentNumberSettings' => $settings->current('production_orders'),
+            'canManageProduction' => $this->isFactoryContext($context),
         ]);
     }
 
@@ -64,7 +66,7 @@ class ProductionOrderController extends Controller
 
     public function create(Request $request): View
     {
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $clone = filled($request->query('clone'))
             ? ProductionOrder::query()
                 ->where('company_id', $context['company_id'])
@@ -80,7 +82,7 @@ class ProductionOrderController extends Controller
 
     public function store(StoreProductionOrderRequest $request): JsonResponse|RedirectResponse
     {
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         [$header, $lines] = $this->payload($request, $context);
         $record = $this->guard(fn (): ProductionOrder => $this->cycle->createMakeToStockOrder($header, $lines));
         $url = $this->submitRedirectUrl($request, $record);
@@ -92,6 +94,7 @@ class ProductionOrderController extends Controller
 
     public function edit(Request $request, ProductionOrder $productionOrder): View
     {
+        $this->requiredFactoryContext($request);
         $this->assertInCurrentContext($request, $productionOrder);
         abort_unless($productionOrder->status === ProductionOrder::StatusDraft && ! $productionOrder->runs()->exists(), 409, __('production_execution.messages.order_draft_only'));
 
@@ -100,7 +103,7 @@ class ProductionOrderController extends Controller
 
     public function update(StoreProductionOrderRequest $request, ProductionOrder $productionOrder): JsonResponse|RedirectResponse
     {
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $this->assertInCurrentContext($request, $productionOrder);
         [$header, $lines] = $this->payload($request, $context);
         $record = $this->guard(fn (): ProductionOrder => $this->cycle->updateDraftOrder($productionOrder, $header, $lines));
@@ -113,6 +116,7 @@ class ProductionOrderController extends Controller
 
     public function destroy(Request $request, ProductionOrder $productionOrder): JsonResponse|RedirectResponse
     {
+        $this->requiredFactoryContext($request);
         $this->assertInCurrentContext($request, $productionOrder);
         $this->guard(fn () => $this->cycle->deleteDraftOrder($productionOrder));
 
@@ -123,7 +127,7 @@ class ProductionOrderController extends Controller
 
     public function restore(Request $request, string $productionOrder): JsonResponse|RedirectResponse
     {
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $record = ProductionOrder::onlyTrashed()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
@@ -139,6 +143,7 @@ class ProductionOrderController extends Controller
 
     public function clone(Request $request, ProductionOrder $productionOrder): RedirectResponse
     {
+        $this->requiredFactoryContext($request);
         $this->assertInCurrentContext($request, $productionOrder);
 
         return to_route('admin.production.work-orders.create', ['clone' => $productionOrder->doc_num]);
@@ -146,7 +151,7 @@ class ProductionOrderController extends Controller
 
     public function bulkDelete(Request $request): JsonResponse
     {
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $validated = $request->validate([
             'doc_nums' => ['required', 'array', 'min:1', 'max:100'],
             'doc_nums.*' => ['required', 'string', 'distinct', Rule::exists('production_orders', 'doc_num')->where(fn ($query) => $query
@@ -177,6 +182,7 @@ class ProductionOrderController extends Controller
         UpdateProductionOrderDocumentNumberSettingsRequest $request,
         DocumentNumberSettingsService $settings,
     ): JsonResponse {
+        $this->requiredFactoryContext($request);
         $result = $settings->update('production_orders', $request->validated('prefix'), (int) $request->validated('padding'));
 
         $this->logActivity($request, 'production.orders.document_number_settings.update', ActivityLogProperties::settingsUpdated('production_orders', [
@@ -232,6 +238,10 @@ class ProductionOrderController extends Controller
 
                 return collect($terms)->every(fn (string $term): bool => str_contains($haystack, mb_strtolower($term)));
             })->values();
+        }
+
+        if ($request->boolean('all')) {
+            return response()->json(['results' => $rows->values()->all(), 'pagination' => ['more' => false]]);
         }
 
         $page = max(1, $request->integer('page', 1));
@@ -314,6 +324,7 @@ class ProductionOrderController extends Controller
 
         return view('modules.production.work-orders.show', [
             'record' => $record,
+            'canManageProduction' => $this->isFactoryContext($this->requiredContext($request)),
             'sourceDocumentNumber' => $record->salesOrder?->doc_num ?: $sourceInvoice?->doc_num,
             'relatedDocuments' => collect([
                 ['label' => __('production_execution.fields.sales_order'), 'number' => $record->salesOrder?->doc_num, 'url' => $record->salesOrder ? route('admin.sales.sales-orders.show', $record->salesOrder) : null, 'permission' => 'sales_orders.view'],
@@ -356,7 +367,8 @@ class ProductionOrderController extends Controller
             && $context['branch_id']
             && (int) $productionOrder->company_id === (int) $context['company_id']
             && (int) $productionOrder->financial_period_id === (int) $context['financial_period_id']
-            && (int) $productionOrder->branch_id === (int) $context['branch_id'],
+            && ($this->isAdministrativeContext($context)
+                || (int) $productionOrder->branch_id === (int) $context['branch_id']),
             404,
         );
     }
@@ -401,9 +413,7 @@ class ProductionOrderController extends Controller
                 'description' => $line['description'] ?: ($sourceLine->description ?? $product->name),
                 'specifications' => $salesLine?->specifications,
                 'production_notes' => $line['production_notes'] ?? null,
-                'stage_public_ids' => array_key_exists('stage_selection_present', $line)
-                    ? ($line['stage_public_ids'] ?? [])
-                    : null,
+                'stage_public_ids' => null,
             ];
         })->values()->all();
 
@@ -432,6 +442,9 @@ class ProductionOrderController extends Controller
 
                 return [
                     'id' => 'sales_order_line:'.$line->public_id,
+                    'product_text' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? $line->description)),
+                    'required_quantity' => $remaining,
+                    'description' => $line->description ?? $line->product?->name,
                     'text' => __('production_execution.orders.source_line_option', [
                         'line' => $line->line_number,
                         'product' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? $line->description)),
@@ -478,6 +491,9 @@ class ProductionOrderController extends Controller
 
                 return [
                     'id' => 'customer_invoice_line:'.$line->public_id,
+                    'product_text' => trim($line->product->doc_num.' — '.$line->product->name),
+                    'required_quantity' => $remaining,
+                    'description' => $line->description ?? $line->product->name,
                     'text' => __('production_execution.orders.invoice_source_line_option', [
                         'line' => $line->line_number,
                         'product' => trim($line->product->doc_num.' — '.$line->product->name),
@@ -526,6 +542,35 @@ class ProductionOrderController extends Controller
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, __('production_execution.messages.operating_context_required'));
 
         return $context;
+    }
+
+    /** @return array{company_id: int, financial_period_id: int, branch_id: int} */
+    private function requiredFactoryContext(Request $request): array
+    {
+        $context = $this->requiredContext($request);
+        abort_unless($this->isFactoryContext($context), 403, __('production_execution.messages.factory_context_required'));
+
+        return $context;
+    }
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    private function isFactoryContext(array $context): bool
+    {
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists();
+    }
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    private function isAdministrativeContext(array $context): bool
+    {
+        return Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
     }
 
     private function authorizeLookup(Request $request): void

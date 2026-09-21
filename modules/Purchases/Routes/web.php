@@ -67,6 +67,12 @@ Route::middleware('auth')
             return response()->json($select2->suppliers($request));
         })->name('select2.suppliers');
 
+        Route::get('/select2/supplier-payment-purchase-orders', function (Request $request, PurchasesSelect2Service $select2) {
+            abort_unless((bool) $request->user()?->can('supplier_payments.create'), 403);
+
+            return response()->json($select2->supplierPaymentPurchaseOrders($request));
+        })->name('select2.supplier-payment-purchase-orders');
+
         Route::get('/select2/products', function (Request $request, PurchasesSelect2Service $select2) {
             abort_unless(
                 (bool) $request->user()?->can('purchases.purchase_requisitions.create')

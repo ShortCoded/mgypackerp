@@ -104,7 +104,6 @@ class PermissionRegistryService
             $permissions = array_merge(
                 $this->fromMenus(),
                 $this->erpUiScreens->permissions(),
-                $this->erpUiScreens->legacyPlaceholderPermissions(),
             );
 
             $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');
@@ -126,7 +125,6 @@ class PermissionRegistryService
         return $this->memo->remember('permissions.registry.form_assignable', function (): array {
             $permissions = array_merge(
                 $this->erpUiScreens->permissions(),
-                $this->erpUiScreens->legacyPlaceholderPermissions(),
             );
 
             foreach ($this->menuConfigFiles() as $file) {

@@ -71,6 +71,7 @@ return [
     ],
     'columns' => [
         'positions' => 'المواضع المخزنية',
+        'products' => 'الأصناف',
         'branch' => 'الفرع',
         'store' => 'المخزن',
         'hall' => 'الصالة',

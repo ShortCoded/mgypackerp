@@ -236,6 +236,10 @@ return [
     'payment_channels' => ['cashbox' => 'خزينة', 'bank' => 'بنك'],
     'material_request_types' => ['planned' => 'من الاحتياج المعتمد', 'additional' => 'إضافي معتمد'],
     'messages' => [
+        'factory_context_required' => 'يجب التحويل إلى فرع من نوع مصنع لتنفيذ عمليات أوامر الإنتاج.',
+        'all_source_lines_required' => 'يجب إدراج جميع بنود مستند المصدر في أمر الإنتاج.',
+        'source_quantity_below_required' => 'لا يمكن أن تقل كمية الإنتاج عن الكمية المطلوبة في مستند المصدر.',
+        'source_quantity_exceeds_remaining' => 'لا يمكن أن يتجاوز إجمالي كمية الإنتاج المرتبطة الكمية المتبقية في مستند المصدر.',
         'document_number_settings_updated' => 'تم تحديث إعدادات رقم أمر الإنتاج بنجاح.',
         'operating_context_required' => 'يجب تحديد الشركة والفرع والفترة المالية أولًا.',
         'stage_in_use' => 'المرحلة مستخدمة في مسار صنف ولا يمكن حذفها.', 'route_stage_duplicate' => 'لا يمكن تكرار المرحلة في مسار الصنف.',

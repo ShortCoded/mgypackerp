@@ -370,6 +370,8 @@ class PurchaseOrderService
             'currency',
             'lines.product.unit',
             'lines.unit',
+            'lines.costCenter',
+            'lines.requisitionLine.requisition',
             'createdBy',
             'updatedBy',
             'approvedBy',

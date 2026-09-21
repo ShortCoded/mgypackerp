@@ -6,13 +6,17 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionOrderLine;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
+use Modules\Sales\Services\SalesCycleReadService;
 
 class StoreProductionOrderRequest extends FormRequest
 {
@@ -45,7 +49,14 @@ class StoreProductionOrderRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can($this->isMethod('POST') ? 'production.orders.create' : 'production.orders.edit');
+        $context = app(OperatingContextService::class)->snapshot($this);
+
+        return (bool) $this->user()?->can($this->isMethod('POST') ? 'production.orders.create' : 'production.orders.edit')
+            && Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeFactory)
+                ->exists();
     }
 
     /** @return array<string, mixed> */
@@ -112,6 +123,61 @@ class StoreProductionOrderRequest extends FormRequest
                 $validator->errors()->add('source_doc_num', __('production_execution.messages.sales_source_invalid'));
 
                 return;
+            }
+
+            if ($source !== null) {
+                $existingOrder = $this->route('productionOrder');
+                $requiredLines = $existingOrder instanceof ProductionOrder
+                    ? $existingOrder->lines()
+                        ->with(['salesOrderLine', 'customerInvoiceLine'])
+                        ->get()
+                        ->mapWithKeys(function (ProductionOrderLine $line) use ($sourceType): array {
+                            $reference = $sourceType === 'sales_order'
+                                ? $line->salesOrderLine?->public_id
+                                : $line->customerInvoiceLine?->public_id;
+
+                            return $reference === null
+                                ? []
+                                : [($sourceType === 'sales_order' ? 'sales_order_line:' : 'customer_invoice_line:').$reference => (string) $line->quantity];
+                        })
+                    : ($sourceType === 'sales_order'
+                    ? app(SalesCycleReadService::class)
+                        ->backorders((int) $context['company_id'], (int) $source->branch_id, ['order_id' => $source->getKey()])
+                        ->filter(fn (array $row): bool => bccomp((string) $row['unplanned_base'], '0', 8) > 0)
+                        ->mapWithKeys(fn (array $row): array => [
+                            'sales_order_line:'.$row['line']->public_id => bcdiv((string) $row['unplanned_base'], (string) $row['line']->conversion_factor, 8),
+                        ])
+                    : $source->lines()
+                        ->where('is_service', false)
+                        ->whereHas('product', fn ($query) => $query->where('item_classification', Product::ClassificationFinishedProduct))
+                        ->get()
+                        ->mapWithKeys(function (CustomerInvoiceLine $line): array {
+                            $plannedBase = (string) ProductionOrderLine::query()
+                                ->where('customer_invoice_line_id', $line->getKey())
+                                ->whereHas('order')
+                                ->sum('base_quantity');
+                            $remainingBase = bcsub((string) $line->base_quantity, $plannedBase, 8);
+
+                            return bccomp($remainingBase, '0', 8) > 0
+                                ? ['customer_invoice_line:'.$line->public_id => bcdiv($remainingBase, (string) $line->conversion_factor, 8)]
+                                : [];
+                        }));
+                $submittedLines = collect($this->input('lines', []))->keyBy('source_line_reference');
+
+                foreach ($requiredLines as $reference => $requiredQuantity) {
+                    $submitted = $submittedLines->get($reference);
+
+                    if ($submitted === null) {
+                        $validator->errors()->add('lines', __('production_execution.messages.all_source_lines_required'));
+
+                        continue;
+                    }
+
+                    if (bccomp((string) ($submitted['quantity'] ?? 0), $requiredQuantity, 8) < 0) {
+                        $index = collect($this->input('lines', []))->search(fn (array $line): bool => ($line['source_line_reference'] ?? null) === $reference);
+                        $validator->errors()->add("lines.{$index}.quantity", __('production_execution.messages.source_quantity_below_required'));
+                    }
+                }
             }
 
             foreach ($this->input('lines', []) as $index => $line) {

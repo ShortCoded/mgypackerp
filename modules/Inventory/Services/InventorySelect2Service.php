@@ -39,9 +39,19 @@ class InventorySelect2Service
     {
         $context = $this->operatingContext->snapshot($request);
         $branchId = $context['branch_id'];
+        $companyReportScope = $request->string('scope')->toString() === 'company'
+            && $request->user()?->canAny(['inventory.reports.operational', 'inventory.reports.financial']);
 
         $query = BranchHall::query()
-            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId), fn ($query) => $query->whereRaw('1 = 0'))
+            ->when(
+                $companyReportScope,
+                fn ($query) => $query->whereHas('branch', fn ($branches) => $branches
+                    ->where('company_id', $context['company_id'])
+                    ->whereIn('type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])
+                    ->where('status', 'active')),
+                fn ($query) => $query->when($branchId, fn ($query) => $query->where('branch_id', $branchId), fn ($query) => $query->whereRaw('1 = 0')),
+            )
+            ->with('branch:id,name')
             ->whereNull('deleted_at')
             ->orderBy('position')
             ->orderBy('name');
@@ -53,7 +63,7 @@ class InventorySelect2Service
 
         return $this->select2->paginated($query, $request, fn (BranchHall $hall): array => [
             'id' => (string) $hall->public_uuid,
-            'text' => (string) $hall->name,
+            'text' => trim(implode(' — ', array_filter([$hall->branch?->name, $hall->name]))),
         ]);
     }
 
@@ -61,6 +71,8 @@ class InventorySelect2Service
     {
         $context = $this->operatingContext->snapshot($request);
         $branchId = $context['branch_id'];
+        $companyReportScope = $request->string('scope')->toString() === 'company'
+            && $request->user()?->canAny(['inventory.reports.operational', 'inventory.reports.financial']);
         $branch = $branchId
             ? Branch::query()
                 ->whereKey($branchId)
@@ -70,7 +82,15 @@ class InventorySelect2Service
             : null;
 
         $query = BranchStore::query()
-            ->when($branch instanceof Branch, fn ($query) => $query->where('branch_id', $branch->getKey()), fn ($query) => $query->whereRaw('1 = 0'))
+            ->when(
+                $companyReportScope,
+                fn ($query) => $query->whereHas('branch', fn ($branches) => $branches
+                    ->where('company_id', $context['company_id'])
+                    ->whereIn('type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])
+                    ->where('status', 'active')),
+                fn ($query) => $query->when($branch instanceof Branch, fn ($query) => $query->where('branch_id', $branch->getKey()), fn ($query) => $query->whereRaw('1 = 0')),
+            )
+            ->with('branch:id,name')
             ->whereNull('deleted_at')
             ->orderBy('position')
             ->orderBy('name');
@@ -82,7 +102,7 @@ class InventorySelect2Service
 
         return $this->select2->paginated($query, $request, fn (BranchStore $store): array => [
             'id' => (string) $store->public_uuid,
-            'text' => (string) $store->name,
+            'text' => trim(implode(' — ', array_filter([$store->branch?->name, $store->name]))),
         ]);
     }
 

@@ -309,48 +309,12 @@ test('navigation styling provides readable interactive nested menus in both dire
         );
 });
 
-test('former placeholder aliases remain technically resolvable without fixed count contracts', function (): void {
-    $registry = app(ErpUiScreenRegistry::class);
-    $aliases = collect($registry->legacyPlaceholderAliases());
+test('UI-only placeholders and shell routes are absent while real screens remain registered', function (): void {
+    $screens = collect(app(ErpUiScreenRegistry::class)->screens());
 
-    expect($aliases)->not->toBeEmpty()
-        ->and($aliases->pluck('key')->unique()->count())->toBe($aliases->count());
-
-    $aliases->each(function (array $alias): void {
-        expect(Route::has($alias['route']))->toBeTrue()
-            ->and($alias['target'])->not->toBeNull()
-            ->and($alias['target']->get('tabs'))->not->toBeEmpty();
-    });
-});
-
-test('legacy placeholder permissions do not expose retired shells in navigation', function (): void {
-    config()->set('erp.phase_mode', 'expanded');
-
-    $registry = app(ErpUiScreenRegistry::class);
-    $aliases = collect($registry->legacyPlaceholderAliases());
-    $permissions = $aliases->pluck('permission')->unique()->values()->all();
-
-    foreach ($permissions as $permission) {
-        Permission::findOrCreate($permission, 'web');
-    }
-
-    $actor = User::factory()->create();
-    $actor->givePermissionTo($permissions);
-
-    $routedLabels = function (array $items) use (&$routedLabels): array {
-        $labels = [];
-
-        foreach ($items as $item) {
-            if (is_string($item['route'] ?? null) && $item['route'] !== '') {
-                $labels[] = $item['label'];
-            }
-
-            $labels = [...$labels, ...$routedLabels($item['children'] ?? [])];
-        }
-
-        return $labels;
-    };
-    $visibleLabels = collect($routedLabels(app(MenuService::class)->getMenu($actor)));
-
-    expect($visibleLabels->intersect($aliases->pluck('key')))->toBeEmpty();
+    expect($screens)->not->toBeEmpty()
+        ->and($screens->where('classification', 'UI_SURFACE_PENDING_DEEP_WORKFLOW'))->toBeEmpty()
+        ->and($screens->filter(fn ($screen): bool => $screen->get('shell_enabled', true) !== false))->toBeEmpty()
+        ->and(collect(Route::getRoutes()->getRoutes())->pluck('action.controller')->filter()->implode("\n"))
+        ->not->toContain('ErpUiShellController');
 });

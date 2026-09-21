@@ -17,7 +17,7 @@
                     <span class="badge rounded-pill badge-subtle-secondary">{{ __('production_execution.statuses.'.$record->status) }}</span>
                 </div>
                 <div class="d-flex flex-wrap gap-2">
-                    @if($record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && ! $record->runs()->exists())
+                    @if($canManageProduction && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && ! $record->runs()->exists())
                         @can('production.orders.edit')
                             <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.production.work-orders.edit', $record) }}">{{ __('common.actions.edit') }}</a>
                         @endcan
@@ -25,7 +25,7 @@
                     @can('production.orders.print')
                         <a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.production.work-orders.print', $record) }}">{{ __('common.actions.print') }}</a>
                     @endcan
-                    @if(in_array($record->status, [\Modules\Production\Models\ProductionOrder::StatusDraft, \Modules\Production\Models\ProductionOrder::StatusPlanned], true))
+                    @if($canManageProduction && in_array($record->status, [\Modules\Production\Models\ProductionOrder::StatusDraft, \Modules\Production\Models\ProductionOrder::StatusPlanned], true))
                         @can('production.orders.release')
                             <form method="POST" action="{{ route('admin.production.work-orders.release', $record) }}">
                                 @csrf

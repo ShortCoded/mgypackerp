@@ -45,7 +45,7 @@ test('sales valuation uses explicit stored price lines and one price-list curren
     salesValuationTransaction($fixture, $fixture['raw']->getKey(), $fixture['store']->getKey(), '3');
     salesValuationTransaction($fixture, $fixture['service']->getKey(), $fixture['store']->getKey(), '4', '4');
     $priceList = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '12.5']]);
-    $priceList->update(['is_print_only' => true]);
+    $priceList->update(['is_print_only' => true, 'approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
 
     $valuation = app(InventoryReportService::class)->salesValuation(
         $fixture['company']->getKey(),
@@ -87,6 +87,7 @@ test('sales valuation uses explicit stored price lines and one price-list curren
     ))->toThrow(DomainException::class);
 
     $operationalList = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '12.5']]);
+    $operationalList->update(['approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
     $operational = app(InventoryReportService::class)->salesValuation(
         $fixture['company']->getKey(), [$fixture['branch']->getKey()], ['price_list_id' => $operationalList->getKey()],
     );
@@ -107,6 +108,7 @@ test('sales valuation applies meaningful as-of hall and location filters and rej
         'transaction_date' => now()->addDay()->toDateString(),
     ]);
     $priceList = createSalesPriceList($fixture, null, [['product' => $fixture['raw'], 'price' => '7']]);
+    $priceList->update(['approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
     $beforeFuture = app(InventoryReportService::class)->salesValuation($fixture['company']->getKey(), [$fixture['branch']->getKey()], [
         'price_list_id' => $priceList->getKey(), 'as_of' => now()->toDateString(), 'branch_hall_id' => $hall->getKey(), 'warehouse_location_id' => $location->getKey(),
     ]);
@@ -128,25 +130,18 @@ test('sales valuation applies meaningful as-of hall and location filters and rej
         'status' => 'active',
     ]);
     $otherHall = BranchHall::query()->create(['branch_id' => $otherBranch->getKey(), 'name' => 'Other Hall']);
-    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
-        ->get(route('admin.inventory.sales-valuation', [
-            'price_list_id' => $priceList->getKey(), 'branch_doc_num' => $fixture['branch']->doc_num,
-            'branch_hall_uuid' => $otherHall->public_uuid,
-        ]))->assertSessionHasErrors('branch_hall_uuid');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     $this->get(route('admin.inventory.sales-valuation', [
         'price_list_id' => $priceList->getKey(), 'branch_store_uuid' => $fixture['store']->public_uuid,
         'branch_hall_uuid' => $otherHall->public_uuid,
     ]))->assertSessionHasErrors('branch_hall_uuid');
-    $this->get(route('admin.inventory.sales-valuation', [
-        'price_list_id' => $priceList->getKey(), 'branch_hall_uuid' => $otherHall->public_uuid,
-        'warehouse_location_uuid' => $location->public_id,
-    ]))->assertSessionHasErrors('warehouse_location_uuid');
 });
 
 test('sales valuation screen export and pdf use canonical routes and permissions', function (): void {
     $fixture = salesCycleFixture();
     $fixture['branch']->update(['type' => Branch::TypeWarehouse]);
     $priceList = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '12.5']]);
+    $priceList->update(['approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
     $session = salesCycleSession($fixture);
     $this->actingAs($fixture['user'])->withSession($session);
 

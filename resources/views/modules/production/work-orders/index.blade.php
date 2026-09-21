@@ -22,7 +22,7 @@
 
 @section('content')
     <div class="production-mobile-workflow">
-        @can('production.orders.document_number_settings.update')
+        @if ($canManageProduction && auth()->user()?->can('production.orders.document_number_settings.update'))
             <div class="card mb-3">
                 <div class="card-header py-2">
                     <button
@@ -74,16 +74,16 @@
                     </div>
                 </div>
             </div>
-        @endcan
+        @endif
 
         <div class="card erp-datatable-card production-orders-datatable-card">
             <x-admin.crud-index-toolbar
                 :title="__('production_execution.orders.title')"
-                :add-route="route('admin.production.work-orders.create')"
+                :add-route="$canManageProduction ? route('admin.production.work-orders.create') : null"
                 add-permission="production.orders.create"
                 :add-label="__('production_execution.orders.create')"
                 :show-trash-filter="auth()->user()?->can('production.orders.view_trashed')"
-                :show-bulk-actions="auth()->user()?->can('production.orders.delete')"
+                :show-bulk-actions="$canManageProduction && auth()->user()?->can('production.orders.delete')"
                 trash-filter-id="production_orders_trash_filter"
                 bulk-actions-class="production-orders-bulk-actions-bar"
                 :bulk-action-label="__('common.bulk_action')"

@@ -8,6 +8,7 @@ $screen = static fn (string $domain, string $slug, string $en, string $ar, array
     'group' => $domain,
     'profile' => 'report',
     'kind' => 'report',
+    'shell_enabled' => false,
     'menu_visible' => false,
     ...$extra,
 ];

@@ -174,6 +174,24 @@ class PurchasesSelect2Service
         ]);
     }
 
+    public function supplierPaymentPurchaseOrders(Request $request): array
+    {
+        $context = $this->operatingContext->snapshot($request);
+        $query = PurchaseOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
+            ->with('supplier:id,doc_num,name')
+            ->select(['id', 'doc_num', 'supplier_id'])
+            ->orderByDesc('id');
+        $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
+
+        return $this->select2->paginated($query, $request, fn (PurchaseOrder $order): array => [
+            'id' => $order->doc_num,
+            'text' => collect([$order->doc_num, $order->supplier?->name])->filter()->join(' / '),
+        ]);
+    }
+
     public function invoices(Request $request): array
     {
         $context = $this->operatingContext->snapshot($request);
@@ -440,11 +458,20 @@ class PurchasesSelect2Service
             return $this->empty();
         }
 
+        $isAdministrativeBranch = Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', (int) $companyId)
+            ->where('type', Branch::TypeAdministrative)
+            ->exists();
+
         $query = BranchStore::query()
             ->join('branches', 'branches.id', '=', 'branch_stores.branch_id')
             ->purchasingEligible()
             ->where('branches.company_id', (int) $companyId)
-            ->where('branch_stores.branch_id', $context['branch_id'])
+            ->when(
+                ! $isAdministrativeBranch,
+                fn ($query) => $query->where('branch_stores.branch_id', $context['branch_id']),
+            )
             ->where('branches.status', 'active')
             ->whereNull('branches.deleted_at')
             ->whereNull('branch_stores.deleted_at')

@@ -1,10 +1,10 @@
 @php
     $isTrashed = $record->trashed();
     $canView = ! $isTrashed && auth()->user()?->can('production.orders.view');
-    $canClone = ! $isTrashed && auth()->user()?->can('production.orders.clone');
-    $canEdit = ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.edit');
-    $canDelete = ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.delete');
-    $canRestore = $isTrashed && auth()->user()?->can('production.orders.restore');
+    $canClone = $canManage && ! $isTrashed && auth()->user()?->can('production.orders.clone');
+    $canEdit = $canManage && ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.edit');
+    $canDelete = $canManage && ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.delete');
+    $canRestore = $canManage && $isTrashed && auth()->user()?->can('production.orders.restore');
 @endphp
 
 @if ($canView || $canClone || $canEdit || $canDelete || $canRestore)

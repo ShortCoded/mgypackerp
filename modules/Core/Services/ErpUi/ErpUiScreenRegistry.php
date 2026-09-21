@@ -28,11 +28,6 @@ class ErpUiScreenRegistry
      */
     private ?Collection $screens = null;
 
-    /**
-     * @var array<string, list<array{key: string, module: string, route: string, path: string, permission: string, target: ErpUiScreenDefinition}>>|null
-     */
-    private ?array $legacyAliasesByTarget = null;
-
     public function __construct(
         private readonly ErpUiScreenBlueprints $blueprints,
     ) {}
@@ -64,66 +59,6 @@ class ErpUiScreenRegistry
                 fn (string $action): string => $screen->permission($action),
                 $screen->actions(),
             ))
-            ->unique()
-            ->sort()
-            ->values()
-            ->all();
-    }
-
-    /**
-     * @return list<array{key: string, module: string, route: string, path: string, permission: string, target: ErpUiScreenDefinition}>
-     */
-    public function legacyPlaceholderAliases(): array
-    {
-        $targets = config('erp_ui_screen_aliases', []);
-
-        if (! is_array($targets)) {
-            return [];
-        }
-
-        $placeholderScreens = collect(config('erp_expanded_screens.screens', []))
-            ->filter(fn (mixed $screen): bool => is_array($screen) && ($screen['status'] ?? null) === 'placeholder');
-
-        $missingMappings = $placeholderScreens
-            ->pluck('key')
-            ->filter(fn (mixed $key): bool => is_string($key) && ! array_key_exists($key, $targets));
-
-        if ($missingMappings->isNotEmpty()) {
-            throw new LogicException('Missing ERP UI Shell placeholder aliases: '.$missingMappings->implode(', '));
-        }
-
-        return $placeholderScreens
-            ->map(function (array $placeholder) use ($targets): array {
-                $key = (string) $placeholder['key'];
-                $targetKey = (string) $targets[$key];
-                $target = $this->find($targetKey);
-
-                if (! $target instanceof ErpUiScreenDefinition) {
-                    throw new LogicException("ERP UI Shell placeholder alias [{$key}] targets missing screen [{$targetKey}].");
-                }
-
-                return [
-                    'key' => $key,
-                    'module' => (string) $placeholder['module'],
-                    'route' => (string) $placeholder['route'],
-                    'path' => (string) $placeholder['path'],
-                    'permission' => (string) $placeholder['permission'],
-                    'target' => $target,
-                ];
-            })
-            ->filter(fn (array $alias): bool => $alias['target']->get('shell_enabled', true) !== false)
-            ->values()
-            ->all();
-    }
-
-    /**
-     * @return list<string>
-     */
-    public function legacyPlaceholderPermissions(): array
-    {
-        return collect($this->legacyPlaceholderAliases())
-            ->pluck('permission')
-            ->filter(fn (mixed $permission): bool => is_string($permission) && $permission !== '')
             ->unique()
             ->sort()
             ->values()
@@ -256,49 +191,23 @@ class ErpUiScreenRegistry
     private function menuItemForScreen(ErpUiScreenDefinition $screen): array
     {
         $actions = [];
-        $legacyAliases = collect($this->legacyAliasesForScreen($screen));
-
         foreach ($screen->actions() as $action) {
             $actions[str_replace('.', '_', $action)] = $screen->permission($action);
         }
-
-        $viewPermissions = $legacyAliases
-            ->pluck('permission')
-            ->prepend($screen->permission('view'))
-            ->unique()
-            ->values()
-            ->all();
 
         return [
             'label' => $screen->key(),
             'title' => $screen->title(),
             'icon' => (string) $screen->get('icon', 'file-alt'),
             'route' => $screen->route('index'),
-            'permission' => count($viewPermissions) === 1 ? $viewPermissions[0] : $viewPermissions,
+            'permission' => $screen->permission('view'),
             'actions' => $actions,
             'phase_modes' => ['expanded'],
             'active' => [
                 $screen->routeNamePrefix().'.*',
-                ...$legacyAliases->pluck('route')->all(),
             ],
             'keywords' => [$screen->title('en'), $screen->title('ar')],
             'children' => [],
         ];
-    }
-
-    /**
-     * @return list<array{key: string, module: string, route: string, path: string, permission: string, target: ErpUiScreenDefinition}>
-     */
-    private function legacyAliasesForScreen(ErpUiScreenDefinition $screen): array
-    {
-        if ($this->legacyAliasesByTarget === null) {
-            $this->legacyAliasesByTarget = [];
-
-            foreach ($this->legacyPlaceholderAliases() as $alias) {
-                $this->legacyAliasesByTarget[$alias['target']->key()][] = $alias;
-            }
-        }
-
-        return $this->legacyAliasesByTarget[$screen->key()] ?? [];
     }
 }

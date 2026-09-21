@@ -1,6 +1,9 @@
 @extends('layouts.app')
 
-@php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+@php
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $dates = app(\Modules\Core\Services\DateFormatService::class);
+@endphp
 @section('title', __('cashbox_count.document_title', ['document' => $count->doc_num]))
 
 @section('content')
@@ -26,7 +29,7 @@
         <div class="card-body">
             <div class="row g-3">
                 @foreach([
-                    'count_date' => $count->count_date?->format('Y-m-d'),
+                    'count_date' => $dates->formatDate($count->count_date, ''),
                     'cashbox' => $count->cashbox?->name,
                     'branch' => $count->branch?->name,
                     'currency' => $count->currency?->code,

@@ -837,6 +837,25 @@
         field.value = values[name];
       }
     });
+    if (values?.required_quantity) {
+      const quantity = row.querySelector('[name$="[quantity]"]');
+      if (quantity) {
+        quantity.min = values.required_quantity;
+        const hint = document.createElement('small');
+        hint.className = 'text-600 d-block mt-1';
+        hint.textContent = `${document.documentElement.lang === 'ar' ? 'المطلوب' : 'Required'}: ${values.required_quantity}`;
+        quantity.closest('.erp-entry-line-quantity')?.appendChild(hint);
+      }
+      row.dataset.requiredSourceLine = '1';
+      const remove = row.querySelector('[data-remove-production-line]');
+      const duplicate = row.querySelector('[data-duplicate-production-line]');
+      if (remove) remove.disabled = true;
+      if (duplicate) duplicate.disabled = true;
+      if (product) {
+        product.style.pointerEvents = 'none';
+        product.tabIndex = -1;
+      }
+    }
     const stages = row.querySelector('[name$="[stage_public_ids][]"]');
     if (stages && Array.isArray(values?.stages)) {
       values.stages.forEach(function (stage) {
@@ -883,6 +902,9 @@
   }
 
   function duplicateProductionOrderLine(row) {
+    if (row?.dataset.requiredSourceLine === '1') {
+      return;
+    }
     const form = row.closest('[data-production-order-form]');
     if (!form) {
       return;
@@ -896,6 +918,9 @@
   }
 
   function removeProductionOrderLine(row) {
+    if (row?.dataset.requiredSourceLine === '1') {
+      return;
+    }
     const form = row.closest('[data-production-order-form]');
     if (!form) {
       return;
@@ -988,12 +1013,42 @@
     $('[data-production-order-form] [name$="[source_line_reference]"]').val(null).trigger('change');
   }
 
+  function loadAllProductionSourceLines() {
+    const form = document.querySelector('[data-production-order-form]');
+    const sourceType = document.querySelector('#production-source-type')?.value || 'make_to_stock';
+    const sourceDocument = document.querySelector('#production-source-document')?.value || '';
+    const body = form?.querySelector('[data-production-order-lines]');
+    const product = body?.querySelector('[name$="[source_line_reference]"]');
+    if (!form || !body || sourceType === 'make_to_stock' || !sourceDocument || !product?.dataset.url) {
+      return;
+    }
+
+    $.getJSON(product.dataset.url, { source_type: sourceType, source_doc_num: sourceDocument, all: 1 })
+      .done(function (response) {
+        $(body).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+        body.replaceChildren();
+        (response.results || []).forEach(function (line) {
+          const row = addProductionOrderLine(form, {
+            source_line_reference: line.id,
+            product_text: line.product_text || line.text,
+            quantity: line.required_quantity,
+            required_quantity: line.required_quantity,
+            description: line.description || '',
+          }, null, false);
+          loadConfiguredProductionStages(row);
+        });
+      });
+  }
+
   $(document).on('change', '#production-source-type', function () {
     productionOrderSourceVisibility();
     clearProductionSourceLines();
   });
 
-  $(document).on('change', '#production-source-document', clearProductionSourceLines);
+  $(document).on('change', '#production-source-document', function () {
+    clearProductionSourceLines();
+    loadAllProductionSourceLines();
+  });
 
   $(document).on('change', '[data-production-order-line] [name$="[source_line_reference]"]', function () {
     loadConfiguredProductionStages(this.closest('[data-production-order-line]'));

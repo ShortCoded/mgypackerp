@@ -74,7 +74,7 @@
                             'routePrefix' => $routePrefix,
                             'canEditRecord' => ($canManageInCurrentBranch ?? false) && ! ($record?->isLockedForEditing() ?? false),
                             'canDeleteRecord' => ($canManageInCurrentBranch ?? false) && ($record?->isDeletable() ?? false),
-                            'canClone' => ($canManageInCurrentBranch ?? false) && auth()->user()?->can('purchase_orders.clone'),
+                            'canClone' => false,
                     ])
                     @if($mode === 'view')
                         @can('purchase_orders.print')

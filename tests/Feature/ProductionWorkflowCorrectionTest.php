@@ -22,6 +22,7 @@ test('authorized users see an Arabic production order toolbar and can open the c
     app()->setLocale('ar');
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $user = User::factory()->create(['locale' => 'ar']);
 
@@ -75,7 +76,7 @@ test('authorized users see an Arabic production order toolbar and can open the c
         ->assertSuccessful()
         ->assertJsonPath('data.0.doc_num', fn (string $value): bool => str_contains($value, 'PRODUCTION-UI-TEST'))
         ->assertJsonPath('data.0.source_document_number', 'إنتاج مستقل للمخزون')
-        ->assertJsonPath('data.0.created_by', $user->name)
+        ->assertJsonPath('data.0.created_by', e($user->name))
         ->assertJsonPath('recordsFiltered', 1);
 
     $this->actingAs($user)->withSession($context)
@@ -84,6 +85,37 @@ test('authorized users see an Arabic production order toolbar and can open the c
         ->assertSee('إنتاج مستقل للمخزون')
         ->assertSee($branch->name)
         ->assertDontSee('Operating factory');
+
+    $administrativeBranch = Branch::query()->create([
+        'doc_number' => 99002,
+        'doc_num' => 'ADMIN-PRODUCTION-VIEW',
+        'company_id' => $company->getKey(),
+        'name' => 'Administrative Production Viewer',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $administrativeContext = [
+        ...$context,
+        OperatingContextService::BranchIdKey => $administrativeBranch->getKey(),
+        OperatingContextService::BranchDocNumKey => $administrativeBranch->doc_num,
+    ];
+
+    $this->actingAs($user)->withSession($administrativeContext)
+        ->get(route('admin.production.work-orders.index'))
+        ->assertSuccessful()
+        ->assertDontSee('إضافة أمر إنتاج')
+        ->assertDontSee('production-orders-document-number-settings');
+    $this->actingAs($user)->withSession($administrativeContext)
+        ->getJson(route('admin.production.work-orders.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertSuccessful()
+        ->assertJsonPath('recordsFiltered', 1)
+        ->assertJsonPath('data.0.doc_num', fn (string $value): bool => str_contains($value, $order->doc_num));
+    $this->actingAs($user)->withSession($administrativeContext)
+        ->get(route('admin.production.work-orders.show', $order))
+        ->assertSuccessful();
+    $this->actingAs($user)->withSession($administrativeContext)
+        ->get(route('admin.production.work-orders.create'))
+        ->assertForbidden();
 
     $this->actingAs($user)->withSession($context)
         ->putJson(route('admin.production.work-orders.document-number-settings.update'), [
@@ -125,6 +157,7 @@ test('all production create forms and operational report pages render in Arabic'
     app()->setLocale('ar');
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $user = User::factory()->create(['locale' => 'ar']);
 

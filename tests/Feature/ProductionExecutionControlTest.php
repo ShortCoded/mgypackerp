@@ -4,6 +4,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Production\Exports\ProductionReportExport;
@@ -151,6 +152,32 @@ test('production orders expose optional sales sources and standalone entry point
         ->and(Route::has('admin.production.runs.inspect'))->toBeFalse();
 });
 
+test('production permission form keeps every configured production action', function (): void {
+    $registry = app(PermissionRegistryService::class);
+    $productionPermissions = collect($registry->all())
+        ->filter(fn (string $permission): bool => str_starts_with($permission, 'production.'))
+        ->values()
+        ->all();
+    $collectPermissions = function (array $nodes) use (&$collectPermissions): array {
+        return collect($nodes)->flatMap(fn (array $node): array => [
+            ...collect($node['permissions'] ?? [])->pluck('name')->all(),
+            ...$collectPermissions($node['children'] ?? []),
+        ])->values()->all();
+    };
+    $formPermissions = $collectPermissions($registry->groupedForForm($productionPermissions));
+
+    expect($formPermissions)->toContain(
+        'production.stages.create',
+        'production.stages.edit',
+        'production.orders.create',
+        'production.orders.release',
+        'production.runs.plan',
+        'production.runs.receive',
+        'production.material_requests.approve',
+        'production.expenses.pay',
+    );
+});
+
 test('production quality capture is mobile friendly', function (): void {
     $view = file_get_contents(resource_path('views/modules/production/runs/show.blade.php'));
     $css = file_get_contents(public_path('assets/css/modules/Production/execution.css'));
@@ -216,7 +243,7 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain('arrow-step="1"')
         ->not->toContain('type="number" step="0.00000001"');
     expect(file_get_contents(resource_path('views/modules/production/product-stages/index.blade.php')))
-        ->toContain('js-select2-ajax')
+        ->toContain('variant="ajax"')
         ->toContain('admin.production.product-stages.select2.products')
         ->not->toContain('@foreach($products as $product)');
     expect(trans('roles.permission_labels.labor', [], 'ar'))->toBe('تسجيل العمالة والساعات')

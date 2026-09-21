@@ -249,6 +249,10 @@ return [
     'payment_channels' => ['cashbox' => 'Cashbox', 'bank' => 'Bank'],
     'material_request_types' => ['planned' => 'Approved Requirement', 'additional' => 'Approved Additional'],
     'messages' => [
+        'factory_context_required' => 'Switch to a factory branch to perform production-order operations.',
+        'all_source_lines_required' => 'Every source document line must be included in the production order.',
+        'source_quantity_below_required' => 'Production quantity cannot be below the source-required quantity.',
+        'source_quantity_exceeds_remaining' => 'Total linked production quantity cannot exceed the remaining source quantity.',
         'document_number_settings_updated' => 'Production order number settings updated successfully.',
         'operating_context_required' => 'Select the company, branch, and financial period first.',
         'stage_in_use' => 'The stage is used by a product route and cannot be deleted.',

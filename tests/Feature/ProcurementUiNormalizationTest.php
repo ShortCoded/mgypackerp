@@ -15,6 +15,7 @@ use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\SupplierQuotation;
 use Modules\Purchases\Services\ProcurementAttachmentService;
@@ -146,6 +147,9 @@ test('administrative branches manage legacy purchasing documents while factory b
         ->assertOk()
         ->assertSee(route('admin.purchases.purchase-orders.edit', $order), false)
         ->assertSee(route('admin.purchases.purchase-orders.submit', $order), false);
+    expect($this->getJson(route('admin.purchases.purchase-orders.data', [
+        'draw' => 1, 'start' => 0, 'length' => 100,
+    ]))->assertOk()->getContent())->toContain($order->doc_num);
     $this->get(route('admin.purchases.purchase-invoices.show', $invoice))
         ->assertOk()
         ->assertSee(route('admin.purchases.purchase-invoices.edit', $invoice), false)
@@ -944,19 +948,54 @@ test('purchase reports menu exposes every implemented procurement report', funct
 
 test('supplier payment form compiles all fields and Arabic labels', function (): void {
     $fixture = procurementUiFixture();
-    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+    $administrativeBranch = procurementAdministrativeBranch($fixture);
+    procurementUseBranch($fixture, $administrativeBranch);
+    $selectedOrder = PurchaseOrder::query()->create([
+        'doc_number' => 9901,
+        'doc_num' => 'PO-PAYMENT-SELECTED',
+        'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id,
+        'branch_id' => $administrativeBranch->id,
+        'branch_store_id' => $fixture['store']->id,
+        'supplier_id' => $fixture['firstSupplier']->id,
+        'currency_id' => $fixture['currency']->id,
+        'document_date' => now()->toDateString(),
+        'status' => PurchaseOrder::StatusApproved,
+    ]);
+    $otherBranchOrder = PurchaseOrder::query()->create([
+        'doc_number' => 9902,
+        'doc_num' => 'PO-PAYMENT-OTHER-BRANCH',
+        'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id,
+        'branch_id' => $fixture['branch']->id,
+        'branch_store_id' => $fixture['store']->id,
+        'supplier_id' => $fixture['firstSupplier']->id,
+        'currency_id' => $fixture['currency']->id,
+        'document_date' => now()->toDateString(),
+        'status' => PurchaseOrder::StatusApproved,
+    ]);
     app()->setLocale('ar');
 
-    $this->get(route('admin.purchases.supplier-payments.create'))
+    $this->withSession(['_old_input' => ['purchase_order_doc_num' => $selectedOrder->doc_num]])
+        ->get(route('admin.purchases.supplier-payments.create'))
         ->assertOk()
         ->assertSee('دفعة / دفعة مقدمة لمورد')
         ->assertSee('تخصيصات الفواتير / الأقساط')
         ->assertSee('name="supplier_doc_num"', false)
         ->assertSee('js-select2-ajax js-payment-supplier', false)
         ->assertSee(route('admin.purchases.select2.suppliers'), false)
+        ->assertSee(route('admin.purchases.select2.supplier-payment-purchase-orders'), false)
+        ->assertSee('value="'.$selectedOrder->doc_num.'" selected', false)
         ->assertSee('name="payment_method"', false)
         ->assertDontSee('@csrf')
         ->assertDontSee("{{ __('Supplier') }}", false);
+
+    $fixture['user']->syncPermissions(['purchases.prices.view', 'supplier_payments.create']);
+    $options = $this->getJson(route('admin.purchases.select2.supplier-payment-purchase-orders'))->assertOk();
+    expect(collect($options->json('results'))->pluck('id')->all())
+        ->toContain($selectedOrder->doc_num)
+        ->not->toContain($otherBranchOrder->doc_num);
+    $this->getJson(route('admin.purchases.select2.purchase-orders'))->assertForbidden();
 });
 
 test('purchase cycle tables consistently support permission aware double click editing', function (): void {

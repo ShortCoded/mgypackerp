@@ -122,6 +122,7 @@ class ProductionCycleService
                 'production_notes' => $header['production_notes'] ?? null,
                 'updated_by' => auth()->id(),
             ]);
+            $this->lockProductionSource($locked);
             $this->adjustSalesDemand($locked, subtract: true);
             $locked->lines()->forceDelete();
             $this->createOrderLines($locked, $lines);
@@ -139,6 +140,7 @@ class ProductionCycleService
                 throw new DomainException(__('production_execution.messages.order_draft_delete_only'));
             }
 
+            $this->lockProductionSource($locked);
             $locked->update(['deleted_by' => auth()->id()]);
             $this->adjustSalesDemand($locked, subtract: true);
             $locked->delete();
@@ -333,31 +335,38 @@ class ProductionCycleService
                 throw new DomainException(__('production_execution.messages.production_source_invalid'));
             }
 
-            $availableBase = $this->availability->forProduct(
-                (int) $order->company_id,
-                (int) $salesOrder->branch_store_id,
-                (int) $product->getKey(),
-                (int) $salesLine->getKey(),
-            )['available'];
-            $deliveryRemainingBase = bcmul($salesLine->remainingDeliveryQuantity(), (string) $salesLine->conversion_factor, 8);
-            $plannedRemainingBase = bcsub((string) $salesLine->production_requested_base_quantity, (string) $salesLine->produced_base_quantity, 8);
-            $remainingBase = $this->nonnegative(bcsub(bcsub($deliveryRemainingBase, $availableBase, 8), $plannedRemainingBase, 8));
-
-            if (bccomp($requestedBaseQuantity, $remainingBase, 8) > 0) {
-                throw new DomainException(__('production_execution.messages.production_demand_exceeds_remaining'));
-            }
+            $this->assertSourceQuantityAvailable(
+                'sales_order_line_id',
+                $salesLine->getKey(),
+                $requestedBaseQuantity,
+                (string) $salesLine->base_quantity,
+            );
         }
 
         if ($invoiceLine !== null) {
-            $alreadyPlannedBase = (string) ProductionOrderLine::query()
-                ->where('customer_invoice_line_id', $invoiceLine->getKey())
-                ->whereHas('order')
-                ->sum('base_quantity');
-            $remainingInvoiceBase = $this->nonnegative(bcsub((string) $invoiceLine->base_quantity, $alreadyPlannedBase, 8));
+            $this->assertSourceQuantityAvailable(
+                'customer_invoice_line_id',
+                $invoiceLine->getKey(),
+                $requestedBaseQuantity,
+                (string) $invoiceLine->base_quantity,
+            );
+        }
+    }
 
-            if (bccomp($requestedBaseQuantity, $remainingInvoiceBase, 8) > 0) {
-                throw new DomainException(__('production_execution.messages.production_demand_exceeds_remaining'));
-            }
+    private function assertSourceQuantityAvailable(
+        string $sourceColumn,
+        int $sourceLineId,
+        string $requestedBaseQuantity,
+        string $sourceBaseQuantity,
+    ): void {
+        $alreadyLinkedBaseQuantity = (string) ProductionOrderLine::query()
+            ->where($sourceColumn, $sourceLineId)
+            ->whereHas('order')
+            ->sum('base_quantity');
+        $remainingBaseQuantity = $this->nonnegative(bcsub($sourceBaseQuantity, $alreadyLinkedBaseQuantity, 8));
+
+        if (bccomp($requestedBaseQuantity, $remainingBaseQuantity, 8) > 0) {
+            throw new DomainException(__('production_execution.messages.source_quantity_exceeds_remaining'));
         }
     }
 

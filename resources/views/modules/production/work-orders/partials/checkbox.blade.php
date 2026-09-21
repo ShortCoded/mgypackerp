@@ -1,4 +1,4 @@
-@if (auth()->user()?->can('production.orders.delete') && ! $record->trashed())
+@if ($canManage && auth()->user()?->can('production.orders.delete') && ! $record->trashed())
     <div class="form-check mb-0 d-flex align-items-center justify-content-center">
         <x-forms.input
             class="form-check-input js-record-select"

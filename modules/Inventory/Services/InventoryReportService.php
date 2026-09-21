@@ -652,6 +652,7 @@ class InventoryReportService
 
         $priceList = PriceList::query()
             ->forCompany($companyId)
+            ->whereNotNull('approved_at')
             ->with('currency')
             ->findOrFail($priceListId);
         $priceListLines = $priceList->lines()->pluck('unit_price', 'product_id')->all();

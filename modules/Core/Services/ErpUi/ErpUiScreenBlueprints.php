@@ -21,12 +21,9 @@ class ErpUiScreenBlueprints
         $permissionResource = str_replace(['/', '-'], ['.', '_'], $slug);
         $profile = (string) ($screen['profile'] ?? 'document');
         $kind = (string) ($screen['kind'] ?? (in_array($profile, ['report', 'inquiry'], true) ? 'report' : 'resource'));
-        $classification = (string) ($screen['classification'] ?? (($screen['shell_enabled'] ?? true) === false
-            ? 'WORKING_REAL_SCREEN'
-            : 'UI_SURFACE_PENDING_DEEP_WORKFLOW'));
-        $isPendingSurface = $classification === 'UI_SURFACE_PENDING_DEEP_WORKFLOW';
-        $actions = $screen['actions'] ?? ($isPendingSurface ? ['view'] : $this->actionsFor($profile));
-        $modes = $screen['modes'] ?? ($isPendingSurface || $kind === 'report'
+        $classification = (string) ($screen['classification'] ?? 'WORKING_REAL_SCREEN');
+        $actions = $screen['actions'] ?? $this->actionsFor($profile);
+        $modes = $screen['modes'] ?? ($kind === 'report'
             ? ['index', 'data']
             : ['index', 'data', 'create', 'view', 'edit', 'clone']);
         $tabs = $screen['tabs'] ?? $this->tabsFor($moduleKey, $profile, (string) $screen['key']);
@@ -69,7 +66,7 @@ class ErpUiScreenBlueprints
             'show_attachments' => (bool) ($screen['show_attachments'] ?? $profile !== 'report'),
             'show_audit' => (bool) ($screen['show_audit'] ?? $profile !== 'report'),
             'double_click_mode' => (string) ($screen['double_click_mode'] ?? 'view'),
-            'status' => 'New UI Shell',
+            'status' => 'Real screen metadata',
         ];
     }
 

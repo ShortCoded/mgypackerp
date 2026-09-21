@@ -19,6 +19,8 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionOrderLine;
+use Modules\Production\Services\ProductionCycleService;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Models\CustomerCommercialAgreement;
 use Modules\Sales\Models\CustomerCreditAllocation;
@@ -980,6 +982,100 @@ test('production demand preserves order-line lineage and has no direct completio
         ->and($orderLine->fresh()->produced_quantity)->toBe('0.00000000')
         ->and($production->fresh()->status)->toBe(ProductionOrder::StatusDraft);
 
+});
+
+test('linked production orders cannot collectively exceed the sales source quantity', function (): void {
+    $fixture = salesCycleFixture();
+    $salesOrder = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Capped production source',
+            'quantity' => '10',
+            'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '100', 'due_date' => now()->addMonth()->toDateString()]],
+    ])));
+    $sourceLine = $salesOrder->lines->sole();
+    $cycle = app(ProductionCycleService::class);
+    $header = [
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'sales_order_id' => $salesOrder->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'source_type' => 'sales_order',
+        'source_id' => $salesOrder->getKey(),
+        'production_order_date' => now()->toDateString(),
+    ];
+    $line = fn (string $quantity): array => [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'sales_order_line_id' => $sourceLine->getKey(),
+        'quantity' => $quantity,
+    ]];
+
+    $first = $cycle->createMakeToStockOrder($header, $line('6'));
+    $cycle->createMakeToStockOrder($header, $line('4'));
+
+    expect(fn () => $cycle->createMakeToStockOrder($header, $line('0.00000001')))
+        ->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
+    expect(fn () => $cycle->updateDraftOrder($first, $header, $line('6.00000001')))
+        ->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
+
+    expect((string) ProductionOrderLine::query()
+        ->where('sales_order_line_id', $sourceLine->getKey())
+        ->whereHas('order')
+        ->sum('base_quantity'))->toBe('10');
+});
+
+test('linked production orders cannot collectively exceed the invoice source quantity', function (): void {
+    $fixture = salesCycleFixture();
+    $salesOrder = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Invoice production source',
+            'quantity' => '10',
+            'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '100', 'due_date' => now()->addMonth()->toDateString()]],
+    ])));
+    $salesLine = $salesOrder->lines->sole();
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder(
+        $salesOrder,
+        [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '10']],
+        [['due_date' => now()->addMonth()->toDateString(), 'amount' => '100']],
+    ));
+    $invoiceLine = $invoice->lines->sole();
+    $cycle = app(ProductionCycleService::class);
+    $header = [
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'sales_order_id' => $salesOrder->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'source_type' => 'customer_invoice',
+        'source_id' => $invoice->getKey(),
+        'production_order_date' => now()->toDateString(),
+    ];
+    $line = fn (string $quantity): array => [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'sales_order_line_id' => $salesLine->getKey(),
+        'customer_invoice_line_id' => $invoiceLine->getKey(),
+        'quantity' => $quantity,
+    ]];
+
+    $cycle->createMakeToStockOrder($header, $line('6'));
+    $cycle->createMakeToStockOrder($header, $line('4'));
+
+    expect(fn () => $cycle->createMakeToStockOrder($header, $line('0.00000001')))
+        ->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
+    expect((string) ProductionOrderLine::query()
+        ->where('customer_invoice_line_id', $invoiceLine->getKey())
+        ->whereHas('order')
+        ->sum('base_quantity'))->toBe('10');
 });
 
 test('credit hold requires a separately audited authorized override reason', function () {

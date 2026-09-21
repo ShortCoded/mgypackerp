@@ -71,6 +71,7 @@ return [
     ],
     'columns' => [
         'positions' => 'Stock positions',
+        'products' => 'Items',
         'branch' => 'Branch',
         'store' => 'Warehouse / store',
         'hall' => 'Hall',

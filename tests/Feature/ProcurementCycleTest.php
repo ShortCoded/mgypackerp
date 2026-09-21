@@ -1744,8 +1744,8 @@ test('purchase order stores span active company branches while remaining company
         ->json('results');
 
     expect(collect($storeResults)->pluck('id')->all())
-        ->toContain($fixture['store']->public_uuid)
-        ->not->toContain($factoryStore->public_uuid, $finishedStore->public_uuid, $serviceStore->public_uuid, $inactiveStore->public_uuid, $otherStore->public_uuid);
+        ->toContain($fixture['store']->public_uuid, $factoryStore->public_uuid, $serviceStore->public_uuid)
+        ->not->toContain($finishedStore->public_uuid, $inactiveStore->public_uuid, $otherStore->public_uuid);
 
     $productResults = $this->getJson(route('admin.purchases.select2.products'))->assertOk()->json('results');
     $historicalService = $this->getJson(route('admin.purchases.select2.products', [

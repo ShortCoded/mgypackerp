@@ -22,12 +22,6 @@ return [
         'operational_policies' => ['title' => ['en' => 'Operational Policies', 'ar' => 'السياسات التشغيلية'], 'icon' => 'sliders-h', 'order' => 40],
     ],
     'screens' => [
-        $screen('erp-general-settings', 'ERP General Settings', 'الإعدادات العامة للنظام'),
-        $screen('company-operational-settings', 'Company Operational Settings', 'إعدادات تشغيل الشركة'),
-        $screen('branch-operational-settings', 'Branch Operational Settings', 'إعدادات تشغيل الفرع'),
-        $screen('financial-period-control', 'Financial Period Control', 'التحكم في الفترات المالية'),
-        $screen('tax-definitions', 'Tax Definitions', 'تعريفات الضرائب', 'commercial_policies', ['profile' => 'master']),
-        $screen('currency-rate-policies', 'Currency Rate Policies', 'سياسات أسعار العملات', 'commercial_policies'),
         [
             'key' => 'core_quick_tasks',
             'slug' => 'quick-tasks',

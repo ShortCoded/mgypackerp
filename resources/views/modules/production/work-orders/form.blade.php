@@ -10,6 +10,7 @@
         'source_line_reference' => $sourceLineReferences->get($line->getKey()),
         'product_text' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? '')),
         'quantity' => $line->quantity,
+        'required_quantity' => $record?->source_type === 'make_to_stock' ? null : $line->quantity,
         'description' => $line->description,
         'production_notes' => $line->production_notes,
         'stages' => $line->stageSnapshots->map(fn ($stage) => [

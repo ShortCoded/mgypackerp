@@ -34,7 +34,6 @@ class ModuleServiceProvider extends ServiceProvider
             $this->loadModuleApiRoutes($module);
         }
 
-        $this->loadErpUiShellRoutes();
     }
 
     protected function loadModuleWebRoutes(string $module): void
@@ -60,17 +59,6 @@ class ModuleServiceProvider extends ServiceProvider
             ->prefix('api/'.$this->routePrefix($module))
             ->as('api.'.$this->routeName($module).'.')
             ->group($path);
-    }
-
-    protected function loadErpUiShellRoutes(): void
-    {
-        $path = base_path('modules/Core/Routes/erp_ui_shell.php');
-
-        if (! file_exists($path)) {
-            return;
-        }
-
-        Route::middleware(['web'])->group($path);
     }
 
     protected function loadModuleMigrations(): void

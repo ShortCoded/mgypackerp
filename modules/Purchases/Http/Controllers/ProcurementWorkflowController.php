@@ -943,6 +943,7 @@ class ProcurementWorkflowController extends Controller
         $invoices = PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->where('remaining_amount', '>', 0)->with(['supplier', 'currency', 'paymentSchedules'])->get();
         $selectedInvoice = $invoices->firstWhere('doc_num', $request->string('invoice')->trim()->toString());
         $selectedSupplierDocNum = (string) $request->old('supplier_doc_num', $selectedInvoice?->supplier?->doc_num ?? '');
+        $selectedPurchaseOrderDocNum = (string) $request->old('purchase_order_doc_num', '');
 
         return view('modules.purchases.procurement.payment-form', [
             'selectedSupplier' => $selectedSupplierDocNum === ''
@@ -953,7 +954,14 @@ class ProcurementWorkflowController extends Controller
             'currencies' => $this->currencies(),
             'invoices' => $invoices,
             'selectedInvoice' => $selectedInvoice,
-            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->where('branch_id', $context['branch_id'])->whereIn('status', ['approved', 'closed'])->get(),
+            'selectedPurchaseOrder' => $selectedPurchaseOrderDocNum === ''
+                ? null
+                : PurchaseOrder::query()
+                    ->forCompany($context['company_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
+                    ->where('doc_num', $selectedPurchaseOrderDocNum)
+                    ->first(['id', 'doc_num']),
         ]);
     }
 
