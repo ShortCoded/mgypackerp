@@ -78,8 +78,14 @@ return [[
         [
             'label' => 'hr_employee_attendance', 'title' => 'Employee Attendance', 'icon' => 'user-clock',
             'route' => 'admin.hr.employee-attendance.index', 'permission' => 'hr.employee_attendance.view', 'subgroup' => 'hr_attendance_management',
-            'actions' => ['view' => 'hr.employee_attendance.view', 'manage' => 'hr.employee_attendance.manage', 'correct' => 'hr.employee_attendance.correct', 'export' => 'hr.employee_attendance.export'],
-            'active' => ['admin.hr.employee-attendance.*'], 'children' => [],
+            'actions' => ['view' => 'hr.employee_attendance.view', 'manage' => 'hr.employee_attendance.manage', 'correct' => 'hr.employee_attendance.correct', 'import' => 'hr.employee_attendance.import', 'export' => 'hr.employee_attendance.export'],
+            'active' => ['admin.hr.employee-attendance.index', 'admin.hr.employee-attendance.export.*', 'admin.hr.employee-attendance.manual.*'], 'children' => [],
+        ],
+        [
+            'label' => 'hr_attendance_import', 'title' => 'Import Attendance', 'icon' => 'file-import',
+            'route' => 'admin.hr.employee-attendance.import.index', 'permission' => 'hr.employee_attendance.import', 'subgroup' => 'hr_attendance_management',
+            'actions' => ['import' => 'hr.employee_attendance.import'],
+            'active' => ['admin.hr.employee-attendance.import.*'], 'children' => [],
         ],
         [
             'label' => 'hr_requests', 'title' => 'HR Requests', 'icon' => 'clipboard-check',

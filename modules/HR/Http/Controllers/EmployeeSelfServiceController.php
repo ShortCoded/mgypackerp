@@ -28,7 +28,7 @@ class EmployeeSelfServiceController extends Controller
     public function index(Request $request): View
     {
         $attendance = $this->attendance->statusForUser($request->user());
-        $employee = $request->user()->hrEmployee()->first();
+        $employee = $request->user()->hrEmployee()->with(['branch:id,name', 'departmentModel:id,name', 'job:id,name', 'defaultShift:id,name'])->first();
         $requests = $employee === null
             ? collect()
             : HrEmployeeServiceRequest::query()
@@ -54,6 +54,13 @@ class EmployeeSelfServiceController extends Controller
             'attendance' => $attendance,
             'employeeRequests' => $requests,
             'payslips' => $payslips,
+            'employee' => $employee,
+            'selfServiceSummary' => [
+                'pending_requests' => $requests->where('status', HrEmployeeServiceRequest::StatusSubmitted)->count(),
+                'approved_requests' => $requests->where('status', HrEmployeeServiceRequest::StatusApproved)->count(),
+                'payslips' => $payslips->count(),
+                'latest_net' => $payslips->first()?->net_amount,
+            ],
             'requestTypes' => HrEmployeeServiceRequest::types(),
             'leaveTypes' => $employee === null ? [] : $this->requests->leaveOptionsForEmployee($employee),
             'currencies' => Currency::query()

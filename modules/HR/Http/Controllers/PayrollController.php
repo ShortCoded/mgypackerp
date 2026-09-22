@@ -10,6 +10,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
@@ -93,12 +94,112 @@ class PayrollController extends Controller
             )
         );
         $cashboxes = Cashbox::query()
+            ->with('branch:id,doc_num,name')
             ->forCompany($companyId)
             ->active()
             ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
             ->when($selected !== null && $selected['run']->branch_id !== null, fn ($query) => $query->where('branch_id', $selected['run']->branch_id))
             ->orderBy('name')
             ->get(['doc_num', 'name', 'branch_id']);
+        $payrollPaymentSources = collect();
+        if ($selected !== null) {
+            $payableByBranch = DB::table('hr_payslips')
+                ->where('payroll_run_id', $selectedRunId)
+                ->selectRaw('branch_id, COALESCE(SUM(net_amount), 0) as payable')
+                ->groupBy('branch_id')
+                ->pluck('payable', 'branch_id');
+            $paidByBranch = DB::table('hr_payroll_payments as payment')
+                ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+                ->where('payment.payroll_run_id', $selectedRunId)
+                ->where('payment.status', 'approved')
+                ->whereNotNull('payment.journal_entry_id')
+                ->where('voucher.status', 'approved')
+                ->whereNull('voucher.deleted_at')
+                ->selectRaw('payment.branch_id, COALESCE(SUM(payment.amount), 0) as paid')
+                ->groupBy('payment.branch_id')
+                ->pluck('paid', 'branch_id');
+            $payrollPaymentSources = $cashboxes->map(function (Cashbox $cashbox) use ($paidByBranch, $payableByBranch): array {
+                $branchKey = $cashbox->branch_id;
+                $remaining = bcsub(
+                    (string) ($payableByBranch->get($branchKey) ?? '0.0000'),
+                    (string) ($paidByBranch->get($branchKey) ?? '0.0000'),
+                    4,
+                );
+
+                return [
+                    'doc_num' => $cashbox->doc_num,
+                    'name' => $cashbox->name,
+                    'branch_name' => $cashbox->branch?->name ?? __('hr_payroll.labels.unassigned_branch'),
+                    'remaining' => $remaining,
+                    'available' => bccomp($remaining, '0.0000', 4) > 0,
+                ];
+            });
+        }
+        $activeEmployees = DB::table('hr_employees')
+            ->where('company_id', $companyId)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]));
+        $basicItem = DB::table('hr_payroll_items')
+            ->where('code', 'BASIC')
+            ->where('item_kind', 'earning')
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->first(['id', 'account_classification_id', 'account_id']);
+        $salaryExpenseReady = $basicItem !== null && ($basicItem->account_id !== null || $basicItem->account_classification_id !== null);
+        $payrollPayableReady = DB::table('accounts as account')
+            ->join('account_classifications as classification', 'classification.id', '=', 'account.account_classification_id')
+            ->where('account.company_id', $companyId)
+            ->where('classification.code', 'payroll_payable')
+            ->where('account.status', 'active')
+            ->where('account.is_postable', true)
+            ->whereNull('account.deleted_at')
+            ->exists();
+        $openPeriodReady = FinancialPeriod::query()
+            ->where('company_id', $companyId)
+            ->where('is_closed', false)
+            ->whereDate('from_date', '<=', now()->startOfMonth()->toDateString())
+            ->whereDate('to_date', '>=', now()->endOfMonth()->toDateString())
+            ->exists();
+        $costAllocationReady = ! DB::table('hr_employees as employee')
+            ->leftJoin('hr_departments as department', 'department.id', '=', 'employee.department_id')
+            ->leftJoin('hr_department_cost_center_defaults as allocation', function ($join) use ($companyId): void {
+                $join->on('allocation.department_id', '=', 'employee.department_id')
+                    ->where('allocation.company_id', $companyId);
+            })
+            ->leftJoin('cost_centers as cost_center', 'cost_center.id', '=', 'allocation.cost_center_id')
+            ->where('employee.company_id', $companyId)
+            ->where('employee.status', 'active')
+            ->whereNull('employee.deleted_at')
+            ->where(function ($query): void {
+                $query->whereNull('employee.department_id')
+                    ->orWhereNull('department.id')
+                    ->orWhereNotNull('department.deleted_at')
+                    ->orWhereNull('allocation.id')
+                    ->orWhereNull('cost_center.id')
+                    ->orWhereNotNull('cost_center.deleted_at')
+                    ->orWhere('cost_center.status', '<>', 'active')
+                    ->orWhere('cost_center.is_group', true);
+            })
+            ->exists();
+        $payrollReadiness = [
+            'active_employees' => (clone $activeEmployees)->count(),
+            'employees_with_salary' => (clone $activeEmployees)->where('pay_basis', 'monthly_salary')->where('basic_salary', '>', 0)->count(),
+            'basic_item' => $basicItem !== null,
+            'salary_expense' => $salaryExpenseReady,
+            'payroll_payable' => $payrollPayableReady,
+            'open_period' => $openPeriodReady,
+            'attendance_policy' => DB::table('hr_payroll_attendance_policies')->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')->exists(),
+            'cost_allocation' => $costAllocationReady,
+            'payment_source' => $cashboxes->isNotEmpty(),
+        ];
+        $payrollReadiness['can_calculate'] = $payrollReadiness['active_employees'] > 0
+            && $payrollReadiness['employees_with_salary'] === $payrollReadiness['active_employees']
+            && $payrollReadiness['basic_item']
+            && $payrollReadiness['salary_expense']
+            && $payrollReadiness['open_period'];
+        $payrollReadiness['can_post'] = $payrollReadiness['can_calculate'] && $payrollReadiness['payroll_payable'] && $payrollReadiness['cost_allocation'];
+        $payrollReadiness['can_pay'] = $payrollReadiness['can_post'] && $payrollReadiness['payment_source'];
 
         return view('modules.hr.payroll.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.payroll-preparation.index'),
@@ -106,7 +207,9 @@ class PayrollController extends Controller
             'selected' => $selected,
             'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
             'cashboxes' => $cashboxes,
+            'payrollPaymentSources' => $payrollPaymentSources,
             'paymentIdempotencyKey' => (string) Str::uuid(),
+            'payrollReadiness' => $payrollReadiness,
         ]);
     }
 

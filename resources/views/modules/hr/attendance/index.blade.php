@@ -34,6 +34,11 @@
 
         <x-admin.report.page :title="__('hr_attendance.admin.title')" :description="__('hr_attendance.report.description')">
             <x-slot:actions>
+                @can('hr.employee_attendance.import')
+                    <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.hr.employee-attendance.import.index') }}">
+                        <span class="fas fa-file-import me-1" aria-hidden="true"></span>{{ __('hr_attendance.import.action') }}
+                    </a>
+                @endcan
                 <x-admin.report.actions-toolbar
                     filter-target="attendance-report-filters"
                     :refresh-url="request()->fullUrl()"

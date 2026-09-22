@@ -1,7 +1,10 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
@@ -11,9 +14,13 @@ use Modules\Core\Models\Company;
 use Modules\Core\Services\OperatingContextService;
 use Modules\HR\Models\HrAttendanceEvent;
 use Modules\HR\Models\HrAttendanceSession;
+use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrEmployeeBiometricMapping;
 use Modules\HR\Models\HrEmployeeShiftAssignment;
 use Modules\HR\Models\HrShift;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -33,6 +40,7 @@ test('attendance and hr request permissions are discoverable', function (): void
         'hr.employee_attendance.view',
         'hr.employee_attendance.manage',
         'hr.employee_attendance.correct',
+        'hr.employee_attendance.import',
         'hr.employee_attendance.export',
         'hr.hr_requests.view',
         'hr.hr_requests.manage',
@@ -254,6 +262,104 @@ test('attendance settings are company scoped and update the authoritative branch
     expect($fixture['branch']->refresh()->attendance_radius_meters)->toBe(300)
         ->and($fixture['branch']->attendance_max_accuracy_meters)->toBe(75)
         ->and($fixture['branch']->attendance_location_policy)->toBe('reject');
+});
+
+test('attendance settings resolve current and Google Maps locations without manual coordinate entry', function (): void {
+    $fixture = attendanceSelfServiceFixture();
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.attendance_settings.manage', 'web');
+    $manager = User::factory()->create();
+    $manager->givePermissionTo('hr.attendance_settings.manage');
+    $session = [OperatingContextService::CompanyIdKey => $fixture['company']->getKey(), OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num];
+
+    $this->actingAs($manager)->withSession($session)
+        ->postJson(route('admin.hr.attendance-settings.resolve-map-url'), [
+            'map_url' => 'https://www.google.com/maps/@30.1234567,31.7654321,17z',
+        ])
+        ->assertOk()
+        ->assertExactJson(['latitude' => '30.1234567', 'longitude' => '31.7654321']);
+
+    Http::fakeSequence()
+        ->push('', 302, ['Location' => 'https://www.google.com/maps?q=29.9876543,30.4567891'])
+        ->push('', 200);
+
+    $this->postJson(route('admin.hr.attendance-settings.resolve-map-url'), [
+        'map_url' => 'https://maps.app.goo.gl/attendance-location',
+    ])->assertOk()->assertExactJson(['latitude' => '29.9876543', 'longitude' => '30.4567891']);
+
+    $this->patch(route('admin.hr.attendance-settings.update', $fixture['branch']), [
+        'attendance_map_url' => 'https://www.google.com/maps?q=30.2000000,31.3000000',
+        'attendance_radius_meters' => 300,
+        'attendance_max_accuracy_meters' => 75,
+        'attendance_location_policy' => 'reject',
+    ])->assertRedirect()->assertSessionHasNoErrors();
+
+    expect($fixture['branch']->refresh()->attendance_latitude)->toBe('30.2000000')
+        ->and($fixture['branch']->attendance_longitude)->toBe('31.3000000');
+
+    $this->postJson(route('admin.hr.attendance-settings.resolve-map-url'), [
+        'map_url' => 'https://example.com/maps?q=30,31',
+    ])->assertUnprocessable()->assertJsonValidationErrors('map_url');
+});
+
+test('biometric Excel import matches device codes and is idempotent', function (): void {
+    $fixture = attendanceSelfServiceFixture(['attendance_location_policy' => 'warn']);
+    $fixture['shift']->update(['start_time' => '22:00:00', 'end_time' => '06:00:00', 'crosses_midnight' => true]);
+    $device = HrBiometricDevice::query()->create([
+        'doc_number' => 9101,
+        'doc_num' => 'BIO-09101',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'device_uid' => 'DEVICE-09101',
+        'name' => 'Main Gate Device',
+        'status' => 'active',
+    ]);
+    HrEmployeeBiometricMapping::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'employee_id' => $fixture['employee']->getKey(),
+        'biometric_device_id' => $device->getKey(),
+        'biometric_code' => '1001',
+        'is_active' => true,
+    ]);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.employee_attendance.import', 'web');
+    $manager = User::factory()->create();
+    $manager->givePermissionTo('hr.employee_attendance.import');
+    $session = [OperatingContextService::CompanyIdKey => $fixture['company']->getKey(), OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num];
+
+    $spreadsheet = new Spreadsheet;
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->fromArray([
+        ['biometric_code', 'punched_at'],
+        ['1001', '2026-09-14 22:00:00'],
+        ['1001', '2026-09-15 06:00:00'],
+    ]);
+    $path = tempnam(sys_get_temp_dir(), 'attendance-import-');
+    expect($path)->toBeString();
+    (new Xlsx($spreadsheet))->save($path);
+    $spreadsheet->disconnectWorksheets();
+
+    try {
+        foreach ([1, 2] as $attempt) {
+            $this->actingAs($manager)->withSession($session)
+                ->post(route('admin.hr.employee-attendance.import.store'), [
+                    'biometric_device_doc_num' => $device->doc_num,
+                    'workbook' => new UploadedFile($path, 'device-export.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
+                ])->assertRedirect(route('admin.hr.employee-attendance.import.index', ['device' => $device->doc_num]))
+                ->assertSessionHasNoErrors();
+        }
+    } finally {
+        @unlink($path);
+    }
+
+    expect(HrAttendanceEvent::query()->where('employee_id', $fixture['employee']->getKey())->count())->toBe(2)
+        ->and(DB::table('hr_attendance_raw_logs')->where('device_id', $device->getKey())->count())->toBe(2)
+        ->and(Activity::query()->where('action', 'attendance.biometric_import')->count())->toBe(1);
+    $this->assertDatabaseHas('hr_attendance_daily_records', [
+        'employee_id' => $fixture['employee']->getKey(),
+        'work_date' => '2026-09-14 00:00:00',
+        'worked_minutes' => 480,
+    ]);
 });
 
 test('branch-restricted hr users cannot reach same-company attendance or shift data outside their scope', function (): void {

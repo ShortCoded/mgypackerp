@@ -466,7 +466,7 @@ class ExcelImportService
         }
     }
 
-    private function assertSafeUpload(UploadedFile $file): void
+    public function assertSafeUpload(UploadedFile $file): void
     {
         $path = $file->getRealPath();
         $mime = $file->getMimeType();

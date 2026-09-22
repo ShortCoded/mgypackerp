@@ -6,6 +6,7 @@ use Modules\HR\Http\Controllers\EmployeeSelfServiceController;
 use Modules\HR\Http\Controllers\HrAllowanceController;
 use Modules\HR\Http\Controllers\HrAreaController;
 use Modules\HR\Http\Controllers\HrAttendanceController;
+use Modules\HR\Http\Controllers\HrAttendanceImportController;
 use Modules\HR\Http\Controllers\HrAttendanceSettingsController;
 use Modules\HR\Http\Controllers\HrBiometricDeviceController;
 use Modules\HR\Http\Controllers\HrCityController;
@@ -68,6 +69,9 @@ Route::middleware('auth')
         Route::patch('/attendance-settings/{branch:doc_num}', [HrAttendanceSettingsController::class, 'update'])
             ->middleware('can:hr.attendance_settings.manage')
             ->name('attendance-settings.update');
+        Route::post('/attendance-settings/resolve-map-url', [HrAttendanceSettingsController::class, 'resolveMapUrl'])
+            ->middleware('can:hr.attendance_settings.manage')
+            ->name('attendance-settings.resolve-map-url');
 
         Route::get('/shift-assignments', [HrShiftAssignmentController::class, 'index'])
             ->middleware('can:hr.shift_assignments.view')
@@ -84,6 +88,10 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:hr.employee_attendance.view')->name('index');
             Route::get('/export/csv', 'exportCsv')->middleware('can:hr.employee_attendance.export')->name('export.csv');
             Route::post('/manual', 'storeManual')->middleware('can:hr.employee_attendance.correct')->name('manual.store');
+        });
+        Route::prefix('employee-attendance/import')->name('employee-attendance.import.')->controller(HrAttendanceImportController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:hr.employee_attendance.import')->name('index');
+            Route::post('/', 'store')->middleware('can:hr.employee_attendance.import')->name('store');
         });
 
         Route::prefix('hr-requests')->name('hr-requests.')->controller(HrRequestController::class)->group(function (): void {

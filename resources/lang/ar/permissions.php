@@ -80,6 +80,7 @@ $hrAttendanceAndRequestPermissionLabels = [
     'hr.employee_attendance.view' => 'عرض حضور وانصراف الموظفين',
     'hr.employee_attendance.manage' => 'إدارة حركات حضور وانصراف الموظفين',
     'hr.employee_attendance.correct' => 'تصحيح حركات حضور وانصراف الموظفين',
+    'hr.employee_attendance.import' => 'استيراد الحضور من أجهزة البصمة',
     'hr.payslips.view' => 'عرض قسائم رواتب الموظفين',
     'hr.payroll_reports.view' => 'عرض تقرير الرواتب',
     'hr.payroll_reports.export' => 'تصدير تقرير الرواتب',

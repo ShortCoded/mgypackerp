@@ -134,6 +134,7 @@ return [
     'hr_attendance_settings' => 'إعدادات الحضور والانصراف',
     'hr_shift_assignments' => 'تخصيص الورديات',
     'hr_employee_attendance' => 'حضور وانصراف الموظفين',
+    'hr_attendance_import' => 'استيراد بصمات الحضور',
     'hr_requests' => 'طلبات الموارد البشرية',
     'hr_payroll_preparation' => 'إعداد الرواتب',
     'hr_payroll_report' => 'تقرير الرواتب',

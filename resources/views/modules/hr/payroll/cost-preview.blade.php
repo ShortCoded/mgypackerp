@@ -1,40 +1,57 @@
 @extends('layouts.app')
 
-@section('title', __('Payroll Cost Preview'))
+@section('title', __('hr_payroll.cost_preview.title'))
 
 @section('content')
-    <div class="card">
-        <div class="card-header">
-            <h5 class="mb-1">{{ __('Payroll Cost Preview') }} #{{ $run->id }}</h5>
-            <div class="text-muted">{{ $run->period_start }} — {{ $run->period_end }}</div>
-        </div>
+    <div class="container-fluid px-0 px-sm-3 hr-cycle-shell">
+        <section class="hr-cycle-hero mb-3">
+            <div class="card-body p-4 position-relative" style="z-index:1">
+                <div class="hr-cycle-kicker mb-2">{{ __('hr_payroll.cost_preview.kicker') }}</div>
+                <h2 class="text-white mb-2">{{ __('hr_payroll.cost_preview.title') }} #{{ $run->id }}</h2>
+                <p class="text-600 mb-3">{{ __('hr_payroll.cost_preview.description') }}</p>
+                <div class="hr-quick-nav">
+                    <a href="{{ route('admin.hr.payroll-preparation.index', ['run' => $run->id]) }}"><span class="fas fa-arrow-right me-1"></span>{{ __('hr_payroll.cost_preview.back') }}</a>
+                    <span><span class="fas fa-calendar-alt me-1"></span>{{ $run->period_start }} — {{ $run->period_end }}</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="card hr-section-card">
         <div class="card-body">
             @if($errors !== [])
                 <div class="alert alert-danger">
+                    <strong>{{ __('hr_payroll.cost_preview.blocked') }}</strong>
                     <ul class="mb-0">@foreach($errors as $error)<li>{{ $error }}</li>@endforeach</ul>
                 </div>
+            @else
+                <div class="alert alert-success d-flex gap-2 align-items-center"><span class="fas fa-check-circle"></span><span>{{ __('hr_payroll.cost_preview.ready') }}</span></div>
             @endif
             <div class="table-responsive">
-                <table class="table table-sm align-middle">
+                <table class="table table-hover align-middle mb-0">
                     <thead><tr>
-                        <th>{{ __('Employee') }}</th><th>{{ __('Payroll Item') }}</th><th>{{ __('Account') }}</th>
-                        <th>{{ __('Account Classification') }}</th><th>{{ __('Department') }}</th><th>{{ __('Cost Center') }}</th>
-                        <th>{{ __('Allocation') }}</th><th class="text-end">{{ __('Amount') }}</th>
+                        <th>{{ __('hr_payroll.cost_preview.employee') }}</th><th>{{ __('hr_payroll.cost_preview.item') }}</th><th>{{ __('hr_payroll.cost_preview.account') }}</th>
+                        <th>{{ __('hr_payroll.cost_preview.classification') }}</th><th>{{ __('hr_payroll.cost_preview.department') }}</th><th>{{ __('hr_payroll.cost_preview.cost_center') }}</th>
+                        <th>{{ __('hr_payroll.cost_preview.allocation') }}</th><th class="text-end">{{ __('hr_payroll.cost_preview.amount') }}</th>
                     </tr></thead>
                     <tbody>
                         @forelse($lines as $line)
                             <tr>
                                 <td>{{ $line['employee'] }}</td><td>{{ $line['payroll_item'] }}</td><td>{{ $line['account'] }}</td>
                                 <td><code>{{ $line['classification'] }}</code></td><td>{{ $line['department'] ?: '—' }}</td>
-                                <td>{{ $line['cost_center'] }}</td><td>{{ $line['allocation_type'] }} / {{ $line['percentage'] }}%</td>
+                                <td>{{ $line['cost_center'] }}</td><td><span class="badge badge-subtle-primary">{{ __('hr_payroll.cost_preview.types.'.$line['allocation_type']) }}</span> <span dir="ltr">{{ $line['percentage'] }}%</span></td>
                                 <td class="text-end" dir="ltr">{{ $line['amount'] }}</td>
                             </tr>
                         @empty
-                            <tr><td colspan="8" class="text-center text-muted py-4">{{ __('No payroll cost lines found.') }}</td></tr>
+                            <tr><td colspan="8" class="text-center text-muted py-4">{{ __('hr_payroll.cost_preview.empty') }}</td></tr>
                         @endforelse
                     </tbody>
                 </table>
             </div>
         </div>
+        </div></div>
     </div>
 @endsection
+
+@push('styles')
+    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/hr-cycle.css') }}?v=20260922">
+@endpush

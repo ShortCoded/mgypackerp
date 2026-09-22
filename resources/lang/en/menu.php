@@ -134,6 +134,7 @@ return [
     'hr_attendance_settings' => 'Attendance Settings',
     'hr_shift_assignments' => 'Shift Assignments',
     'hr_employee_attendance' => 'Employee Attendance',
+    'hr_attendance_import' => 'Import Attendance Punches',
     'hr_requests' => 'HR Requests',
     'hr_payroll_preparation' => 'Payroll Preparation',
     'hr_payroll_report' => 'Payroll Report',

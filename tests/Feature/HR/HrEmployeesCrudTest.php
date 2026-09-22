@@ -1939,13 +1939,27 @@ test('employee record can link one active user account only once', function (): 
     $employee = HrEmployee::query()->where('user_id', $linkedUser->getKey())->sole();
     expect($employee->user?->is($linkedUser))->toBeTrue();
 
+    $replacementUser = User::factory()->create();
+    $this->withSession($session)
+        ->putJson(route('admin.hr.employees.update', $employee->doc_num), hrEmployeePayload($fixtures, [
+            'user_doc_num' => $replacementUser->doc_num,
+            'basic_salary' => '4,500',
+            'biometric_mappings' => [],
+        ]))
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    expect($employee->refresh()->user?->is($replacementUser))->toBeTrue()
+        ->and($employee->basic_salary)->toBe('4500.00')
+        ->and(Activity::query()->where('event', 'hr.employees.update')->where('subject_id', $employee->getKey())->exists())->toBeTrue();
+
     $this->withSession($session)
         ->postJson(route('admin.hr.employees.store'), hrEmployeePayload($fixtures, [
             'full_name' => 'Second Employee',
             'national_id' => '29104159999999',
             'email' => 'second.employee@example.test',
             'work_email' => 'second.employee@company.example.test',
-            'user_doc_num' => $linkedUser->doc_num,
+            'user_doc_num' => $replacementUser->doc_num,
             'biometric_mappings' => [],
         ]))
         ->assertUnprocessable()

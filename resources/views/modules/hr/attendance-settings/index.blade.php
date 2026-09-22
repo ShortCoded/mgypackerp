@@ -15,6 +15,14 @@
                         <div class="card-body">
                             <form method="POST" action="{{ route('admin.hr.attendance-settings.update', $branch) }}" class="row g-3 js-attendance-settings-form">
                                 @csrf @method('PATCH')
+                                <div class="col-12">
+                                    <x-forms.label :for="'attendance_map_url_'.$branch->getKey()" :label="__('hr_attendance_settings.fields.map_url')" />
+                                    <div class="input-group">
+                                        <x-forms.input class="form-control js-map-url" :id="'attendance_map_url_'.$branch->getKey()" name="attendance_map_url" type="url" dir="ltr" :placeholder="__('hr_attendance_settings.placeholders.map_url')" />
+                                        <button class="btn btn-outline-secondary js-resolve-map-url" type="button">{{ __('hr_attendance_settings.actions.resolve_url') }}</button>
+                                    </div>
+                                    <div class="alert alert-info py-2 mt-2 mb-0 js-location-status" role="status">{{ __('hr_attendance_settings.map_url_help') }}</div>
+                                </div>
                                 <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_latitude') }}</label><input class="form-control js-latitude" name="attendance_latitude" type="number" step="0.0000001" value="{{ $branch->attendance_latitude }}"></div>
                                 <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_longitude') }}</label><input class="form-control js-longitude" name="attendance_longitude" type="number" step="0.0000001" value="{{ $branch->attendance_longitude }}"></div>
                                 <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_radius_meters') }}</label><input class="form-control" name="attendance_radius_meters" type="number" min="10" max="10000" value="{{ $branch->attendance_radius_meters }}" required></div>
@@ -36,13 +44,68 @@
 
 @push('scripts')
 <script>
-    document.querySelectorAll('.js-capture-location').forEach(button => button.addEventListener('click', () => {
-        const form = button.closest('form');
-        if (!navigator.geolocation) return window.alert(@json(__('hr_attendance_settings.messages.location_unavailable')));
-        navigator.geolocation.getCurrentPosition(position => {
-            form.querySelector('.js-latitude').value = position.coords.latitude.toFixed(7);
-            form.querySelector('.js-longitude').value = position.coords.longitude.toFixed(7);
-        }, () => window.alert(@json(__('hr_attendance_settings.messages.location_unavailable'))), {enableHighAccuracy: true});
-    }));
+    (() => {
+        const resolveUrl = @json(route('admin.hr.attendance-settings.resolve-map-url'));
+        const csrf = @json(csrf_token());
+        const messages = {
+            resolving: @json(__('hr_attendance_settings.messages.resolving')),
+            resolved: @json(__('hr_attendance_settings.messages.resolved')),
+            resolveFailed: @json(__('hr_attendance_settings.messages.resolve_failed')),
+            locating: @json(__('hr_attendance_settings.messages.locating')),
+            locationUnavailable: @json(__('hr_attendance_settings.messages.location_unavailable')),
+        };
+
+        const setCoordinates = (form, latitude, longitude) => {
+            form.querySelector('.js-latitude').value = Number(latitude).toFixed(7);
+            form.querySelector('.js-longitude').value = Number(longitude).toFixed(7);
+        };
+
+        const setStatus = (status, message, type = 'info') => {
+            status.textContent = message;
+            status.className = `alert alert-${type} py-2 mt-2 mb-0 js-location-status`;
+        };
+
+        const resolveMapUrl = async form => {
+            const input = form.querySelector('.js-map-url');
+            const status = form.querySelector('.js-location-status');
+            if (!input.value.trim()) return;
+            setStatus(status, messages.resolving);
+            try {
+                const response = await fetch(resolveUrl, {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf},
+                    body: JSON.stringify({map_url: input.value.trim()}),
+                });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload?.errors?.map_url?.[0] || messages.resolveFailed);
+                setCoordinates(form, payload.latitude, payload.longitude);
+                setStatus(status, messages.resolved, 'success');
+            } catch (error) {
+                setStatus(status, error.message || messages.resolveFailed, 'danger');
+            }
+        };
+
+        document.querySelectorAll('.js-attendance-settings-form').forEach(form => {
+            form.querySelector('.js-resolve-map-url')?.addEventListener('click', () => resolveMapUrl(form));
+            form.querySelector('.js-map-url')?.addEventListener('change', () => resolveMapUrl(form));
+            form.querySelector('.js-capture-location')?.addEventListener('click', buttonEvent => {
+                const status = form.querySelector('.js-location-status');
+                if (!navigator.geolocation) {
+                    setStatus(status, messages.locationUnavailable, 'danger');
+                    return;
+                }
+                buttonEvent.currentTarget.disabled = true;
+                setStatus(status, messages.locating);
+                navigator.geolocation.getCurrentPosition(position => {
+                    setCoordinates(form, position.coords.latitude, position.coords.longitude);
+                    setStatus(status, messages.resolved, 'success');
+                    buttonEvent.currentTarget.disabled = false;
+                }, () => {
+                    setStatus(status, messages.locationUnavailable, 'danger');
+                    buttonEvent.currentTarget.disabled = false;
+                }, {enableHighAccuracy: true, timeout: 15000, maximumAge: 0});
+            });
+        });
+    })();
 </script>
 @endpush

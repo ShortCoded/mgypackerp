@@ -111,6 +111,25 @@ class HrAttendanceService
     }
 
     /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    public function recordBiometricPunch(HrEmployee $employee, User $actor, array $data, CarbonImmutable $occurredAt): array
+    {
+        return $this->recordPunch(
+            employee: $employee->loadMissing(['branch', 'defaultShift']),
+            eventType: (string) $data['event_type'],
+            data: $data,
+            source: 'biometric_import',
+            actor: $actor,
+            occurredAt: $occurredAt,
+            ipAddress: null,
+            userAgent: null,
+            includeStatus: false,
+        );
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function statusForEmployee(HrEmployee $employee): array
@@ -187,7 +206,7 @@ class HrAttendanceService
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    private function recordPunch(HrEmployee $employee, string $eventType, array $data, string $source, User $actor, CarbonImmutable $occurredAt, ?string $ipAddress, ?string $userAgent): array
+    private function recordPunch(HrEmployee $employee, string $eventType, array $data, string $source, User $actor, CarbonImmutable $occurredAt, ?string $ipAddress, ?string $userAgent, bool $includeStatus = true): array
     {
         $idempotencyKey = (string) $data['idempotency_key'];
         $existing = HrAttendanceEvent::query()
@@ -198,7 +217,7 @@ class HrAttendanceService
         if ($existing instanceof HrAttendanceEvent) {
             $this->ensureIdempotencyMatches($existing, $eventType);
 
-            return $this->statusForEmployee($employee);
+            return $includeStatus ? $this->statusForEmployee($employee) : [];
         }
 
         DB::transaction(function () use ($employee, $eventType, $data, $source, $actor, $occurredAt, $ipAddress, $userAgent, $idempotencyKey): void {
@@ -323,7 +342,7 @@ class HrAttendanceService
             $this->rebuildDailyRecord($session, $occurredAt);
         });
 
-        return $this->statusForEmployee($employee->fresh(['branch', 'defaultShift']));
+        return $includeStatus ? $this->statusForEmployee($employee->fresh(['branch', 'defaultShift'])) : [];
     }
 
     private function ensureIdempotencyMatches(HrAttendanceEvent $existing, string $eventType): void

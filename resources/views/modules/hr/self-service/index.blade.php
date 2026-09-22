@@ -8,7 +8,7 @@
 @section('title', __('hr_attendance.self_service.title'))
 
 @section('content')
-    <div class="container-fluid px-0 px-sm-3 employee-self-service"
+    <div class="container-fluid px-0 px-sm-3 employee-self-service hr-cycle-shell"
         data-status-url="{{ route('employee.hr.attendance.status') }}"
         data-punch-url="{{ route('employee.hr.attendance.punch') }}"
         data-login-url="{{ route('login') }}"
@@ -20,14 +20,49 @@
             <div class="alert alert-danger"><ul class="mb-0">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
         @endif
 
+        @if ($attendance['linked'])
+            <section class="hr-cycle-hero mb-3">
+                <div class="card-body p-4 p-lg-5 position-relative" style="z-index:1">
+                    <div class="row align-items-center g-4">
+                        <div class="col-lg-8">
+                            <div class="hr-cycle-kicker mb-2">{{ __('hr_attendance.self_service.workspace_kicker') }}</div>
+                            <h2 class="text-white mb-2">{{ __('hr_attendance.self_service.welcome', ['name' => $employee?->full_name ?: $employee?->name]) }}</h2>
+                            <div class="employee-profile-line mb-3">
+                                <span><i class="fas fa-id-badge"></i>{{ $employee?->doc_num }}</span>
+                                <span><i class="fas fa-building"></i>{{ $employee?->departmentModel?->name ?: __('hr_attendance.labels.not_available') }}</span>
+                                <span><i class="fas fa-briefcase"></i>{{ $employee?->job?->name ?: __('hr_attendance.labels.not_available') }}</span>
+                                <span><i class="fas fa-map-marker-alt"></i>{{ $employee?->branch?->name ?: __('hr_attendance.labels.no_branch') }}</span>
+                            </div>
+                            <div class="hr-quick-nav">
+                                <a href="#attendance-workspace"><span class="fas fa-user-clock me-1"></span>{{ __('hr_attendance.self_service.nav_attendance') }}</a>
+                                <a href="#employee-payslips"><span class="fas fa-file-invoice-dollar me-1"></span>{{ __('hr_attendance.self_service.nav_payslips') }}</a>
+                                <a href="#employee-requests"><span class="fas fa-paper-plane me-1"></span>{{ __('hr_attendance.self_service.nav_new_request') }}</a>
+                                <a href="#my-requests"><span class="fas fa-list-alt me-1"></span>{{ __('hr_attendance.self_service.nav_requests') }}</a>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="row g-2">
+                                <div class="col-6"><div class="rounded-3 p-3 h-100" style="background:rgba(255,255,255,.12)"><small class="text-600">{{ __('hr_attendance.self_service.pending_requests') }}</small><div class="fs-3 fw-bold">{{ $selfServiceSummary['pending_requests'] }}</div></div></div>
+                                <div class="col-6"><div class="rounded-3 p-3 h-100" style="background:rgba(255,255,255,.12)"><small class="text-600">{{ __('hr_attendance.self_service.available_payslips') }}</small><div class="fs-3 fw-bold">{{ $selfServiceSummary['payslips'] }}</div></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        @endif
+
         @unless ($attendance['linked'])
             <div class="alert alert-warning mb-3">
                 <h5 class="alert-heading">{{ __('hr_attendance.self_service.not_linked_title') }}</h5>
                 <p class="mb-0">{{ __('hr_attendance.self_service.not_linked_help') }}</p>
             </div>
         @else
-            <section class="card attendance-hero mb-3" aria-labelledby="attendance-status-title">
+            <section class="card attendance-hero hr-section-card mb-3 self-service-section" id="attendance-workspace" aria-labelledby="attendance-status-title">
                 <div class="card-body p-3 p-sm-4">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <div><div class="hr-section-eyebrow">{{ __('hr_attendance.self_service.today') }}</div><h5 class="mb-0">{{ __('hr_attendance.self_service.attendance_workspace') }}</h5></div>
+                        <span class="hr-status-chip"><span class="fas fa-map-marker-alt"></span>{{ __('hr_attendance.self_service.location_required') }}</span>
+                    </div>
                     <div class="d-flex flex-column flex-sm-row justify-content-between gap-3">
                         <div>
                             <div class="text-600 small">{{ $attendance['employee']['name'] }} · {{ $attendance['employee']['branch'] ?: __('hr_attendance.labels.no_branch') }}</div>
@@ -64,7 +99,7 @@
                 </div>
             </section>
 
-            <section class="card mb-3">
+            <section class="card hr-section-card mb-3 self-service-section">
                 <div class="card-header"><h5 class="mb-0">{{ __('hr_attendance.self_service.recent_events') }}</h5></div>
                 <div class="list-group list-group-flush js-recent-events">
                     @forelse ($attendance['recent_events'] as $event)
@@ -80,8 +115,8 @@
         @endunless
 
         @if ($attendance['linked'])
-            <section class="card mb-3" id="employee-payslips">
-                <div class="card-header"><h5 class="mb-0">{{ __('hr_payroll_reports.payslip.my_payslips') }}</h5></div>
+            <section class="card hr-section-card mb-3 self-service-section" id="employee-payslips">
+                <div class="card-header py-3"><div class="hr-section-eyebrow">{{ __('hr_attendance.self_service.salary_archive') }}</div><h5 class="mb-0">{{ __('hr_payroll_reports.payslip.my_payslips') }}</h5><div class="small text-muted mt-1">{{ __('hr_attendance.self_service.payslip_help') }}</div></div>
                 <div class="list-group list-group-flush">
                     @forelse ($payslips as $payslip)
                         <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ route('employee.hr.payslips.show', $payslip->id) }}">
@@ -94,9 +129,9 @@
                 </div>
             </section>
 
-            <section class="card mb-3" id="employee-requests">
-                <div class="card-header"><h5 class="mb-0">{{ __('hr_requests.self_service.new_request') }}</h5></div>
-                <div class="card-body">
+            <section class="card hr-section-card mb-3 self-service-section" id="employee-requests">
+                <div class="card-header py-3 d-flex flex-wrap justify-content-between align-items-center gap-2"><div><div class="hr-section-eyebrow">{{ __('hr_attendance.self_service.request_center') }}</div><h5 class="mb-0">{{ __('hr_requests.self_service.new_request') }}</h5><div class="small text-muted mt-1">{{ __('hr_attendance.self_service.request_help') }}</div></div>@if ($attendance['can_submit_requests'])<button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#employee-request-composer" aria-expanded="{{ $errors->any() ? 'true' : 'false' }}"><span class="fas fa-plus me-1"></span>{{ __('hr_attendance.self_service.start_request') }}</button>@endif</div>
+                <div @class(['card-body collapse' => true, 'show' => $errors->any()]) id="employee-request-composer">
                     @if ($attendance['can_submit_requests'])
                     <form action="{{ route('employee.hr.requests.store') }}" method="POST" class="row g-3 js-employee-request-form">
                         @csrf
@@ -150,7 +185,7 @@
                 </div>
             </section>
 
-            <section class="card">
+            <section class="card hr-section-card self-service-section" id="my-requests">
                 <div class="card-header"><h5 class="mb-0">{{ __('hr_requests.self_service.my_requests') }}</h5></div>
                 <div class="card-body p-2 p-sm-3">
                     <div class="row g-2">
@@ -177,6 +212,7 @@
 
 @push('styles')
     <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/employee-self-service.css') }}">
+    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/hr-cycle.css') }}?v=20260922">
 @endpush
 
 @push('scripts')

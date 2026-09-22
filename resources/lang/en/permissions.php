@@ -80,6 +80,7 @@ $hrAttendanceAndRequestPermissionLabels = [
     'hr.employee_attendance.view' => 'View Employee Attendance',
     'hr.employee_attendance.manage' => 'Manage Employee Attendance Events',
     'hr.employee_attendance.correct' => 'Correct Employee Attendance Events',
+    'hr.employee_attendance.import' => 'Import Attendance from Biometric Devices',
     'hr.payslips.view' => 'View Employee Payslips',
     'hr.payroll_reports.view' => 'View Payroll Report',
     'hr.payroll_reports.export' => 'Export Payroll Report',

@@ -304,6 +304,7 @@ return [
         'hr_biometric_devices' => null,
         'hr_shifts' => null,
         'hr_employee_attendance' => null,
+        'hr_attendance_import' => null,
         'hr_requests' => null,
         'employee_self_service' => null,
         'hr_document_types' => null,

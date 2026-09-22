@@ -3,6 +3,7 @@
 namespace Modules\HR\Http\Controllers;
 
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -11,7 +12,9 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\HR\Http\Requests\Attendance\ResolveAttendanceMapUrlRequest;
 use Modules\HR\Http\Requests\UpdateAttendanceSettingsRequest;
+use Modules\HR\Services\MapCoordinatesService;
 
 class HrAttendanceSettingsController extends Controller
 {
@@ -19,6 +22,7 @@ class HrAttendanceSettingsController extends Controller
         private readonly OperatingCompanyContextService $companies,
         private readonly OperatingScopeAccessService $scope,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly MapCoordinatesService $coordinates,
     ) {}
 
     public function index(Request $request): View
@@ -37,15 +41,29 @@ class HrAttendanceSettingsController extends Controller
         $company = $this->companies->currentCompany($request);
         abort_unless($company !== null && $this->scope->canAccessBranch($request->user(), $branch, $company), 404);
 
-        DB::transaction(function () use ($request, $branch, $company): void {
+        $validated = $request->safe()->except('attendance_map_url');
+        $mapUrl = trim((string) $request->validated('attendance_map_url', ''));
+
+        if ($mapUrl !== '') {
+            $coordinates = $this->coordinates->coordinates($mapUrl);
+            $validated['attendance_latitude'] = $coordinates['latitude'];
+            $validated['attendance_longitude'] = $coordinates['longitude'];
+        }
+
+        DB::transaction(function () use ($request, $branch, $company, $validated): void {
             $locked = Branch::query()->where('company_id', $company->getKey())->lockForUpdate()->findOrFail($branch->getKey());
             abort_unless($this->scope->canAccessBranch($request->user(), $locked, $company), 404);
             $locked->update([
-                ...$request->validated(),
+                ...$validated,
                 'updated_by' => $request->user()->getKey(),
             ]);
         });
 
         return back()->with('success', __('hr_attendance_settings.messages.updated'));
+    }
+
+    public function resolveMapUrl(ResolveAttendanceMapUrlRequest $request): JsonResponse
+    {
+        return response()->json($this->coordinates->coordinates((string) $request->validated('map_url')));
     }
 }
