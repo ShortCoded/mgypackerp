@@ -96,6 +96,7 @@
         'contract_start_date',
         'contract_end_date',
         'probation_end_date',
+        'graduation_year',
         'attendance_tracking_enabled',
         'attendance_policy_type',
         'allow_late_minutes',
@@ -172,6 +173,7 @@
                 <ul class="mb-3 nav nav-tabs hr-employee-form-tabs" id="hr-employee-tabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" id="tab-basic-info" data-bs-toggle="tab" data-bs-target="#pane-basic-info" type="button" role="tab">{{ __('hr.employees.sections.basic_info') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-work-info" data-bs-toggle="tab" data-bs-target="#pane-work-info" type="button" role="tab">{{ __('hr.employees.sections.work_info') }}</button></li>
+                    <li class="nav-item"><button class="nav-link" id="tab-education" data-bs-toggle="tab" data-bs-target="#pane-education" type="button" role="tab">{{ __('hr.employees.sections.education') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-attendance-biometric" data-bs-toggle="tab" data-bs-target="#pane-attendance-biometric" type="button" role="tab">{{ __('hr.employees.sections.attendance_biometric') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-salary-payment" data-bs-toggle="tab" data-bs-target="#pane-salary-payment" type="button" role="tab">{{ __('hr.employees.sections.salary_payment') }}</button></li>
                     <li class="nav-item"><button class="nav-link" id="tab-documents" data-bs-toggle="tab" data-bs-target="#pane-documents" type="button" role="tab">{{ __('hr.employees.sections.documents') }}</button></li>
@@ -496,6 +498,34 @@
                                 @endif
                                 <div class="invalid-feedback" data-error-for="address"></div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="pane-education" role="tabpanel" aria-labelledby="tab-education">
+                        <div class="row g-3 align-items-start hr-employee-form-grid">
+                            @foreach (['qualification_doc_num', 'university_doc_num', 'faculty_doc_num', 'specialization_doc_num', 'military_service_doc_num'] as $fieldName)
+                                @php
+                                    $option = $selectOption($fieldName) ?? [];
+                                    $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName);
+                                @endphp
+                                <div class="col-12 col-md-6 col-xl-4">
+                                    @include('modules.hr.partials.inline-select2-field', [
+                                        'isView' => $isView,
+                                        'inputId' => $inputId,
+                                        'fieldName' => $fieldName,
+                                        'fieldLabel' => __('hr.employees.attributes.' . $fieldName),
+                                        'placeholder' => __('hr.employees.placeholders.' . $fieldName),
+                                        'selectedValue' => $selectValue($fieldName),
+                                        'selectedText' => (string) ($option['text'] ?? ''),
+                                        'dataUrl' => (string) ($option['url'] ?? ''),
+                                        'canCreate' => (bool) ($option['can_create'] ?? false),
+                                        'createUrl' => $option['create_url'] ?? null,
+                                        'inlineUrl' => null,
+                                        'required' => false,
+                                    ])
+                                </div>
+                            @endforeach
+                            <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="hr-employee-graduation-year">{{ __('hr.employees.attributes.graduation_year') }}</label>@if($isView)<x-forms.view-field for="hr-employee-graduation-year" :value="$fieldValue('graduation_year')" />@else<x-forms.input id="hr-employee-graduation-year" name="graduation_year" type="number" min="1900" :max="now()->year + 10" value="{{ $fieldValue('graduation_year') }}" />@endif<div class="invalid-feedback" data-error-for="graduation_year"></div></div>
                         </div>
                     </div>
 

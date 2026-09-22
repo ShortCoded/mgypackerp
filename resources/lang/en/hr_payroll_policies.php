@@ -2,7 +2,7 @@
 
 return [
     'title' => 'Payroll Attendance Policies',
-    'create' => 'Add policy version',
+    'create' => 'Add policy',
     'scope' => 'Scope',
     'company_scope' => 'All company branches',
     'fields' => [
@@ -17,18 +17,18 @@ return [
         'standard_day_minutes' => 'Standard working minutes per day',
         'deduction_payroll_item_code' => 'Deduction payroll item',
     ],
-    'help' => 'New versions close the previous version automatically. All deductions are disabled until explicitly enabled.',
+    'help' => 'Choose the branch and start date, then enable only the required deductions. All branches applies the policy company-wide.',
     'workspace' => [
         'kicker' => 'From attendance to net pay',
         'description' => 'Define exactly how absence, lateness, early leave, and unpaid leave become payroll deductions while preserving the policy snapshot used by every run.',
         'import' => 'Import punches', 'attendance' => 'Review attendance', 'payroll' => 'Calculate payroll',
-        'how_it_works' => 'How does the policy work?', 'new_version' => 'Traceable version',
+        'how_it_works' => 'How it applies', 'new_version' => 'New policy',
         'scope_section' => '1. Scope and effective date', 'scope_help' => 'Choose the whole company or one branch. A branch policy takes priority over the company policy.',
         'rules_section' => '2. Deduction rules', 'rules_help' => 'Enable only agreed rules. An unchecked rule never deducts pay.',
         'deduction_item_help' => 'Used for attendance deductions in the payslip and accounting journal.',
         'divisor_help' => 'Example: 30 means daily pay equals monthly salary divided by 30.',
         'minutes_help' => 'Example: 480 minutes equals 8 hours and determines the per-minute value.',
-        'save_version' => 'Save new version', 'history' => 'Immutable history', 'versions' => 'Policy versions',
+        'save_version' => 'Save policy', 'history' => 'Previous policies', 'versions' => 'Saved policies',
         'enabled_rules' => 'Enabled rules', 'current' => 'Current', 'no_deductions' => 'No deductions',
     ],
     'descriptions' => [

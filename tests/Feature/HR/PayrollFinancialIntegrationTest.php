@@ -359,8 +359,11 @@ test('payroll calculation approval finance payment and both reconciliations are 
     ];
     $draft = app(PayrollPaymentService::class)->createCashPayment($runId, $fixture['company']->getKey(), $paymentPayload);
     $duplicateDraft = app(PayrollPaymentService::class)->createCashPayment($runId, $fixture['company']->getKey(), $paymentPayload);
+    $payslipId = (int) DB::table('hr_payslips')->where('payroll_run_id', $runId)->value('id');
 
     expect($duplicateDraft['voucher']->getKey())->toBe($draft['voucher']->getKey())
+        ->and((int) $draft['payment']->payslip_id)->toBe($payslipId)
+        ->and($draft['voucher']->person_name)->toBe($fixture['employee']->full_name)
         ->and(DB::table('hr_payroll_payments')->where('company_id', $fixture['company']->getKey())->where('idempotency_key', $paymentKey)->count())->toBe(1);
     expect(fn () => app(PayrollPaymentService::class)->createCashPayment($runId, $fixture['company']->getKey(), [
         ...$paymentPayload,
@@ -631,9 +634,13 @@ test('payroll reports exports and payslips use persisted snapshots with branch a
     $this->withSession($session)->get(route('admin.hr.reports.payments'))
         ->assertOk()->assertSee($payment['voucher']->doc_num)->assertSee('EGP');
     $this->withSession($session)->get(route('admin.hr.payslips.show', $payslip->id))
-        ->assertOk()->assertSee($fixture['employee']->full_name)->assertSee('BASIC')
+        ->assertOk()->assertSee($fixture['employee']->full_name)->assertSee(__('hr_payroll_reports.payslip.items'))
+        ->assertDontSee('Policy Snapshots')->assertDontSee('Record Ids')->assertDontSee('employee_master')
+        ->assertDontSee('BASIC')
         ->assertSee(app(NumericFormatService::class)->format($payslip->net_amount))
         ->assertDontSee(number_format((float) $payslip->net_amount, 2));
+    $this->withSession($session)->get(route('admin.hr.payslips.print', $payslip->id))
+        ->assertOk()->assertSee('window.print()', false)->assertDontSee('Policy Snapshots')->assertDontSee('employee_master');
     $this->withSession($session)->get(route('admin.hr.payslips.show', $otherPayslip))->assertNotFound();
     $this->withSession($session)->get(route('admin.hr.payslips.show', $foreignPayslip))->assertNotFound();
 

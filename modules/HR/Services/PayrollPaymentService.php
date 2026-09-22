@@ -29,12 +29,19 @@ final class PayrollPaymentService
     ) {}
 
     /**
-     * @param  array{cashbox_doc_num: string, amount: mixed, payment_date: string, idempotency_key: string, reference?: string|null}  $data
+     * @param  array{payslip_id: int, cashbox_doc_num: string, amount: mixed, payment_date: string, idempotency_key: string, reference?: string|null}  $data
      * @return array{payment: object, voucher: CashVoucher}
      */
     public function createCashPayment(int $payrollRunId, int $companyId, array $data): array
     {
         return DB::transaction(function () use ($payrollRunId, $companyId, $data): array {
+            if (! isset($data['payslip_id'])) {
+                $payslipIds = DB::table('hr_payslips')->where('payroll_run_id', $payrollRunId)->where('company_id', $companyId)->limit(2)->pluck('id');
+                if ($payslipIds->count() !== 1) {
+                    throw new DomainException(__('hr_payroll.messages.payslip_required'));
+                }
+                $data['payslip_id'] = (int) $payslipIds->first();
+            }
             $existing = DB::table('hr_payroll_payments as payment')
                 ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
                 ->join('cashboxes as cashbox', 'cashbox.id', '=', 'voucher.cashbox_id')
@@ -49,14 +56,15 @@ final class PayrollPaymentService
                 ]);
             if ($existing !== null) {
                 $expectedAmount = bcadd((string) $data['amount'], '0', 4);
-                $expectedDescription = filled($data['reference'] ?? null)
-                    ? trim((string) $data['reference'])
-                    : __('hr_payroll.payment.reference', ['run' => $payrollRunId]);
                 $samePayload = (int) $existing->payroll_run_id === $payrollRunId
+                    && (int) $existing->payslip_id === (int) $data['payslip_id']
                     && hash_equals(trim((string) $existing->cashbox_doc_num), trim((string) $data['cashbox_doc_num']))
                     && CarbonImmutable::parse($existing->voucher_date)->isSameDay($data['payment_date'])
-                    && hash_equals(trim((string) $existing->voucher_description), $expectedDescription)
                     && bccomp((string) $existing->amount, $expectedAmount, 4) === 0;
+                if (filled($data['reference'] ?? null)) {
+                    $samePayload = $samePayload
+                        && hash_equals(trim((string) $existing->voucher_description), trim((string) $data['reference']));
+                }
                 if (! $samePayload) {
                     throw new DomainException(__('hr_payroll.messages.payment_idempotency_conflict'));
                 }
@@ -72,6 +80,17 @@ final class PayrollPaymentService
                 throw new DomainException(__('hr_payroll.messages.payment_requires_posted_run'));
             }
 
+            $payslip = DB::table('hr_payslips')
+                ->where('id', $data['payslip_id'])
+                ->where('payroll_run_id', $payrollRunId)
+                ->where('company_id', $companyId)
+                ->whereIn('status', ['approved', 'posted'])
+                ->lockForUpdate()
+                ->first(['id', 'employee_id', 'employee_name', 'employee_doc_num', 'branch_id', 'net_amount']);
+            if ($payslip === null) {
+                throw new DomainException(__('hr_payroll.messages.payslip_not_payable'));
+            }
+
             $cashbox = Cashbox::query()
                 ->with('account')
                 ->forCompany($companyId)
@@ -79,16 +98,20 @@ final class PayrollPaymentService
                 ->where('doc_num', $data['cashbox_doc_num'])
                 ->whereNull('deleted_at')
                 ->firstOrFail();
-            if ($run->branch_id !== null
-                && ($cashbox->branch_id === null || (int) $run->branch_id !== (int) $cashbox->branch_id)) {
+            if ($payslip->branch_id !== null
+                && ($cashbox->branch_id === null || (int) $payslip->branch_id !== (int) $cashbox->branch_id)) {
                 throw new DomainException(__('hr_payroll.messages.payment_branch_mismatch'));
             }
             $branchId = $cashbox->branch_id === null ? null : (int) $cashbox->branch_id;
 
             $amount = bcadd((string) $data['amount'], '0', 4);
-            $remaining = $this->remainingForBranch($payrollRunId, $branchId);
+            $remaining = $this->remainingForPayslip((int) $payslip->id);
+            $runRemaining = $this->remainingForBranch($payrollRunId, $branchId);
             if (bccomp($amount, '0.0000', 4) <= 0 || bccomp($amount, $remaining, 4) > 0) {
                 throw new DomainException(__('hr_payroll.messages.payment_exceeds_remaining', ['remaining' => $remaining]));
+            }
+            if (bccomp($amount, $runRemaining, 4) > 0) {
+                throw new DomainException(__('hr_payroll.messages.payment_exceeds_run_remaining', ['remaining' => $runRemaining]));
             }
 
             $currency = Currency::query()->forCompany($companyId)->active()->where('is_main', true)->firstOrFail();
@@ -104,13 +127,13 @@ final class PayrollPaymentService
                 'currency_doc_num' => $currency->doc_num,
                 'exchange_rate' => 1,
                 'amount' => $amount,
-                'person_name' => __('hr_payroll.payment.payee'),
-                'reason' => __('hr_payroll.payment.reason', ['run' => $payrollRunId]),
-                'description' => $data['reference'] ?? __('hr_payroll.payment.reference', ['run' => $payrollRunId]),
+                'person_name' => $payslip->employee_name,
+                'reason' => __('hr_payroll.payment.employee_reason', ['employee' => $payslip->employee_name, 'run' => $payrollRunId]),
+                'description' => $data['reference'] ?? __('hr_payroll.payment.employee_reference', ['employee' => $payslip->employee_name, 'code' => $payslip->employee_doc_num]),
                 'lines' => [[
                     'account_doc_num' => $payable->doc_num,
                     'amount' => $amount,
-                    'description' => __('hr_payroll.payment.line_description', ['run' => $payrollRunId]),
+                    'description' => __('hr_payroll.payment.employee_line_description', ['employee' => $payslip->employee_name, 'run' => $payrollRunId]),
                 ]],
             ], $companyId);
             $voucher = $created['record'];
@@ -119,6 +142,7 @@ final class PayrollPaymentService
                 'branch_id' => $branchId,
                 'financial_period_id' => $financialPeriod->getKey(),
                 'payroll_run_id' => $payrollRunId,
+                'payslip_id' => $payslip->id,
                 'cash_voucher_id' => $voucher->getKey(),
                 'amount' => $amount,
                 'idempotency_key' => $data['idempotency_key'],
@@ -167,7 +191,10 @@ final class PayrollPaymentService
                 throw new DomainException(__('hr_payroll.messages.functional_currency_required', ['employee' => __('hr_payroll.payment.payee')]));
             }
 
-            $remaining = $this->remainingForBranch((int) $payment->payroll_run_id, $payment->branch_id === null ? null : (int) $payment->branch_id, (int) $payment->id);
+            if ($payment->payslip_id === null) {
+                throw new DomainException(__('hr_payroll.messages.payslip_not_payable'));
+            }
+            $remaining = $this->remainingForPayslip((int) $payment->payslip_id, (int) $payment->id);
             if (bccomp((string) $payment->amount, $remaining, 4) > 0) {
                 throw new DomainException(__('hr_payroll.messages.payment_exceeds_remaining', ['remaining' => $remaining]));
             }
@@ -284,6 +311,7 @@ final class PayrollPaymentService
         $causer = $this->auditCauser($userId);
         $properties = [
             'payroll_run_id' => (int) $payment->payroll_run_id,
+            'payslip_id' => $payment->payslip_id === null ? null : (int) $payment->payslip_id,
             'payroll_payment_id' => (int) $payment->id,
             'payment_status' => 'approved',
             'voucher_doc_num' => $voucher->doc_num,
@@ -315,6 +343,7 @@ final class PayrollPaymentService
         $causer = $this->auditCauser($userId);
         $properties = [
             'payroll_run_id' => (int) $payment->payroll_run_id,
+            'payslip_id' => $payment->payslip_id === null ? null : (int) $payment->payslip_id,
             'payroll_payment_id' => (int) $payment->id,
             'payment_status' => 'cancelled',
             'voucher_doc_num' => $voucher->doc_num,
@@ -366,6 +395,26 @@ final class PayrollPaymentService
             ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
             ->where('payment.payroll_run_id', $payrollRunId)
             ->when($branchId === null, fn ($query) => $query->whereNull('payment.branch_id'), fn ($query) => $query->where('payment.branch_id', $branchId))
+            ->when($excludingPaymentId !== null, fn ($query) => $query->where('payment.id', '<>', $excludingPaymentId))
+            ->where('payment.status', 'approved')
+            ->whereNotNull('payment.journal_entry_id')
+            ->where('voucher.status', CashVoucher::StatusApproved)
+            ->whereNull('voucher.deleted_at')
+            ->sum('payment.amount');
+
+        return bcsub(
+            $this->numbers->normalizeToScale($payable, 4) ?? '0.0000',
+            $this->numbers->normalizeToScale($paid, 4) ?? '0.0000',
+            4,
+        );
+    }
+
+    private function remainingForPayslip(int $payslipId, ?int $excludingPaymentId = null): string
+    {
+        $payable = DB::table('hr_payslips')->where('id', $payslipId)->value('net_amount') ?? '0.0000';
+        $paid = DB::table('hr_payroll_payments as payment')
+            ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+            ->where('payment.payslip_id', $payslipId)
             ->when($excludingPaymentId !== null, fn ($query) => $query->where('payment.id', '<>', $excludingPaymentId))
             ->where('payment.status', 'approved')
             ->whereNotNull('payment.journal_entry_id')

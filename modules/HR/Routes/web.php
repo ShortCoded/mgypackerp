@@ -55,7 +55,7 @@ Route::middleware('auth')
         Route::post('/requests', 'storeRequest')->middleware('throttle:10,1')->name('requests.store');
         Route::patch('/requests/{employeeRequest}/cancel', 'cancelRequest')->name('requests.cancel');
         Route::get('/payslips/{payslip}', [PayslipController::class, 'employeeShow'])->whereNumber('payslip')->name('payslips.show');
-        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'employeePdf'])->whereNumber('payslip')->name('payslips.print');
+        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'employeePrint'])->whereNumber('payslip')->name('payslips.print');
         Route::get('/payslips/{payslip}/pdf', [PayslipController::class, 'employeePdf'])->whereNumber('payslip')->name('payslips.pdf');
     });
 
@@ -120,7 +120,7 @@ Route::middleware('auth')
             ->name('payroll-preparation.index');
         Route::get('/payslips/{payslip}', [PayslipController::class, 'adminShow'])
             ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.show');
-        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'adminPdf'])
+        Route::get('/payslips/{payslip}/print', [PayslipController::class, 'adminPrint'])
             ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.print');
         Route::get('/payslips/{payslip}/pdf', [PayslipController::class, 'adminPdf'])
             ->whereNumber('payslip')->middleware('can:hr.payslips.view')->name('payslips.pdf');

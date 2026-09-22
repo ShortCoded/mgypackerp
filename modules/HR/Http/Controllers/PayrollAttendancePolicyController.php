@@ -36,6 +36,18 @@ class PayrollAttendancePolicyController extends Controller
             ->allowedBranchQuery($request->user(), [(string) $company->doc_num])
             ->pluck('branches.id')
             ->all();
+        $payrollItems = DB::table('hr_payroll_items')
+            ->where('item_kind', 'deduction')
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->orderBy('name')
+            ->get(['code', 'name'])
+            ->map(function (object $item): object {
+                $translationKey = 'hr_payroll_reports.item_names.'.$item->code;
+                $item->display_name = __($translationKey) !== $translationKey ? __($translationKey) : $item->name;
+
+                return $item;
+            });
 
         return view('modules.hr.payroll-attendance-policies.index', [
             'policies' => HrPayrollAttendancePolicy::query()
@@ -45,7 +57,8 @@ class PayrollAttendancePolicyController extends Controller
                 ->orderByDesc('effective_from')
                 ->paginate(30),
             'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
-            'payrollItems' => DB::table('hr_payroll_items')->where('item_kind', 'deduction')->where('status', 'active')->whereNull('deleted_at')->orderBy('name')->get(['code', 'name']),
+            'payrollItems' => $payrollItems,
+            'payrollItemNames' => $payrollItems->pluck('display_name', 'code'),
             'canCreateCompanyPolicy' => $unrestricted,
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.payroll-attendance-policies.index'),
         ]);

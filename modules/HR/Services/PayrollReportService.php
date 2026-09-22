@@ -143,6 +143,7 @@ class PayrollReportService
             ->join('hr_payroll_runs as run', 'run.id', '=', 'payment.payroll_run_id')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+            ->leftJoin('hr_payslips as payslip', 'payslip.id', '=', 'payment.payslip_id')
             ->leftJoin('branches as branch', 'branch.id', '=', 'payment.branch_id')
             ->leftJoin('journal_entries as journal', function ($join) use ($allowedPeriodIds): void {
                 $join->on('journal.id', '=', 'payment.journal_entry_id');
@@ -163,8 +164,9 @@ class PayrollReportService
             ->whereNull('run.deleted_at')
             ->whereNull('period.deleted_at')
             ->select([
-                'payment.id', 'payment.payroll_run_id', 'payment.branch_id', 'payment.amount',
+                'payment.id', 'payment.payroll_run_id', 'payment.payslip_id', 'payment.branch_id', 'payment.amount',
                 'payment.approved_at', 'period.period_start', 'period.period_end',
+                'payslip.employee_doc_num', 'payslip.employee_name',
                 'branch.doc_num as branch_doc_num', 'branch.name as branch_name',
                 'voucher.doc_num as voucher_doc_num', 'voucher.voucher_date',
                 'journal.doc_num as journal_doc_num', 'reversal.doc_num as reversal_journal_doc_num',
@@ -183,6 +185,13 @@ class PayrollReportService
             ->when(isset($filters['period_to']), fn (Builder $query): Builder => $query->where('period.period_start', '<=', $filters['period_to']))
             ->when(isset($filters['branch_doc_num']), fn (Builder $query): Builder => $query->where('branch.doc_num', $filters['branch_doc_num']))
             ->when(isset($filters['run_id']), fn (Builder $query): Builder => $query->where('run.id', $filters['run_id']));
+
+        if (isset($filters['employee'])) {
+            $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $filters['employee']).'%';
+            $query->where(fn (Builder $employeeQuery): Builder => $employeeQuery
+                ->where('payslip.employee_name', 'like', $term)
+                ->orWhere('payslip.employee_doc_num', 'like', $term));
+        }
 
         return DB::query()
             ->fromSub($query, 'payment_report')
@@ -277,6 +286,7 @@ class PayrollReportService
                     $join->on('currency.company_id', '=', 'payment.company_id')->where('currency.is_main', true);
                 })
                 ->where('payment.payroll_run_id', $payslip->payroll_run_id)
+                ->where('payment.payslip_id', $payslip->id)
                 ->orderBy('payment.id');
             if ($allowedPeriodIds !== null) {
                 $paymentsQuery->whereIn('payment.financial_period_id', $allowedPeriodIds !== [] ? $allowedPeriodIds : [0]);
@@ -295,6 +305,10 @@ class PayrollReportService
             'payslip' => $payslip,
             'items' => $items->map(function (object $item): object {
                 $item->source_snapshot = $this->decodeJson($item->source_snapshot);
+                $translationKey = 'hr_payroll_reports.item_names.'.$item->code;
+                $item->display_name = __($translationKey) !== $translationKey
+                    ? __($translationKey)
+                    : ($item->name ?: __('hr_payroll_reports.payslip.default_item'));
 
                 return $item;
             }),

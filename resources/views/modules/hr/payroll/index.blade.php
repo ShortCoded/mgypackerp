@@ -7,40 +7,10 @@
 @section('content')
     <div class="container-fluid px-0 px-sm-3 hr-cycle-shell" id="payroll-workspace">
         <x-admin.report.page :title="__('hr_payroll.title')" :description="__('hr_payroll.description')">
-            <section class="hr-cycle-hero mb-3">
-                <div class="card-body p-4 p-lg-5">
-                    <div class="row align-items-center g-4">
-                        <div class="col-lg-8 position-relative" style="z-index:1">
-                            <div class="hr-cycle-kicker mb-2">{{ __('hr_payroll.workspace.kicker') }}</div>
-                            <h2 class="text-white mb-2">{{ __('hr_payroll.workspace.title') }}</h2>
-                            <p class="mb-3 text-600">{{ __('hr_payroll.workspace.description') }}</p>
-                            <div class="hr-quick-nav">
-                                <a href="{{ route('admin.hr.employees.index') }}"><span class="fas fa-users me-1"></span>{{ __('hr_payroll.workspace.employee_salaries') }}</a>
-                                <a href="{{ route('admin.hr.employee-attendance.import.index') }}"><span class="fas fa-file-import me-1"></span>{{ __('hr_payroll.workspace.import_attendance') }}</a>
-                                <a href="{{ route('admin.hr.payroll-attendance-policies.index') }}"><span class="fas fa-sliders-h me-1"></span>{{ __('hr_payroll.workspace.attendance_policy') }}</a>
-                                <a href="{{ route('admin.finance.cashboxes.index') }}"><span class="fas fa-cash-register me-1"></span>{{ __('hr_payroll.workspace.payment_sources') }}</a>
-                            </div>
-                        </div>
-                        <div class="col-lg-4 position-relative" style="z-index:1">
-                            <div class="rounded-3 p-3" style="background:rgba(255,255,255,.12)">
-                                <div class="small text-600">{{ __('hr_payroll.workspace.current_readiness') }}</div>
-                                <div class="fs-2 fw-bold">{{ collect($payrollReadiness)->only(['basic_item', 'salary_expense', 'payroll_payable', 'open_period', 'cost_allocation', 'payment_source'])->filter()->count() }}/6</div>
-                                <div>{{ $payrollReadiness['can_pay'] ? __('hr_payroll.workspace.ready_full_cycle') : __('hr_payroll.workspace.complete_setup') }}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section class="hr-stepper mb-3" aria-label="{{ __('hr_payroll.workspace.cycle_title') }}">
-                @foreach (__('hr_payroll.workspace.steps') as $index => $step)
-                    <div class="hr-step">
-                        <span class="hr-step-number">{{ $index + 1 }}</span>
-                        <strong>{{ $step['title'] }}</strong>
-                        <small>{{ $step['description'] }}</small>
-                    </div>
-                @endforeach
-            </section>
+            <div class="card mb-3"><div class="card-body py-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <div><h5 class="mb-1">{{ __('hr_payroll.workspace.title') }}</h5><div class="small text-muted">{{ __('hr_payroll.workspace.description') }}</div></div>
+                <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-falcon-default" href="{{ route('admin.hr.employees.index') }}">{{ __('hr_payroll.workspace.employee_salaries') }}</a><a class="btn btn-sm btn-falcon-default" href="{{ route('admin.hr.employee-attendance.import.index') }}">{{ __('hr_payroll.workspace.import_attendance') }}</a><a class="btn btn-sm btn-falcon-default" href="{{ route('admin.hr.payroll-attendance-policies.index') }}">{{ __('hr_payroll.workspace.attendance_policy') }}</a></div>
+            </div></div>
 
             <section class="card hr-section-card mb-3">
                 <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -197,58 +167,36 @@
                     </div>
                 @endcan
 
-                @if ($selected['run']->status === 'posted' && bccomp((string) $summary['remaining'], '0.0000', 4) > 0)
-                    @can('hr.payroll_payment.create')
-                        @can('cash_payment_vouchers.create')
-                            <div class="card hr-section-card mb-3">
-                                <div class="card-header py-3"><div class="hr-section-eyebrow">{{ __('hr_payroll.workspace.payment_step') }}</div><h5 class="mb-0">{{ __('hr_payroll.actions.create_payment') }}</h5><div class="small text-muted mt-1">{{ __('hr_payroll.workspace.payment_help') }}</div></div>
-                                <div class="card-body">
-                                    <form id="payroll-payment-form" class="row g-2 align-items-end" data-url="{{ route('admin.hr.payroll-runs.payments.store', $selected['run']->id) }}">
-                                        @csrf
-                                        <x-forms.input type="hidden" name="idempotency_key" value="{{ $paymentIdempotencyKey }}" />
-                                        <div class="col-12 col-md-4">
-                                            <x-forms.label for="payroll_cashbox" :label="__('hr_payroll.labels.cashbox')" :required="true" />
-                                            <x-forms.select class="form-select" id="payroll_cashbox" name="cashbox_doc_num" required>
-                                                <option value="">{{ __('common.placeholders.select') }}</option>
-                                                @foreach ($payrollPaymentSources as $source)
-                                                    <option value="{{ $source['doc_num'] }}" data-remaining="{{ $source['remaining'] }}" @disabled(! $source['available'])>
-                                                        {{ $source['branch_name'] }} — {{ $source['name'] }} / {{ $source['doc_num'] }} — {{ __('hr_payroll.labels.remaining') }}: {{ $numbers->format($source['remaining']) }}
-                                                    </option>
-                                                @endforeach
-                                            </x-forms.select>
-                                            <div class="form-text">{{ __('hr_payroll.workspace.payment_source_help') }}</div>
-                                        </div>
-                                        <div class="col-6 col-md-2">
-                                            <x-forms.label for="payroll_payment_amount" :label="__('hr_payroll.labels.amount')" :required="true" />
-                                            <x-forms.numeric-input id="payroll_payment_amount" name="amount" :scale="4" step="0.0001" min="0.0001" :value="$summary['remaining']" required />
-                                        </div>
-                                        <div class="col-6 col-md-2">
-                                            <x-forms.label for="payroll_payment_date" :label="__('hr_payroll.labels.payment_date')" :required="true" />
-                                            <x-forms.date-input id="payroll_payment_date" name="payment_date" :value="now()->toDateString()" required />
-                                        </div>
-                                        <div class="col-12 col-md-2">
-                                            <x-forms.label for="payroll_payment_reference" :label="__('hr_payroll.labels.reference')" />
-                                            <x-forms.input id="payroll_payment_reference" name="reference" />
-                                        </div>
-                                        <div class="col-12 col-md-2">
-                                            <button class="btn btn-primary w-100" type="submit">{{ __('hr_payroll.actions.create_payment') }}</button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        @endcan
-                    @endcan
-                @endif
+                <div class="card mb-3">
+                    <div class="card-header py-2"><h6 class="mb-0">{{ __('hr_payroll.labels.employee_payments') }}</h6><div class="small text-muted">{{ __('hr_payroll.workspace.payment_help') }}</div></div>
+                    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+                        <thead><tr><th>{{ __('hr_payroll.labels.employee') }}</th><th>{{ __('hr_payroll.labels.branch') }}</th><th class="text-end">{{ __('hr_payroll.labels.gross') }}</th><th class="text-end">{{ __('hr_payroll.labels.deductions') }}</th><th class="text-end">{{ __('hr_payroll.labels.net') }}</th><th class="text-end">{{ __('hr_payroll.labels.paid') }}</th><th class="text-end">{{ __('hr_payroll.labels.remaining') }}</th><th></th></tr></thead>
+                        <tbody>@forelse($payrollEmployees as $employeePayroll)<tr><td><a href="{{ route('admin.hr.payslips.show', $employeePayroll->id) }}">{{ $employeePayroll->employee_name }}</a><div class="small text-muted" dir="ltr">{{ $employeePayroll->employee_doc_num }}</div></td><td>{{ $employeePayroll->branch_name ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->gross_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->deduction_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->net_amount) }}</td><td class="text-end" dir="ltr">{{ $employeePayroll->covered_by_legacy_payment ? '—' : $numbers->format($employeePayroll->paid_amount) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $employeePayroll->covered_by_legacy_payment ? '—' : $numbers->format($employeePayroll->remaining_amount) }}</td><td class="text-end">
+                            @if ($employeePayroll->covered_by_legacy_payment)
+                                <span class="badge badge-subtle-warning">{{ __('hr_payroll.labels.legacy_payment_covered') }}</span>
+                            @elseif ($selected['run']->status === 'posted' && bccomp((string) $employeePayroll->remaining_amount, '0.0000', 4) > 0 && bccomp((string) $summary['remaining'], '0.0000', 4) > 0)
+                                @can('hr.payroll_payment.create') @can('cash_payment_vouchers.create')<button class="btn btn-sm btn-primary js-open-payroll-payment" type="button" data-bs-toggle="modal" data-bs-target="#payroll-payment-modal" data-payslip-id="{{ $employeePayroll->id }}" data-employee="{{ $employeePayroll->employee_name }}" data-branch-id="{{ $employeePayroll->branch_id }}" data-remaining="{{ $employeePayroll->remaining_amount }}">{{ __('hr_payroll.actions.pay_employee') }}</button>@endcan @endcan
+                            @else <span class="badge badge-subtle-success">{{ __('hr_payroll.labels.settled') }}</span> @endif
+                        </td></tr>@empty<tr><td colspan="8" class="text-center text-muted py-3">{{ __('hr_payroll.labels.no_employees') }}</td></tr>@endforelse</tbody>
+                    </table></div>
+                </div>
+
+                <div class="modal fade" id="payroll-payment-modal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">{{ __('hr_payroll.actions.pay_employee') }}: <span class="js-payment-employee"></span></h5><button class="btn-close" type="button" data-bs-dismiss="modal"></button></div><form id="payroll-payment-form" data-url="{{ route('admin.hr.payroll-runs.payments.store', $selected['run']->id) }}"><div class="modal-body"><x-forms.input type="hidden" name="payslip_id" id="payroll_payslip_id" /><x-forms.input type="hidden" name="idempotency_key" value="{{ $paymentIdempotencyKey }}" />
+                    <div class="mb-3"><x-forms.label for="payroll_cashbox" :label="__('hr_payroll.labels.cashbox')" :required="true" /><x-forms.select class="form-select" id="payroll_cashbox" name="cashbox_doc_num" required><option value="">{{ __('common.placeholders.select') }}</option>@foreach ($payrollPaymentSources as $source)<option value="{{ $source['doc_num'] }}" data-branch-id="{{ $source['branch_id'] }}">{{ $source['branch_name'] }} — {{ $source['name'] }}</option>@endforeach</x-forms.select></div>
+                    <div class="row g-2"><div class="col-6"><x-forms.label for="payroll_payment_amount" :label="__('hr_payroll.labels.amount')" :required="true" /><x-forms.numeric-input id="payroll_payment_amount" name="amount" :scale="4" step="0.0001" min="0.0001" required /></div><div class="col-6"><x-forms.label for="payroll_payment_date" :label="__('hr_payroll.labels.payment_date')" :required="true" /><x-forms.date-input id="payroll_payment_date" name="payment_date" :value="now()->toDateString()" required /></div></div>
+                    <div class="mt-3"><x-forms.label for="payroll_payment_reference" :label="__('hr_payroll.labels.reference')" /><x-forms.input id="payroll_payment_reference" name="reference" /></div>
+                </div><div class="modal-footer"><button class="btn btn-falcon-default" type="button" data-bs-dismiss="modal">{{ __('common.actions.cancel') }}</button><button class="btn btn-primary" type="submit">{{ __('hr_payroll.actions.create_payment') }}</button></div></form></div></div></div>
 
                 @canany(['hr.payroll_payment.create', 'hr.payroll_reconciliation.view'])
                     <div class="card">
                         <div class="card-header py-2"><h6 class="mb-0">{{ __('hr_payroll.labels.payments') }}</h6></div>
                         <div class="table-responsive">
                             <table class="table table-sm align-middle mb-0">
-                            <thead><tr><th>{{ __('hr_payroll.labels.voucher') }}</th><th>{{ __('hr_payroll.labels.payment_date') }}</th><th class="text-end">{{ __('hr_payroll.labels.amount') }}</th><th>{{ __('hr_payroll.labels.status') }}</th><th>{{ __('hr_payroll.labels.journal') }}</th></tr></thead>
+                            <thead><tr><th>{{ __('hr_payroll.labels.employee') }}</th><th>{{ __('hr_payroll.labels.voucher') }}</th><th>{{ __('hr_payroll.labels.payment_date') }}</th><th class="text-end">{{ __('hr_payroll.labels.amount') }}</th><th>{{ __('hr_payroll.labels.status') }}</th><th>{{ __('hr_payroll.labels.journal') }}</th></tr></thead>
                             <tbody>
                                 @forelse ($selected['payments'] as $payment)
                                     <tr>
+                                        <td>{{ $payment->employee_name ?: __('hr_payroll.labels.legacy_branch_payment') }}</td>
                                         <td><a href="{{ route('admin.finance.cash-payment-vouchers.show', $payment->voucher_doc_num) }}">{{ $payment->voucher_doc_num }}</a></td>
                                         <td dir="ltr">{{ $payment->voucher_date }}</td>
                                         <td class="text-end" dir="ltr">{{ $numbers->format($payment->amount) }}</td>
@@ -256,7 +204,7 @@
                                         <td dir="ltr">{{ $payment->journal_doc_num ?: ($payment->reversal_journal_doc_num ?: '—') }}</td>
                                     </tr>
                                 @empty
-                                    <tr><td class="text-center text-muted py-3" colspan="5">{{ __('hr_payroll.labels.no_payments') }}</td></tr>
+                                    <tr><td class="text-center text-muted py-3" colspan="6">{{ __('hr_payroll.labels.no_payments') }}</td></tr>
                                 @endforelse
                             </tbody>
                             </table>
@@ -356,14 +304,16 @@
                 }
             });
 
-            document.getElementById('payroll_cashbox')?.addEventListener('change', event => {
-                const selected = event.currentTarget.selectedOptions[0];
-                const amount = document.getElementById('payroll_payment_amount');
-                if (amount && selected?.dataset.remaining) {
-                    amount.value = selected.dataset.remaining;
-                    amount.dispatchEvent(new Event('input', {bubbles: true}));
-                }
-            });
+            document.querySelectorAll('.js-open-payroll-payment').forEach(button => button.addEventListener('click', () => {
+                document.getElementById('payroll_payslip_id').value = button.dataset.payslipId;
+                document.getElementById('payroll_payment_amount').value = button.dataset.remaining;
+                document.querySelector('.js-payment-employee').textContent = button.dataset.employee;
+                const cashbox = document.getElementById('payroll_cashbox');
+                [...cashbox.options].forEach(option => {
+                    option.hidden = option.value !== '' && option.dataset.branchId !== button.dataset.branchId;
+                });
+                cashbox.value = '';
+            }));
         })();
     </script>
 @endpush

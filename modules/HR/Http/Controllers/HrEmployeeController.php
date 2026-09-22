@@ -37,12 +37,17 @@ use Modules\HR\Models\HrDocumentType;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrFaculty;
 use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrMilitaryService;
 use Modules\HR\Models\HrNationality;
+use Modules\HR\Models\HrQualification;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
+use Modules\HR\Models\HrSpecialization;
+use Modules\HR\Models\HrUniversity;
 use Modules\HR\Services\HrEmployeeDocumentNumberSettingsService;
 use Modules\HR\Services\HrEmployeeService;
 use Modules\HR\Services\HrFoundationRegistry;
@@ -65,6 +70,11 @@ class HrEmployeeController extends Controller
         'job_doc_num' => ['column' => 'job_id', 'model' => HrJob::class, 'foundation' => 'jobs'],
         'employment_type_doc_num' => ['column' => 'employment_type_id', 'model' => HrEmploymentType::class, 'foundation' => 'employment-types'],
         'nationality_doc_num' => ['column' => 'nationality_id', 'model' => HrNationality::class, 'lookup' => 'nationalities'],
+        'qualification_doc_num' => ['column' => 'qualification_id', 'model' => HrQualification::class, 'lookup' => 'qualifications'],
+        'university_doc_num' => ['column' => 'university_id', 'model' => HrUniversity::class, 'lookup' => 'universities'],
+        'faculty_doc_num' => ['column' => 'faculty_id', 'model' => HrFaculty::class, 'lookup' => 'faculties'],
+        'specialization_doc_num' => ['column' => 'specialization_id', 'model' => HrSpecialization::class, 'lookup' => 'specializations'],
+        'military_service_doc_num' => ['column' => 'military_service_id', 'model' => HrMilitaryService::class, 'lookup' => 'military-services'],
         'hiring_status_doc_num' => ['column' => 'hiring_status_id', 'model' => HrHiringStatus::class, 'lookup' => 'hiring-statuses'],
         'allowance_doc_num' => ['column' => 'allowance_id', 'model' => HrAllowance::class, 'lookup' => 'allowances'],
         'default_shift_doc_num' => ['column' => 'default_shift_id', 'model' => HrShift::class, 'foundation' => 'shifts'],

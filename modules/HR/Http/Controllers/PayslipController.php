@@ -30,6 +30,11 @@ class PayslipController extends Controller
         return $this->pdf($pdf, $this->adminPayload($request, $payslip));
     }
 
+    public function adminPrint(Request $request, int $payslip): View
+    {
+        return $this->print($this->adminPayload($request, $payslip));
+    }
+
     public function employeeShow(Request $request, int $payslip): View
     {
         return view('modules.hr.payslips.show', $this->employeePayload($request, $payslip));
@@ -38,6 +43,11 @@ class PayslipController extends Controller
     public function employeePdf(Request $request, int $payslip, ReportPdfService $pdf): Response
     {
         return $this->pdf($pdf, $this->employeePayload($request, $payslip));
+    }
+
+    public function employeePrint(Request $request, int $payslip): View
+    {
+        return $this->print($this->employeePayload($request, $payslip));
     }
 
     /** @return array<string, mixed> */
@@ -68,5 +78,16 @@ class PayslipController extends Controller
             'printIdentityPolicy' => 'report',
             ...$payload,
         ], 'payslip-'.$payload['payslip']->id.'.pdf');
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function print(array $payload): View
+    {
+        $company = Company::query()->withTrashed()->findOrFail((int) $payload['payslip']->company_id);
+
+        return view('modules.hr.payslips.print', [
+            'companyPrintIdentity' => $this->printIdentities->forCompany($company),
+            ...$payload,
+        ]);
     }
 }

@@ -136,7 +136,7 @@
         </section>
 
         @if ($employeeAttendance['linked'])
-            <section class="card attendance-hero employee-self-service mb-3"
+            <section class="card attendance-hero attendance-dashboard-card mb-3"
                 data-status-url="{{ route('employee.hr.attendance.status') }}"
                 data-punch-url="{{ route('employee.hr.attendance.punch') }}"
                 data-login-url="{{ route('login') }}"

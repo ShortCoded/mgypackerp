@@ -91,7 +91,7 @@ class PayrollReportController extends Controller
         }
 
         return Excel::download(
-            new PayrollReportExport($headings, $exportRows, $type === 'payroll' ? [7, 8, 9] : [7]),
+            new PayrollReportExport($headings, $exportRows, $type === 'payroll' ? [7, 8, 9] : [9]),
             $filename.'.'.$format,
             $format === 'csv' ? ExcelFormat::CSV : ExcelFormat::XLSX,
         );
@@ -102,7 +102,7 @@ class PayrollReportController extends Controller
     {
         $keys = $type === 'payroll'
             ? ['run', 'period', 'branch', 'employee_code', 'employee', 'currency', 'gross', 'deductions', 'net', 'status']
-            : ['run', 'period', 'branch', 'voucher', 'payment_date', 'currency', 'amount', 'status', 'journal'];
+            : ['run', 'period', 'branch', 'employee_code', 'employee', 'voucher', 'payment_date', 'currency', 'amount', 'status', 'journal'];
 
         return array_map(fn (string $key): string => __('hr_payroll_reports.columns.'.$key), $keys);
     }
@@ -129,6 +129,8 @@ class PayrollReportController extends Controller
             $row->payroll_run_id,
             $row->period_start.' — '.$row->period_end,
             $row->branch_name,
+            $row->employee_doc_num,
+            $row->employee_name ?: __('hr_payroll.labels.legacy_branch_payment'),
             $row->voucher_doc_num,
             $row->voucher_date,
             $row->currency_code,
@@ -165,7 +167,7 @@ class PayrollReportController extends Controller
 
                 $currency = $rows->first()?->currency_code;
 
-                return [__('hr_payroll_reports.totals.'.$label), '', '', '', '', $currency, $amount, '', ''];
+                return [__('hr_payroll_reports.totals.'.$label), '', '', '', '', '', '', $currency, $amount, '', ''];
             })
             ->values()
             ->all();

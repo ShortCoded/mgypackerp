@@ -30,12 +30,17 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeBiometricMapping;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrFaculty;
 use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrMilitaryService;
 use Modules\HR\Models\HrNationality;
+use Modules\HR\Models\HrQualification;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
+use Modules\HR\Models\HrSpecialization;
+use Modules\HR\Models\HrUniversity;
 
 class HrEmployeeService
 {
@@ -62,6 +67,7 @@ class HrEmployeeService
         'mobile',
         'alternate_phone',
         'address',
+        'graduation_year',
         'basic_salary',
         'attendance_tracking_enabled',
         'attendance_policy_type',
@@ -106,6 +112,11 @@ class HrEmployeeService
         'job_doc_num' => ['column' => 'job_id', 'model' => HrJob::class],
         'employment_type_doc_num' => ['column' => 'employment_type_id', 'model' => HrEmploymentType::class],
         'nationality_doc_num' => ['column' => 'nationality_id', 'model' => HrNationality::class],
+        'qualification_doc_num' => ['column' => 'qualification_id', 'model' => HrQualification::class],
+        'university_doc_num' => ['column' => 'university_id', 'model' => HrUniversity::class],
+        'faculty_doc_num' => ['column' => 'faculty_id', 'model' => HrFaculty::class],
+        'specialization_doc_num' => ['column' => 'specialization_id', 'model' => HrSpecialization::class],
+        'military_service_doc_num' => ['column' => 'military_service_id', 'model' => HrMilitaryService::class],
         'hiring_status_doc_num' => ['column' => 'hiring_status_id', 'model' => HrHiringStatus::class],
         'allowance_doc_num' => ['column' => 'allowance_id', 'model' => HrAllowance::class],
         'default_shift_doc_num' => ['column' => 'default_shift_id', 'model' => HrShift::class],

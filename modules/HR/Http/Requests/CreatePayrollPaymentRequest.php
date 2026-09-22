@@ -3,6 +3,7 @@
 namespace Modules\HR\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -23,6 +24,11 @@ class CreatePayrollPaymentRequest extends FormRequest
         $companyId = app(OperatingCompanyContextService::class)->currentCompanyId($this);
 
         return [
+            'payslip_id' => [
+                'required',
+                'integer',
+                Rule::exists('hr_payslips', 'id')->where('company_id', $companyId),
+            ],
             'cashbox_doc_num' => [
                 'required',
                 'string',
@@ -38,5 +44,25 @@ class CreatePayrollPaymentRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->normalizeNumericInput(['amount']);
+
+        if (! $this->filled('payslip_id')) {
+            $payrollRunId = (int) $this->route('payrollRun');
+            $payslipIds = DB::table('hr_payslips')->where('payroll_run_id', $payrollRunId)->limit(2)->pluck('id');
+            if ($payslipIds->count() === 1) {
+                $this->merge(['payslip_id' => $payslipIds->first()]);
+            }
+        }
+    }
+
+    /** @return array<string, string> */
+    public function attributes(): array
+    {
+        return [
+            'payslip_id' => __('hr_payroll.labels.employee'),
+            'cashbox_doc_num' => __('hr_payroll.labels.cashbox'),
+            'amount' => __('hr_payroll.labels.amount'),
+            'payment_date' => __('hr_payroll.labels.payment_date'),
+            'reference' => __('hr_payroll.labels.reference'),
+        ];
     }
 }

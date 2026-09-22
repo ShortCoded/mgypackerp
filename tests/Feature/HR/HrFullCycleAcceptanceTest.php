@@ -194,7 +194,8 @@ test('marker-scoped employee-to-payroll cycle reconciles exactly and retries wit
         ->get(route('admin.hr.payslips.show', $payslip->id))
         ->assertOk()
         ->assertSee($employee->full_name)
-        ->assertSee('ATTENDANCE-DEDUCTION');
+        ->assertSee('خصومات الحضور والانصراف')
+        ->assertDontSee('ATTENDANCE-DEDUCTION');
     foreach ([
         'admin.hr.reports.employees',
         'admin.hr.employee-attendance.index',

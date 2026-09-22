@@ -22,13 +22,18 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeDocument;
 use Modules\HR\Models\HrEmploymentTaxPolicy;
 use Modules\HR\Models\HrEmploymentType;
+use Modules\HR\Models\HrFaculty;
 use Modules\HR\Models\HrHiringStatus;
 use Modules\HR\Models\HrInsuranceOffice;
 use Modules\HR\Models\HrJob;
+use Modules\HR\Models\HrMilitaryService;
 use Modules\HR\Models\HrNationality;
+use Modules\HR\Models\HrQualification;
 use Modules\HR\Models\HrSection;
 use Modules\HR\Models\HrShift;
 use Modules\HR\Models\HrSocialInsurancePolicy;
+use Modules\HR\Models\HrSpecialization;
+use Modules\HR\Models\HrUniversity;
 use Modules\HR\Services\HrLifecycleAuditLogger;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
@@ -385,6 +390,11 @@ function hrEmployeeFixtures(): array
     ]);
     $employmentType = HrEmploymentType::query()->create(['doc_number' => 804, 'doc_num' => 'HRT-00804', 'name' => 'Full Time', 'status' => 'active']);
     $nationality = HrNationality::query()->create(['doc_number' => 811, 'doc_num' => 'HRN-00811', 'name' => 'Egyptian']);
+    $qualification = HrQualification::query()->create(['doc_number' => 814, 'doc_num' => 'HQL-00814', 'name' => 'Bachelor']);
+    $university = HrUniversity::query()->create(['doc_number' => 815, 'doc_num' => 'HUN-00815', 'name' => 'Cairo University']);
+    $faculty = HrFaculty::query()->create(['doc_number' => 816, 'doc_num' => 'HFC-00816', 'name' => 'Engineering']);
+    $specialization = HrSpecialization::query()->create(['doc_number' => 817, 'doc_num' => 'HSP-00817', 'name' => 'Production']);
+    $militaryService = HrMilitaryService::query()->create(['doc_number' => 818, 'doc_num' => 'HMS-00818', 'name' => 'Completed']);
     $hiringStatus = HrHiringStatus::query()->create(['doc_number' => 812, 'doc_num' => 'HHS-00812', 'name' => 'Appointed']);
     $allowance = HrAllowance::query()->create(['doc_number' => 813, 'doc_num' => 'HAL-00813', 'name' => 'Transportation']);
     $shift = HrShift::query()->create(['doc_number' => 805, 'doc_num' => 'HSH-00805', 'name' => 'Morning', 'start_time' => '08:00', 'end_time' => '16:00', 'break_minutes' => 30, 'status' => 'active']);
@@ -411,7 +421,7 @@ function hrEmployeeFixtures(): array
         'size_bytes' => 8,
     ]);
 
-    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'nationality', 'hiringStatus', 'allowance', 'shift', 'device', 'documentType', 'insuranceOffice', 'archiveFile');
+    return compact('company', 'branch', 'currency', 'department', 'section', 'job', 'employmentType', 'nationality', 'qualification', 'university', 'faculty', 'specialization', 'militaryService', 'hiringStatus', 'allowance', 'shift', 'device', 'documentType', 'insuranceOffice', 'archiveFile');
 }
 
 function hrOperatingSession(array $fixtures): array
@@ -446,6 +456,12 @@ function hrEmployeePayload(array $fixtures, array $overrides = []): array
         'job_doc_num' => $fixtures['job']->doc_num,
         'employment_type_doc_num' => $fixtures['employmentType']->doc_num,
         'nationality_doc_num' => $fixtures['nationality']->doc_num,
+        'qualification_doc_num' => $fixtures['qualification']->doc_num,
+        'university_doc_num' => $fixtures['university']->doc_num,
+        'faculty_doc_num' => $fixtures['faculty']->doc_num,
+        'specialization_doc_num' => $fixtures['specialization']->doc_num,
+        'military_service_doc_num' => $fixtures['militaryService']->doc_num,
+        'graduation_year' => 2013,
         'hiring_status_doc_num' => $fixtures['hiringStatus']->doc_num,
         'allowance_doc_num' => $fixtures['allowance']->doc_num,
         'work_email' => 'nadia.ahmed@company.example.test',
@@ -1720,6 +1736,12 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->and($employee->job_id)->toBe($fixtures['job']->getKey())
         ->and($employee->employment_type_id)->toBe($fixtures['employmentType']->getKey())
         ->and($employee->nationality_id)->toBe($fixtures['nationality']->getKey())
+        ->and($employee->qualification_id)->toBe($fixtures['qualification']->getKey())
+        ->and($employee->university_id)->toBe($fixtures['university']->getKey())
+        ->and($employee->faculty_id)->toBe($fixtures['faculty']->getKey())
+        ->and($employee->specialization_id)->toBe($fixtures['specialization']->getKey())
+        ->and($employee->military_service_id)->toBe($fixtures['militaryService']->getKey())
+        ->and($employee->graduation_year)->toBe(2013)
         ->and($employee->hiring_status_id)->toBe($fixtures['hiringStatus']->getKey())
         ->and($employee->allowance_id)->toBe($fixtures['allowance']->getKey())
         ->and($employee->default_shift_id)->toBe($fixtures['shift']->getKey())
@@ -1744,6 +1766,11 @@ test('HrEmployee crud stores relations by public doc nums manages documents and 
         ->assertSee('col-12 col-md-6 col-xl-4 col-xxl-3', false)
         ->assertDontSee('cost_center_doc_num', false)
         ->assertSee('value="'.$fixtures['nationality']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['qualification']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['university']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['faculty']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['specialization']->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixtures['militaryService']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['hiringStatus']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['allowance']->doc_num.'" selected', false)
         ->assertSee('value="'.$fixtures['shift']->doc_num.'" selected', false)

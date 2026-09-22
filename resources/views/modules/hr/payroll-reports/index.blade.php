@@ -35,7 +35,7 @@
                 </div>
                 <div class="col-6 col-lg-2"><x-forms.label for="run_id" :label="__('hr_payroll_reports.columns.run')" /><x-forms.input id="run_id" name="run_id" type="number" min="1" :value="$filters['run_id'] ?? null" /></div>
                 <div class="col-6 col-lg-2"><x-forms.label for="status" :label="__('hr_payroll_reports.columns.status')" /><x-forms.input id="status" name="status" :value="$filters['status'] ?? null" /></div>
-                @if ($isPayroll)<div class="col-12 col-lg-3"><x-forms.label for="employee" :label="__('hr_payroll_reports.columns.employee')" /><x-forms.input id="employee" name="employee" :value="$filters['employee'] ?? null" /></div>@endif
+                <div class="col-12 col-lg-3"><x-forms.label for="employee" :label="__('hr_payroll_reports.columns.employee')" /><x-forms.input id="employee" name="employee" :value="$filters['employee'] ?? null" /></div>
             </x-admin.report.filter-panel>
 
             <div class="row g-2 mb-3">
@@ -54,7 +54,7 @@
 
             <div class="card"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
                 <thead><tr>
-                    @foreach ($isPayroll ? ['run', 'period', 'branch', 'employee', 'currency', 'gross', 'deductions', 'net', 'status', 'payslip'] : ['run', 'period', 'branch', 'voucher', 'payment_date', 'currency', 'amount', 'status', 'journal'] as $column)
+                    @foreach ($isPayroll ? ['run', 'period', 'branch', 'employee', 'currency', 'gross', 'deductions', 'net', 'status', 'payslip'] : ['run', 'period', 'branch', 'employee', 'voucher', 'payment_date', 'currency', 'amount', 'status', 'journal'] as $column)
                         <th>{{ __('hr_payroll_reports.columns.'.$column) }}</th>
                     @endforeach
                 </tr></thead>
@@ -73,6 +73,7 @@
                                 <td>{{ __('hr_payroll.status.'.$row->status) }}</td>
                                 <td>@can('hr.payslips.view')<a class="btn btn-sm btn-outline-primary" href="{{ route('admin.hr.payslips.show', $row->id) }}">{{ __('hr_payroll_reports.actions.view_payslip') }}</a>@else—@endcan</td>
                             @else
+                                <td>{{ $row->employee_name ?: __('hr_payroll.labels.legacy_branch_payment') }} @if($row->employee_doc_num)<span class="text-muted" dir="ltr">{{ $row->employee_doc_num }}</span>@endif</td>
                                 <td>@can('cash_payment_vouchers.view')<a href="{{ route('admin.finance.cash-payment-vouchers.show', $row->voucher_doc_num) }}">{{ $row->voucher_doc_num }}</a>@else<span dir="ltr">{{ $row->voucher_doc_num }}</span>@endcan</td>
                                 <td dir="ltr">{{ $row->voucher_date }}</td>
                                 <td dir="ltr">{{ $row->currency_code }}</td>
@@ -82,7 +83,7 @@
                             @endif
                         </tr>
                     @empty
-                        <tr><td colspan="{{ $isPayroll ? 10 : 9 }}" class="text-center text-muted py-4">{{ __('hr_payroll_reports.empty') }}</td></tr>
+                        <tr><td colspan="10" class="text-center text-muted py-4">{{ __('hr_payroll_reports.empty') }}</td></tr>
                     @endforelse
                 </tbody>
             </table></div>@if($report['rows']->hasPages())<div class="card-footer">{{ $report['rows']->links() }}</div>@endif</div>

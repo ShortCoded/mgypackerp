@@ -90,4 +90,16 @@ class StorePayrollAttendancePolicyRequest extends FormRequest
                 : null,
         ]);
     }
+
+    /** @return array<string, string> */
+    public function attributes(): array
+    {
+        return [
+            'branch_doc_num' => __('hr_payroll_policies.fields.branch'),
+            'effective_from' => __('hr_payroll_policies.fields.effective_from'),
+            'deduction_payroll_item_code' => __('hr_payroll_policies.fields.deduction_payroll_item_code'),
+            'salary_day_divisor' => __('hr_payroll_policies.fields.salary_day_divisor'),
+            'standard_day_minutes' => __('hr_payroll_policies.fields.standard_day_minutes'),
+        ];
+    }
 }

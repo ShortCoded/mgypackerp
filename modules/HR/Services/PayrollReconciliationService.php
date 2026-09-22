@@ -414,6 +414,7 @@ final class PayrollReconciliationService
 
         return DB::table('hr_payroll_payments as payment')
             ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+            ->leftJoin('hr_payslips as payslip', 'payslip.id', '=', 'payment.payslip_id')
             ->leftJoin('journal_entries as journal', function ($join) use ($allowedPaymentPeriodIds): void {
                 $join->on('journal.id', '=', 'payment.journal_entry_id');
                 if ($allowedPaymentPeriodIds !== null) {
@@ -433,8 +434,11 @@ final class PayrollReconciliationService
             ->orderBy('payment.id')
             ->select([
                 'payment.id',
+                'payment.payslip_id',
                 'payment.amount',
                 'payment.approved_at',
+                'payslip.employee_name',
+                'payslip.employee_doc_num',
                 'voucher.doc_num as voucher_doc_num',
                 'voucher.voucher_date',
                 'journal.doc_num as journal_doc_num',

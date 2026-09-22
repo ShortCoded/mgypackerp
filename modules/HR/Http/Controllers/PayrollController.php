@@ -102,38 +102,47 @@ class PayrollController extends Controller
             ->orderBy('name')
             ->get(['doc_num', 'name', 'branch_id']);
         $payrollPaymentSources = collect();
+        $payrollEmployees = collect();
         if ($selected !== null) {
-            $payableByBranch = DB::table('hr_payslips')
+            $hasLegacyAggregatePayments = DB::table('hr_payroll_payments')
                 ->where('payroll_run_id', $selectedRunId)
-                ->selectRaw('branch_id, COALESCE(SUM(net_amount), 0) as payable')
-                ->groupBy('branch_id')
-                ->pluck('payable', 'branch_id');
-            $paidByBranch = DB::table('hr_payroll_payments as payment')
+                ->whereNull('payslip_id')
+                ->where('status', 'approved')
+                ->whereNotNull('journal_entry_id')
+                ->exists();
+            $paidByPayslip = DB::table('hr_payroll_payments as payment')
                 ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
                 ->where('payment.payroll_run_id', $selectedRunId)
+                ->whereNotNull('payment.payslip_id')
                 ->where('payment.status', 'approved')
                 ->whereNotNull('payment.journal_entry_id')
                 ->where('voucher.status', 'approved')
                 ->whereNull('voucher.deleted_at')
-                ->selectRaw('payment.branch_id, COALESCE(SUM(payment.amount), 0) as paid')
-                ->groupBy('payment.branch_id')
-                ->pluck('paid', 'branch_id');
-            $payrollPaymentSources = $cashboxes->map(function (Cashbox $cashbox) use ($paidByBranch, $payableByBranch): array {
-                $branchKey = $cashbox->branch_id;
-                $remaining = bcsub(
-                    (string) ($payableByBranch->get($branchKey) ?? '0.0000'),
-                    (string) ($paidByBranch->get($branchKey) ?? '0.0000'),
-                    4,
-                );
+                ->selectRaw('payment.payslip_id, COALESCE(SUM(payment.amount), 0) as paid')
+                ->groupBy('payment.payslip_id')
+                ->pluck('paid', 'payment.payslip_id');
+            $payrollEmployees = DB::table('hr_payslips as payslip')
+                ->leftJoin('branches as branch', 'branch.id', '=', 'payslip.branch_id')
+                ->where('payslip.payroll_run_id', $selectedRunId)
+                ->orderBy('payslip.employee_name')
+                ->get([
+                    'payslip.id', 'payslip.employee_id', 'payslip.employee_doc_num', 'payslip.employee_name',
+                    'payslip.branch_id', 'payslip.gross_amount', 'payslip.deduction_amount', 'payslip.net_amount',
+                    'branch.name as branch_name',
+                ])
+                ->map(function (object $payslip) use ($hasLegacyAggregatePayments, $paidByPayslip): object {
+                    $payslip->paid_amount = (string) ($paidByPayslip->get($payslip->id) ?? '0.0000');
+                    $payslip->remaining_amount = bcsub((string) $payslip->net_amount, $payslip->paid_amount, 4);
+                    $payslip->covered_by_legacy_payment = $hasLegacyAggregatePayments;
 
-                return [
-                    'doc_num' => $cashbox->doc_num,
-                    'name' => $cashbox->name,
-                    'branch_name' => $cashbox->branch?->name ?? __('hr_payroll.labels.unassigned_branch'),
-                    'remaining' => $remaining,
-                    'available' => bccomp($remaining, '0.0000', 4) > 0,
-                ];
-            });
+                    return $payslip;
+                });
+            $payrollPaymentSources = $cashboxes->map(fn (Cashbox $cashbox): array => [
+                'doc_num' => $cashbox->doc_num,
+                'name' => $cashbox->name,
+                'branch_name' => $cashbox->branch?->name ?? __('hr_payroll.labels.unassigned_branch'),
+                'branch_id' => $cashbox->branch_id,
+            ]);
         }
         $activeEmployees = DB::table('hr_employees')
             ->where('company_id', $companyId)
@@ -208,6 +217,7 @@ class PayrollController extends Controller
             'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
             'cashboxes' => $cashboxes,
             'payrollPaymentSources' => $payrollPaymentSources,
+            'payrollEmployees' => $payrollEmployees,
             'paymentIdempotencyKey' => (string) Str::uuid(),
             'payrollReadiness' => $payrollReadiness,
         ]);
