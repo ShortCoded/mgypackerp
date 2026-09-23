@@ -2,6 +2,26 @@
     --plastics-dashboard-section-gap: 1.5rem;
 }
 
+.plastics-dashboard > .attendance-dashboard-card {
+    display: block !important;
+    align-self: start;
+    block-size: auto !important;
+    min-block-size: 0 !important;
+    max-block-size: none;
+}
+
+.plastics-dashboard > .attendance-dashboard-card > .card-body {
+    block-size: auto;
+    min-block-size: 0;
+    flex: none !important;
+    padding-block: .5rem !important;
+}
+
+.plastics-dashboard > .attendance-dashboard-card .attendance-dashboard-content {
+    min-block-size: 0;
+    padding-block: 0;
+}
+
 .plastics-dashboard-chart {
     height: 15rem;
     min-height: 0;

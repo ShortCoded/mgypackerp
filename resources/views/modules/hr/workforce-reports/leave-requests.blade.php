@@ -5,6 +5,7 @@
 @section('title', __('hr_workforce_reports.leave_requests.title'))
 
 @section('content')
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
     @php($routeName = 'admin.hr.reports.leave-requests')
     @php($exportOptions = collect(['csv' => 'file-csv', 'xlsx' => 'file-excel', 'pdf' => 'file-pdf'])->map(fn ($icon, $format) => ['permission' => 'hr.leave_reports.export', 'url' => route($routeName.'.export', [...$filters, 'format' => $format]), 'label' => strtoupper($format), 'icon' => $icon, 'newTab' => $format === 'pdf'])->values()->all())
     <div class="container-fluid px-0 px-sm-3 admin-report-page">
@@ -29,7 +30,7 @@
                 <thead><tr>@foreach(['document_number', 'employee', 'request_type', 'leave_type', 'from', 'to', 'days_duration', 'balance_impact', 'status', 'approver', 'approval_date'] as $column)<th>{{ __('hr_workforce_reports.columns.'.$column) }}</th>@endforeach</tr></thead>
                 <tbody>
                     @forelse($report['rows'] as $row)
-                        <tr><td dir="ltr">{{ $row->public_uuid }}</td><td>{{ $row->employee_name }}</td><td>{{ __('hr_requests.types.'.$row->request_type) }}</td><td>{{ $row->leave_type_name ?: '—' }}</td><td dir="ltr">{{ $row->requested_from ?: '—' }}</td><td dir="ltr">{{ $row->requested_to ?: '—' }}</td><td dir="ltr">{{ $row->request_type === 'leave' ? $numbers->format($row->leave_days) : ($row->requested_minutes === null ? '—' : __('hr_workforce_reports.units.minutes_value', ['value' => $row->requested_minutes])) }}</td><td dir="ltr">{{ $numbers->format($row->balance_impact) }}</td><td>{{ __('hr_requests.statuses.'.$row->status) }}</td><td>{{ $row->approver_name ?: '—' }}</td><td dir="ltr">{{ $row->resolved_at ?: '—' }}</td></tr>
+                        <tr><td dir="ltr">{{ $row->public_uuid }}</td><td>{{ $row->employee_name }}</td><td>{{ __('hr_requests.types.'.$row->request_type) }}</td><td>{{ $row->leave_type_name ?: '—' }}</td><td dir="ltr">{{ $dates->formatDate($row->requested_from, '—') }}</td><td dir="ltr">{{ $dates->formatDate($row->requested_to, '—') }}</td><td dir="ltr">{{ $row->request_type === 'leave' ? $numbers->format($row->leave_days) : ($row->requested_minutes === null ? '—' : __('hr_workforce_reports.units.minutes_value', ['value' => $row->requested_minutes])) }}</td><td dir="ltr">{{ $numbers->format($row->balance_impact) }}</td><td>{{ __('hr_requests.statuses.'.$row->status) }}</td><td>{{ $row->approver_name ?: '—' }}</td><td dir="ltr">{{ $dates->formatDateTime($row->resolved_at, '—') }}</td></tr>
                     @empty<tr><td colspan="11" class="text-center text-muted py-4">{{ __('hr_workforce_reports.empty') }}</td></tr>@endforelse
                 </tbody>
             </table></div>@if($report['rows']->hasPages())<div class="card-footer">{{ $report['rows']->links() }}</div>@endif</div>

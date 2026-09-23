@@ -36,7 +36,7 @@
                                     <strong class="d-block mb-1">{{ __('hr_attendance.import.choose_file') }}</strong>
                                     <span class="small text-muted" id="attendance-workbook-name">{{ __('hr_attendance.import.no_file') }}</span>
                                 </label>
-                                <input class="visually-hidden" id="attendance_workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                                <x-forms.input class="visually-hidden" id="attendance_workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
                                 <button class="btn btn-primary" type="submit"><span class="fas fa-file-import me-1" aria-hidden="true"></span>{{ __('hr_attendance.import.action') }}</button>

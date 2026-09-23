@@ -255,6 +255,14 @@ test('HR self-service and reports retain shared components, density, and respons
     path.join(projectRoot, 'resources/views/modules/hr/self-service/index.blade.php'),
     'utf8',
   );
+  const dashboard = readFileSync(
+    path.join(projectRoot, 'resources/views/dashboard.blade.php'),
+    'utf8',
+  );
+  const payroll = readFileSync(
+    path.join(projectRoot, 'resources/views/modules/hr/payroll/index.blade.php'),
+    'utf8',
+  );
   const report = readFileSync(
     path.join(projectRoot, 'resources/views/modules/hr/attendance/index.blade.php'),
     'utf8',
@@ -264,9 +272,18 @@ test('HR self-service and reports retain shared components, density, and respons
     'utf8',
   );
 
-  assert.match(css, /@media\(max-width:575\.98px\)/);
-  assert.match(css, /\.attendance-actions\{grid-template-columns:1fr\}/);
-  assert.match(css, /\.attendance-action-btn\{min-height:4\.75rem/);
+  assert.match(css, /@media\s*\(max-width:\s*575\.98px\)/);
+  assert.match(css, /\.attendance-actions\s*\{[\s\S]*grid-template-columns:\s*1fr/);
+  assert.match(css, /\.attendance-action-btn\s*\{[\s\S]*min-height:\s*2\.75rem/);
+  assert.match(css, /\.employee-self-service\s*\{[\s\S]*max-width:\s*none/);
+  assert.match(css, /\.attendance-dashboard-card\s*\{[\s\S]*min-height:\s*0\s*!important/);
+  assert.match(css, /\.attendance-dashboard-card\s+\.card-body\s*\{[\s\S]*flex:\s*0\s+0\s+auto\s*!important/);
+  assert.match(css, /\.attendance-dashboard-card\s+\.js-attendance-feedback:empty\s*\{\s*display:\s*none/);
+  assert.match(selfService, /container-fluid w-100 mw-100 m-0 p-0/);
+  assert.match(payroll, /container-fluid w-100 mw-100 m-0 p-0/);
+  assert.doesNotMatch(payroll, /hr-cycle\.css'\) }}\?v=/);
+  assert.match(dashboard, /attendance-dashboard-card h-auto/);
+  assert.doesNotMatch(dashboard, /js-attendance-actions flex-grow-1/);
   assert.match(selfService, /data-login-url=/);
   assert.match(selfService, /aria-live="polite"/);
   assert.match(selfService, /<x-forms\.date-input/);

@@ -5,6 +5,7 @@
 @section('title', __('hr_payroll_reports.'.$type.'.title'))
 
 @section('content')
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
     @php($isPayroll = $type === 'payroll')
     @php($routeName = $isPayroll ? 'admin.hr.reports.payroll' : 'admin.hr.reports.payments')
     @php($exportPermission = $isPayroll ? 'hr.payroll_reports.export' : 'hr.payroll_payment_reports.export')
@@ -62,7 +63,7 @@
                     @forelse ($report['rows'] as $row)
                         <tr>
                             <td dir="ltr">{{ $row->payroll_run_id }}</td>
-                            <td dir="ltr">{{ $row->period_start }} — {{ $row->period_end }}</td>
+                            <td dir="ltr">{{ $dates->formatDate($row->period_start, '—') }} — {{ $dates->formatDate($row->period_end, '—') }}</td>
                             <td>{{ $row->branch_name ?: '—' }}</td>
                             @if ($isPayroll)
                                 <td>{{ $row->employee_name }} <span class="text-muted" dir="ltr">{{ $row->employee_doc_num }}</span></td>
@@ -75,7 +76,7 @@
                             @else
                                 <td>{{ $row->employee_name ?: __('hr_payroll.labels.legacy_branch_payment') }} @if($row->employee_doc_num)<span class="text-muted" dir="ltr">{{ $row->employee_doc_num }}</span>@endif</td>
                                 <td>@can('cash_payment_vouchers.view')<a href="{{ route('admin.finance.cash-payment-vouchers.show', $row->voucher_doc_num) }}">{{ $row->voucher_doc_num }}</a>@else<span dir="ltr">{{ $row->voucher_doc_num }}</span>@endcan</td>
-                                <td dir="ltr">{{ $row->voucher_date }}</td>
+                                <td dir="ltr">{{ $dates->formatDate($row->voucher_date, '—') }}</td>
                                 <td dir="ltr">{{ $row->currency_code }}</td>
                                 <td class="text-end" dir="ltr">{{ $numbers->format($row->amount) }}</td>
                                 <td>{{ __('hr_payroll.status.'.$row->status) }}</td>

@@ -11,6 +11,8 @@ class IntendedUrlService
 {
     public const CookieName = 'erp_intended_url';
 
+    public const AfterOperatingContextSessionKey = 'url.intended_after_operating_context';
+
     public function __construct(
         private readonly CookieFactory $cookies,
         private readonly SafeRedirectUrlService $urls

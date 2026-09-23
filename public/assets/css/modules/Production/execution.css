@@ -139,7 +139,47 @@
 }
 
 .production-mobile-workflow .quality-detail-list dd {
-  overflow-wrap: anywhere;
+    overflow-wrap: anywhere;
+}
+
+.production-run-form-grid > [class*="col-"] {
+    min-inline-size: 0;
+}
+
+.production-run-labor-table {
+    min-width: 72rem;
+    table-layout: fixed;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(1) {
+    width: 3.5rem;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(2) {
+    width: 22rem;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(3) {
+    width: 15rem;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(4) {
+    width: 10rem;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(5) {
+    width: 16rem;
+}
+
+.production-run-labor-table > :not(caption) > * > :nth-child(6) {
+    width: 6rem;
+}
+
+.production-run-labor-table .form-control,
+.production-run-labor-table .form-select,
+.production-run-labor-table .select2-container {
+    width: 100%;
+    min-width: 0;
 }
 
 .production-mobile-workflow .quality-checkpoint-list {

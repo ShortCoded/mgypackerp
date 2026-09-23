@@ -136,13 +136,13 @@
         </section>
 
         @if ($employeeAttendance['linked'])
-            <section class="card attendance-hero attendance-dashboard-card mb-3"
+            <section class="card attendance-hero attendance-dashboard-card h-auto mb-3"
                 data-status-url="{{ route('employee.hr.attendance.status') }}"
                 data-punch-url="{{ route('employee.hr.attendance.punch') }}"
                 data-login-url="{{ route('login') }}"
                 data-messages='@json(__('hr_attendance.javascript'))'>
-                <div class="card-body p-3">
-                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                <div class="card-body py-2 px-3">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 attendance-dashboard-content">
                         <div>
                             <div class="small text-600">{{ __('hr_attendance.self_service.title') }} · {{ $employeeAttendance['employee']['branch'] ?: __('hr_attendance.labels.no_branch') }}</div>
                             <h5 class="mb-1 js-attendance-state-label">{{ __('hr_attendance.states.'.$employeeAttendance['state']) }}</h5>
@@ -150,7 +150,7 @@
                             <span class="d-none js-attendance-clock" data-check-in-at="{{ $employeeAttendance['check_in_at'] }}" data-state="{{ $employeeAttendance['state'] }}"></span>
                             <span class="d-none js-worked-minutes">{{ $employeeAttendance['worked_minutes'] }}</span><span class="d-none js-break-minutes">{{ $employeeAttendance['break_minutes'] }}</span>
                         </div>
-                        <div class="attendance-actions js-attendance-actions flex-grow-1">
+                        <div class="attendance-actions js-attendance-actions">
                             @foreach (\Modules\HR\Models\HrAttendanceEvent::types() as $action)
                                 <button type="button" class="btn attendance-action-btn js-attendance-punch {{ in_array($action, $employeeAttendance['allowed_actions'], true) ? '' : 'd-none' }}" data-event-type="{{ $action }}">{{ __('hr_attendance.actions.'.$action) }}</button>
                             @endforeach

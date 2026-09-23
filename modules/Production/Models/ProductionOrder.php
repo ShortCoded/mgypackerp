@@ -78,8 +78,20 @@ class ProductionOrder extends Model
         return $this->hasMany(ProductionRun::class)->orderBy('planned_start_at');
     }
 
+    public function runBatches(): HasMany
+    {
+        return $this->hasMany(ProductionRunBatch::class)->orderBy('created_at');
+    }
+
     public function stageSnapshots(): HasMany
     {
         return $this->hasMany(ProductionOrderStageSnapshot::class)->orderBy('sequence');
+    }
+
+    public function orderStageSnapshots(): HasMany
+    {
+        return $this->hasMany(ProductionOrderStageSnapshot::class)
+            ->whereNull('production_order_line_id')
+            ->orderBy('sequence');
     }
 }

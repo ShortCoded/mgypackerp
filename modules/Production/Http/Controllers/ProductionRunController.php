@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
-use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DataTableSearchService;
@@ -22,14 +21,16 @@ use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\RecordProductionLaborRequest;
 use Modules\Production\Http\Requests\StoreProductionRunRequest;
+use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
-use Modules\Production\Models\ProductionShift;
+use Modules\Production\Models\ProductionRunBatch;
 use Modules\Production\Services\ProductionCycleService;
 
 class ProductionRunController extends Controller
@@ -52,7 +53,7 @@ class ProductionRunController extends Controller
     {
         $this->requiredContext($request);
 
-        return $this->form(null, false);
+        return $this->form(null, false, $request);
     }
 
     public function orderLines(Request $request, DataTableSearchService $search, Select2ResponseService $select2, NumericFormatService $numbers): JsonResponse
@@ -92,7 +93,58 @@ class ProductionRunController extends Controller
         ]));
     }
 
-    public function stages(Request $request, Select2ResponseService $select2, NumericFormatService $numbers): JsonResponse
+    public function ordersLookup(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $this->authorizeLookup($request);
+        $context = $this->requiredContext($request);
+        $query = ProductionOrder::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereIn('status', [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted])
+            ->orderByDesc('doc_number');
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'technical_notes', 'production_notes']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (ProductionOrder $order): array => [
+            'id' => $order->doc_num,
+            'text' => $order->doc_num.' — '.__('production_execution.statuses.'.$order->status),
+        ]));
+    }
+
+    public function orderLinesForOrder(Request $request, string $docNum, NumericFormatService $numbers): JsonResponse
+    {
+        $this->authorizeLookup($request);
+        $context = $this->requiredContext($request);
+        $order = ProductionOrder::query()
+            ->where('doc_num', $docNum)
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereIn('status', [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted])
+            ->with(['lines.product', 'lines.unit'])
+            ->firstOrFail();
+
+        return response()->json([
+            'data' => [
+                'order' => ['id' => $order->doc_num, 'number' => $order->doc_num],
+                'lines' => $order->lines->map(fn (ProductionOrderLine $line): array => [
+                    'id' => $line->public_id,
+                    'text' => __('production_execution.runs.order_item_option', [
+                        'line' => $line->line_number,
+                        'product' => $line->product?->name ?? $line->description,
+                        'quantity' => $numbers->format($line->quantity),
+                        'unit' => $line->unit?->name ?? '',
+                    ]),
+                ])->values(),
+            ],
+        ]);
+    }
+
+    public function stages(Request $request, Select2ResponseService $select2, NumericFormatService $numbers, DataTableSearchService $search): JsonResponse
     {
         $this->authorizeLookup($request);
         $context = $this->requiredContext($request);
@@ -104,12 +156,23 @@ class ProductionRunController extends Controller
                 ->where('financial_period_id', $context['financial_period_id'])
                 ->where('branch_id', $context['branch_id']))
             ->firstOrFail();
-        $query = $line->stageSnapshots()->withSum([
-            'runs as planned_base_quantity_sum' => fn ($runs) => $runs->where('status', '<>', ProductionRun::StatusCancelled),
-        ], 'planned_base_quantity')->orderBy('sequence');
-
-        return response()->json($select2->paginated($query, $request, function (ProductionOrderStageSnapshot $stage) use ($line, $numbers): array {
-            $remainingBase = bcsub((string) $line->base_quantity, (string) ($stage->planned_base_quantity_sum ?? 0), 8);
+        $line->load('order');
+        $stages = $this->cycle->stagesForLine($line->order, $line);
+        $terms = $search->terms($request->input('q', $request->input('term')));
+        $results = $stages->map(function (ProductionOrderStageSnapshot $stage) use ($line, $numbers): array {
+            $committedBase = ProductionRun::query()
+                ->where('production_order_line_id', $line->getKey())
+                ->where('production_order_stage_snapshot_id', $stage->getKey())
+                ->where('status', '<>', ProductionRun::StatusCancelled)
+                ->get(['status', 'planned_base_quantity', 'good_base_quantity'])
+                ->reduce(fn (string $total, ProductionRun $run): string => bcadd(
+                    $total,
+                    $run->status === ProductionRun::StatusCompleted
+                        ? (string) $run->good_base_quantity
+                        : (string) $run->planned_base_quantity,
+                    8,
+                ), '0.00000000');
+            $remainingBase = bcsub((string) $line->base_quantity, $committedBase, 8);
             $remaining = bccomp($remainingBase, '0', 8) > 0
                 ? bcdiv($remainingBase, (string) $line->conversion_factor, 8)
                 : '0';
@@ -118,11 +181,25 @@ class ProductionRunController extends Controller
                 'id' => $stage->public_id,
                 'text' => __('production_execution.runs.stage_option', [
                     'sequence' => $stage->sequence,
-                    'stage' => $stage->stage_name,
+                    'stage' => ($stage->production_order_line_id === null
+                        ? __('production_execution.orders.order_route_short').' — '
+                        : __('production_execution.orders.line_route_short').' — ').$stage->stage_name,
                     'remaining' => $numbers->format($remaining),
                 ]),
             ];
-        }));
+        });
+        if ($terms !== []) {
+            $results = $results->filter(fn (array $stage): bool => collect($terms)->every(
+                fn (string $term): bool => str_contains(mb_strtolower($stage['text']), mb_strtolower($term)),
+            ))->values();
+        }
+        $page = max(1, $request->integer('page', 1));
+        $perPage = $select2->perPage();
+
+        return response()->json([
+            'results' => $results->forPage($page, $perPage)->values()->all(),
+            'pagination' => ['more' => $results->count() > $page * $perPage],
+        ]);
     }
 
     public function assets(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
@@ -146,24 +223,24 @@ class ProductionRunController extends Controller
         ]));
     }
 
-    public function costCenters(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    public function machines(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
         $this->authorizeLookup($request);
         $context = $this->requiredContext($request);
-        $query = CostCenter::query()
-            ->forCompany($context['company_id'])
-            ->active()
-            ->where('is_group', false)
+        $query = ProductionMachine::query()
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->where('status', ProductionMachine::StatusAvailable)
             ->orderBy('name');
         $terms = $search->terms($request->input('q', $request->input('term')));
 
         if ($terms !== []) {
-            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name']]);
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['code', 'name']]);
         }
 
-        return response()->json($select2->paginated($query, $request, fn (CostCenter $costCenter): array => [
-            'id' => $costCenter->doc_num,
-            'text' => trim($costCenter->doc_num.' — '.$costCenter->name),
+        return response()->json($select2->paginated($query, $request, fn (ProductionMachine $machine): array => [
+            'id' => $machine->public_id,
+            'text' => trim($machine->code.' — '.$machine->name),
         ]));
     }
 
@@ -197,6 +274,25 @@ class ProductionRunController extends Controller
     public function store(StoreProductionRunRequest $request): JsonResponse|RedirectResponse
     {
         $context = $this->requiredContext($request);
+        if (is_array($request->validated('lines'))) {
+            $firstLine = ProductionOrderLine::query()
+                ->with('order')
+                ->findOrFail($request->validated('lines.0.production_order_line_id'));
+            abort_unless(
+                (int) $firstLine->order->company_id === (int) $context['company_id']
+                && (int) $firstLine->order->financial_period_id === (int) $context['financial_period_id']
+                && (int) $firstLine->order->branch_id === (int) $context['branch_id'],
+                404,
+            );
+            $batch = $this->guard(fn (): ProductionRunBatch => $this->cycle->createRunBatch(
+                $firstLine->order,
+                $request->safe()->except('submit_action'),
+            ));
+            $url = route('admin.production.runs.batches.show', $batch);
+
+            return $this->respond($request, ['batch_number' => $batch->batch_number, 'url' => $url], $url, 201);
+        }
+
         $line = ProductionOrderLine::query()->with('order')->findOrFail($request->validated('production_order_line_id'));
         abort_unless(
             (int) $line->order->company_id === (int) $context['company_id']
@@ -215,7 +311,7 @@ class ProductionRunController extends Controller
         $this->assertRunInCurrentContext($request, $productionRun);
         abort_unless($this->runCanBeChanged($productionRun), 409, __('production_execution.messages.run_plan_only'));
 
-        return $this->form($productionRun, false);
+        return $this->form($productionRun, false, $request);
     }
 
     public function update(StoreProductionRunRequest $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
@@ -234,7 +330,7 @@ class ProductionRunController extends Controller
     {
         $this->assertRunInCurrentContext($request, $productionRun);
 
-        return $this->form($productionRun, true);
+        return $this->form($productionRun, true, $request);
     }
 
     public function destroy(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
@@ -305,6 +401,54 @@ class ProductionRunController extends Controller
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
             'workers' => $this->workers((int) $productionRun->company_id, (int) $productionRun->branch_id),
         ]);
+    }
+
+    public function showBatch(Request $request, ProductionRunBatch $productionRunBatch): View
+    {
+        $context = $this->requiredContext($request);
+        abort_unless(
+            (int) $productionRunBatch->company_id === (int) $context['company_id']
+            && (int) $productionRunBatch->financial_period_id === (int) $context['financial_period_id']
+            && (int) $productionRunBatch->branch_id === (int) $context['branch_id'],
+            404,
+        );
+        $batch = $productionRunBatch->load([
+            'order', 'runs.order', 'runs.product', 'runs.unit', 'runs.stageSnapshot',
+            'runs.orderLine.product', 'runs.orderLine.unit', 'runs.requirements.product', 'runs.requirements.unit',
+        ]);
+
+        return view('modules.production.runs.batch-show', [
+            'record' => $batch,
+            'numbers' => app(NumericFormatService::class),
+            'stores' => BranchStore::query()->where('branch_id', $productionRunBatch->branch_id)->orderBy('position')->get(),
+            'materialDocuments' => InventoryDocument::query()
+                ->where('production_run_batch_id', $productionRunBatch->getKey())
+                ->where('status', InventoryDocument::StatusPosted)
+                ->orderBy('id')
+                ->get(),
+        ]);
+    }
+
+    public function issueBatch(Request $request, ProductionRunBatch $productionRunBatch): JsonResponse|RedirectResponse
+    {
+        $context = $this->requiredContext($request);
+        abort_unless(
+            (int) $productionRunBatch->company_id === (int) $context['company_id']
+            && (int) $productionRunBatch->financial_period_id === (int) $context['financial_period_id']
+            && (int) $productionRunBatch->branch_id === (int) $context['branch_id'],
+            404,
+        );
+        $validated = $request->validate([
+            'branch_store_id' => ['required', 'integer', Rule::exists(BranchStore::class, 'id')->where('branch_id', $context['branch_id'])],
+            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+        ]);
+        $document = $this->guard(fn (): InventoryDocument => $this->cycle->issueRunBatchMaterials(
+            $productionRunBatch,
+            (int) $validated['branch_store_id'],
+            isset($validated['warehouse_location_id']) ? (int) $validated['warehouse_location_id'] : null,
+        ));
+
+        return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.batches.show', $productionRunBatch));
     }
 
     public function print(Request $request, ProductionRun $productionRun): Response
@@ -543,33 +687,38 @@ class ProductionRunController extends Controller
         );
     }
 
-    private function form(?ProductionRun $record, bool $isClone): View
+    private function form(?ProductionRun $record, bool $isClone, Request $request): View
     {
-        $record?->loadMissing(['order', 'orderLine.product', 'orderLine.unit', 'stageSnapshot', 'fixedAsset', 'costCenter']);
+        $record?->loadMissing(['order', 'orderLine.product', 'orderLine.unit', 'stageSnapshot', 'fixedAsset']);
 
-        $context = $record === null
-            ? null
-            : ['company_id' => $record->company_id, 'branch_id' => $record->branch_id];
-        $shifts = $context === null
-            ? collect()
-            : ProductionShift::query()
+        $context = $record === null ? $this->requiredContext($request) : [
+            'company_id' => $record->company_id,
+            'branch_id' => $record->branch_id,
+        ];
+        $orderDocNum = $record?->order?->doc_num ?? old('production_order_doc_num');
+        $orderLabel = $record?->order?->doc_num;
+        if ($orderLabel === null && filled($orderDocNum)) {
+            $orderLabel = ProductionOrder::query()
+                ->where('doc_num', $orderDocNum)
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->value('doc_num');
+        }
+        $asset = $record?->fixedAsset;
+        if (! $asset && filled(old('fixed_asset_doc_num'))) {
+            $asset = FixedAsset::query()
+                ->where('doc_num', old('fixed_asset_doc_num'))
                 ->where('company_id', $context['company_id'])
                 ->where('branch_id', $context['branch_id'])
-                ->where('is_active', true)
-                ->orderBy('starts_at')
-                ->get();
-
-        if ($context === null) {
-            $snapshot = $this->context->snapshot(request());
-            $shifts = ProductionShift::query()
-                ->where('company_id', $snapshot['company_id'])
-                ->where('branch_id', $snapshot['branch_id'])
-                ->where('is_active', true)
-                ->orderBy('starts_at')
-                ->get();
+                ->where('status', FixedAsset::StatusActive)
+                ->first();
         }
+        $assetOption = $asset
+            ? ['id' => $asset->doc_num, 'text' => $asset->doc_num.' — '.$asset->asset_name]
+            : null;
 
-        return view('modules.production.runs.form', compact('record', 'isClone', 'shifts'));
+        return view('modules.production.runs.form', compact('record', 'isClone', 'orderDocNum', 'orderLabel', 'assetOption'));
     }
 
     private function runCanBeChanged(ProductionRun $run): bool

@@ -42,7 +42,9 @@
                         @endif
                     </div>
                     <div class="col-auto">
-                        @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
+                        <div data-standard-movement-actions>
+                            @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
+                        </div>
                     </div>
                 </div>
             </div>
@@ -59,6 +61,25 @@
                 @endif
 
                 <h6 class="text-700 mb-3">{{ __('inventory.movements.header_data') }}</h6>
+                @if(!$record && !($isClone ?? false))
+                    @if((auth()->user()->can('inventory.documents.issue') && auth()->user()->can('production.runs.issue')) || (auth()->user()->can('inventory.documents.receive') && auth()->user()->can('production.runs.receive')))
+                        <div class="border rounded p-3 mb-3" data-production-run-batch-wrapper hidden>
+                            <x-forms.label for="inventory-production-run-batch" :label="__('inventory.movements.fields.production_run_batch')" />
+                            <x-forms.select
+                                variant="ajax"
+                                id="inventory-production-run-batch"
+                                name="production_run_batch_public_id"
+                                :url="route('admin.inventory.documents.select2.production-run-batches')"
+                                :placeholder="__('inventory.movements.placeholders.select_production_run_batch')"
+                                data-production-run-batch
+                                :data-extra-params="json_encode(['document_type' => '#inventory-document-type'])"
+                                data-details-url="{{ route('admin.inventory.documents.production-batches.details', ['publicId' => '__BATCH_ID__']) }}"
+                            />
+                            <div class="form-text" data-production-run-batch-help></div>
+                            <div class="alert alert-info mt-3 mb-0" data-production-run-batch-preview hidden aria-live="polite"></div>
+                        </div>
+                    @endif
+                @endif
                 <div class="row g-3 align-items-start">
                     <div class="col-md-6 col-xl-3">
                         <x-forms.label for="inventory-document-type" :label="__('inventory.movements.fields.type')" required />
@@ -123,7 +144,7 @@
                     </div>
                 </div>
 
-                <div class="border-top mt-4 pt-3">
+                <div class="border-top mt-4 pt-3" data-inventory-lines-section>
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                         <h6 class="text-700 mb-0">{{ __('inventory.movements.fields.lines') }}</h6>
                         <button class="btn btn-falcon-default btn-sm" type="button" data-add-inventory-line title="{{ __('inventory.movements.add_line_shortcut') }}" data-bs-title="{{ __('inventory.movements.add_line_shortcut') }}">
@@ -156,7 +177,14 @@
             </div>
 
             <div class="card-footer">
-                @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
+                <div class="d-flex flex-wrap justify-content-end gap-2">
+                    <div data-standard-movement-actions>
+                        @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
+                    </div>
+                    <button class="btn btn-primary btn-sm" type="submit" data-production-run-batch-submit hidden disabled>
+                        {{ __('inventory.movements.actions.issue_production_run_batch') }}
+                    </button>
+                </div>
             </div>
         </div>
     </form>
@@ -198,6 +226,21 @@
     <script type="application/json" data-inventory-movement-ui>{!! \Illuminate\Support\Js::encode([
         'store' => __('inventory.movements.fields.store'),
         'sourceStore' => __('inventory.movements.fields.source_store'),
+        'batchLoading' => __('inventory.movements.messages.production_run_batch_loading'),
+        'batchLoadFailed' => __('inventory.movements.messages.production_run_batch_load_failed'),
+        'batchEmpty' => __('inventory.movements.messages.production_run_batch_no_materials'),
+        'batchIssueReason' => __('inventory.movements.production_run_batch_reason'),
+        'batchReceiptReason' => __('inventory.movements.production_run_batch_receipt_reason'),
+        'batchIssueHelp' => __('inventory.movements.production_run_batch_help'),
+        'batchReceiptHelp' => __('inventory.movements.production_run_batch_receipt_help'),
+        'batchIssueAction' => __('inventory.movements.actions.issue_production_run_batch'),
+        'batchReceiveAction' => __('inventory.movements.actions.receive_production_run_batch'),
+        'batchFinishedProduct' => __('inventory.movements.fields.product'),
+        'batchTitle' => __('inventory.movements.production_run_batch_preview_title'),
+        'batchOrder' => __('inventory.movements.fields.production_order'),
+        'batchStage' => __('inventory.movements.fields.production_stage'),
+        'batchQuantity' => __('inventory.movements.fields.quantity'),
+        'batchMaterial' => __('inventory.movements.fields.product'),
     ]) !!}</script>
     <script type="application/json" data-inventory-movement-lines>{!! \Illuminate\Support\Js::encode($initialLines) !!}</script>
 @endsection

@@ -196,6 +196,7 @@ class InventoryDocumentPostingService
             }
             if ($locked->production_order_id !== null
                 || $locked->production_run_id !== null
+                || $locked->production_run_batch_id !== null
                 || in_array($locked->source_document_type, [ProductionRun::class, ProductionMaterialRequirement::class], true)
                 || $locked->lines()->whereIn('source_line_type', [ProductionRun::class, ProductionMaterialRequirement::class])->exists()) {
                 throw new DomainException(__('Production-linked inventory documents must be reversed through the production workflow.'));
@@ -258,7 +259,7 @@ class InventoryDocumentPostingService
                             'transaction_date', 'transaction_type', 'product_id', 'unit_id',
                             'source_type', 'source_id', 'source_doc_num', 'source_line_type',
                             'source_line_id', 'supplier_id', 'customer_id', 'production_order_id',
-                            'production_run_id', 'inventory_reservation_id', 'unit_cost', 'total_cost',
+                            'production_run_id', 'production_run_batch_id', 'inventory_reservation_id', 'unit_cost', 'total_cost',
                         ]),
                         'quantity_in' => $transaction->quantity_out,
                         'quantity_out' => $transaction->quantity_in,

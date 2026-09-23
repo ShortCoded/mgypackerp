@@ -95,10 +95,14 @@ This application is a Laravel application and its main Laravel ecosystems packag
 ## Tools
 
 - Laravel Boost is an MCP server with tools designed specifically for this application. Prefer Boost tools over manual alternatives like shell commands or file reads.
+- Start Laravel-specific work with Boost's `application-info` when available so framework, package, PHP, and database behavior is interpreted against the installed versions.
 - Use `database-query` to run read-only queries against the database instead of writing raw SQL in tinker.
 - Use `database-schema` to inspect table structure before writing migrations or models.
 - Use `get-absolute-url` to resolve the correct scheme, domain, and port for project URLs. Always use this before sharing a URL with the user.
 - Use `browser-logs` to read browser logs, errors, and exceptions. Only recent logs are useful, ignore old entries.
+- Prefer the matching Boost capability for routes, configuration, schema/data inspection, logs/errors, application execution, Artisan metadata, and package documentation whenever the installed Boost server exposes one. For targeted route checks, use `get-absolute-url` for named routes or read-only `tinker` inspection when appropriate and approved.
+- Treat Artisan, tests, shell commands, source search, and direct source inspection as complementary verification. They must not silently replace an expected Boost capability.
+- If Laravel Boost is configured but unavailable, first inspect the effective Codex MCP entry and diagnose server initialization or tool-call errors. Do not claim that Boost is unavailable or continue with manual fallbacks until the actual MCP failure has been exposed.
 
 ## Searching Documentation (IMPORTANT)
 

@@ -523,6 +523,13 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'production_stages' => [
+        'prefix' => 'STG-',
+        'padding' => 5,
+        'column' => 'code',
+        'number_column' => 'id',
+        'scope' => 'company',
+    ],
     'quality_inspections' => [
         'prefix' => 'QC-INS-',
         'padding' => 5,

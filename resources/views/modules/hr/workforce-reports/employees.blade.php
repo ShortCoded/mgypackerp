@@ -3,6 +3,7 @@
 @section('title', __('hr_workforce_reports.employees.title'))
 
 @section('content')
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
     @php($routeName = 'admin.hr.reports.employees')
     @php($exportOptions = collect(['csv' => 'file-csv', 'xlsx' => 'file-excel', 'pdf' => 'file-pdf'])->map(fn ($icon, $format) => ['permission' => 'hr.employee_reports.export', 'url' => route($routeName.'.export', [...$filters, 'format' => $format]), 'label' => strtoupper($format), 'icon' => $icon, 'newTab' => $format === 'pdf'])->values()->all())
     <div class="container-fluid px-0 px-sm-3 admin-report-page">
@@ -30,7 +31,7 @@
                 <tbody>
                     @forelse($report as $row)
                         <tr>
-                            <td dir="ltr">{{ $row->employee_code ?: $row->doc_num }}</td><td>{{ $row->full_name }}</td><td>{{ $row->branch_name ?: '—' }}</td><td>{{ $row->department_name ?: '—' }}</td><td>{{ $row->section_name ?: '—' }}</td><td>{{ $row->job_name ?: '—' }}</td><td>{{ $row->employment_type_name ?: '—' }}</td><td dir="ltr">{{ $row->hire_date ?: '—' }}</td><td>{{ $row->gender ? __('hr.employees.genders.'.$row->gender) : '—' }}</td><td>{{ __('hr.employees.statuses.'.$row->status) }}</td>
+                            <td dir="ltr">{{ $row->employee_code ?: $row->doc_num }}</td><td>{{ $row->full_name }}</td><td>{{ $row->branch_name ?: '—' }}</td><td>{{ $row->department_name ?: '—' }}</td><td>{{ $row->section_name ?: '—' }}</td><td>{{ $row->job_name ?: '—' }}</td><td>{{ $row->employment_type_name ?: '—' }}</td><td dir="ltr">{{ $dates->formatDate($row->hire_date, '—') }}</td><td>{{ $row->gender ? __('hr.employees.genders.'.$row->gender) : '—' }}</td><td>{{ __('hr.employees.statuses.'.$row->status) }}</td>
                         </tr>
                     @empty<tr><td colspan="10" class="text-center text-muted py-4">{{ __('hr_workforce_reports.empty') }}</td></tr>@endforelse
                 </tbody>

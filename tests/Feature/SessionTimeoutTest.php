@@ -119,7 +119,8 @@ test('login shows expired flash message and returns to sanitized intended url', 
     $this->post('/login', [
         'login' => $user->email,
         'password' => 'password',
-    ])->assertRedirect('/admin/roles');
+    ])->assertRedirect('/dashboard')
+        ->assertSessionHas(IntendedUrlService::AfterOperatingContextSessionKey, '/admin/roles');
 });
 
 test('external intended urls are rejected after login', function () {
@@ -258,7 +259,8 @@ test('intended cookie restores protected page after login page session expires',
         ]);
 
     $loginResponse
-        ->assertRedirect('/admin/roles?page=2')
+        ->assertRedirect('/dashboard')
+        ->assertSessionHas(IntendedUrlService::AfterOperatingContextSessionKey, '/admin/roles?page=2')
         ->assertCookieExpired(IntendedUrlService::CookieName);
 });
 

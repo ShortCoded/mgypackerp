@@ -111,7 +111,10 @@ class InventoryGlReconciliationService
             ->when($financialPeriodId !== null, fn ($query) => $query->where('inventory_documents.financial_period_id', $financialPeriodId))
             ->when($branchId !== null, fn ($query) => $query->where('inventory_documents.branch_id', $branchId))
             ->where('inventory_documents.status', InventoryDocument::StatusPosted)
-            ->whereNotNull('inventory_documents.production_run_id')
+            ->where(function ($query): void {
+                $query->whereNotNull('inventory_documents.production_run_id')
+                    ->orWhereNotNull('inventory_document_lines.production_run_id');
+            })
             ->whereNull('inventory_document_lines.deleted_at')
             ->selectRaw(
                 'coalesce(sum(case

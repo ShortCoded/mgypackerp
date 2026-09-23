@@ -32,12 +32,15 @@ class ProductionCostService
         $runIds = $runs->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
         $inventoryCosts = DB::table('inventory_document_lines')
             ->join('inventory_documents', 'inventory_documents.id', '=', 'inventory_document_lines.inventory_document_id')
-            ->whereIn('inventory_documents.production_run_id', $runIds)
+            ->where(function ($query) use ($runIds): void {
+                $query->whereIn('inventory_document_lines.production_run_id', $runIds)
+                    ->orWhereIn('inventory_documents.production_run_id', $runIds);
+            })
             ->where('inventory_documents.status', InventoryDocument::StatusPosted)
             ->whereNull('inventory_document_lines.deleted_at')
-            ->groupBy('inventory_documents.production_run_id')
+            ->groupByRaw('coalesce(inventory_document_lines.production_run_id, inventory_documents.production_run_id)')
             ->selectRaw(
-                'inventory_documents.production_run_id,
+                'coalesce(inventory_document_lines.production_run_id, inventory_documents.production_run_id) as production_run_id,
                 coalesce(sum(case when inventory_documents.document_type in (?, ?) then inventory_document_lines.total_cost else 0 end), 0) as issued,
                 coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as returned,
                 coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as waste,

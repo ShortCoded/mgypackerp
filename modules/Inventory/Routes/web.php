@@ -18,6 +18,8 @@ Route::middleware('auth')
             Route::get('/data', 'data')->middleware('can:inventory.documents.view')->name('data');
             Route::get('/select2/stores', 'stores')->middleware('can:inventory.documents.view')->name('select2.stores');
             Route::get('/select2/products', 'products')->middleware('can:inventory.documents.view')->name('select2.products');
+            Route::get('/select2/production-run-batches', 'productionRunBatches')->middleware('can:inventory.documents.create')->name('select2.production-run-batches');
+            Route::get('/production-run-batches/{publicId}/details', 'productionRunBatchDetails')->middleware('can:inventory.documents.create')->name('production-batches.details');
             Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');
             Route::post('/', 'store')->middleware(['can:inventory.documents.create', IdempotentDocumentSubmission::class])->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:inventory.documents.delete')->name('bulk-delete');

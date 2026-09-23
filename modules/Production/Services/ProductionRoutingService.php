@@ -7,8 +7,11 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\CrudAuditService;
+use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
+use Modules\Production\Models\ProductionOrderStageEvent;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionStage;
 use Modules\Production\Models\ProductProductionStage;
@@ -18,6 +21,7 @@ class ProductionRoutingService
     public function __construct(
         private readonly OperatingCompanyContextService $companies,
         private readonly CrudAuditService $audit,
+        private readonly DocumentNumberService $numbers,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -25,9 +29,11 @@ class ProductionRoutingService
     {
         return DB::transaction(function () use ($data): ProductionStage {
             $companyId = $this->companies->requireCompanyId();
-            $this->assertUniqueStageCode($companyId, $data['code']);
+            $code = $this->numbers->nextForCompany('production_stages', ProductionStage::class, $companyId)['code'];
+            $this->assertUniqueStageCode($companyId, $code);
             $stage = ProductionStage::query()->create([
                 ...$this->stageValues($data),
+                'code' => $code,
                 'company_id' => $companyId,
                 'created_by' => auth()->id(),
             ]);
@@ -42,8 +48,9 @@ class ProductionRoutingService
     {
         return DB::transaction(function () use ($stage, $data): ProductionStage {
             $locked = $this->lockStage($stage);
-            $this->assertUniqueStageCode((int) $locked->company_id, $data['code'], (int) $locked->getKey());
-            $this->audit->saveUpdate($locked, $this->stageValues($data));
+            $values = $this->stageValues($data);
+            unset($values['code']);
+            $this->audit->saveUpdate($locked, $values);
 
             return $locked->refresh();
         });
@@ -156,14 +163,23 @@ class ProductionRoutingService
             ->lockForUpdate()
             ->get();
 
-        if ($selectedStagePublicIds !== null) {
-            $selectedStagePublicIds = collect($selectedStagePublicIds)->filter()->unique()->values()->all();
-            $route = $route->whereIn('public_id', $selectedStagePublicIds)->values();
+        $selectedStagePublicIds = collect($selectedStagePublicIds ?? [])->filter()->unique()->values()->all();
+        $route = $route->whereIn('public_id', $selectedStagePublicIds)->values();
 
-            if ($route->count() !== count($selectedStagePublicIds)) {
-                throw new DomainException(__('production_execution.messages.order_stage_selection_invalid'));
-            }
+        if ($route->count() !== count($selectedStagePublicIds)) {
+            throw new DomainException(__('production_execution.messages.order_stage_selection_invalid'));
         }
+
+        $orderStageIds = $line->order->orderStageSnapshots()
+            ->where('is_required', true)
+            ->pluck('production_stage_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+        $route = $route->reject(fn (ProductProductionStage $routeStage): bool => in_array(
+            (int) $routeStage->production_stage_id,
+            $orderStageIds,
+            true,
+        ))->values();
 
         foreach ($route as $routeStage) {
             $stage = $routeStage->stage;
@@ -176,6 +192,7 @@ class ProductionRoutingService
                 'company_id' => $line->order->company_id,
                 'production_order_id' => $line->production_order_id,
                 'production_order_line_id' => $line->getKey(),
+                'route_scope_key' => 'line:'.$line->getKey(),
                 'production_stage_id' => $stage->getKey(),
                 'product_production_stage_id' => $routeStage->getKey(),
                 'sequence' => $routeStage->sequence,
@@ -187,15 +204,90 @@ class ProductionRoutingService
                 'standard_duration_unit' => $routeStage->standard_duration_unit ?? $stage->standard_duration_unit,
                 'is_required' => true,
                 'status' => ProductionOrderStageSnapshot::StatusPending,
+                'created_by' => auth()->id(),
             ]);
         }
+    }
+
+    /** @param list<string>|null $selectedStagePublicIds */
+    public function snapshotOrderRoute(ProductionOrder $order, ?array $selectedStagePublicIds): void
+    {
+        $lockedOrder = ProductionOrder::query()->lockForUpdate()->findOrFail($order->getKey());
+        $existingStages = $lockedOrder->orderStageSnapshots()->get();
+
+        if ($existingStages->contains(fn (ProductionOrderStageSnapshot $stage): bool => $stage->events()->exists()
+            || $stage->runs()->exists())) {
+            throw new DomainException(__('production_execution.messages.order_route_locked'));
+        }
+
+        $existingStages->each->delete();
+        $selectedIds = collect($selectedStagePublicIds ?? [])->filter()->unique()->values()->all();
+
+        if ($selectedIds === []) {
+            return;
+        }
+
+        $stages = ProductionStage::query()
+            ->forCompany((int) $lockedOrder->company_id)
+            ->whereIn('public_id', $selectedIds)
+            ->where('status', ProductionStage::StatusActive)
+            ->whereNull('deleted_at')
+            ->get()
+            ->keyBy('public_id');
+
+        if ($stages->count() !== count($selectedIds)) {
+            throw new DomainException(__('production_execution.messages.order_stage_selection_invalid'));
+        }
+
+        foreach ($selectedIds as $index => $publicId) {
+            /** @var ProductionStage $stage */
+            $stage = $stages->get($publicId);
+            ProductionOrderStageSnapshot::query()->create([
+                'company_id' => $lockedOrder->company_id,
+                'production_order_id' => $lockedOrder->getKey(),
+                'production_order_line_id' => null,
+                'route_scope_key' => 'order',
+                'production_stage_id' => $stage->getKey(),
+                'product_production_stage_id' => null,
+                'sequence' => $index + 1,
+                'stage_code' => $stage->code,
+                'stage_name' => $stage->name,
+                'description' => $stage->description,
+                'output_type' => $stage->output_type,
+                'standard_duration_value' => $stage->standard_duration_value,
+                'standard_duration_unit' => $stage->standard_duration_unit,
+                'is_required' => true,
+                'status' => ProductionOrderStageSnapshot::StatusPending,
+                'created_by' => auth()->id(),
+            ]);
+
+        }
+    }
+
+    public function recordStageEvent(
+        ProductionOrderStageSnapshot $stage,
+        string $eventType,
+        ?string $previousStatus,
+        string $status,
+        ?int $runId = null,
+        ?string $notes = null,
+    ): void {
+        ProductionOrderStageEvent::query()->create([
+            'production_order_stage_snapshot_id' => $stage->getKey(),
+            'production_run_id' => $runId,
+            'changed_by' => auth()->id(),
+            'event_type' => $eventType,
+            'previous_status' => $previousStatus,
+            'status' => $status,
+            'notes' => $notes,
+            'occurred_at' => now(),
+        ]);
     }
 
     /** @param array<string, mixed> $data */
     private function stageValues(array $data): array
     {
         return [
-            'code' => trim($data['code']),
             'name' => trim($data['name']),
             'description' => $data['description'] ?? null,
             'output_type' => $data['output_type'] ?? null,

@@ -15,6 +15,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\ActivityLogProperties;
 use Modules\Core\Services\CompanyPrintIdentityService;
@@ -29,6 +30,7 @@ use Modules\Production\Http\Requests\StoreProductionOrderRequest;
 use Modules\Production\Http\Requests\UpdateProductionOrderDocumentNumberSettingsRequest;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
+use Modules\Production\Models\ProductionStage;
 use Modules\Production\Models\ProductProductionStage;
 use Modules\Production\Services\ProductionCycleService;
 use Modules\Sales\Models\CustomerInvoice;
@@ -36,6 +38,7 @@ use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Services\SalesCycleReadService;
+use Modules\Sales\Services\SalesUnitConversionService;
 use Throwable;
 
 class ProductionOrderController extends Controller
@@ -274,7 +277,7 @@ class ProductionOrderController extends Controller
         ]));
     }
 
-    public function stages(Request $request, Select2ResponseService $select2): JsonResponse
+    public function stages(Request $request, Select2ResponseService $select2, DataTableSearchService $search): JsonResponse
     {
         $this->authorizeLookup($request);
         $context = $this->requiredContext($request);
@@ -304,6 +307,15 @@ class ProductionOrderController extends Controller
             ->where('status', 'active')
             ->with('stage')
             ->orderBy('sequence');
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        foreach ($terms as $term) {
+            $query->where(fn ($stages) => $stages
+                ->where('sequence', 'like', '%'.$term.'%')
+                ->orWhereHas('stage', fn ($stage) => $stage
+                    ->where('name', 'like', '%'.$term.'%')
+                    ->orWhere('code', 'like', '%'.$term.'%')));
+        }
 
         return response()->json($select2->paginated($query, $request, fn (ProductProductionStage $routeStage): array => [
             'id' => $routeStage->public_id,
@@ -314,10 +326,125 @@ class ProductionOrderController extends Controller
         ]));
     }
 
+    public function orderStages(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $this->authorizeLookup($request);
+        $context = $this->requiredContext($request);
+        $query = ProductionStage::query()
+            ->forCompany($context['company_id'])
+            ->where('status', ProductionStage::StatusActive)
+            ->orderBy('display_order')
+            ->orderBy('name');
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['code', 'name', 'description']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn ($stage): array => [
+            'id' => $stage->public_id,
+            'text' => trim($stage->code.' — '.$stage->name),
+        ]));
+    }
+
+    public function lineDetails(
+        Request $request,
+        SalesUnitConversionService $units,
+        NumericFormatService $numbers,
+    ): JsonResponse {
+        $this->authorizeLookup($request);
+        $context = $this->requiredContext($request);
+        $validated = $request->validate([
+            'source_type' => ['required', Rule::in(['make_to_stock', 'sales_order', 'customer_invoice'])],
+            'source_doc_num' => ['nullable', 'string', 'max:100'],
+            'source_line_reference' => ['required', 'string', 'max:180'],
+        ]);
+        [$referenceType, $publicReference] = array_pad(explode(':', $validated['source_line_reference'], 2), 2, null);
+        $expectedReferenceType = match ($validated['source_type']) {
+            'make_to_stock' => 'product',
+            'sales_order' => 'sales_order_line',
+            'customer_invoice' => 'customer_invoice_line',
+        };
+        abort_unless($referenceType === $expectedReferenceType, 422, __('production_execution.messages.invalid_source_line'));
+        $sourceLine = match ($referenceType) {
+            'product' => Product::query()->forCompany($context['company_id'])
+                ->where('doc_num', $publicReference)
+                ->active()
+                ->where('item_classification', Product::ClassificationFinishedProduct)
+                ->with(['unit', 'equivalentUnit'])
+                ->firstOrFail(),
+            'sales_order_line' => SalesOrderLine::query()
+                ->where('public_id', $publicReference)
+                ->whereHas('order', fn ($orders) => $orders
+                    ->where('company_id', $context['company_id'])
+                    ->where('doc_num', $validated['source_doc_num'])
+                    ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled]))
+                ->with(['product.unit', 'product.equivalentUnit', 'unit'])
+                ->firstOrFail(),
+            'customer_invoice_line' => CustomerInvoiceLine::query()
+                ->where('public_id', $publicReference)
+                ->whereHas('invoice', fn ($invoices) => $invoices
+                    ->where('company_id', $context['company_id'])
+                    ->where('doc_num', $validated['source_doc_num'])
+                    ->where('document_type', CustomerInvoice::TypeInvoice)
+                    ->where('status', CustomerInvoice::StatusPosted))
+                ->with(['product.unit', 'product.equivalentUnit', 'unit'])
+                ->firstOrFail(),
+            default => abort(422, __('production_execution.messages.invalid_source_line')),
+        };
+        $product = $sourceLine instanceof Product ? $sourceLine : $sourceLine->product;
+        abort_unless($product instanceof Product && (int) $product->company_id === (int) $context['company_id'], 404);
+        abort_unless($product->item_classification === Product::ClassificationFinishedProduct, 422, __('production_execution.messages.production_line_product_invalid'));
+        $unit = $sourceLine instanceof Product ? $product->unit : $sourceLine->unit;
+        abort_unless($unit !== null, 422, __('production_execution.messages.product_unit_required'));
+        $conversion = $units->snapshot($product, $unit->getKey(), '1');
+        $equivalentFactor = filled($product->equivalent_value) && bccomp((string) $product->equivalent_value, '0', 8) > 0
+            ? (string) $product->equivalent_value
+            : '1.00000000';
+        $outputFactor = bcmul($conversion['conversion_factor'], $equivalentFactor, 8);
+        $equivalentUnit = $product->equivalentUnit ?: $product->unit;
+        $components = ProductComponent::query()
+            ->forCompany((int) $product->company_id)
+            ->where('product_id', $product->getKey())
+            ->with(['componentProduct.unit', 'unit'])
+            ->orderBy('id')
+            ->get()
+            ->map(function (ProductComponent $component) use ($outputFactor, $numbers, $units): array {
+                $componentProduct = $component->componentProduct;
+                abort_unless($componentProduct instanceof Product && $component->unit !== null, 422);
+                $componentQuantity = $units->snapshot(
+                    $componentProduct,
+                    $component->unit_id,
+                    (string) $component->quantity,
+                );
+                $total = bcmul($componentQuantity['base_quantity'], $outputFactor, 8);
+
+                return [
+                    'product' => trim(($component->componentProduct?->doc_num ?? '').' — '.($component->componentProduct?->name ?? '')),
+                    'unit' => $componentProduct->unit?->name ?? '',
+                    'quantity_per_output' => $numbers->format($componentQuantity['base_quantity']),
+                    'required_quantity' => $numbers->format($total),
+                    'calculation_method' => $component->calculation_method,
+                    'percentage' => filled($component->percentage) ? $numbers->format($component->percentage).'%' : null,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'unit' => $unit->name,
+            'base_unit' => $product->unit?->name ?? '',
+            'equivalent_value' => $numbers->format($product->equivalent_value ?: 1),
+            'equivalent_unit' => $equivalentUnit?->name ?? $product->unit?->name ?? '',
+            'conversion_factor' => $conversion['conversion_factor'],
+            'output_factor' => $outputFactor,
+            'components' => $components,
+        ]);
+    }
+
     public function show(Request $request, ProductionOrder $productionOrder): View
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['branch', 'salesOrder.branch', 'salesOrder.branchStore', 'lines.product', 'lines.unit', 'lines.stageSnapshots', 'runs.product', 'runs.stageSnapshot', 'runs.requirements.product', 'runs.inventoryDocuments']);
+        $record = $productionOrder->load(['branch', 'salesOrder.branch', 'salesOrder.branchStore', 'orderStageSnapshots.stage', 'orderStageSnapshots.events.changedBy', 'orderStageSnapshots.events.run', 'lines.product', 'lines.unit', 'lines.stageSnapshots.events.changedBy', 'lines.stageSnapshots.events.run', 'runs.product', 'runs.stageSnapshot', 'runs.requirements.product', 'runs.inventoryDocuments']);
         $sourceInvoice = $record->source_type === 'customer_invoice'
             ? CustomerInvoice::query()->whereKey($record->source_id)->first()
             : null;
@@ -348,7 +475,7 @@ class ProductionOrderController extends Controller
     private function printDocument(Request $request, ProductionOrder $productionOrder, string $documentTitle, string $filenamePrefix): Response
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'lines.product', 'lines.unit', 'lines.stageSnapshots']);
+        $record = $productionOrder->load(['company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'orderStageSnapshots.stage', 'lines.product', 'lines.unit', 'lines.stageSnapshots']);
 
         return $this->pdf->stream('reports.production.order', [
             'title' => $documentTitle.' — '.$record->doc_num,
@@ -413,7 +540,7 @@ class ProductionOrderController extends Controller
                 'description' => $line['description'] ?: ($sourceLine->description ?? $product->name),
                 'specifications' => $salesLine?->specifications,
                 'production_notes' => $line['production_notes'] ?? null,
-                'stage_public_ids' => null,
+                'stage_public_ids' => $line['stage_public_ids'] ?? [],
             ];
         })->values()->all();
 
@@ -507,7 +634,7 @@ class ProductionOrderController extends Controller
 
     private function form(?ProductionOrder $record, bool $isClone): View
     {
-        $record?->loadMissing(['lines.product', 'lines.salesOrderLine', 'lines.customerInvoiceLine', 'lines.stageSnapshots.productStage', 'salesOrder.lines']);
+        $record?->loadMissing(['orderStageSnapshots.stage', 'lines.product', 'lines.salesOrderLine', 'lines.customerInvoiceLine', 'lines.stageSnapshots.productStage', 'salesOrder.lines']);
         $sourceDocumentNumber = match ($record?->source_type) {
             'sales_order' => $record->salesOrder?->doc_num,
             'customer_invoice' => CustomerInvoice::query()->whereKey($record->source_id)->value('doc_num'),

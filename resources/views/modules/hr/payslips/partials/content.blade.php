@@ -1,7 +1,8 @@
 @inject('numbers', 'Modules\Core\Services\NumericFormatService')
+@inject('dates', 'Modules\Core\Services\DateFormatService')
 
 <div class="card mb-3"><div class="card-body"><div class="row g-3">
-    @foreach (['period' => $payslip->period_start.' — '.$payslip->period_end, 'branch' => $payslip->branch_name ?: '—', 'status' => __('hr_payroll.status.'.$payslip->status)] as $key => $value)
+    @foreach (['period' => $dates->formatDate($payslip->period_start, '—').' — '.$dates->formatDate($payslip->period_end, '—'), 'branch' => $payslip->branch_name ?: '—', 'status' => __('hr_payroll.status.'.$payslip->status)] as $key => $value)
         <div class="col-md-4"><div class="small text-muted">{{ __('hr_payroll_reports.columns.'.$key) }}</div><div class="fw-semibold">{{ $value }}</div></div>
     @endforeach
 </div></div></div>

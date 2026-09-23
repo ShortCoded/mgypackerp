@@ -20,6 +20,7 @@ use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Services\InactiveSessionService;
 use Modules\Core\Services\IntendedUrlService;
 use Modules\Core\Services\LocalePreferenceService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SessionIdentityService;
 use NotificationChannels\WebPush\PushSubscription;
 
@@ -45,6 +46,7 @@ class AuthenticatedSessionController extends Controller
         DefaultLoginContextService $defaultLoginContexts,
         UserAccountStatusService $accounts,
         UserPresenceService $presence,
+        OperatingContextService $operatingContext,
     ): JsonResponse|RedirectResponse {
         $preLoginSessionFingerprint = $presence->sessionFingerprint($request);
         $user = $request->authenticate($authLogService, $accounts, $presence);
@@ -110,7 +112,7 @@ class AuthenticatedSessionController extends Controller
         });
 
         if ($request->expectsJson() || $request->ajax()) {
-            $redirect = $this->redirectPath($request, $intendedUrls);
+            $redirect = $this->redirectPath($request, $intendedUrls, $operatingContext);
 
             return response()->json([
                 'success' => true,
@@ -120,8 +122,7 @@ class AuthenticatedSessionController extends Controller
                 ->withCookie($lockScreen->forgetReturnUrlCookie());
         }
 
-        return redirect()
-            ->intended(route('dashboard', absolute: false))
+        return redirect($this->redirectPath($request, $intendedUrls, $operatingContext))
             ->withCookie($intendedUrls->forgetCookie())
             ->withCookie($lockScreen->forgetReturnUrlCookie());
     }
@@ -177,14 +178,32 @@ class AuthenticatedSessionController extends Controller
             ->withCookie($lockScreen->forgetReturnUrlCookie());
     }
 
-    protected function redirectPath(Request $request, IntendedUrlService $intendedUrls): string
-    {
+    protected function redirectPath(
+        Request $request,
+        IntendedUrlService $intendedUrls,
+        OperatingContextService $operatingContext,
+    ): string {
         $intended = $intendedUrls->pullSanitized($request);
+        $dashboard = route('dashboard', absolute: false);
 
-        if (is_string($intended)) {
+        if (! is_string($intended)) {
+            return $dashboard;
+        }
+
+        if (! $operatingContext->current($request)['requires_selection']) {
             return $intended;
         }
 
-        return route('dashboard', absolute: false);
+        $intendedPath = parse_url($intended, PHP_URL_PATH);
+
+        if ($intendedPath === $dashboard) {
+            return $intended;
+        }
+
+        if (is_string($intendedPath) && $intendedPath !== $dashboard) {
+            $request->session()->put(IntendedUrlService::AfterOperatingContextSessionKey, $intended);
+        }
+
+        return $dashboard;
     }
 }

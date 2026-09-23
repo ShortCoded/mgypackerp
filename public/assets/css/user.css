@@ -67,6 +67,10 @@
   white-space: nowrap;
 }
 
+section.card {
+  padding-block: 0;
+}
+
 .erp-entry-lines-table .select2-container {
   max-width: 100%;
   min-width: 0;
@@ -2991,4 +2995,17 @@ html[dir="rtl"] .erp-date-picker-calendar {
   body {
     padding-block-start: env(safe-area-inset-top);
   }
+}
+
+.hr-cycle-shell .hr-section-card > .card-body {
+  padding-block: .75rem;
+}
+
+.hr-cycle-shell .hr-section-card > .card-header,
+.hr-cycle-shell .hr-section-card > .card-footer {
+  padding-block: .625rem;
+}
+
+.hr-cycle-shell .hr-stat-card {
+  padding-block: .75rem !important;
 }

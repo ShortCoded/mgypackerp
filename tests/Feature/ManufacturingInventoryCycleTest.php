@@ -20,6 +20,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\Cashbox;
@@ -53,8 +54,10 @@ use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\ProductionRunBatch;
 use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Models\QualityStockHold;
+use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionCycleService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Modules\Production\Services\ProductionReportService;
@@ -166,6 +169,265 @@ function productionSubmission(array $payload = []): array
 {
     return ['_submission_token' => (string) Str::uuid(), ...$payload];
 }
+
+test('a production batch issues only available BOM materials for all included product lines', function () {
+    $fixture = manufacturingInventoryFixture();
+    InventoryTransaction::query()
+        ->where('product_id', $fixture['raw']->getKey())
+        ->where('source_doc_num', 'OPEN-MFG')
+        ->update(['quantity_in' => '9', 'total_cost' => '18']);
+
+    $secondFinished = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9903,
+        'doc_num' => 'FG-MFG-SECOND',
+        'name' => 'Second Finished Unit',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'status' => 'active',
+    ]);
+    ProductComponent::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'product_id' => $secondFinished->getKey(),
+        'component_product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '2',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    $cycle = app(ProductionCycleService::class);
+    $order = $cycle->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+    ], [
+        ['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '8'],
+        ['product_id' => $secondFinished->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '8'],
+    ]);
+    $order = $cycle->releaseOrder($order);
+    Permission::findOrCreate('production.runs.plan', 'web');
+    Permission::findOrCreate('production.runs.issue', 'web');
+    Permission::findOrCreate('production.runs.receive', 'web');
+    Permission::findOrCreate('production.runs.view', 'web');
+    Permission::findOrCreate('inventory.documents.create', 'web');
+    Permission::findOrCreate('inventory.documents.issue', 'web');
+    Permission::findOrCreate('inventory.documents.receive', 'web');
+    Permission::findOrCreate('production.material_requests.create', 'web');
+    Permission::findOrCreate('inventory.documents.view', 'web');
+    $fixture['user']->givePermissionTo([
+        'production.runs.plan',
+        'production.runs.issue',
+        'production.runs.receive',
+        'production.runs.view',
+        'inventory.documents.create',
+        'inventory.documents.issue',
+        'inventory.documents.receive',
+        'production.material_requests.create',
+        'inventory.documents.view',
+    ]);
+    $session = manufacturingIntegritySession($fixture);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.runs.create'))
+        ->assertOk()
+        ->assertSee('name="production_order_doc_num"', false)
+        ->assertSee('name="fixed_asset_doc_num"', false)
+        ->assertDontSee('name="production_machine_public_id"', false)
+        ->assertSee('data-production-run-batch-lines', false)
+        ->assertSee('data-line-card-label="بند أمر الإنتاج"', false)
+        ->assertDontSee('name="production_shift_id"', false)
+        ->assertDontSee('name="cost_center_doc_num"', false)
+        ->assertSee('data-depends-on="#production-run-batch-line-__INDEX__"', false)
+        ->assertSeeInOrder([
+            'name="production_order_doc_num"',
+            'name="fixed_asset_doc_num"',
+            'name="notes"',
+            'data-production-run-batch-lines',
+        ], false);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.runs.select2.orders', ['q' => $order->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $order->doc_num);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.runs.orders.lines', ['docNum' => $order->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('data.order.id', $order->doc_num)
+        ->assertJsonCount(2, 'data.lines');
+    $createToken = (string) Str::uuid();
+    $createPayload = [
+        '_submission_token' => $createToken,
+        'production_order_doc_num' => $order->doc_num,
+        'production_machine_public_id' => $fixture['machine']->public_id,
+        'planned_start_at' => now()->addHour()->toDateTimeString(),
+        'planned_end_at' => now()->addHours(2)->toDateTimeString(),
+        'lines' => $order->lines->map(fn ($line): array => [
+            'production_order_line_public_id' => $line->public_id,
+            'planned_quantity' => '4',
+        ])->all(),
+    ];
+    $createUrl = route('admin.production.runs.store');
+    $createResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($createUrl, $createPayload)
+        ->assertCreated();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($createUrl, $createPayload)
+        ->assertCreated()
+        ->assertExactJson($createResponse->json());
+    $batch = ProductionRunBatch::query()->where('batch_number', data_get($createResponse->json(), 'data.batch_number'))->firstOrFail();
+    $firstRun = $batch->runs()->with('requirements.product')->firstOrFail();
+
+    $materialRequestForm = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.material-requests.create', ['run' => $firstRun->getKey()]))
+        ->assertOk()
+        ->assertSee($fixture['raw']->doc_num)
+        ->assertSee('data-planned-remaining="8.00000000"', false)
+        ->assertSee('data-navigation-url=', false);
+    preg_match('/<select\b[^>]*data-material-run-select[^>]*>/s', $materialRequestForm->getContent(), $runSelectMatches);
+    expect($runSelectMatches[0] ?? null)->toContain('data-navigation-url=')
+        ->not->toContain('data-url=');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.runs.batches.show', $batch))
+        ->assertOk()
+        ->assertSee($batch->batch_number)
+        ->assertSee(__('production_execution.runs.issue_batch'));
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.create'))
+        ->assertOk()
+        ->assertSee(__('inventory.movements.fields.production_run_batch'));
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.select2.production-run-batches', ['q' => $batch->batch_number]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $batch->public_id);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.production-batches.details', $batch->public_id))
+        ->assertOk()
+        ->assertJsonCount(2, 'data.materials')
+        ->assertJsonPath('data.materials.0.quantity', '8');
+
+    $issueToken = (string) Str::uuid();
+    $issueUrl = route('admin.inventory.documents.store');
+    $issuePayload = [
+        '_submission_token' => $issueToken,
+        'document_type' => InventoryDocument::TypeIssue,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'production_run_batch_public_id' => $batch->public_id,
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($issueUrl, [...$issuePayload, 'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'quantity' => '100000',
+        ]]])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('lines');
+    $movementService = app(InventoryMovementService::class);
+    $failingMovementService = Mockery::mock($movementService)->makePartial();
+    $failingMovementService->shouldReceive('createAndPost')
+        ->once()
+        ->andReturnUsing(function (array $header, array $lines) use ($movementService): never {
+            $movementService->createAndPost($header, $lines);
+            throw new RuntimeException('Injected failure after batch issue posting.');
+        });
+    $this->app->instance(InventoryMovementService::class, $failingMovementService);
+    $failingCycle = app(ProductionCycleService::class);
+    expect(fn () => $failingCycle->issueRunBatchMaterials($batch, $fixture['store']->getKey()))
+        ->toThrow(RuntimeException::class, 'Injected failure after batch issue posting.');
+    $requirementIds = $batch->runs()->with('requirements')->get()->flatMap->requirements->pluck('id')->all();
+    expect(InventoryDocument::query()->where('production_run_batch_id', $batch->getKey())->count())->toBe(0)
+        ->and(InventoryReservation::query()->whereIn('production_material_requirement_id', $requirementIds)->count())->toBe(0)
+        ->and($batch->runs()->with('requirements')->get()->flatMap->requirements->pluck('issued_quantity')->unique()->all())
+        ->toBe(['0.00000000'])
+        ->and(InventoryTransaction::query()->whereIn('production_run_id', $batch->runs()->pluck('id'))
+            ->where('stock_status', InventoryTransaction::StatusProductionStaging)
+            ->count())->toBe(0);
+    $this->app->instance(InventoryMovementService::class, $movementService);
+    $cycle = app(ProductionCycleService::class);
+    $issueResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($issueUrl, $issuePayload)
+        ->assertCreated();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($issueUrl, $issuePayload)
+        ->assertCreated()
+        ->assertExactJson($issueResponse->json());
+    $document = InventoryDocument::query()->where('doc_num', data_get($issueResponse->json(), 'data.doc_num'))->firstOrFail();
+    $document->load('lines');
+    $runs = $batch->runs()->with('requirements')->get();
+    $requirements = $runs->flatMap->requirements->sortBy('id')->values();
+    $costPositions = app(ProductionCostService::class)->positions($runs);
+
+    expect($document->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($document->production_run_id)->toBeNull()
+        ->and((int) $document->production_run_batch_id)->toBe((int) $batch->getKey())
+        ->and($document->lines)->toHaveCount(2)
+        ->and($document->lines->pluck('quantity')->all())->toBe(['8.00000000', '1.00000000'])
+        ->and($document->lines->pluck('production_run_id')->unique()->count())->toBe(2)
+        ->and($requirements->pluck('issued_quantity')->all())->toBe(['8.00000000', '1.00000000'])
+        ->and($costPositions->get($runs[0]->getKey())['issued'])->toBe('16.00000000')
+        ->and($costPositions->get($runs[1]->getKey())['issued'])->toBe('2.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(),
+            $fixture['store']->getKey(),
+            $fixture['raw']->getKey(),
+        )['available'])->toBe('0.00000000');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.show', $document))
+        ->assertOk()
+        ->assertSee(app(DateFormatService::class)->formatDate($document->document_date, '—'))
+        ->assertSee($batch->batch_number);
+
+    $runs->each(function (ProductionRun $run) use ($cycle, $fixture): void {
+        $run = $cycle->startSetup($run);
+        $run = $cycle->completeSetup($run);
+        $run = $cycle->startRun($run);
+        $accounting = $run->requirements->mapWithKeys(fn ($requirement): array => [
+            $requirement->getKey() => [
+                'consumed_quantity' => (string) $requirement->issued_quantity,
+                'waste_quantity' => '0',
+            ],
+        ])->all();
+        $cycle->accountMaterials($run, $fixture['store']->getKey(), $accounting);
+        $cycle->recordProgress($run, [
+            'good_base_quantity' => '1',
+            'scrap_base_quantity' => '0',
+            'notes' => 'Batch line completed for reconciliation',
+        ]);
+    });
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.select2.production-run-batches', [
+            'document_type' => InventoryDocument::TypeReceipt,
+            'q' => $batch->batch_number,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $batch->public_id);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.production-batches.details', [
+            'publicId' => $batch->public_id,
+            'document_type' => InventoryDocument::TypeReceipt,
+        ]))
+        ->assertOk()
+        ->assertJsonCount(2, 'data.outputs');
+    $receiptResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->postJson($issueUrl, [
+            '_submission_token' => (string) Str::uuid(),
+            'document_type' => InventoryDocument::TypeReceipt,
+            'branch_store_uuid' => $fixture['store']->public_uuid,
+            'production_run_batch_public_id' => $batch->public_id,
+        ])
+        ->assertCreated();
+    $receiptDocuments = InventoryDocument::query()->whereIn('doc_num', data_get($receiptResponse->json(), 'data.doc_nums'))->get();
+    expect($receiptDocuments)->toHaveCount(2)
+        ->and($receiptDocuments->every(fn (InventoryDocument $receipt): bool => $receipt->document_type === InventoryDocument::TypeProductionReceipt
+            && (int) $receipt->production_run_batch_id === (int) $batch->getKey()))->toBeTrue();
+    foreach ($runs as $run) {
+        expect($cycle->completeRun($run->fresh())->status)->toBe(ProductionRun::StatusCompleted);
+    }
+    $batchReconciliation = collect(app(InventoryGlReconciliationService::class)->reconcile(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+    ))->keyBy('key');
+    expect($batchReconciliation['wip']['difference'])->toBe('0.0000')
+        ->and($batchReconciliation['finished_goods']['difference'])->toBe('0.0000');
+});
 
 function operationalReportCount(string $html, string $key): int
 {
@@ -579,6 +841,13 @@ test('production quality runs the controlled request receive inspect review clos
         'branch_id' => $fixture['branch']->getKey(),
         'job_title' => 'Line helper',
     ]);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.runs.select2.workers', ['q' => 'LABOR-980']))
+        ->assertOk()
+        ->assertJsonCount(2, 'results')
+        ->assertJsonFragment(['id' => $operator->doc_num, 'text' => $operator->doc_num.' — Operator One'])
+        ->assertJsonFragment(['id' => $qualityHelper->doc_num, 'text' => $qualityHelper->doc_num.' — Quality Helper']);
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->postJson(route('admin.production.runs.labor', $run), [
@@ -3110,6 +3379,13 @@ test('an approved maintenance plan generates idempotent calendar and meter dues 
 
 test('inventory and production screens translate labels without changing status values', function (string $locale): void {
     $fixture = manufacturingInventoryFixture();
+    $factoryBranch = Branch::query()->create([
+        ...app(DocumentNumberService::class)->next('branches', Branch::class),
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Manufacturing Test Factory',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
     $permissions = ['inventory.documents.create', 'inventory.documents.adjust', 'production.orders.view'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
@@ -3120,8 +3396,8 @@ test('inventory and production screens translate labels without changing status 
         'locale' => $locale,
         OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
         OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
-        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
-        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::BranchIdKey => $factoryBranch->getKey(),
+        OperatingContextService::BranchDocNumKey => $factoryBranch->doc_num,
         OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
@@ -3136,7 +3412,7 @@ test('inventory and production screens translate labels without changing status 
     $order = app(ProductionCycleService::class)->createMakeToStockOrder([
         'company_id' => $fixture['company']->getKey(),
         'financial_period_id' => $fixture['period']->getKey(),
-        'branch_id' => $fixture['branch']->getKey(),
+        'branch_id' => $factoryBranch->getKey(),
     ], [[
         'product_id' => $fixture['finished']->getKey(),
         'unit_id' => $fixture['unit']->getKey(),
@@ -3388,6 +3664,7 @@ test('production run creation requires a token and replays one created run', fun
     $session = manufacturingIntegritySession($fixture);
     $payload = [
         'production_order_line_id' => $orderLine->getKey(),
+        'production_machine_public_id' => $fixture['machine']->public_id,
         'planned_quantity' => '1',
         'planned_start_at' => now()->addHour()->toDateTimeString(),
         'planned_end_at' => now()->addHours(2)->toDateTimeString(),

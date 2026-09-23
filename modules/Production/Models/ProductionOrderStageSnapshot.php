@@ -59,4 +59,11 @@ class ProductionOrderStageSnapshot extends Model
     {
         return $this->hasMany(ProductionRun::class, 'production_order_stage_snapshot_id');
     }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(ProductionOrderStageEvent::class, 'production_order_stage_snapshot_id')
+            ->orderBy('occurred_at')
+            ->orderBy('id');
+    }
 }

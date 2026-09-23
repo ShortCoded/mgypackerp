@@ -3,7 +3,8 @@
 @section('title', __('hr_payroll.cost_preview.title'))
 
 @section('content')
-    <div class="container-fluid px-0 px-sm-3 hr-cycle-shell">
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
+    <div class="container-fluid w-100 mw-100 m-0 p-0 hr-cycle-shell">
         <section class="hr-cycle-hero mb-3">
             <div class="card-body p-4 position-relative" style="z-index:1">
                 <div class="hr-cycle-kicker mb-2">{{ __('hr_payroll.cost_preview.kicker') }}</div>
@@ -11,7 +12,7 @@
                 <p class="text-600 mb-3">{{ __('hr_payroll.cost_preview.description') }}</p>
                 <div class="hr-quick-nav">
                     <a href="{{ route('admin.hr.payroll-preparation.index', ['run' => $run->id]) }}"><span class="fas fa-arrow-right me-1"></span>{{ __('hr_payroll.cost_preview.back') }}</a>
-                    <span><span class="fas fa-calendar-alt me-1"></span>{{ $run->period_start }} — {{ $run->period_end }}</span>
+                    <span><span class="fas fa-calendar-alt me-1"></span>{{ $dates->formatDate($run->period_start, '—') }} — {{ $dates->formatDate($run->period_end, '—') }}</span>
                 </div>
             </div>
         </section>
@@ -53,5 +54,5 @@
 @endsection
 
 @push('styles')
-    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/hr-cycle.css') }}?v=20260922">
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/hr-cycle.css') }}">
 @endpush

@@ -30,12 +30,17 @@ class ProductionStageController extends Controller
 
     public function create(): View
     {
-        return view('modules.production.stages.form', ['stage' => null]);
+        return view('modules.production.stages.form', ['stage' => null, 'mode' => 'create']);
     }
 
     public function edit(ProductionStage $productionStage): View
     {
-        return view('modules.production.stages.form', ['stage' => $productionStage]);
+        return view('modules.production.stages.form', ['stage' => $productionStage, 'mode' => 'edit']);
+    }
+
+    public function show(ProductionStage $productionStage): View
+    {
+        return view('modules.production.stages.form', ['stage' => $productionStage, 'mode' => 'view']);
     }
 
     public function store(SaveProductionStageRequest $request): RedirectResponse
@@ -74,10 +79,17 @@ class ProductionStageController extends Controller
         try {
             $stage = $callback();
 
-            $redirect = match (request()->string('submit_intent')->toString()) {
-                'save_and_new' => redirect()->route('admin.production.stages.create'),
-                'save_and_edit' => redirect()->route('admin.production.stages.edit', $stage),
-                default => redirect()->route('admin.production.stages.index'),
+            $action = request()->string('submit_action')->toString() ?: request()->string('submit_intent')->toString();
+            $redirect = match ($action) {
+                'save_view' => redirect()->route('admin.production.stages.show', $stage),
+                'save_edit', 'save_and_edit' => redirect()->route('admin.production.stages.edit', $stage),
+                'save_new', 'save_and_new' => redirect()->route('admin.production.stages.create'),
+                'save_back', 'save_and_back' => redirect()->route('admin.production.stages.index'),
+                default => request()->user()?->can('production.stages.edit')
+                    ? redirect()->route('admin.production.stages.edit', $stage)
+                    : (request()->user()?->can('production.stages.view')
+                        ? redirect()->route('admin.production.stages.show', $stage)
+                        : redirect()->route('admin.production.stages.index')),
             };
 
             return $redirect->with('success', $message);

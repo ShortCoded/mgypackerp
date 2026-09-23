@@ -15,7 +15,7 @@ class SaveProductionStageRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'code' => ['required', 'string', 'max:80'],
+            'code' => ['nullable', 'string', 'max:80'],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'output_type' => ['nullable', 'string', 'max:80'],
@@ -23,6 +23,7 @@ class SaveProductionStageRequest extends FormRequest
             'standard_duration_unit' => ['nullable', Rule::in(['hours', 'days']), 'required_with:standard_duration_value'],
             'display_order' => ['required', 'integer', 'min:1', 'max:100000'],
             'status' => ['required', Rule::in(['active', 'inactive'])],
+            'submit_action' => ['nullable', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new'])],
             'submit_intent' => ['nullable', Rule::in(['save_and_new', 'save_and_edit', 'save_and_back'])],
         ];
     }

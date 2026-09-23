@@ -52,9 +52,10 @@ class ErpUiScreenRegistry
     /**
      * @return list<string>
      */
-    public function permissions(): array
+    public function permissions(array $excludedScreenKeys = []): array
     {
         return $this->collection()
+            ->reject(fn (ErpUiScreenDefinition $screen): bool => in_array($screen->key(), $excludedScreenKeys, true))
             ->flatMap(fn (ErpUiScreenDefinition $screen): array => array_map(
                 fn (string $action): string => $screen->permission($action),
                 $screen->actions(),

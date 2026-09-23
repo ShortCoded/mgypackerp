@@ -21,6 +21,7 @@ Route::middleware('auth')
             Route::get('/create', 'create')->middleware('can:production.stages.create')->name('create');
             Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
             Route::patch('/{productionStage}/restore', 'restore')->middleware('can:production.stages.restore')->name('restore');
+            Route::get('/{productionStage}', 'show')->middleware('can:production.stages.view')->name('show');
             Route::get('/{productionStage}/edit', 'edit')->middleware('can:production.stages.edit')->name('edit');
             Route::put('/{productionStage}', 'update')->name('update');
             Route::delete('/{productionStage}', 'destroy')->middleware('can:production.stages.delete')->name('destroy');
@@ -99,6 +100,8 @@ Route::middleware('auth')
             Route::get('/select2/products', 'products')->name('select2.products');
             Route::get('/select2/sources', 'sources')->name('select2.sources');
             Route::get('/select2/stages', 'stages')->name('select2.stages');
+            Route::get('/select2/order-stages', 'orderStages')->name('select2.order-stages');
+            Route::get('/select2/line-details', 'lineDetails')->name('select2.line-details');
             Route::get('/create', 'create')->middleware('can:production.orders.create')->name('create');
             Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class.':required')->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:production.orders.delete')->name('bulk-delete');
@@ -123,11 +126,15 @@ Route::middleware('auth')
         Route::prefix('runs')->name('runs.')->controller(ProductionRunController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:production.runs.view')->name('index');
             Route::get('/data', 'data')->middleware('can:production.runs.view')->name('data');
+            Route::get('/select2/orders', 'ordersLookup')->name('select2.orders');
             Route::get('/select2/order-lines', 'orderLines')->name('select2.order-lines');
             Route::get('/select2/stages', 'stages')->name('select2.stages');
             Route::get('/select2/assets', 'assets')->name('select2.assets');
-            Route::get('/select2/cost-centers', 'costCenters')->name('select2.cost-centers');
+            Route::get('/select2/machines', 'machines')->name('select2.machines');
             Route::get('/select2/workers', 'workersLookup')->name('select2.workers');
+            Route::get('/orders/{docNum}/lines', 'orderLinesForOrder')->name('orders.lines');
+            Route::get('/batches/{productionRunBatch}', 'showBatch')->middleware('can:production.runs.view')->name('batches.show');
+            Route::post('/batches/{productionRunBatch}/issue', 'issueBatch')->middleware(['can:production.runs.issue', IdempotentDocumentSubmission::class.':required'])->name('batches.issue');
             Route::get('/create', 'create')->middleware('can:production.runs.plan')->name('create');
             Route::post('/', 'store')->middleware(['can:production.runs.plan', IdempotentDocumentSubmission::class.':required'])->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:production.runs.delete')->name('bulk-delete');

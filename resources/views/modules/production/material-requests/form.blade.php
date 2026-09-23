@@ -40,7 +40,7 @@
                                 @if($isEdit)
                                     <x-forms.input type="hidden" name="production_run_id" :value="$selectedRun?->id" />
                                 @endif
-                                <x-forms.select variant="local" id="production-material-run" name="production_run_id" required :disabled="$isEdit || $isView" data-material-run-select data-url="{{ route('admin.production.material-requests.create') }}">
+                                <x-forms.select variant="local" id="production-material-run" name="production_run_id" required :disabled="$isEdit || $isView" data-material-run-select data-navigation-url="{{ route('admin.production.material-requests.create') }}">
                                     <option value="">{{ __('common.placeholders.select') }}</option>
                                     @foreach($runs as $run)
                                         <option value="{{ $run->id }}" @selected((int) old('production_run_id', $selectedRun?->id) === (int) $run->id)>{{ $run->run_number }} — {{ $run->stageSnapshot?->stage_name ?: $run->product?->name }}</option>

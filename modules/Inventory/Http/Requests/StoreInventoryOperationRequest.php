@@ -59,6 +59,14 @@ class StoreInventoryOperationRequest extends FormRequest
 
     public function authorize(): bool
     {
+        if (filled($this->input('production_run_batch_public_id'))) {
+            $permission = $this->input('document_type') === InventoryDocument::TypeReceipt
+                ? ['inventory.documents.receive', 'production.runs.receive']
+                : ['inventory.documents.issue', 'production.runs.issue'];
+
+            return collect($permission)->every(fn (string $ability): bool => (bool) $this->user()?->can($ability));
+        }
+
         $permission = match ($this->input('document_type')) {
             InventoryDocument::TypeReceipt => 'inventory.documents.receive',
             InventoryDocument::TypeIssue => 'inventory.documents.issue',
@@ -76,6 +84,28 @@ class StoreInventoryOperationRequest extends FormRequest
     public function rules(): array
     {
         $context = app(OperatingContextService::class)->snapshot($this);
+
+        if (filled($this->input('production_run_batch_public_id'))) {
+            return [
+                'production_run_batch_public_id' => [
+                    'required',
+                    'uuid',
+                    Rule::exists('production_run_batches', 'public_id')->where(fn ($query) => $query
+                        ->where('company_id', $context['company_id'])
+                        ->where('financial_period_id', $context['financial_period_id'])
+                        ->where('branch_id', $context['branch_id'])),
+                ],
+                'branch_store_uuid' => [
+                    'required',
+                    'uuid',
+                    Rule::exists('branch_stores', 'public_uuid')->where(fn ($query) => $query
+                        ->where('branch_id', $context['branch_id'])
+                        ->whereNull('deleted_at')),
+                ],
+                'document_type' => ['required', Rule::in([InventoryDocument::TypeIssue, InventoryDocument::TypeReceipt])],
+                'lines' => ['array', 'max:0'],
+            ];
+        }
 
         return [
             'branch_store_uuid' => [

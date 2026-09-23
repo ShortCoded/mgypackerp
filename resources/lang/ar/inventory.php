@@ -463,6 +463,11 @@ return [
         'add_line_shortcut' => 'إضافة بند جديد (Alt + N)',
         'duplicate_line_shortcut' => 'تكرار بيانات البند (Alt + D)',
         'delete_line_shortcut' => 'حذف البند (Alt + Delete)',
+        'production_run_batch_help' => 'اختر تشغيلة إنتاج لعرض احتياجات خاماتها المحسوبة. لا يمكن تعديل البنود أو الكميات يدويًا، ويصرف النظام المتاح فقط من المخزن المحدد.',
+        'production_run_batch_receipt_help' => 'اختر التشغيلة لاستلام الناتج السليم المسجل لبنودها. يتحقق النظام من المرحلة النهائية واحتساب الخامات والجودة ويستلم الكميات المتبقية تلقائيًا.',
+        'production_run_batch_preview_title' => 'احتياجات التشغيلة المحسوبة',
+        'production_run_batch_reason' => 'صرف خامات التشغيلة الإنتاجية',
+        'production_run_batch_receipt_reason' => 'استلام ناتج التشغيلة الإنتاجية',
         'posting_notice' => 'المسودة قابلة للتعديل. الترحيل يحدّث الرصيد والقيد المحاسبي، وتصحيح المستند المُرحّل يكون بعكس الحركة.',
         'fields' => [
             'document' => 'المستند',
@@ -485,6 +490,9 @@ return [
             'manufacture_date' => 'تاريخ الإنتاج',
             'expiry_date' => 'تاريخ الصلاحية',
             'status' => 'الحالة',
+            'production_run_batch' => 'التشغيلة الإنتاجية',
+            'production_order' => 'أمر الإنتاج',
+            'production_stage' => 'المرحلة الإنتاجية',
         ],
         'types' => [
             'inventory_receipt' => 'إذن استلام مخزني',
@@ -536,6 +544,7 @@ return [
             'select_store' => 'اختر المخزن',
             'select_destination_store' => 'اختر المخزن المستلم',
             'select_product' => 'ابحث عن الصنف',
+            'select_production_run_batch' => 'ابحث عن رقم التشغيلة',
         ],
         'actions' => [
             'add_line' => 'إضافة بند',
@@ -547,6 +556,8 @@ return [
             'post_and_new' => 'ترحيل وجديد',
             'post_and_view' => 'ترحيل وعرض',
             'reverse' => 'عكس الحركة',
+            'issue_production_run_batch' => 'صرف خامات التشغيلة',
+            'receive_production_run_batch' => 'استلام ناتج التشغيلة',
         ],
         'accounting' => [
             'receipt' => 'استلام مخزني :document',
@@ -559,6 +570,10 @@ return [
             'reversed' => 'تم عكس حركة المخزون بنجاح.',
             'only_drafts_editable' => 'لا يمكن تعديل حركة المخزون إلا وهي مسودة.',
             'context_mismatch' => 'حركة المخزون لا تتبع سياق التشغيل الحالي.',
+            'production_run_batch_loading' => 'جارٍ تحميل خامات التشغيلة…',
+            'production_run_batch_load_failed' => 'تعذر تحميل تفاصيل التشغيلة. حدّث الاختيار وحاول مرة أخرى.',
+            'production_run_batch_no_materials' => 'لا توجد خامات متبقية للصرف لهذه التشغيلة.',
+            'production_run_batch_type_invalid' => 'اختر إذن صرف أو استلام لاستخدام رقم التشغيلة.',
         ],
     ],
     'stock_counts' => [

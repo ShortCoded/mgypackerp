@@ -14,6 +14,148 @@
 
   const ui = jsonData('[data-inventory-movement-ui]', {});
 
+  function showProductionRunBatchPreview(message, materials, productLabel) {
+    const preview = document.querySelector('[data-production-run-batch-preview]');
+    const submit = document.querySelector('[data-production-run-batch-submit]');
+    if (!preview) return;
+    preview.replaceChildren();
+    preview.hidden = false;
+    if (!Array.isArray(materials)) {
+      preview.textContent = message || '';
+      if (submit) submit.disabled = true;
+      return;
+    }
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-2';
+    title.textContent = message;
+    preview.appendChild(title);
+    const list = document.createElement('ul');
+    list.className = 'mb-0 ps-3';
+    materials.forEach(function (material) {
+      const row = document.createElement('li');
+      const line = `${productLabel || ui.batchMaterial}: ${material.product || ''} — ${material.quantity || ''} ${material.unit || ''}`.trim();
+      const context = [material.finished_product, material.stage, material.run_number].filter(Boolean).join(' · ');
+      row.textContent = context ? `${line} (${context})` : line;
+      list.appendChild(row);
+    });
+    preview.appendChild(list);
+    if (submit) submit.disabled = materials.length === 0;
+  }
+
+  function updateProductionRunBatchMode(enabled) {
+    const form = document.querySelector('[data-inventory-movement-form]');
+    const wrapper = form?.querySelector('[data-production-run-batch-wrapper]');
+    const batchSelect = form?.querySelector('[data-production-run-batch]');
+    const batchHelp = form?.querySelector('[data-production-run-batch-help]');
+    const typeSelect = form?.querySelector('[data-movement-type]');
+    const reason = form?.querySelector('[name="movement_reason"]');
+    const lines = form?.querySelector('[data-inventory-lines-section]');
+    if (!form || !batchSelect || !typeSelect || !lines) return;
+    const documentType = String(typeSelect.value || '');
+    const batchTypeAllowed = ['inventory_issue', 'inventory_receipt'].includes(documentType);
+    enabled = enabled && batchTypeAllowed;
+    if (wrapper) wrapper.hidden = !batchTypeAllowed;
+    if (batchHelp) batchHelp.textContent = documentType === 'inventory_receipt'
+      ? (ui.batchReceiptHelp || '')
+      : (ui.batchIssueHelp || '');
+
+    if (enabled) {
+      if (form.dataset.productionBatchMode !== '1' && !Object.hasOwn(typeSelect.dataset, 'previousValue')) {
+        typeSelect.dataset.previousValue = typeSelect.value;
+      }
+      if (form.dataset.productionBatchMode !== '1' && !Object.hasOwn(typeSelect.dataset, 'previousDisabled')) {
+        typeSelect.dataset.previousDisabled = typeSelect.disabled ? '1' : '0';
+      }
+      $(typeSelect).prop('disabled', true).trigger('change.select2');
+      let hiddenType = form.querySelector('[data-batch-document-type]');
+      if (!hiddenType) {
+        hiddenType = document.createElement('input');
+        hiddenType.type = 'hidden';
+        hiddenType.name = 'document_type';
+        hiddenType.dataset.batchDocumentType = '1';
+        form.appendChild(hiddenType);
+      }
+      hiddenType.value = documentType;
+      if (reason) {
+        if (!Object.hasOwn(reason.dataset, 'previousValue')) reason.dataset.previousValue = reason.value;
+        reason.value = documentType === 'inventory_receipt' ? (ui.batchReceiptReason || '') : (ui.batchIssueReason || '');
+      }
+      if (form.dataset.productionBatchMode !== '1') {
+        lines.hidden = true;
+        lines.querySelectorAll('input, select, textarea, button').forEach(function (field) {
+          field.dataset.batchWasDisabled = field.disabled ? '1' : '0';
+          $(field).prop('disabled', true);
+          if (field.tagName === 'SELECT') $(field).trigger('change.select2');
+        });
+      }
+      form.dataset.productionBatchMode = '1';
+    } else {
+      if (form.dataset.productionBatchMode === '1') {
+        form.querySelector('[data-batch-document-type]')?.remove();
+        $(typeSelect).prop('disabled', typeSelect.dataset.previousDisabled === '1');
+        if (Object.hasOwn(typeSelect.dataset, 'previousValue')) {
+          $(typeSelect).val(typeSelect.dataset.previousValue).trigger('change');
+          $(typeSelect).trigger('change.select2');
+          delete typeSelect.dataset.previousValue;
+          delete typeSelect.dataset.previousDisabled;
+        }
+        if (reason && Object.hasOwn(reason.dataset, 'previousValue')) {
+          reason.value = reason.dataset.previousValue;
+          delete reason.dataset.previousValue;
+        }
+        lines.hidden = false;
+        lines.querySelectorAll('input, select, textarea, button').forEach(function (field) {
+          $(field).prop('disabled', field.dataset.batchWasDisabled === '1');
+          delete field.dataset.batchWasDisabled;
+          if (field.tagName === 'SELECT') $(field).trigger('change.select2');
+        });
+      }
+      form.dataset.productionBatchMode = '0';
+    }
+
+    form.querySelectorAll('[data-standard-movement-actions]').forEach(function (actions) { actions.hidden = enabled; });
+    const submit = form.querySelector('[data-production-run-batch-submit]');
+    if (submit) {
+      submit.hidden = !enabled;
+      submit.disabled = enabled;
+      submit.textContent = documentType === 'inventory_receipt' ? (ui.batchReceiveAction || '') : (ui.batchIssueAction || '');
+    }
+    const preview = form.querySelector('[data-production-run-batch-preview]');
+    if (!enabled && preview) {
+      preview.hidden = true;
+      preview.replaceChildren();
+    }
+  }
+
+  function loadProductionRunBatch() {
+    const form = document.querySelector('[data-inventory-movement-form]');
+    const batchSelect = form?.querySelector('[data-production-run-batch]');
+    const preview = form?.querySelector('[data-production-run-batch-preview]');
+    if (!form || !batchSelect || !preview) return;
+    const publicId = String(batchSelect.value || '');
+    const documentType = String(form.querySelector('[data-movement-type]')?.value || '');
+    updateProductionRunBatchMode(publicId !== '' && ['inventory_issue', 'inventory_receipt'].includes(documentType));
+    if (!publicId) return;
+
+    showProductionRunBatchPreview(ui.batchLoading || '', null);
+    const detailsUrl = String(batchSelect.dataset.detailsUrl || '').replace('__BATCH_ID__', encodeURIComponent(publicId));
+    const requestUrl = new URL(detailsUrl, window.location.origin);
+    requestUrl.searchParams.set('document_type', documentType);
+    $.getJSON(requestUrl.toString()).done(function (response) {
+      const batch = response.data || {};
+      const materials = documentType === 'inventory_receipt' ? batch.outputs : batch.materials;
+      if (!Array.isArray(materials) || materials.length === 0) {
+        showProductionRunBatchPreview(ui.batchEmpty || '', null);
+        return;
+      }
+      const title = `${ui.batchTitle || ''} — ${batch.batch_number || ''} / ${ui.batchOrder || ''}: ${batch.order_number || ''}`;
+      showProductionRunBatchPreview(title, materials, documentType === 'inventory_receipt' ? ui.batchFinishedProduct : ui.batchMaterial);
+    }).fail(function () {
+      showProductionRunBatchPreview(ui.batchLoadFailed || '', null);
+    });
+  }
+
   function setFieldVisibility(selector, visible, required) {
     const field = document.querySelector(selector);
     if (!field) {
@@ -49,6 +191,14 @@
       $('#inventory-destination-status').val('damaged').trigger('change.select2');
     } else if (usesDestinationStatus && !$('#inventory-destination-status').val()) {
       $('#inventory-destination-status').val('available').trigger('change.select2');
+    }
+
+    const batch = document.querySelector('[data-production-run-batch]');
+    const batchTypeAllowed = ['inventory_issue', 'inventory_receipt'].includes(type);
+    if (batch && !batchTypeAllowed && batch.value) {
+      $(batch).val(null).trigger('change');
+    } else {
+      updateProductionRunBatchMode(Boolean(batch?.value) && batchTypeAllowed);
     }
   }
 
@@ -181,6 +331,7 @@
   }
 
   $(document).on('change select2:select', '[data-movement-type]', updateMovementFields);
+  $(document).on('change', '[data-production-run-batch]', loadProductionRunBatch);
   $(document).on('click', '[data-add-inventory-line]', function () {
     const activeRow = document.activeElement?.closest?.('[data-inventory-line]');
     addLine({}, activeRow, true);
@@ -198,6 +349,7 @@
       addLine(line, null, false);
     });
     updateMovementFields();
+    loadProductionRunBatch();
     initializeLineShortcuts();
   });
 })(jQuery, window, document);

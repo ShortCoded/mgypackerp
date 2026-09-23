@@ -184,20 +184,16 @@ test('costing report shells render posted production costs and export the same s
         ->assertDontSee('value="profitability" selected', false);
 
     $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.costing.product-cost.data', ['draw' => 4]))
+        ->get($route)
         ->assertOk()
-        ->assertJsonPath('draw', 4)
-        ->assertJsonPath('recordsFiltered', 1)
-        ->assertJsonPath('data.0.recognized_cost', '70.00000000')
-        ->assertJsonPath('data.0.allocated_overhead', '30.00000000')
-        ->assertJsonPath('data.0.actual_cost', '100.00000000')
-        ->assertJsonPath('data.0.wip', '30.00000000');
-
-    $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.costing.product-cost.data', ['draw' => 5, 'type' => 'allocation_analysis']))
-        ->assertOk()
-        ->assertJsonPath('data.0.product', $fixture['finished']->doc_num.' / '.$fixture['finished']->name)
-        ->assertJsonMissing(['allocation_run' => $allocation->doc_num]);
+        ->assertSee(__('costing_reports.columns.recognized_cost'))
+        ->assertSee(__('costing_reports.columns.allocated_overhead'))
+        ->assertSee(__('costing_reports.columns.actual_cost'))
+        ->assertSee(__('costing_reports.columns.wip'))
+        ->assertSee('70')
+        ->assertSee('30')
+        ->assertSee('100')
+        ->assertDontSee($allocation->doc_num);
 
     foreach (['work_in_progress', 'finished_goods_cost', 'allocation_analysis'] as $type) {
         Permission::findOrCreate("reports.costing.{$type}.view", 'web');
@@ -209,18 +205,23 @@ test('costing report shells render posted production costs and export the same s
     ]);
 
     $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.costing.work-in-progress.data', ['draw' => 6]))
+        ->get(route('admin.reports.costing.work-in-progress.index'))
         ->assertOk()
-        ->assertJsonPath('data.0.wip', '30.00000000');
+        ->assertSee($run->run_number)
+        ->assertSee(__('costing_reports.columns.wip'))
+        ->assertSee('30');
     $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.costing.finished-goods-cost.data', ['draw' => 7]))
+        ->get(route('admin.reports.costing.finished-goods-cost.index'))
         ->assertOk()
-        ->assertJsonPath('data.0.recognized_cost', '70.00000000');
+        ->assertSee($fixture['finished']->name)
+        ->assertSee(__('costing_reports.columns.recognized_cost'))
+        ->assertSee('70');
     $this->actingAs($fixture['user'])->withSession($session)
-        ->get(route('admin.reports.costing.allocation-analysis.data', ['draw' => 8]))
+        ->get(route('admin.reports.costing.allocation-analysis.index'))
         ->assertOk()
-        ->assertJsonPath('data.0.allocation_run', $allocation->doc_num)
-        ->assertJsonPath('data.0.unused_capacity_cost', '20.0000');
+        ->assertSee($allocation->doc_num)
+        ->assertSee(__('costing_reports.columns.unused_capacity_cost'))
+        ->assertSee('20');
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.accounting.reports.costing.export.excel', ['type' => 'product_cost']))

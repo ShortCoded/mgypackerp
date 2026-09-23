@@ -86,7 +86,8 @@ class InventoryAccountingPostingService
     private function ownsAccounting(InventoryDocument $document): bool
     {
         if ($document->document_type === InventoryDocument::TypeProductionReceipt
-            && $document->production_run_id === null) {
+            && $document->production_run_id === null
+            && ! $document->lines->contains(fn (InventoryDocumentLine $line): bool => $line->production_run_id !== null)) {
             return false;
         }
 
@@ -117,17 +118,19 @@ class InventoryAccountingPostingService
         }
 
         $grouped = [];
-        $costCenterId = in_array($document->document_type, [
+        $usesProductionCostCenter = in_array($document->document_type, [
             InventoryDocument::TypeMaterialIssue,
             InventoryDocument::TypeAdditionalMaterialIssue,
             InventoryDocument::TypeMaterialReturn,
             InventoryDocument::TypeProductionWaste,
             InventoryDocument::TypeProductionReceipt,
-        ], true)
-            ? $document->productionRun?->cost_center_id
-            : ($this->isMaintenanceMaterialDocument($document) ? $this->maintenanceCostCenterId($document) : null);
+        ], true);
+        $maintenanceCostCenterId = $this->isMaintenanceMaterialDocument($document) ? $this->maintenanceCostCenterId($document) : null;
 
         foreach ($document->lines as $line) {
+            $costCenterId = $usesProductionCostCenter
+                ? ($line->productionRun?->cost_center_id ?? $document->productionRun?->cost_center_id)
+                : $maintenanceCostCenterId;
             $amount = bcadd((string) $line->total_cost, '0', 4);
 
             if (bccomp($amount, '0', 4) <= 0) {

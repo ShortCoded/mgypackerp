@@ -463,6 +463,11 @@ return [
         'add_line_shortcut' => 'Add a new line (Alt + N)',
         'duplicate_line_shortcut' => 'Duplicate line data (Alt + D)',
         'delete_line_shortcut' => 'Delete line (Alt + Delete)',
+        'production_run_batch_help' => 'Choose a production run batch to review its calculated material requirements. Lines and quantities are read-only; the system issues only the available stock from the selected store.',
+        'production_run_batch_receipt_help' => 'Choose a batch to receive its recorded good output. The system validates final-stage, material-accounting, and quality requirements, then receives the remaining quantities automatically.',
+        'production_run_batch_preview_title' => 'Calculated batch material requirements',
+        'production_run_batch_reason' => 'Production run batch material issue',
+        'production_run_batch_receipt_reason' => 'Production run batch output receipt',
         'posting_notice' => 'Drafts remain editable. Posting updates stock and accounting; posted documents are corrected by reversal.',
         'fields' => [
             'document' => 'Document',
@@ -485,6 +490,9 @@ return [
             'manufacture_date' => 'Manufacture Date',
             'expiry_date' => 'Expiry Date',
             'status' => 'Status',
+            'production_run_batch' => 'Production Run Batch',
+            'production_order' => 'Production Order',
+            'production_stage' => 'Production Stage',
         ],
         'types' => [
             'inventory_receipt' => 'Inventory Receipt',
@@ -536,6 +544,7 @@ return [
             'select_store' => 'Select store',
             'select_destination_store' => 'Select receiving store',
             'select_product' => 'Search for a product',
+            'select_production_run_batch' => 'Search by batch number',
         ],
         'actions' => [
             'add_line' => 'Add Line',
@@ -547,6 +556,8 @@ return [
             'post_and_new' => 'Post & New',
             'post_and_view' => 'Post & View',
             'reverse' => 'Reverse Movement',
+            'issue_production_run_batch' => 'Issue Batch Materials',
+            'receive_production_run_batch' => 'Receive Batch Output',
         ],
         'accounting' => [
             'receipt' => 'Inventory receipt :document',
@@ -559,6 +570,10 @@ return [
             'reversed' => 'Inventory movement reversed successfully.',
             'only_drafts_editable' => 'Only draft inventory movements can be edited.',
             'context_mismatch' => 'The inventory movement does not belong to the active operating context.',
+            'production_run_batch_loading' => 'Loading batch materials…',
+            'production_run_batch_load_failed' => 'Could not load batch details. Re-select the batch and try again.',
+            'production_run_batch_no_materials' => 'This batch has no remaining materials to issue.',
+            'production_run_batch_type_invalid' => 'Select an issue or receipt movement to use a production batch.',
         ],
     ],
     'stock_counts' => [

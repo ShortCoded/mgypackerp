@@ -103,7 +103,7 @@ class PermissionRegistryService
         return $this->memo->remember('permissions.registry.all', function (): array {
             $permissions = array_merge(
                 $this->fromMenus(),
-                $this->erpUiScreens->permissions(),
+                $this->erpUiScreens->permissions(excludedScreenKeys: ['core_user_tasks']),
             );
 
             $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');

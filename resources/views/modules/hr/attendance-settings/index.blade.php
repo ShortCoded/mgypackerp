@@ -23,11 +23,26 @@
                                     </div>
                                     <div class="alert alert-info py-2 mt-2 mb-0 js-location-status" role="status">{{ __('hr_attendance_settings.map_url_help') }}</div>
                                 </div>
-                                <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_latitude') }}</label><input class="form-control js-latitude" name="attendance_latitude" type="number" step="0.0000001" value="{{ $branch->attendance_latitude }}"></div>
-                                <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_longitude') }}</label><input class="form-control js-longitude" name="attendance_longitude" type="number" step="0.0000001" value="{{ $branch->attendance_longitude }}"></div>
-                                <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_radius_meters') }}</label><input class="form-control" name="attendance_radius_meters" type="number" min="10" max="10000" value="{{ $branch->attendance_radius_meters }}" required></div>
-                                <div class="col-6"><label class="form-label">{{ __('branches.attributes.attendance_max_accuracy_meters') }}</label><input class="form-control" name="attendance_max_accuracy_meters" type="number" min="5" max="5000" value="{{ $branch->attendance_max_accuracy_meters }}" required></div>
-                                <div class="col-12"><label class="form-label">{{ __('branches.attributes.attendance_location_policy') }}</label><x-forms.select variant="local" name="attendance_location_policy" :allow-clear="false" required>@foreach (['allow', 'warn', 'reject'] as $policy)<option value="{{ $policy }}" @selected($branch->attendance_location_policy === $policy)>{{ __('branches.attendance_location.policies.'.$policy) }}</option>@endforeach</x-forms.select></div>
+                                <div class="col-6">
+                                    <x-forms.label :for="'attendance_latitude_'.$branch->getKey()" :label="__('branches.attributes.attendance_latitude')" />
+                                    <x-forms.numeric-input class="js-latitude" :id="'attendance_latitude_'.$branch->getKey()" name="attendance_latitude" :scale="7" :allow-negative="true" step="0.0000001" :value="$branch->attendance_latitude" />
+                                </div>
+                                <div class="col-6">
+                                    <x-forms.label :for="'attendance_longitude_'.$branch->getKey()" :label="__('branches.attributes.attendance_longitude')" />
+                                    <x-forms.numeric-input class="js-longitude" :id="'attendance_longitude_'.$branch->getKey()" name="attendance_longitude" :scale="7" :allow-negative="true" step="0.0000001" :value="$branch->attendance_longitude" />
+                                </div>
+                                <div class="col-6">
+                                    <x-forms.label :for="'attendance_radius_meters_'.$branch->getKey()" :label="__('branches.attributes.attendance_radius_meters')" :required="true" />
+                                    <x-forms.numeric-input :id="'attendance_radius_meters_'.$branch->getKey()" name="attendance_radius_meters" :scale="0" min="10" max="10000" step="1" :value="$branch->attendance_radius_meters" required />
+                                </div>
+                                <div class="col-6">
+                                    <x-forms.label :for="'attendance_max_accuracy_meters_'.$branch->getKey()" :label="__('branches.attributes.attendance_max_accuracy_meters')" :required="true" />
+                                    <x-forms.numeric-input :id="'attendance_max_accuracy_meters_'.$branch->getKey()" name="attendance_max_accuracy_meters" :scale="0" min="5" max="5000" step="1" :value="$branch->attendance_max_accuracy_meters" required />
+                                </div>
+                                <div class="col-12">
+                                    <x-forms.label :for="'attendance_location_policy_'.$branch->getKey()" :label="__('branches.attributes.attendance_location_policy')" :required="true" />
+                                    <x-forms.select :id="'attendance_location_policy_'.$branch->getKey()" variant="local" name="attendance_location_policy" :allow-clear="false" required>@foreach (['allow', 'warn', 'reject'] as $policy)<option value="{{ $policy }}" @selected($branch->attendance_location_policy === $policy)>{{ __('branches.attendance_location.policies.'.$policy) }}</option>@endforeach</x-forms.select>
+                                </div>
                                 @can('hr.attendance_settings.manage')
                                     <div class="col-12 d-flex flex-wrap gap-2"><button class="btn btn-outline-secondary js-capture-location" type="button">{{ __('hr_attendance_settings.actions.capture') }}</button><button class="btn btn-primary" type="submit">{{ __('common.actions.save') }}</button></div>
                                 @endcan

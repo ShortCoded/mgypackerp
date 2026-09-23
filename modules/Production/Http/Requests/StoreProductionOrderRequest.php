@@ -74,6 +74,16 @@ class StoreProductionOrderRequest extends FormRequest
             'priority' => ['required', Rule::in(['low', 'normal', 'high', 'urgent'])],
             'overproduction_tolerance_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'production_notes' => ['nullable', 'string', 'max:5000'],
+            'order_stage_public_ids' => ['nullable', 'array', 'max:50'],
+            'order_stage_public_ids.*' => [
+                'required',
+                'uuid',
+                'distinct',
+                Rule::exists('production_stages', 'public_id')->where(fn ($query) => $query
+                    ->where('company_id', $context['company_id'])
+                    ->where('status', 'active')
+                    ->whereNull('deleted_at')),
+            ],
             'submit_action' => ['nullable', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_clone'])],
             'lines' => ['required', 'array', 'min:1', 'max:200'],
             'lines.*.source_line_reference' => ['required', 'string', 'max:180', 'distinct'],

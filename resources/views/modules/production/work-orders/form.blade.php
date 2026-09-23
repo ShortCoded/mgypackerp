@@ -18,6 +18,10 @@
             'text' => $stage->sequence.'. '.$stage->stage_name,
         ])->filter(fn ($stage) => filled($stage['id']))->values()->all(),
     ])->values()->all() ?? [];
+    $initialOrderStages = $record?->orderStageSnapshots?->map(fn ($stage) => [
+        'id' => $stage->stage?->public_id,
+        'text' => $stage->sequence.'. '.$stage->stage_name,
+    ])->filter(fn ($stage) => filled($stage['id']))->values()->all() ?? [];
     $initialLines = old('lines', $recordLines ?: [[]]);
     $sourceType = old('source_type', $record?->source_type ?? 'make_to_stock');
 @endphp
@@ -26,7 +30,7 @@
 
 @section('content')
     <div class="production-mobile-workflow">
-    <form data-production-order-form method="POST" action="{{ $isEdit ? route('admin.production.work-orders.update', $record) : route('admin.production.work-orders.store') }}" novalidate>
+    <form data-production-order-form data-line-details-url="{{ route('admin.production.work-orders.select2.line-details') }}" method="POST" action="{{ $isEdit ? route('admin.production.work-orders.update', $record) : route('admin.production.work-orders.store') }}" novalidate>
         @csrf
         @if($isEdit)
             @method('PUT')
@@ -127,6 +131,16 @@
                 </div>
 
                 <div class="border-top mt-4 pt-3">
+                    <div class="mb-3">
+                        <x-forms.label for="production-order-route" :label="__('production_execution.orders.order_route')" />
+                        <x-forms.select variant="ajax" id="production-order-route" name="order_stage_public_ids[]" :url="route('admin.production.work-orders.select2.order-stages')" :placeholder="__('production_execution.orders.select_order_stages')" multiple>
+                            @foreach($initialOrderStages as $stage)
+                                <option value="{{ $stage['id'] }}" selected>{{ $stage['text'] }}</option>
+                            @endforeach
+                        </x-forms.select>
+                        <div class="form-text">{{ __('production_execution.orders.order_route_help') }}</div>
+                        <div class="invalid-feedback d-block" data-error-for="order_stage_public_ids"></div>
+                    </div>
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                         <h6 class="text-700 mb-0">{{ __('production_execution.orders.finished_products') }}</h6>
                         <button class="btn btn-falcon-default btn-sm" type="button" data-add-production-line title="{{ __('production_execution.orders.add_line_shortcut') }}" data-bs-title="{{ __('production_execution.orders.add_line_shortcut') }}">
@@ -139,7 +153,7 @@
                                 <tr>
                                     <th class="text-center erp-entry-line-number">#</th>
                                     <th class="erp-entry-line-item">{{ __('production_execution.fields.source_line_product') }}</th>
-                                    <th class="erp-entry-line-quantity">{{ __('production_execution.fields.quantity') }}</th>
+                                    <th class="erp-entry-line-quantity">{{ __('production_execution.fields.quantity') }} / {{ __('production_execution.fields.unit') }}</th>
                                     <th class="erp-entry-line-text">{{ __('production_execution.fields.description') }}</th>
                                     <th class="erp-entry-line-text">{{ __('production_execution.fields.production_route') }}</th>
                                     <th class="erp-entry-line-text">{{ __('production_execution.fields.notes') }}</th>
@@ -176,6 +190,9 @@
             </td>
             <td class="erp-entry-line-quantity">
                 <x-forms.numeric-input name="lines[__INDEX__][quantity]" :scale="8" min="0.00000001" step="0.00000001" arrow-step="1" required />
+                <div class="small text-600 mt-1" data-line-unit-details></div>
+                <div class="small fw-semibold text-primary mt-1" data-line-equivalent-output></div>
+                <div class="small mt-2 d-none" data-line-component-preview></div>
             </td>
             <td class="erp-entry-line-text">
                 <x-forms.textarea name="lines[__INDEX__][description]" rows="2" maxlength="1000"></x-forms.textarea>

@@ -38,7 +38,7 @@ class ProductionExecutionDataTable
 
         return DataTables::eloquent($query)
             ->filter(fn ($query) => $this->filter($query, $request, ['code', 'name', 'description', 'output_type', 'status']))
-            ->addColumn('duration', fn (ProductionStage $stage): string => $stage->standard_duration_value ? e($stage->standard_duration_value.' '.__('production_execution.duration_units.'.$stage->standard_duration_unit)) : '—')
+            ->addColumn('duration', fn (ProductionStage $stage): string => $stage->standard_duration_value ? e($this->numbers->format($stage->standard_duration_value).' '.__('production_execution.duration_units.'.$stage->standard_duration_unit)) : '—')
             ->editColumn('status', fn (ProductionStage $stage): string => $this->badge(__('production_execution.statuses.'.$stage->status), $stage->status === 'active' ? 'success' : 'secondary'))
             ->addColumn('actions', fn (ProductionStage $stage): string => $this->stageActions($request, $stage))
             ->orderColumn('duration', 'standard_duration_value $1')

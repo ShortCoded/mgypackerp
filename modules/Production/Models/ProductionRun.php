@@ -37,6 +37,7 @@ class ProductionRun extends Model
     protected $fillable = [
         'public_id', 'run_number', 'company_id', 'financial_period_id', 'branch_id',
         'production_order_id', 'production_order_line_id', 'production_order_stage_snapshot_id', 'product_id', 'unit_id',
+        'production_run_batch_id',
         'cost_center_id',
         'conversion_factor', 'planned_quantity', 'planned_base_quantity', 'good_base_quantity',
         'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity',
@@ -126,6 +127,11 @@ class ProductionRun extends Model
         return $this->belongsTo(ProductionOrder::class, 'production_order_id');
     }
 
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(ProductionRunBatch::class, 'production_run_batch_id');
+    }
+
     public function orderLine(): BelongsTo
     {
         return $this->belongsTo(ProductionOrderLine::class, 'production_order_line_id');
@@ -139,6 +145,11 @@ class ProductionRun extends Model
     public function fixedAsset(): BelongsTo
     {
         return $this->belongsTo(FixedAsset::class)->withTrashed();
+    }
+
+    public function productionMachine(): BelongsTo
+    {
+        return $this->belongsTo(ProductionMachine::class);
     }
 
     public function product(): BelongsTo

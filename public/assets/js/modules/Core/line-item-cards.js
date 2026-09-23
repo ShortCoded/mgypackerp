@@ -49,9 +49,10 @@
             const input=form.querySelector('[name="submit_action"]');
             if(button && input) input.value=button.dataset.submitAction;
         });
-        const enhance = () => {
-            if (marker.dataset.lineCardLayout === 'table') return;
-            form.querySelectorAll('table').forEach(table => {
+            const enhance = () => {
+                if (marker.dataset.lineCardLayout === 'table') return;
+                form.querySelectorAll('table').forEach(table => {
+            const lineLabel = table.dataset.lineCardLabel || marker.dataset.lineLabel;
             if (!table.querySelector('tbody [name^="lines["], tbody [name^="items["], tbody [name^="allocations["], tbody [name^="results["], tbody [name^="payment_schedules["], tbody [name^="labor_details["]')) return;
             if (!table.querySelector('input:not([type="hidden"]):not([readonly]):not([disabled]), select:not([disabled]), textarea:not([readonly])')) return;
             const headings = Array.from(table.tHead?.rows[0]?.cells || []).map(cell => cell.textContent.trim());
@@ -65,7 +66,7 @@
                     const fresh = !row.dataset.lineCard;
                     row.dataset.lineCard = '1';
                     row.setAttribute('role', 'listitem');
-                    row.setAttribute('aria-label', `${marker.dataset.lineLabel} ${index + 1}`);
+                    row.setAttribute('aria-label', `${lineLabel} ${index + 1}`);
                     Array.from(row.cells).forEach((cell, column) => {
                         const fields = Array.from(cell.querySelectorAll('input:not([type="hidden"]), select, textarea'));
                         const label = headings[column] || '';
@@ -75,7 +76,7 @@
                         });
                         if (column === 0 && ['#', 'م', ''].includes(label) && !fields.length) {
                             cell.classList.add('line-card-heading');
-                            cell.dataset.cardTitle = `${marker.dataset.lineLabel} `;
+                            cell.dataset.cardTitle = `${lineLabel} `;
                         } else if (label && !cell.querySelector(':scope > .line-card-field-label')) {
                             const title = document.createElement('label');
                             title.className = 'line-card-field-label';

@@ -219,9 +219,9 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain('z-index: 1085');
 
     expect(file_get_contents(resource_path('views/modules/production/stages/form.blade.php')))
-        ->toContain('save_and_new')
-        ->toContain('save_and_edit')
-        ->toContain('save_and_back');
+        ->toContain("@include('modules.finance.partials.form-actions'")
+        ->toContain('name="submit_action"')
+        ->toContain("'canClone' => false");
 
     expect($qualityView)
         ->toContain('quality-evidence-gallery')

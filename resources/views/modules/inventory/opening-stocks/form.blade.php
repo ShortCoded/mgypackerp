@@ -266,12 +266,6 @@
                                         @endif
                                     </td>
                                     <td>
-                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['manufacture_date'] ?? null }}</div>@else<x-forms.date-input name="lines[{{ $index }}][manufacture_date]" :value="$line['manufacture_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.manufacture_date"></div>@endif
-                                    </td>
-                                    <td>
-                                        @if($isReadonly)<div class="form-control-plaintext">{{ $line['expiry_date'] ?? null }}</div>@else<x-forms.date-input name="lines[{{ $index }}][expiry_date]" :value="$line['expiry_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.expiry_date"></div>@endif
-                                    </td>
-                                    <td>
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['unit'] ?? null }}</div>
                                         @else
@@ -305,6 +299,12 @@
                                             <x-forms.input class="form-control js-opening-stock-batch" name="lines[{{ $index }}][batch_lot]" type="text" maxlength="100" value="{{ $line['batch_lot'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.batch_lot"></div>
                                         @endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $dateFormatService->formatDate($line['manufacture_date'] ?? null, '—') }}</div>@else<x-forms.date-input name="lines[{{ $index }}][manufacture_date]" :value="$line['manufacture_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.manufacture_date"></div>@endif
+                                    </td>
+                                    <td>
+                                        @if($isReadonly)<div class="form-control-plaintext">{{ $dateFormatService->formatDate($line['expiry_date'] ?? null, '—') }}</div>@else<x-forms.date-input name="lines[{{ $index }}][expiry_date]" :value="$line['expiry_date'] ?? ''" /><div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.expiry_date"></div>@endif
                                     </td>
                                     <td>
                                         @if($isReadonly)

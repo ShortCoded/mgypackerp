@@ -9,6 +9,7 @@ use Modules\Auth\Services\UserPresenceService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\IntendedUrlService;
 use Modules\Core\Services\OperatingContextService;
 
 function operatingContextCompany(array $overrides = []): Company
@@ -85,6 +86,32 @@ function operatingContextRestrictedRole(array $overrides = []): Role
         ...$overrides,
     ]);
 }
+
+test('deferred intended page opens after an operating context is selected from the dashboard', function () {
+    $user = User::factory()->create();
+
+    $this->withSession(['url.intended' => '/dashboard/pending-decisions'])
+        ->post('/login', [
+            'login' => $user->email,
+            'password' => 'password',
+        ])
+        ->assertRedirect('/dashboard')
+        ->assertSessionHas(IntendedUrlService::AfterOperatingContextSessionKey, '/dashboard/pending-decisions');
+
+    $branch = operatingContextBranch();
+    $company = $branch->company;
+    $period = operatingContextPeriod(['company' => $company]);
+
+    $this->postJson(route('admin.operating-context.select'), [
+        'company_doc_num' => $company->doc_num,
+        'branch_doc_num' => $branch->doc_num,
+        'financial_period_doc_num' => $period->doc_num,
+    ])->assertOk()->assertJsonPath('reload', true);
+
+    $this->get('/dashboard')
+        ->assertRedirect('/dashboard/pending-decisions')
+        ->assertSessionMissing(IntendedUrlService::AfterOperatingContextSessionKey);
+});
 
 test('authenticated user can save a valid company branch and financial period in session', function () {
     $user = User::factory()->create();

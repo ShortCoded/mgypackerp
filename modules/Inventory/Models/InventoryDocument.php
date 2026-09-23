@@ -14,6 +14,7 @@ use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\ProductionRunBatch;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrder;
@@ -150,6 +151,11 @@ class InventoryDocument extends Model
     public function productionRun(): BelongsTo
     {
         return $this->belongsTo(ProductionRun::class);
+    }
+
+    public function productionRunBatch(): BelongsTo
+    {
+        return $this->belongsTo(ProductionRunBatch::class, 'production_run_batch_id');
     }
 
     public function journalEntry(): BelongsTo

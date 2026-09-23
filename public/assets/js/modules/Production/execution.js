@@ -16,6 +16,15 @@
     stockBalanceAvailable: 'أقصى كمية متاحة للفحص من رصيد المخزن: ',
     stockBalanceInsufficient: 'الكمية المطلوبة أكبر من الرصيد المتاح للفحص.',
     stockBalanceError: 'تعذر قراءة الرصيد الحالي.',
+    required: 'المطلوب',
+    productComponents: 'احتياجات مكونات المنتج',
+    noProductComponents: 'لا توجد مكونات مسجلة لهذا المنتج.',
+    equivalentOutput: 'ما يعادل كمية الإنتاج',
+    selectOrderFirst: 'اختر أمر الإنتاج لعرض بنوده.',
+    loadingOrderItems: 'جارٍ تحميل بنود أمر الإنتاج…',
+    orderHasNoItems: 'لا توجد بنود متاحة في أمر الإنتاج المختار.',
+    orderItemsLoadFailed: 'تعذر تحميل بنود أمر الإنتاج.',
+    selectOrderItem: 'اختر بند أمر الإنتاج',
   } : {
     invalidTableConfiguration: 'Invalid table configuration.',
     deleteConfirm: 'Delete this record?',
@@ -28,6 +37,15 @@
     stockBalanceAvailable: 'Maximum inspectable quantity in this warehouse: ',
     stockBalanceInsufficient: 'Requested quantity exceeds inspectable stock.',
     stockBalanceError: 'Could not read the current stock balance.',
+    required: 'Required',
+    productComponents: 'Product component requirements',
+    noProductComponents: 'No product components are configured.',
+    equivalentOutput: 'Equivalent output',
+    selectOrderFirst: 'Select a production order to load its items.',
+    loadingOrderItems: 'Loading production-order items…',
+    orderHasNoItems: 'The selected production order has no available items.',
+    orderItemsLoadFailed: 'Could not load production-order items.',
+    selectOrderItem: 'Select a production-order item',
   };
 
   function fallbackMessage(key) {
@@ -580,7 +598,7 @@
     if (!this.value) {
       return;
     }
-    const url = new URL(this.dataset.url, window.location.origin);
+    const url = new URL(this.dataset.navigationUrl, window.location.origin);
     url.searchParams.set('run', this.value);
     const additional = document.querySelector('[data-additional-material]');
     if (additional && additional.checked) {
@@ -812,6 +830,103 @@
     });
   }
 
+  function multiplyDecimals(left, right) {
+    const normalize = window.AppNumbers && typeof window.AppNumbers.normalize === 'function'
+      ? window.AppNumbers.normalize
+      : function (value) { return String(value ?? '').replaceAll(',', '').trim(); };
+    const leftValue = normalize(left);
+    const rightValue = normalize(right);
+    if (!leftValue || !rightValue) return '';
+
+    const toParts = function (value) {
+      const parts = value.split('.');
+      const fraction = parts[1] || '';
+      return { digits: BigInt((parts[0] || '0') + fraction), scale: fraction.length };
+    };
+    const first = toParts(leftValue);
+    const second = toParts(rightValue);
+    const product = (first.digits * second.digits).toString();
+    const scale = first.scale + second.scale;
+    const padded = product.padStart(scale + 1, '0');
+    const whole = scale ? padded.slice(0, -scale) : padded;
+    const fraction = scale ? padded.slice(-scale).replace(/0+$/, '') : '';
+    const normalized = fraction ? `${whole}.${fraction}` : whole;
+
+    return window.AppNumbers && typeof window.AppNumbers.format === 'function'
+      ? window.AppNumbers.format(normalized)
+      : normalized;
+  }
+
+  function updateProductionLinePreview(row) {
+    const quantity = row?.querySelector('[name$="[quantity]"]');
+    const output = row?.querySelector('[data-line-equivalent-output]');
+    const components = row?.querySelector('[data-line-component-preview]');
+    const normalizedQuantity = window.AppNumbers?.normalize?.(quantity?.value || '');
+    const outputFactor = row?.dataset.outputFactor || '';
+    if (!quantity || !output || !normalizedQuantity || !outputFactor) {
+      if (output) output.textContent = '';
+      if (components) components.classList.add('d-none');
+      return;
+    }
+
+    const outputQuantity = multiplyDecimals(normalizedQuantity, outputFactor);
+    output.textContent = `${fallbackMessage('equivalentOutput')}: ${outputQuantity} ${row.dataset.equivalentUnit || ''}`.trim();
+    if (!components) return;
+    components.replaceChildren();
+    const componentRows = JSON.parse(row.dataset.componentPreview || '[]');
+    if (componentRows.length === 0) {
+      components.textContent = fallbackMessage('noProductComponents');
+      components.classList.remove('d-none');
+      return;
+    }
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-1';
+    title.textContent = fallbackMessage('productComponents');
+    components.appendChild(title);
+    const list = document.createElement('ul');
+    list.className = 'mb-0 ps-3';
+    componentRows.forEach(function (component) {
+      const item = document.createElement('li');
+      const required = multiplyDecimals(normalizedQuantity, component.quantity_per_output);
+      item.textContent = `${component.product}: ${required} ${component.unit || ''}`.trim();
+      if (component.percentage) item.textContent += ` (${component.percentage})`;
+      list.appendChild(item);
+    });
+    components.appendChild(list);
+    components.classList.remove('d-none');
+  }
+
+  function loadProductionLineDetails(row) {
+    const product = row?.querySelector('[name$="[source_line_reference]"]');
+    if (!product?.value) return;
+    const version = String(Number(row.dataset.detailsVersion || 0) + 1);
+    row.dataset.detailsVersion = version;
+    $.getJSON(document.querySelector('[data-production-order-form]')?.dataset.lineDetailsUrl || '', {
+      source_type: document.querySelector('#production-source-type')?.value || 'make_to_stock',
+      source_doc_num: document.querySelector('#production-source-document')?.value || '',
+      source_line_reference: product.value,
+    }).done(function (payload) {
+      if (row.dataset.detailsVersion !== version) return;
+      row.dataset.outputFactor = payload.output_factor || '1';
+      row.dataset.equivalentUnit = payload.equivalent_unit || payload.base_unit || '';
+      row.dataset.componentPreview = JSON.stringify((payload.components || []).map(function (component) {
+        return { product: component.product, unit: component.unit, quantity_per_output: component.required_quantity, percentage: component.percentage };
+      }));
+      const unit = row.querySelector('[data-line-unit-details]');
+      if (unit) {
+        const factor = window.AppNumbers?.format?.(payload.output_factor || '1') || payload.output_factor || '1';
+        unit.textContent = `1 ${payload.unit} = ${factor} ${row.dataset.equivalentUnit}`;
+      }
+      updateProductionLinePreview(row);
+    }).fail(function () {
+      if (row.dataset.detailsVersion !== version) return;
+      row.dataset.outputFactor = '';
+      row.dataset.componentPreview = '[]';
+      updateProductionLinePreview(row);
+    });
+  }
+
   function addProductionOrderLine(form, values, afterRow, focus) {
     const body = form.querySelector('[data-production-order-lines]');
     const template = document.getElementById('production-order-line-template');
@@ -843,7 +958,8 @@
         quantity.min = values.required_quantity;
         const hint = document.createElement('small');
         hint.className = 'text-600 d-block mt-1';
-        hint.textContent = `${document.documentElement.lang === 'ar' ? 'المطلوب' : 'Required'}: ${values.required_quantity}`;
+        const formattedRequired = window.AppNumbers?.format?.(values.required_quantity) || values.required_quantity;
+        hint.textContent = `${fallbackMessage('required')}: ${formattedRequired}`;
         quantity.closest('.erp-entry-line-quantity')?.appendChild(hint);
       }
       row.dataset.requiredSourceLine = '1';
@@ -864,6 +980,10 @@
         }
       });
     }
+    if (stages) {
+      stages.dataset.routeProduct = product?.value || '';
+    }
+    loadConfiguredProductionStages(row);
     initializeWorkflowSelects(row);
     if (window.AppNumbers && typeof window.AppNumbers.refresh === 'function') {
       window.AppNumbers.refresh(row);
@@ -871,6 +991,7 @@
     if (focus !== false) {
       row.querySelector('select:not([disabled]), input:not([type="hidden"]):not([disabled]), textarea:not([disabled])')?.focus();
     }
+    loadProductionLineDetails(row);
 
     return row;
   }
@@ -882,23 +1003,22 @@
       return;
     }
 
-    $(stages).val(null).trigger('change');
-    stages.replaceChildren();
-    if (!product.value || !stages.dataset.url) {
-      return;
+    const selectedProduct = String(product.value || '');
+
+    if (stages.dataset.routeProduct !== selectedProduct) {
+      $(stages).val(null).trigger('change');
+      stages.replaceChildren();
+      stages.dataset.routeProduct = selectedProduct;
     }
 
-    $.getJSON(stages.dataset.url, {
-      source_type: document.querySelector('#production-source-type')?.value || 'make_to_stock',
-      source_doc_num: document.querySelector('#production-source-document')?.value || '',
-      source_line_reference: product.value,
-      page: 1,
-    }).done(function (response) {
-      (response.results || []).forEach(function (stage) {
-        stages.appendChild(new Option(stage.text, stage.id, true, true));
-      });
-      $(stages).trigger('change');
-    });
+    $(stages).prop('disabled', selectedProduct === '').trigger('change.select2');
+    const extraParams = {
+      source_type: '#production-source-type',
+      source_doc_num: '#production-source-document',
+      source_line_reference: `#${product.id}`,
+    };
+    stages.dataset.extraParams = JSON.stringify(extraParams);
+    $(stages).data('extra-params', extraParams);
   }
 
   function duplicateProductionOrderLine(row) {
@@ -1032,10 +1152,9 @@
             source_line_reference: line.id,
             product_text: line.product_text || line.text,
             quantity: line.required_quantity,
-            required_quantity: line.required_quantity,
-            description: line.description || '',
-          }, null, false);
-          loadConfiguredProductionStages(row);
+          required_quantity: line.required_quantity,
+          description: line.description || '',
+        }, null, false);
         });
       });
   }
@@ -1051,7 +1170,13 @@
   });
 
   $(document).on('change', '[data-production-order-line] [name$="[source_line_reference]"]', function () {
-    loadConfiguredProductionStages(this.closest('[data-production-order-line]'));
+    const row = this.closest('[data-production-order-line]');
+    loadConfiguredProductionStages(row);
+    loadProductionLineDetails(row);
+  });
+
+  $(document).on('input change', '[data-production-order-line] [name$="[quantity]"]', function () {
+    updateProductionLinePreview(this.closest('[data-production-order-line]'));
   });
 
   $(document).on('click', '[data-production-order-form] [data-add-production-line]', function () {
@@ -1150,6 +1275,10 @@
     } else {
       $(row).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
       row.remove();
+      $(rows).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+      reindexLaborRows(container);
+      initializeWorkflowSelects(container);
+      return;
     }
     reindexLaborRows(container);
   }
@@ -1202,6 +1331,159 @@
         addLaborRow(container, {}, row || null, true);
       }
     });
+  }
+
+  function reindexProductionRunBatchLines(container) {
+    const rows = container?.querySelector('[data-production-run-batch-rows]');
+    if (!rows) return;
+    rows.querySelectorAll('[data-production-run-batch-row]').forEach(function (row, index) {
+      row.querySelectorAll('[name]').forEach(function (field) {
+        field.name = field.name.replace(/lines\[(?:\d+|__INDEX__)\]/, `lines[${index}]`);
+      });
+      const line = row.querySelector('[name$="[production_order_line_public_id]"]');
+      const stage = row.querySelector('[name$="[production_order_stage_snapshot_public_id]"]');
+      if (line) line.id = `production-run-batch-line-${index}`;
+      if (stage) {
+        stage.id = `production-run-batch-stage-${index}`;
+        stage.dataset.dependsOn = `#production-run-batch-line-${index}`;
+      }
+    });
+  }
+
+  function setProductionRunLineOptions(container, row, selectedId) {
+    const line = row.querySelector('[data-order-line-choice]');
+    const stage = row.querySelector('[data-run-line-stage]');
+    const quantity = row.querySelector('[name$="[planned_quantity]"]');
+    if (!line) return;
+    const lines = container._orderLines || [];
+    line.replaceChildren(new Option(fallbackMessage('selectOrderItem'), ''));
+    lines.forEach(function (option) {
+      line.add(new Option(option.text, option.id, false, String(option.id) === String(selectedId || '')));
+    });
+    line.disabled = lines.length === 0;
+    line.required = lines.length > 0;
+    if (stage) {
+      stage.value = '';
+      stage.disabled = true;
+    }
+    if (quantity) {
+      quantity.value = '';
+      quantity.disabled = lines.length === 0;
+      quantity.required = lines.length > 0;
+    }
+    $(line).trigger('change.select2');
+  }
+
+  function clearProductionRunBatchRows(container) {
+    const rows = container?.querySelector('[data-production-run-batch-rows]');
+    if (!rows) return;
+    $(rows).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+    rows.replaceChildren();
+  }
+
+  function addProductionRunBatchLine(container, focus) {
+    const rows = container?.querySelector('[data-production-run-batch-rows]');
+    const template = document.getElementById('production-run-batch-row-template');
+    if (!rows || !(template instanceof HTMLTemplateElement) || !(container._orderLines || []).length) return null;
+    const index = rows.querySelectorAll('[data-production-run-batch-row]').length;
+    const markup = template.innerHTML.replaceAll('__INDEX__', String(index));
+    rows.insertAdjacentHTML('beforeend', markup);
+    const row = rows.lastElementChild;
+    reindexProductionRunBatchLines(container);
+    setProductionRunLineOptions(container, row);
+    initializeWorkflowSelects(row);
+    if (window.AppNumbers?.refresh) window.AppNumbers.refresh(row);
+    if (focus !== false) row.querySelector('select:not([disabled]), input:not([type="hidden"])')?.focus();
+    return row;
+  }
+
+  function updateProductionRunBatchVisibility(container, message, hasLines) {
+    const empty = container?.querySelector('[data-production-run-lines-empty]');
+    const table = container?.querySelector('[data-production-run-lines-table]');
+    if (empty) {
+      empty.hidden = hasLines;
+      if (message) empty.textContent = message;
+    }
+    if (table) table.hidden = !hasLines;
+    container?.querySelectorAll('[data-add-production-run-line]').forEach(function (button) {
+      button.disabled = !hasLines;
+    });
+  }
+
+  function loadProductionRunOrderLines() {
+    const order = document.querySelector('[data-production-order-for-run]');
+    const container = document.querySelector('[data-production-run-batch-lines]');
+    if (!order || !container) return;
+    const orderId = String(order.value || '');
+    const requestId = String(Number(container.dataset.linesRequestId || 0) + 1);
+    container.dataset.linesRequestId = requestId;
+    container._orderLines = [];
+    clearProductionRunBatchRows(container);
+    updateProductionRunBatchVisibility(container, orderId ? fallbackMessage('loadingOrderItems') : fallbackMessage('selectOrderFirst'), false);
+    if (!orderId) return;
+
+    const url = String(container.dataset.orderLinesUrlTemplate || '').replace('__ORDER_DOC_NUM__', encodeURIComponent(orderId));
+    $.getJSON(url).done(function (response) {
+      if (container.dataset.linesRequestId !== requestId || String(order.value || '') !== orderId) return;
+      const lines = response?.data?.lines;
+      container._orderLines = Array.isArray(lines) ? lines : [];
+      if (container._orderLines.length === 0) {
+        updateProductionRunBatchVisibility(container, fallbackMessage('orderHasNoItems'), false);
+        return;
+      }
+      addProductionRunBatchLine(container, false);
+      updateProductionRunBatchVisibility(container, '', true);
+    }).fail(function (xhr) {
+      if (container.dataset.linesRequestId !== requestId) return;
+      const message = xhr.responseJSON?.message || fallbackMessage('orderItemsLoadFailed');
+      updateProductionRunBatchVisibility(container, message, false);
+    });
+  }
+
+  $(document).on('change select2:select select2:clear', '[data-production-order-for-run]', loadProductionRunOrderLines);
+  $(document).on('change', '[data-order-line-choice]', function () {
+    const row = this.closest('[data-production-run-batch-row]');
+    const stage = row?.querySelector('[data-run-line-stage]');
+    const quantity = row?.querySelector('[name$="[planned_quantity]"]');
+    if (!row || !stage || !quantity) return;
+    stage.value = '';
+    stage.disabled = !this.value;
+    quantity.disabled = !this.value;
+    if (!this.value) quantity.value = '';
+    $(stage).trigger('change.select2');
+  });
+
+  $(document).on('click', '[data-add-production-run-line]', function () {
+    addProductionRunBatchLine(this.closest('[data-production-run-batch-lines]'), true);
+  });
+
+  $(document).on('click', '[data-remove-production-run-line]', function () {
+    const container = this.closest('[data-production-run-batch-lines]');
+    const rows = container?.querySelector('[data-production-run-batch-rows]');
+    const row = this.closest('[data-production-run-batch-row]');
+    if (!rows || !row) return;
+    if (rows.querySelectorAll('[data-production-run-batch-row]').length === 1) {
+      row.querySelectorAll('select').forEach(function (field) { $(field).val(null).trigger('change'); });
+      const quantity = row.querySelector('[name$="[planned_quantity]"]');
+      if (quantity) quantity.value = '';
+    } else {
+      $(row).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+      row.remove();
+      $(rows).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+      reindexProductionRunBatchLines(container);
+      initializeWorkflowSelects(container);
+      return;
+    }
+    reindexProductionRunBatchLines(container);
+  });
+
+  function initializeProductionRunBatchLines() {
+    const container = document.querySelector('[data-production-run-batch-lines]');
+    if (!container || container.dataset.initialized === '1') return;
+    container.dataset.initialized = '1';
+    reindexProductionRunBatchLines(container);
+    initializeWorkflowSelects(container);
+    loadProductionRunOrderLines();
   }
 
   function reindexMaintenanceMaterialRows(container) {
@@ -1339,5 +1621,6 @@
     updateMaintenanceOrderFields();
     updateMaintenanceExpenseFields();
     initializeProductionOrderDocumentNumberSettings();
+    initializeProductionRunBatchLines();
   });
 })(window.jQuery, window, document);

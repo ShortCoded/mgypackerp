@@ -541,7 +541,17 @@ test('opening stock form renders image select2 grid modal and inline errors', fu
         ->assertDontSee('name="branch_hall_uuid"', false)
         ->assertSee('opening-stock-product-info-modal', false)
         ->assertSee('data-error-for="document_date"', false)
-        ->assertSee('data-error-for="lines.__INDEX__.product_doc_num"', false);
+        ->assertSee('data-error-for="lines.__INDEX__.product_doc_num"', false)
+        ->assertSeeInOrder([
+            'name="lines[0][product_doc_num]"',
+            'data-unit-display',
+            'name="lines[0][quantity]"',
+            'name="lines[0][stock_status]"',
+            'name="lines[0][batch_lot]"',
+            'name="lines[0][manufacture_date]"',
+            'name="lines[0][expiry_date]"',
+            'name="lines[0][notes]"',
+        ], false);
 
     $factory = openingStockContext($this, Branch::TypeFactory, $context['company']);
 

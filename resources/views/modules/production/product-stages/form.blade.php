@@ -51,16 +51,16 @@
                         <div class="border-top mt-4 pt-3">
                             <h6 class="mb-3 text-700">{{ __('production_execution.product_stages.component_assignments') }}</h6>
                             <div class="row g-3">
-                                @foreach($components as $component)
+                                @foreach($components as $productComponent)
                                     <div class="col-md-6 col-xl-4">
                                         <div class="border rounded-2 p-3 h-100">
-                                            <x-forms.label :for="'component-stage-'.$component->public_id" :label="trim(($component->componentProduct?->doc_num ?? '').' — '.($component->componentProduct?->name ?? ''))" />
-                                            <x-forms.select variant="local" :id="'component-stage-'.$component->public_id" :name="'component_stage_ids['.$component->public_id.']'" :placeholder="__('production_execution.product_stages.first_stage_fallback')">
+                                            <x-forms.label :for="'component-stage-'.$productComponent->public_id" :label="trim(($productComponent->componentProduct?->doc_num ?? '').' — '.($productComponent->componentProduct?->name ?? ''))" />
+                                            <x-forms.select variant="local" :id="'component-stage-'.$productComponent->public_id" :name="'component_stage_ids['.$productComponent->public_id.']'" :placeholder="__('production_execution.product_stages.first_stage_fallback')">
                                                 @foreach($stages as $stage)
-                                                    <option value="{{ $stage->id }}" @selected((string) old('component_stage_ids.'.$component->public_id, $component->production_stage_id) === (string) $stage->id)>{{ $stage->code }} — {{ $stage->name }}</option>
+                                                    <option value="{{ $stage->id }}" @selected((string) old('component_stage_ids.'.$productComponent->public_id, $productComponent->production_stage_id) === (string) $stage->id)>{{ $stage->code }} — {{ $stage->name }}</option>
                                                 @endforeach
                                             </x-forms.select>
-                                            @error('component_stage_ids.'.$component->public_id)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+                                            @error('component_stage_ids.'.$productComponent->public_id)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                                         </div>
                                     </div>
                                 @endforeach

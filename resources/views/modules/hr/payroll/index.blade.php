@@ -1,11 +1,12 @@
 @extends('layouts.app')
 
+@inject('dates', 'Modules\Core\Services\DateFormatService')
 @inject('numbers', 'Modules\Core\Services\NumericFormatService')
 
 @section('title', __('hr_payroll.title'))
 
 @section('content')
-    <div class="container-fluid px-0 px-sm-3 hr-cycle-shell" id="payroll-workspace">
+    <div class="container-fluid w-100 mw-100 m-0 p-0 hr-cycle-shell" id="payroll-workspace">
         <x-admin.report.page :title="__('hr_payroll.title')" :description="__('hr_payroll.description')">
             <div class="card mb-3"><div class="card-body py-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
                 <div><h5 class="mb-1">{{ __('hr_payroll.workspace.title') }}</h5><div class="small text-muted">{{ __('hr_payroll.workspace.description') }}</div></div>
@@ -85,7 +86,7 @@
                         <tbody>
                             @forelse ($runs as $run)
                                 <tr @class(['table-active' => (int) request('run') === (int) $run->id])>
-                                    <td dir="ltr">{{ $run->period_start }} — {{ $run->period_end }}</td>
+                                    <td dir="ltr">{{ $dates->formatDate($run->period_start, '—') }} — {{ $dates->formatDate($run->period_end, '—') }}</td>
                                     <td>{{ $run->branch_name ?: __('hr_payroll.labels.all_branches') }}</td>
                                     <td class="text-end" dir="ltr">{{ $run->employee_count }}</td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($run->gross_amount) }}</td>
@@ -155,7 +156,7 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="text-muted small">{{ __('hr_payroll.labels.as_of') }}</div>
-                                    <div dir="ltr">{{ request('as_of', now()->toDateString()) }}</div>
+                                    <div dir="ltr">{{ $dates->formatDate(request('as_of', now()->toDateString()), '—') }}</div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="text-muted small">{{ __('hr_payroll.labels.status') }}</div>
@@ -198,7 +199,7 @@
                                     <tr>
                                         <td>{{ $payment->employee_name ?: __('hr_payroll.labels.legacy_branch_payment') }}</td>
                                         <td><a href="{{ route('admin.finance.cash-payment-vouchers.show', $payment->voucher_doc_num) }}">{{ $payment->voucher_doc_num }}</a></td>
-                                        <td dir="ltr">{{ $payment->voucher_date }}</td>
+                                        <td dir="ltr">{{ $dates->formatDate($payment->voucher_date, '—') }}</td>
                                         <td class="text-end" dir="ltr">{{ $numbers->format($payment->amount) }}</td>
                                         <td>{{ __('hr_payroll.status.'.$payment->status) }}</td>
                                         <td dir="ltr">{{ $payment->journal_doc_num ?: ($payment->reversal_journal_doc_num ?: '—') }}</td>
@@ -319,5 +320,5 @@
 @endpush
 
 @push('styles')
-    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/hr-cycle.css') }}?v=20260922">
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/hr-cycle.css') }}">
 @endpush

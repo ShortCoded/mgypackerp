@@ -359,6 +359,9 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
     $organizationSetup = collect($basicData['children'])->firstWhere('label', __('menu.organization_setup'));
     $generalAccounting = collect($accountingCosting['children'])->firstWhere('label', __('menu.general_accounting'));
     $humanResourcesChildLabels = collect($humanResources['children'])->pluck('label')->all();
+    $humanResourcesResourceLabels = collect(permissionRegistryResourceNodes($humanResources['children']))
+        ->pluck('label')
+        ->all();
     $workManagement = collect($tools['children'])->firstWhere('label', __('menu.work_management'));
     $applicationTools = collect($tools['children'])->firstWhere('label', __('menu.application_tools'));
 
@@ -374,9 +377,9 @@ test('permission registry preserves nested menu hierarchy for role forms', funct
         ->not->toContain(__('menu.financial_periods'));
     expect(collect($generalAccounting['children'])->pluck('label')->all())
         ->toContain(__('menu.financial_periods'));
-    expect($humanResourcesChildLabels)
-        ->toContain(__('menu.hr_employees'), __('menu.hr_departments'), __('menu.hr_countries'))
-        ->not->toContain(__('menu.employee_data'), __('menu.hr_setup'));
+    expect($humanResourcesResourceLabels)
+        ->toContain(__('menu.hr_employees'), __('menu.hr_departments'), __('menu.hr_countries'));
+    expect($humanResourcesChildLabels)->not->toContain(__('menu.employee_data'), __('menu.hr_setup'));
     expect(collect($workManagement['children'])->pluck('label')->all())->toContain(__('menu.my_board'));
     expect(collect($applicationTools['children'])->pluck('label')->all())->toContain(__('menu.pwa_settings'));
 

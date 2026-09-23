@@ -8,7 +8,7 @@
 @section('title', __('hr_attendance.self_service.title'))
 
 @section('content')
-    <div class="container-fluid px-0 px-sm-3 employee-self-service hr-cycle-shell"
+    <div class="container-fluid w-100 mw-100 m-0 p-0 employee-self-service hr-cycle-shell"
         data-status-url="{{ route('employee.hr.attendance.status') }}"
         data-punch-url="{{ route('employee.hr.attendance.punch') }}"
         data-login-url="{{ route('login') }}"
@@ -93,7 +93,7 @@
                 <div class="list-group list-group-flush">
                     @forelse ($payslips as $payslip)
                         <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ route('employee.hr.payslips.show', $payslip->id) }}">
-                            <span dir="ltr">{{ $payslip->period_start }} — {{ $payslip->period_end }}</span>
+                            <span dir="ltr">{{ $dates->formatDate($payslip->period_start, '—') }} — {{ $dates->formatDate($payslip->period_end, '—') }}</span>
                             <strong dir="ltr">{{ $numbers->format($payslip->net_amount) }}</strong>
                         </a>
                     @empty
@@ -184,8 +184,8 @@
 @endsection
 
 @push('styles')
-    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/employee-self-service.css') }}">
-    <link rel="stylesheet" href="{{ asset('assets/css/modules/HR/hr-cycle.css') }}?v=20260922">
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/employee-self-service.css') }}">
+    <link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/HR/hr-cycle.css') }}">
 @endpush
 
 @push('scripts')

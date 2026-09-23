@@ -4,6 +4,7 @@ namespace Modules\Inventory\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
@@ -25,6 +27,9 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryMovementService;
+use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\ProductionRunBatch;
+use Modules\Production\Services\ProductionCycleService;
 
 class InventoryDocumentController extends Controller
 {
@@ -120,6 +125,92 @@ class InventoryDocumentController extends Controller
         ]));
     }
 
+    public function productionRunBatches(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $documentType = $this->authorizeProductionRunBatchAction($request);
+        $context = $this->requiredContext($request);
+        $query = $documentType === InventoryDocument::TypeReceipt
+            ? $this->receivableProductionBatches($context)
+            : $this->issueableProductionBatches($context);
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['batch_number']]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (ProductionRunBatch $batch): array => [
+            'id' => (string) $batch->public_id,
+            'text' => (string) $batch->batch_number,
+        ]));
+    }
+
+    public function productionRunBatchDetails(Request $request, string $publicId, NumericFormatService $numbers): JsonResponse
+    {
+        $documentType = $this->authorizeProductionRunBatchAction($request);
+        $context = $this->requiredContext($request);
+        $batchQuery = $documentType === InventoryDocument::TypeReceipt
+            ? $this->receivableProductionBatches($context)
+            : $this->issueableProductionBatches($context);
+        $batch = $batchQuery
+            ->with([
+                'order',
+                'runs.orderLine.product.unit',
+                'runs.orderLine.unit',
+                'runs.stageSnapshot',
+                'runs.requirements.product',
+                'runs.requirements.unit',
+            ])
+            ->where('public_id', $publicId)
+            ->firstOrFail();
+
+        $lines = $documentType === InventoryDocument::TypeReceipt
+            ? $batch->runs
+                ->filter(fn (ProductionRun $run): bool => bccomp(
+                    bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8),
+                    '0',
+                    8,
+                ) > 0)
+                ->map(fn (ProductionRun $run): array => [
+                    'run_number' => $run->run_number,
+                    'line_number' => $run->orderLine->line_number,
+                    'finished_product' => $run->orderLine->product?->name,
+                    'stage' => $run->stageSnapshot?->stage_name,
+                    'product' => $run->orderLine->product?->name,
+                    'quantity' => $numbers->format(bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8)),
+                    'unit' => $run->orderLine->product?->unit?->name ?? $run->orderLine->unit?->name,
+                ])
+                ->values()
+            : $batch->runs->flatMap(function (ProductionRun $run) use ($numbers): array {
+                return $run->requirements
+                    ->filter(fn ($requirement): bool => bccomp(
+                        bcsub((string) $requirement->planned_quantity, (string) $requirement->issued_quantity, 8),
+                        '0',
+                        8,
+                    ) > 0)
+                    ->map(fn ($requirement): array => [
+                        'run_number' => $run->run_number,
+                        'line_number' => $run->orderLine->line_number,
+                        'finished_product' => $run->orderLine->product?->name,
+                        'stage' => $run->stageSnapshot?->stage_name,
+                        'product' => $requirement->product?->name,
+                        'quantity' => $numbers->format(bcsub((string) $requirement->planned_quantity, (string) $requirement->issued_quantity, 8)),
+                        'unit' => $requirement->unit?->name,
+                    ])
+                    ->values()
+                    ->all();
+            })->values();
+
+        abort_if($lines->isEmpty(), 409, $documentType === InventoryDocument::TypeReceipt
+            ? __('production_execution.messages.run_batch_output_not_receivable')
+            : __('production_execution.messages.run_batch_materials_already_issued'));
+
+        return response()->json(['data' => [
+            'batch_number' => $batch->batch_number,
+            'order_number' => $batch->order->doc_num,
+            ($documentType === InventoryDocument::TypeReceipt ? 'outputs' : 'materials') => $lines,
+        ]]);
+    }
+
     public function products(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
         $context = $this->requiredContext($request);
@@ -140,9 +231,54 @@ class InventoryDocumentController extends Controller
         ]));
     }
 
-    public function store(StoreInventoryOperationRequest $request, InventoryMovementService $service): JsonResponse|RedirectResponse
-    {
+    public function store(
+        StoreInventoryOperationRequest $request,
+        InventoryMovementService $service,
+        ProductionCycleService $productionCycle,
+    ): JsonResponse|RedirectResponse {
         $context = $this->requiredContext($request);
+        $data = $request->validated();
+
+        if (filled($data['production_run_batch_public_id'] ?? null)) {
+            $batch = ProductionRunBatch::query()
+                ->where('public_id', $data['production_run_batch_public_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->firstOrFail();
+            $store = BranchStore::query()
+                ->where('branch_id', $context['branch_id'])
+                ->where('public_uuid', $data['branch_store_uuid'])
+                ->firstOrFail();
+            if ($data['document_type'] === InventoryDocument::TypeReceipt) {
+                $documents = $this->guard(fn (): array => $productionCycle->receiveRunBatchFinishedGoods(
+                    $batch,
+                    (int) $store->getKey(),
+                ));
+                $docNums = collect($documents)->map(fn (InventoryDocument $document): string => $document->doc_num)->values()->all();
+                $url = route('admin.production.runs.batches.show', $batch);
+
+                return $this->respond(
+                    $request,
+                    ['doc_nums' => $docNums, 'url' => $url],
+                    $url,
+                    201,
+                    'inventory.movements.messages.posted',
+                );
+            }
+
+            $document = $this->guard(fn (): InventoryDocument => $productionCycle->issueRunBatchMaterials($batch, (int) $store->getKey()));
+            $url = route('admin.inventory.documents.show', $document);
+
+            return $this->respond(
+                $request,
+                ['doc_num' => $document->doc_num, 'status' => $document->status, 'url' => $url],
+                $url,
+                201,
+                'inventory.movements.messages.posted',
+            );
+        }
+
         [$header, $lines] = $this->movementPayload($request, $context);
         $shouldPost = $request->string('submit_action')->toString() === 'post_and_view';
         $document = $this->guard(fn (): InventoryDocument => $shouldPost
@@ -321,6 +457,49 @@ class InventoryDocumentController extends Controller
             'financial_period_id' => $context['financial_period_id'],
             'branch_id' => $context['branch_id'],
         ];
+    }
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    private function issueableProductionBatches(array $context): Builder
+    {
+        $allowedRunStatuses = [ProductionRun::StatusPlanned, ProductionRun::StatusSetup, ProductionRun::StatusReady];
+
+        return ProductionRunBatch::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereHas('runs')
+            ->whereDoesntHave('runs', fn ($runs) => $runs->whereNotIn('status', $allowedRunStatuses))
+            ->whereHas('runs.requirements', fn ($requirements) => $requirements
+                ->whereColumn('planned_quantity', '>', 'issued_quantity'))
+            ->orderByDesc('id');
+    }
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    private function receivableProductionBatches(array $context): Builder
+    {
+        return ProductionRunBatch::query()
+            ->where('company_id', $context['company_id'])
+            ->where('financial_period_id', $context['financial_period_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->whereHas('runs', fn ($runs) => $runs
+                ->where('status', ProductionRun::StatusRunning)
+                ->whereColumn('good_base_quantity', '>', 'received_base_quantity'))
+            ->orderByDesc('id');
+    }
+
+    private function authorizeProductionRunBatchAction(Request $request): string
+    {
+        $documentType = $request->input('document_type', InventoryDocument::TypeIssue);
+        $abilities = match ($documentType) {
+            InventoryDocument::TypeIssue => ['inventory.documents.issue', 'production.runs.issue'],
+            InventoryDocument::TypeReceipt => ['inventory.documents.receive', 'production.runs.receive'],
+            default => abort(422, __('inventory.movements.messages.production_run_batch_type_invalid')),
+        };
+
+        abort_unless(collect($abilities)->every(fn (string $ability): bool => (bool) $request->user()?->can($ability)), 403);
+
+        return $documentType;
     }
 
     private function assertInCurrentContext(Request $request, InventoryDocument $inventoryDocument): void
