@@ -1649,7 +1649,6 @@
     "Select each delivery line once.": "حدد كل بند تسليم مرة واحدة.",
     "Disposition quantities cannot be negative.": "كميات التصرف في المرتجع لا يمكن أن تكون سالبة.",
     "Delivery is linked to return :return.": "إذن التسليم مرتبط بالمرتجع :return.",
-    "Production demand exceeds the unplanned stock shortage.": "احتياج الإنتاج يتجاوز عجز المخزون الذي لم يخطط له.",
     "Create Return": "إنشاء مرتجع",
     "Convert to quotation": "تحويل إلى عرض سعر",
     "Convert to order": "تحويل إلى أمر بيع",

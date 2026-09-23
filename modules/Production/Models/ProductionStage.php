@@ -4,10 +4,12 @@ namespace Modules\Production\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
-use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Models\Branch;
+use Modules\Core\Services\OperatingContextService;
 
 class ProductionStage extends Model
 {
@@ -42,12 +44,26 @@ class ProductionStage extends Model
 
     public function resolveRouteBinding($value, $field = null): ?self
     {
-        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+        $context = app(OperatingContextService::class)->snapshot(request());
 
-        return $companyId === null ? null : $this->newQuery()
+        if (! $context['company_id'] || ! $context['branch_id'] || ! Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists()) {
+            return null;
+        }
+
+        return $this->newQuery()
             ->where($field ?? $this->getRouteKeyName(), $value)
-            ->where('company_id', $companyId)
+            ->where('company_id', $context['company_id'])
+            ->visibleInBranch($context['branch_id'])
             ->first();
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function productStages(): HasMany
@@ -58,5 +74,12 @@ class ProductionStage extends Model
     public function scopeForCompany(Builder $query, int $companyId): Builder
     {
         return $query->where($this->qualifyColumn('company_id'), $companyId);
+    }
+
+    public function scopeVisibleInBranch(Builder $query, int $branchId): Builder
+    {
+        return $query->where(fn (Builder $branchQuery): Builder => $branchQuery
+            ->whereNull($this->qualifyColumn('branch_id'))
+            ->orWhere($this->qualifyColumn('branch_id'), $branchId));
     }
 }

@@ -8,9 +8,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DataTableSearchService;
-use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\SaveProductProductionRouteRequest;
@@ -26,16 +27,22 @@ class ProductProductionStageController extends Controller
             return $dataTable->productStages($request);
         }
 
-        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($request);
+        $context = $this->requiredFactoryContext($request);
 
         return view('modules.production.product-stages.index', [
-            'stages' => ProductionStage::query()->forCompany($companyId)->where('status', ProductionStage::StatusActive)->orderBy('display_order')->orderBy('name')->get(),
+            'stages' => ProductionStage::query()
+                ->forCompany($context['company_id'])
+                ->visibleInBranch($context['branch_id'])
+                ->where('status', ProductionStage::StatusActive)
+                ->orderBy('display_order')
+                ->orderBy('name')
+                ->get(),
         ]);
     }
 
     public function products(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
-        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($request);
+        $companyId = $this->requiredFactoryContext($request)['company_id'];
         $query = Product::query()
             ->forCompany($companyId)
             ->active()
@@ -53,22 +60,28 @@ class ProductProductionStageController extends Controller
         ]));
     }
 
-    public function edit(Product $product): View
+    public function edit(Request $request, Product $product): View
     {
-        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId();
-        abort_unless((int) $product->company_id === $companyId, 404);
+        $context = $this->requiredFactoryContext($request);
+        abort_unless((int) $product->company_id === $context['company_id'], 404);
 
         return view('modules.production.product-stages.form', [
             'product' => $product,
-            'stages' => ProductionStage::query()->forCompany($companyId)->where('status', ProductionStage::StatusActive)->orderBy('display_order')->get(),
-            'routeStages' => ProductProductionStage::query()->forCompany($companyId)->where('product_id', $product->getKey())->with('stage')->orderBy('sequence')->get(),
+            'stages' => ProductionStage::query()->forCompany($context['company_id'])->visibleInBranch($context['branch_id'])->where('status', ProductionStage::StatusActive)->orderBy('display_order')->get(),
+            'routeStages' => ProductProductionStage::query()
+                ->forCompany($context['company_id'])
+                ->where('product_id', $product->getKey())
+                ->whereHas('stage', fn ($stages) => $stages->visibleInBranch($context['branch_id']))
+                ->with('stage')
+                ->orderBy('sequence')
+                ->get(),
             'components' => $product->components()->with(['componentProduct', 'productionStage'])->orderBy('id')->get(),
         ]);
     }
 
     public function update(SaveProductProductionRouteRequest $request, Product $product, ProductionRoutingService $routing): RedirectResponse
     {
-        abort_unless((int) $product->company_id === app(OperatingCompanyContextService::class)->requireCompanyId($request), 404);
+        abort_unless((int) $product->company_id === $this->requiredFactoryContext($request)['company_id'], 404);
         try {
             $data = $request->validated();
             $rows = collect($data['selected_stage_ids'])
@@ -82,5 +95,19 @@ class ProductProductionStageController extends Controller
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['route' => $exception->getMessage()]);
         }
+    }
+
+    /** @return array{company_id: int, branch_id: int} */
+    private function requiredFactoryContext(Request $request): array
+    {
+        $context = app(OperatingContextService::class)->snapshot($request);
+        abort_unless($context['company_id'] && $context['branch_id'], 409, __('production_execution.messages.operating_context_required'));
+        abort_unless(Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists(), 403, __('production_execution.messages.factory_context_required'));
+
+        return ['company_id' => $context['company_id'], 'branch_id' => $context['branch_id']];
     }
 }

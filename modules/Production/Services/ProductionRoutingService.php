@@ -4,11 +4,12 @@ namespace Modules\Production\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
-use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageEvent;
@@ -19,22 +20,24 @@ use Modules\Production\Models\ProductProductionStage;
 class ProductionRoutingService
 {
     public function __construct(
-        private readonly OperatingCompanyContextService $companies,
         private readonly CrudAuditService $audit,
         private readonly DocumentNumberService $numbers,
+        private readonly OperatingContextService $context,
     ) {}
 
     /** @param array<string, mixed> $data */
     public function createStage(array $data): ProductionStage
     {
         return DB::transaction(function () use ($data): ProductionStage {
-            $companyId = $this->companies->requireCompanyId();
+            $context = $this->requireFactoryContext();
+            $companyId = $context['company_id'];
             $code = $this->numbers->nextForCompany('production_stages', ProductionStage::class, $companyId)['code'];
             $this->assertUniqueStageCode($companyId, $code);
             $stage = ProductionStage::query()->create([
                 ...$this->stageValues($data),
                 'code' => $code,
                 'company_id' => $companyId,
+                'branch_id' => $context['branch_id'],
                 'created_by' => auth()->id(),
             ]);
             $this->audit->clearCreationUpdateAudit($stage);
@@ -50,6 +53,7 @@ class ProductionRoutingService
             $locked = $this->lockStage($stage);
             $values = $this->stageValues($data);
             unset($values['code']);
+            $values['branch_id'] = $locked->branch_id ?? $this->requireFactoryContext()['branch_id'];
             $this->audit->saveUpdate($locked, $values);
 
             return $locked->refresh();
@@ -60,6 +64,10 @@ class ProductionRoutingService
     {
         DB::transaction(function () use ($stage): void {
             $locked = $this->lockStage($stage);
+
+            if ($locked->branch_id === null) {
+                $this->audit->saveUpdate($locked, ['branch_id' => $this->requireFactoryContext()['branch_id']]);
+            }
 
             if ($locked->productStages()->where('status', ProductionStage::StatusActive)->exists()) {
                 throw new DomainException(__('production_execution.messages.stage_in_use'));
@@ -76,7 +84,8 @@ class ProductionRoutingService
     public function replaceProductRoute(Product $product, array $rows, array $componentStageAssignments = []): void
     {
         DB::transaction(function () use ($product, $rows, $componentStageAssignments): void {
-            $companyId = $this->companies->requireCompanyId();
+            $context = $this->requireFactoryContext();
+            $companyId = $context['company_id'];
             $lockedProduct = Product::query()->where('company_id', $companyId)->lockForUpdate()->findOrFail($product->getKey());
             $stageIds = collect($rows)->pluck('production_stage_id')->map(fn (mixed $id): int => (int) $id)->all();
 
@@ -86,6 +95,7 @@ class ProductionRoutingService
 
             $stages = ProductionStage::query()
                 ->forCompany($companyId)
+                ->visibleInBranch($context['branch_id'])
                 ->whereIn('id', $stageIds)
                 ->where('status', ProductionStage::StatusActive)
                 ->lockForUpdate()
@@ -158,6 +168,7 @@ class ProductionRoutingService
             ->forCompany((int) $line->order->company_id)
             ->where('product_id', $line->product_id)
             ->where('status', ProductionStage::StatusActive)
+            ->whereHas('stage', fn ($stages) => $stages->visibleInBranch((int) $line->order->branch_id))
             ->with('stage')
             ->orderBy('sequence')
             ->lockForUpdate()
@@ -229,6 +240,7 @@ class ProductionRoutingService
 
         $stages = ProductionStage::query()
             ->forCompany((int) $lockedOrder->company_id)
+            ->visibleInBranch((int) $lockedOrder->branch_id)
             ->whereIn('public_id', $selectedIds)
             ->where('status', ProductionStage::StatusActive)
             ->whereNull('deleted_at')
@@ -300,10 +312,27 @@ class ProductionRoutingService
 
     private function lockStage(ProductionStage $stage): ProductionStage
     {
+        $context = $this->requireFactoryContext();
+
         return ProductionStage::query()
-            ->forCompany($this->companies->requireCompanyId())
+            ->forCompany($context['company_id'])
+            ->visibleInBranch($context['branch_id'])
             ->lockForUpdate()
             ->findOrFail($stage->getKey());
+    }
+
+    /** @return array{company_id: int, branch_id: int} */
+    private function requireFactoryContext(): array
+    {
+        $context = $this->context->snapshot(request());
+        abort_unless($context['company_id'] && $context['branch_id'], 409, __('production_execution.messages.operating_context_required'));
+        abort_unless(Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists(), 403, __('production_execution.messages.factory_context_required'));
+
+        return ['company_id' => $context['company_id'], 'branch_id' => $context['branch_id']];
     }
 
     private function assertUniqueStageCode(int $companyId, string $code, ?int $exceptId = null): void

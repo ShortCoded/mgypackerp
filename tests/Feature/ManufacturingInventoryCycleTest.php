@@ -1434,6 +1434,27 @@ test('available material can be split between sales production orders and a shor
     ]);
 
     InventoryTransaction::query()->create([
+        'posting_key' => 'make-to-order-does-not-use-finished-stock',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'transaction_date' => now()->toDateString(),
+        'transaction_type' => 'opening_stock',
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity_in' => '1000',
+        'quantity_out' => 0,
+        'source_type' => 'test',
+        'source_id' => 15000,
+        'source_doc_num' => 'FG-OPEN-ALLOCATE-1000',
+        'unit_cost' => '1',
+        'total_cost' => '1000',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    InventoryTransaction::query()->create([
         'posting_key' => 'allocate-existing-raw-balance',
         'company_id' => $fixture['company']->getKey(),
         'financial_period_id' => $fixture['period']->getKey(),
@@ -1566,6 +1587,67 @@ test('available material can be split between sales production orders and a shor
         ->and($newerRequirement->fresh()->issued_quantity)->toBe('50.00000000')
         ->and($lastIssue->journalEntry)->not->toBeNull()
         ->and((string) $lastIssue->journalEntry->lines()->sum('debit_amount'))->toBe((string) $lastIssue->journalEntry->lines()->sum('credit_amount'));
+});
+
+test('short-closing a linked production order releases only its unproduced sales demand', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put([
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ]);
+
+    $currency = Currency::query()->where('company_id', $fixture['company']->getKey())->firstOrFail();
+    $customer = Customer::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 15010,
+        'doc_num' => 'CUSTOMER-SHORT-CLOSE-DEMAND',
+        'name' => 'Short Close Demand Customer',
+        'status' => 'active',
+    ]);
+    $salesOrder = SalesOrder::query()->create([
+        'doc_number' => 15010,
+        'doc_num' => 'SO-SHORT-CLOSE-DEMAND',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'customer_id' => $customer->getKey(),
+        'currency_id' => $currency->getKey(),
+        'order_date' => now()->toDateString(),
+        'expected_delivery_date' => now()->addWeek()->toDateString(),
+        'status' => SalesOrder::StatusApproved,
+        'credit_status' => 'approved',
+        'subtotal_amount' => '100',
+        'total_amount' => '100',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $salesLine = $salesOrder->lines()->create([
+        'line_number' => 1,
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'description' => $fixture['finished']->name,
+        'quantity' => '100',
+        'unit_price' => '1',
+        'line_total' => '100',
+        'product_classification_snapshot' => Product::ClassificationFinishedProduct,
+        'conversion_factor' => '1',
+        'base_quantity' => '100',
+    ]);
+    $demand = app(SalesProductionDemandService::class);
+    $production = $demand->create($salesOrder, [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '100']]);
+
+    app(ProductionCycleService::class)->shortCloseOrder($production, 'Production quantity was reduced');
+
+    expect($salesLine->fresh()->production_requested_quantity)->toBe('0.00000000')
+        ->and($salesLine->fresh()->remainingProductionDemandBaseQuantity())->toBe('100.00000000')
+        ->and($demand->create($salesOrder->fresh(), [['sales_order_line_id' => $salesLine->getKey(), 'quantity' => '100']])->lines->first()->quantity)
+        ->toBe('100.00000000');
 });
 
 test('one sales line can be split across production orders without duplicating its demand', function (): void {

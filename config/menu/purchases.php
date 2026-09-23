@@ -87,6 +87,7 @@ return [
                     'submit' => 'purchase_orders.submit', 'approve' => 'purchase_orders.approve', 'reject' => 'purchase_orders.reject',
                     'send' => 'purchase_orders.send', 'close' => 'purchase_orders.close', 'cancel' => 'purchase_orders.cancel',
                     'print' => 'purchase_orders.print', 'view_prices' => 'purchases.prices.view',
+                    'direct_procurement_override' => 'purchases.direct_procurement.override',
                     'document_number_control' => 'purchase_orders.document_number.control',
                     'document_number_settings_update' => 'purchase_orders.document_number_settings.update',
                 ],

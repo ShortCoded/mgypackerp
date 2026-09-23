@@ -344,12 +344,9 @@ class ProductionCycleService
                 throw new DomainException(__('production_execution.messages.production_source_invalid'));
             }
 
-            $this->assertSourceQuantityAvailable(
-                'sales_order_line_id',
-                $salesLine->getKey(),
-                $requestedBaseQuantity,
-                (string) $salesLine->base_quantity,
-            );
+            if (bccomp($requestedBaseQuantity, $salesLine->remainingProductionDemandBaseQuantity(), 8) > 0) {
+                throw new DomainException(__('production_execution.messages.source_quantity_exceeds_remaining'));
+            }
         }
 
         if ($invoiceLine !== null) {
@@ -1877,7 +1874,7 @@ class ProductionCycleService
     public function shortCloseOrder(ProductionOrder $order, string $reason): ProductionOrder
     {
         return DB::transaction(function () use ($order, $reason): ProductionOrder {
-            $locked = ProductionOrder::query()->with('runs')->lockForUpdate()->findOrFail($order->getKey());
+            $locked = ProductionOrder::query()->with(['runs', 'lines'])->lockForUpdate()->findOrFail($order->getKey());
 
             if (trim($reason) === '' || in_array($locked->status, [ProductionOrder::StatusCompleted, ProductionOrder::StatusCancelled], true)) {
                 throw new DomainException(__('An open production order and a short-close reason are required.'));
@@ -1886,6 +1883,8 @@ class ProductionCycleService
             foreach ($locked->runs->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled]) as $run) {
                 $this->cancelRun($run, 'Production order short-closed: '.trim($reason));
             }
+
+            $this->releaseUnproducedSalesDemand($locked);
 
             $locked->update([
                 'status' => ProductionOrder::StatusShortClosed,
@@ -1897,6 +1896,36 @@ class ProductionCycleService
 
             return $locked->refresh();
         });
+    }
+
+    private function releaseUnproducedSalesDemand(ProductionOrder $order): void
+    {
+        foreach ($order->lines->whereNotNull('sales_order_line_id') as $productionLine) {
+            $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($productionLine->sales_order_line_id);
+            $unproducedBase = $this->nonnegative(bcsub(
+                (string) $productionLine->base_quantity,
+                (string) $productionLine->received_base_quantity,
+                8,
+            ));
+
+            if (bccomp($unproducedBase, '0', 8) <= 0) {
+                continue;
+            }
+
+            $unproducedQuantity = bcdiv($unproducedBase, (string) $productionLine->conversion_factor, 8);
+            $salesLine->update([
+                'production_requested_quantity' => $this->nonnegative(bcsub(
+                    (string) $salesLine->production_requested_quantity,
+                    $unproducedQuantity,
+                    8,
+                )),
+                'production_requested_base_quantity' => $this->nonnegative(bcsub(
+                    (string) $salesLine->production_requested_base_quantity,
+                    $unproducedBase,
+                    8,
+                )),
+            ]);
+        }
     }
 
     /** @param list<string> $fromStatuses @param array<string, mixed> $extra */

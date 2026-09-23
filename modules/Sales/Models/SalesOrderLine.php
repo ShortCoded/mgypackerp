@@ -51,6 +51,26 @@ class SalesOrderLine extends Model
         return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
     }
 
+    public function remainingProductionDemandBaseQuantity(): string
+    {
+        $remaining = bcsub(
+            bcsub((string) $this->base_quantity, (string) $this->delivered_base_quantity, 8),
+            (string) $this->production_requested_base_quantity,
+            8,
+        );
+
+        return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
+    }
+
+    public function remainingProductionDemandQuantity(): string
+    {
+        if (bccomp((string) $this->conversion_factor, '0', 8) <= 0) {
+            return '0.00000000';
+        }
+
+        return bcdiv($this->remainingProductionDemandBaseQuantity(), (string) $this->conversion_factor, 8);
+    }
+
     public function activeReservedQuantity(): string
     {
         $reservations = $this->relationLoaded('reservations')

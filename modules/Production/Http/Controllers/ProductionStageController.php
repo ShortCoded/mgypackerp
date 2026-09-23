@@ -8,7 +8,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
-use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Models\Branch;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\SaveProductionStageRequest;
 use Modules\Production\Models\ProductionStage;
@@ -16,30 +17,43 @@ use Modules\Production\Services\ProductionRoutingService;
 
 class ProductionStageController extends Controller
 {
-    public function __construct(private readonly ProductionRoutingService $routing) {}
+    public function __construct(
+        private readonly ProductionRoutingService $routing,
+        private readonly OperatingContextService $context,
+    ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
+        $this->requiredFactoryContext($request);
+
         return view('modules.production.stages.index');
     }
 
     public function data(Request $request, ProductionExecutionDataTable $dataTable): JsonResponse
     {
+        $this->requiredFactoryContext($request);
+
         return $dataTable->stages($request);
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
+        $this->requiredFactoryContext($request);
+
         return view('modules.production.stages.form', ['stage' => null, 'mode' => 'create']);
     }
 
-    public function edit(ProductionStage $productionStage): View
+    public function edit(Request $request, ProductionStage $productionStage): View
     {
+        $this->requiredFactoryContext($request);
+
         return view('modules.production.stages.form', ['stage' => $productionStage, 'mode' => 'edit']);
     }
 
-    public function show(ProductionStage $productionStage): View
+    public function show(Request $request, ProductionStage $productionStage): View
     {
+        $this->requiredFactoryContext($request);
+
         return view('modules.production.stages.form', ['stage' => $productionStage, 'mode' => 'view']);
     }
 
@@ -64,12 +78,21 @@ class ProductionStageController extends Controller
         }
     }
 
-    public function restore(string $productionStage): JsonResponse
+    public function restore(Request $request, string $productionStage): JsonResponse
     {
-        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId();
-        $stage = ProductionStage::onlyTrashed()->forCompany($companyId)->where('public_id', $productionStage)->firstOrFail();
+        $context = $this->requiredFactoryContext($request);
+        $stage = ProductionStage::onlyTrashed()
+            ->forCompany($context['company_id'])
+            ->visibleInBranch($context['branch_id'])
+            ->where('public_id', $productionStage)
+            ->firstOrFail();
         $stage->restore();
-        $stage->update(['deleted_by' => null, 'restored_by' => auth()->id(), 'restored_at' => now()]);
+        $stage->update([
+            'branch_id' => $stage->branch_id ?? $context['branch_id'],
+            'deleted_by' => null,
+            'restored_by' => auth()->id(),
+            'restored_at' => now(),
+        ]);
 
         return response()->json(['success' => true, 'message' => __('production_execution.messages.stage_restored')]);
     }
@@ -96,5 +119,19 @@ class ProductionStageController extends Controller
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['stage' => $exception->getMessage()]);
         }
+    }
+
+    /** @return array{company_id: int, branch_id: int} */
+    private function requiredFactoryContext(Request $request): array
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['branch_id'], 409, __('production_execution.messages.operating_context_required'));
+        abort_unless(Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists(), 403, __('production_execution.messages.factory_context_required'));
+
+        return ['company_id' => $context['company_id'], 'branch_id' => $context['branch_id']];
     }
 }

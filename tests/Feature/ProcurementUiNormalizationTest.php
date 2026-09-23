@@ -38,6 +38,69 @@ function procurementUiFixture(): array
     return $fixture;
 }
 
+test('purchase order form restores the permission-gated direct procurement option', function (): void {
+    $fixture = procurementUiFixture();
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+
+    $this->withSession(['locale' => 'ar'])
+        ->get(route('admin.purchases.purchase-orders.create'))
+        ->assertOk()
+        ->assertSee('id="direct_procurement_override"', false)
+        ->assertSee(__('purchase_orders.attributes.direct_procurement_override'))
+        ->assertSee('data-direct-purchase-reason', false)
+        ->assertSee('name="direct_procurement_reason"', false)
+        ->assertSee(__('purchase_orders.messages.direct_procurement_override_help'));
+
+    $purchasesMenu = collect(config('menu.purchases'))->firstWhere('label', 'purchases');
+    $purchaseOrdersMenu = collect($purchasesMenu['children'] ?? [])->firstWhere('label', 'purchase_orders');
+
+    expect($purchaseOrdersMenu['actions']['direct_procurement_override'] ?? null)
+        ->toBe('purchases.direct_procurement.override');
+
+    $purchaseOrder = [
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'document_date' => now()->toDateString(),
+        'exchange_rate' => 1,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 2,
+            'unit_price' => 10,
+        ]],
+    ];
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), $purchaseOrder)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('direct_procurement_override');
+
+    $created = $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$purchaseOrder,
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Production material purchase without a requisition.',
+    ])->assertOk()->assertJsonPath('success', true);
+
+    $record = PurchaseOrder::query()->where('doc_num', $created->json('data.doc_num'))->sole();
+    expect($record->direct_procurement_override)->toBeTrue()
+        ->and($record->direct_procurement_reason)->toBe('Production material purchase without a requisition.');
+
+    $fixture['user']->revokePermissionTo('purchases.direct_procurement.override');
+
+    $this->postJson(route('admin.purchases.purchase-orders.store'), [
+        ...$purchaseOrder,
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Unauthorized direct purchase attempt.',
+    ])->assertUnprocessable()->assertJsonValidationErrors('direct_procurement_override');
+
+    $this->get(route('admin.purchases.purchase-orders.create'))
+        ->assertOk()
+        ->assertDontSee('id="direct_procurement_override"', false)
+        ->assertDontSee('name="direct_procurement_reason"', false);
+
+    expect(PurchaseOrder::query()->count())->toBe(1);
+});
+
 test('inventory request uses employee and inferred context with bounded product selectors', function (): void {
     $fixture = procurementUiFixture();
     $this->get(route('admin.purchases.purchase-requisitions.create'))->assertOk()

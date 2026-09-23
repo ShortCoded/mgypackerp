@@ -200,6 +200,11 @@
             <td class="erp-entry-line-text line-card-full">
                 <x-forms.input type="hidden" name="lines[__INDEX__][stage_selection_present]" value="1" />
                 <x-forms.select variant="ajax" name="lines[__INDEX__][stage_public_ids][]" :url="route('admin.production.work-orders.select2.stages')" :placeholder="__('production_execution.orders.select_stages')" multiple />
+                <div class="small text-600 mt-1">{{ __('production_execution.orders.line_route_help') }}
+                    @can('production.product_stages.view')
+                        <a href="{{ route('admin.production.product-stages.index') }}">{{ __('production_execution.product_stages.configure') }}</a>
+                    @endcan
+                </div>
             </td>
             <td class="erp-entry-line-text">
                 <x-forms.textarea name="lines[__INDEX__][production_notes]" rows="2" maxlength="2000"></x-forms.textarea>

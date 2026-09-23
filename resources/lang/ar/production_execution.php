@@ -2,7 +2,7 @@
 
 return [
     'production_expense' => 'مصروف تشغيلي للإنتاج',
-    'stages' => ['title' => 'المراحل الإنتاجية', 'create' => 'إضافة مرحلة إنتاجية', 'edit' => 'تعديل مرحلة إنتاجية', 'view_document' => 'عرض المرحلة :document', 'code_generated' => 'ينشئ النظام الكود تلقائيًا عند الحفظ.'],
+    'stages' => ['title' => 'المراحل الإنتاجية', 'create' => 'إضافة مرحلة إنتاجية', 'edit' => 'تعديل مرحلة إنتاجية', 'view_document' => 'عرض المرحلة :document', 'code_generated' => 'سيُنشئ النظام الكود تلقائيًا عند الحفظ.'],
     'product_stages' => [
         'title' => 'المراحل الإنتاجية للأصناف', 'configure' => 'تحديد مسار الصنف', 'current_routes' => 'مسارات الأصناف المسجلة',
         'optional_route_help' => 'مسار الصنف اختياري. اختر مراحله داخل بند أمر الإنتاج عند الحاجة، وتُحفظ المراحل المختارة كنسخة مستقلة.',
@@ -28,6 +28,7 @@ return [
         'select_order_stages' => 'اختر مراحل أمر الإنتاج',
         'order_route_help' => 'هذه المراحل تسري على جميع البنود أولًا. ويمكن إضافة مسار اختياري خاص بكل بند بعدها.',
         'line_route' => 'المسار الإنتاجي الخاص بهذا البند',
+        'line_route_help' => 'اختياري. المراحل هنا حسب المسار المحدد للمنتج. إذا لم تظهر مراحل، حدّد مسار المنتج أولًا.',
         'order_route_short' => 'الأمر بالكامل',
         'line_route_short' => 'البند',
         'material_requirements' => 'احتياجات مكونات المنتج',
@@ -42,7 +43,7 @@ return [
         'select_source_document' => 'اختر أمر البيع أو فاتورة المبيعات',
         'select_product' => 'اختر منتجًا تامًا',
         'select_stages' => 'اختر مراحل هذا البند', 'stage_option' => ':sequence. :stage',
-        'source_line_option' => 'بند :line — :product — المطلوب :required — المغطى من المخزون :allocated — المخطط :planned — المتبقي للتصنيع :remaining',
+        'source_line_option' => 'بند :line — :product — كمية أمر البيع :required — المخطط للإنتاج :planned — المتبقي للإنتاج :remaining',
         'invoice_source_line_option' => 'بند :line — :product — كمية الفاتورة :required — المخطط منها :planned — المتبقي للتصنيع :remaining',
         'add_line_shortcut' => 'إضافة بند جديد (Alt + N)',
         'duplicate_line_shortcut' => 'تكرار بيانات البند (Alt + D)',
@@ -61,6 +62,7 @@ return [
         'stage_option' => ':sequence. :stage — المتبقي للتوزيع :remaining',
         'batch_lines' => 'المنتجات والكميات داخل التشغيلة',
         'batch_lines_help' => 'أضف بندًا أو أكثر من أمر الإنتاج نفسه. يحتفظ كل بند بمرحلته وحساب مكوناته المستقل.',
+        'batch_stage_help' => 'مراحل كل بند تأتي من المسارات المحفوظة في أمر الإنتاج والمنتج. إذا لم تظهر مراحل، راجع المسار قبل التشغيل.',
         'add_batch_line' => 'إضافة بند منتج',
         'batch_document' => 'تشغيلة الإنتاج :number',
         'batch_overview' => 'بنود التشغيلة ومراحلها المختارة',

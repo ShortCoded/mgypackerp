@@ -33,8 +33,10 @@ class ProductionExecutionDataTable
     public function stages(Request $request): JsonResponse
     {
         $context = $this->context->snapshot($request);
+        $this->assertFactoryContext($context);
         $query = $this->trashQuery($request, ProductionStage::class, 'production.stages.view_trashed')
-            ->when($context['company_id'], fn ($query) => $query->where('company_id', $context['company_id']), fn ($query) => $query->whereRaw('1 = 0'));
+            ->where('company_id', $context['company_id'])
+            ->visibleInBranch($context['branch_id']);
 
         return DataTables::eloquent($query)
             ->filter(fn ($query) => $this->filter($query, $request, ['code', 'name', 'description', 'output_type', 'status']))
@@ -49,10 +51,14 @@ class ProductionExecutionDataTable
     public function productStages(Request $request): JsonResponse
     {
         $context = $this->context->snapshot($request);
+        $this->assertFactoryContext($context);
         $query = ProductProductionStage::query()
-            ->when($context['company_id'], fn ($query) => $query->where('product_production_stages.company_id', $context['company_id']), fn ($query) => $query->whereRaw('1 = 0'))
+            ->where('product_production_stages.company_id', $context['company_id'])
             ->join('products', 'products.id', '=', 'product_production_stages.product_id')
             ->join('production_stages', 'production_stages.id', '=', 'product_production_stages.production_stage_id')
+            ->where(fn ($stages) => $stages
+                ->whereNull('production_stages.branch_id')
+                ->orWhere('production_stages.branch_id', $context['branch_id']))
             ->select(['product_production_stages.*', 'products.doc_num as product_code', 'products.name as product_name', 'production_stages.code as stage_code', 'production_stages.name as stage_name']);
 
         return DataTables::eloquent($query)
@@ -407,6 +413,17 @@ class ProductionExecutionDataTable
     private function hasContext(array $context): bool
     {
         return (bool) ($context['company_id'] && $context['financial_period_id'] && $context['branch_id']);
+    }
+
+    /** @param array{company_id: int|null, branch_id: int|null} $context */
+    private function assertFactoryContext(array $context): void
+    {
+        abort_unless($context['company_id'] && $context['branch_id'], 409, __('production_execution.messages.operating_context_required'));
+        abort_unless(Branch::query()
+            ->whereKey($context['branch_id'])
+            ->where('company_id', $context['company_id'])
+            ->where('type', Branch::TypeFactory)
+            ->exists(), 403, __('production_execution.messages.factory_context_required'));
     }
 
     private function runCanBeChanged(ProductionRun $run): bool

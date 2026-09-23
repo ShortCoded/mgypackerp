@@ -4,18 +4,27 @@ namespace Modules\Production\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Core\Models\Branch;
+use Modules\Core\Services\OperatingContextService;
 
 class SaveProductionStageRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can($this->isMethod('post') ? 'production.stages.create' : 'production.stages.edit');
+        $context = app(OperatingContextService::class)->snapshot($this);
+
+        return (bool) $this->user()?->can($this->isMethod('post') ? 'production.stages.create' : 'production.stages.edit')
+            && Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeFactory)
+                ->exists();
     }
 
     public function rules(): array
     {
         return [
-            'code' => ['nullable', 'string', 'max:80'],
+            'code' => ['prohibited'],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'output_type' => ['nullable', 'string', 'max:80'],

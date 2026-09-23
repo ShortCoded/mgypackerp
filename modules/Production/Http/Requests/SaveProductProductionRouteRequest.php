@@ -5,23 +5,35 @@ namespace Modules\Production\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
-use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Core\Models\Branch;
+use Modules\Core\Services\OperatingContextService;
 
 class SaveProductProductionRouteRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('production.product_stages.manage');
+        $context = app(OperatingContextService::class)->snapshot($this);
+
+        return (bool) $this->user()?->can('production.product_stages.manage')
+            && Branch::query()
+                ->whereKey($context['branch_id'])
+                ->where('company_id', $context['company_id'])
+                ->where('type', Branch::TypeFactory)
+                ->exists();
     }
 
     public function rules(): array
     {
-        $companyId = app(OperatingCompanyContextService::class)->requireCompanyId($this);
+        $context = app(OperatingContextService::class)->snapshot($this);
 
         return [
-            'product_id' => ['required', 'integer', Rule::exists('products', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
+            'product_id' => ['required', 'integer', Rule::exists('products', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->whereNull('deleted_at'))],
             'selected_stage_ids' => ['present', 'array'],
-            'selected_stage_ids.*' => ['integer', 'distinct', Rule::exists('production_stages', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
+            'selected_stage_ids.*' => ['integer', 'distinct', Rule::exists('production_stages', 'id')->where(fn ($query) => $query
+                ->where('company_id', $context['company_id'])
+                ->where(fn ($branches) => $branches->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))
+                ->where('status', 'active')
+                ->whereNull('deleted_at'))],
             'stage_sequences' => ['nullable', 'array'],
             'stage_sequences.*' => ['integer', 'min:1', 'max:100000'],
             'component_stage_ids' => ['nullable', 'array'],
@@ -29,7 +41,8 @@ class SaveProductProductionRouteRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('production_stages', 'id')->where(fn ($query) => $query
-                    ->where('company_id', $companyId)
+                    ->where('company_id', $context['company_id'])
+                    ->where(fn ($branches) => $branches->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))
                     ->where('status', 'active')
                     ->whereNull('deleted_at')),
             ],

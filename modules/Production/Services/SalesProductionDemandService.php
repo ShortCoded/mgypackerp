@@ -8,7 +8,6 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
-use Modules\Inventory\Services\InventoryAvailabilityService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
@@ -20,7 +19,6 @@ class SalesProductionDemandService
         private readonly DocumentNumberService $documents,
         private readonly SalesAmountService $amounts,
         private readonly FinancialPeriodService $periods,
-        private readonly InventoryAvailabilityService $availability,
     ) {}
 
     /** @param list<array{sales_order_line_id: int, quantity: string|int|float}> $lines */
@@ -56,11 +54,11 @@ class SalesProductionDemandService
                 $baseQuantity = bcmul($quantity, (string) $line->conversion_factor, 8);
                 $this->amounts->assertPositive($quantity, __('Production quantity must be greater than zero.'));
                 Product::query()->lockForUpdate()->findOrFail($line->product_id);
-                $availableBase = $this->availability->forProduct((int) $order->company_id, (int) $order->branch_store_id, (int) $line->product_id, (int) $line->getKey())['available'];
-                $available = bcdiv($availableBase, (string) $line->conversion_factor, 8);
-                $plannedRemaining = bcsub((string) $line->production_requested_quantity, (string) $line->produced_quantity, 8);
-                $remaining = bcsub(bcsub($line->remainingDeliveryQuantity(), $available, 8), $plannedRemaining, 8);
-                $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Production demand exceeds the unplanned stock shortage.'));
+                $this->amounts->assertNotGreaterThan(
+                    $baseQuantity,
+                    $line->remainingProductionDemandBaseQuantity(),
+                    __('production_execution.messages.source_quantity_exceeds_remaining'),
+                );
                 $productionLine = $production->lines()->create([
                     'sales_order_line_id' => $line->getKey(), 'line_number' => $index + 1,
                     'product_id' => $line->product_id, 'unit_id' => $line->unit_id, 'description' => $line->description,

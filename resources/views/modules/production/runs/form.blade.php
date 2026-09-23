@@ -154,6 +154,7 @@
                                 <tbody data-production-run-batch-rows></tbody>
                             </table>
                         </div>
+                        <div class="small text-600 mt-2">{{ __('production_execution.runs.batch_stage_help') }}</div>
                         <div class="invalid-feedback d-block" data-error-for="lines"></div>
                         <div class="d-flex justify-content-end mt-2">
                             <button class="btn btn-falcon-default btn-sm" type="button" data-add-production-run-line disabled>

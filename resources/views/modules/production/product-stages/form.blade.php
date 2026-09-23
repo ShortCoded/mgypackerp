@@ -1,6 +1,7 @@
 @extends('layouts.app')
 
 @php($selected = $routeStages->keyBy('production_stage_id'))
+@php($selectedStageIds = collect(old('selected_stage_ids', $selected->keys()->all()))->map(fn ($id) => (int) $id)->all())
 
 @section('title', __('production_execution.product_stages.configure'))
 
@@ -34,7 +35,7 @@
                                 <div class="border rounded-2 p-3 h-100">
                                     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
                                         <label class="form-check mb-0">
-                                            <x-forms.input class="form-check-input" type="checkbox" name="selected_stage_ids[]" value="{{ $stage->id }}" :checked="in_array($stage->id, old('selected_stage_ids', $selected->keys()->all()))" />
+                                            <x-forms.input class="form-check-input" type="checkbox" name="selected_stage_ids[]" value="{{ $stage->id }}" :checked="in_array($stage->id, $selectedStageIds, true)" />
                                             <span class="form-check-label fw-semi-bold">{{ $stage->code }} — {{ $stage->name }}</span>
                                         </label>
                                         <span class="badge badge-subtle-secondary">{{ $stage->output_type ?: '—' }}</span>
@@ -55,9 +56,10 @@
                                     <div class="col-md-6 col-xl-4">
                                         <div class="border rounded-2 p-3 h-100">
                                             <x-forms.label :for="'component-stage-'.$productComponent->public_id" :label="trim(($productComponent->componentProduct?->doc_num ?? '').' — '.($productComponent->componentProduct?->name ?? ''))" />
+                                            @php($componentStageId = old('component_stage_ids.'.$productComponent->public_id, in_array((int) $productComponent->production_stage_id, $selectedStageIds, true) ? $productComponent->production_stage_id : null))
                                             <x-forms.select variant="local" :id="'component-stage-'.$productComponent->public_id" :name="'component_stage_ids['.$productComponent->public_id.']'" :placeholder="__('production_execution.product_stages.first_stage_fallback')">
                                                 @foreach($stages as $stage)
-                                                    <option value="{{ $stage->id }}" @selected((string) old('component_stage_ids.'.$productComponent->public_id, $productComponent->production_stage_id) === (string) $stage->id)>{{ $stage->code }} — {{ $stage->name }}</option>
+                                                    <option value="{{ $stage->id }}" @selected((string) $componentStageId === (string) $stage->id)>{{ $stage->code }} — {{ $stage->name }}</option>
                                                 @endforeach
                                             </x-forms.select>
                                             @error('component_stage_ids.'.$productComponent->public_id)<div class="invalid-feedback d-block">{{ $message }}</div>@enderror

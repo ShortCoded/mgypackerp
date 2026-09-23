@@ -232,7 +232,7 @@ class ProductionOrderController extends Controller
 
         abort_if(blank($input['source_doc_num'] ?? null), 422, __('production_execution.messages.select_source_first'));
         $rows = $sourceType === 'sales_order'
-            ? $this->salesOrderSourceLines($context['company_id'], (string) $input['source_doc_num'], $salesCycle, $numbers)
+            ? $this->salesOrderSourceLines($context['company_id'], (string) $input['source_doc_num'], $numbers)
             : $this->invoiceSourceLines($context['company_id'], (string) $input['source_doc_num'], $salesCycle, $numbers);
 
         if ($terms !== []) {
@@ -280,7 +280,7 @@ class ProductionOrderController extends Controller
     public function stages(Request $request, Select2ResponseService $select2, DataTableSearchService $search): JsonResponse
     {
         $this->authorizeLookup($request);
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $validated = $request->validate([
             'source_type' => ['required', Rule::in(['make_to_stock', 'sales_order', 'customer_invoice'])],
             'source_doc_num' => ['nullable', 'string', 'max:100'],
@@ -305,6 +305,7 @@ class ProductionOrderController extends Controller
             ->forCompany($context['company_id'])
             ->where('product_id', $productId)
             ->where('status', 'active')
+            ->whereHas('stage', fn ($stages) => $stages->visibleInBranch($context['branch_id']))
             ->with('stage')
             ->orderBy('sequence');
         $terms = $search->terms($request->input('q', $request->input('term')));
@@ -329,9 +330,10 @@ class ProductionOrderController extends Controller
     public function orderStages(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
         $this->authorizeLookup($request);
-        $context = $this->requiredContext($request);
+        $context = $this->requiredFactoryContext($request);
         $query = ProductionStage::query()
             ->forCompany($context['company_id'])
+            ->visibleInBranch($context['branch_id'])
             ->where('status', ProductionStage::StatusActive)
             ->orderBy('display_order')
             ->orderBy('name');
@@ -553,7 +555,7 @@ class ProductionOrderController extends Controller
         ], $lines];
     }
 
-    private function salesOrderSourceLines(int $companyId, string $documentNumber, SalesCycleReadService $salesCycle, NumericFormatService $numbers): Collection
+    private function salesOrderSourceLines(int $companyId, string $documentNumber, NumericFormatService $numbers): Collection
     {
         $order = SalesOrder::query()
             ->where('company_id', $companyId)
@@ -561,11 +563,18 @@ class ProductionOrderController extends Controller
             ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled])
             ->firstOrFail();
 
-        return $salesCycle->backorders($companyId, (int) $order->branch_id, ['order_id' => $order->getKey()])
-            ->filter(fn (array $row): bool => bccomp((string) $row['unplanned_base'], '0', 8) > 0)
-            ->map(function (array $row) use ($numbers): array {
-                $line = $row['line'];
-                $remaining = bcdiv((string) $row['unplanned_base'], (string) $line->conversion_factor, 8);
+        return $order->lines()
+            ->with(['product', 'unit'])
+            ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
+            ->whereHas('product', fn ($query) => $query
+                ->where('company_id', $companyId)
+                ->where('item_classification', Product::ClassificationFinishedProduct)
+                ->where('status', 'active'))
+            ->orderBy('line_number')
+            ->get()
+            ->filter(fn (SalesOrderLine $line): bool => bccomp($line->remainingProductionDemandQuantity(), '0', 8) > 0)
+            ->map(function (SalesOrderLine $line) use ($numbers): array {
+                $remaining = $line->remainingProductionDemandQuantity();
 
                 return [
                     'id' => 'sales_order_line:'.$line->public_id,
@@ -575,9 +584,8 @@ class ProductionOrderController extends Controller
                     'text' => __('production_execution.orders.source_line_option', [
                         'line' => $line->line_number,
                         'product' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? $line->description)),
-                        'required' => $numbers->format($line->remainingDeliveryQuantity()),
-                        'allocated' => $numbers->format($row['available']),
-                        'planned' => $numbers->format($row['remaining_production']),
+                        'required' => $numbers->format($line->quantity),
+                        'planned' => $numbers->format($line->production_requested_quantity),
                         'remaining' => $numbers->format($remaining),
                     ]),
                 ];

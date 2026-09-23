@@ -29,6 +29,7 @@ test('an order snapshots only its selected route and stage inputs are not duplic
     $this->actingAs($user);
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $unit = ItemUnit::query()->create([
         'company_id' => $company->getKey(),
@@ -201,6 +202,7 @@ test('stage codes are generated and stage durations are human formatted', functi
     $user->givePermissionTo(['production.stages.create', 'production.stages.view']);
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $context = [
         OperatingContextService::CompanyIdKey => $company->getKey(),
@@ -230,10 +232,33 @@ test('stage codes are generated and stage durations are human formatted', functi
             'submit_action' => 'save_view',
         ]);
 
-    $stage = ProductionStage::query()->where('company_id', $company->getKey())->sole();
+    $stage = ProductionStage::query()->where('company_id', $company->getKey())->where('code', 'STG-00001')->sole();
     $storeResponse->assertRedirect(route('admin.production.stages.show', $stage));
     expect($stage->code)->toBe('STG-00001')
         ->and(app(NumericFormatService::class)->format($stage->standard_duration_value))->toBe('0.25');
+
+    $this->actingAs($user)->withSession($context)
+        ->post(route('admin.production.stages.store'), [
+            '_submission_token' => (string) Str::uuid(),
+            'code' => 'PACK-FINAL',
+            'name' => 'مرحلة برمز تلقائي',
+            'display_order' => '2',
+            'status' => 'active',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasErrors('code');
+
+    $this->actingAs($user)->withSession($context)
+        ->post(route('admin.production.stages.store'), [
+            '_submission_token' => (string) Str::uuid(),
+            'name' => 'مرحلة ثانية',
+            'display_order' => '3',
+            'status' => 'active',
+        ])
+        ->assertRedirect();
+
+    expect(ProductionStage::query()->where('company_id', $company->getKey())->where('name', 'مرحلة ثانية')->value('code'))
+        ->toBe('STG-00002');
 
     $this->actingAs($user)->withSession($context)
         ->get(route('admin.production.stages.show', $stage))
@@ -254,6 +279,7 @@ test('product route editor loads component stage assignments without a blade com
     $user->givePermissionTo('production.product_stages.manage');
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $unit = ItemUnit::query()->create([
         'company_id' => $company->getKey(), 'doc_number' => 93501, 'doc_num' => 'UNIT-ROUTE-EDITOR',
@@ -291,7 +317,22 @@ test('product route editor loads component stage assignments without a blade com
         ->get(route('admin.production.product-stages.edit', $product))
         ->assertOk()
         ->assertSee('component-stage-'.$component->public_id)
-        ->assertSee($componentProduct->name);
+        ->assertSee($componentProduct->name)
+        ->assertDontSee('value="'.$stage->getKey().'" selected', false);
+
+    ProductProductionStage::query()->create([
+        'company_id' => $company->getKey(),
+        'product_id' => $product->getKey(),
+        'production_stage_id' => $stage->getKey(),
+        'sequence' => 1,
+        'status' => ProductionStage::StatusActive,
+        'created_by' => $user->getKey(),
+    ]);
+
+    $this->actingAs($user)->withSession($context)
+        ->get(route('admin.production.product-stages.edit', $product))
+        ->assertOk()
+        ->assertSee('value="'.$stage->getKey().'" selected', false);
 });
 
 test('order route scales BOM per equivalent output unit and records stage history', function (): void {
@@ -302,6 +343,7 @@ test('order route scales BOM per equivalent output unit and records stage histor
     $this->actingAs($user);
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $carton = ItemUnit::query()->create([
         'company_id' => $company->getKey(),
@@ -440,6 +482,7 @@ test('production route lookups search and line details return formatted unit and
     $user->givePermissionTo('production.orders.view');
     $company = Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
+    $branch->update(['type' => Branch::TypeFactory]);
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $carton = ItemUnit::query()->create([
         'company_id' => $company->getKey(),

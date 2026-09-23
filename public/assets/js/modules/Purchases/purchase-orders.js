@@ -658,6 +658,15 @@
     $(document).on('change', '.js-order-requisitions', async function () {
       const form = this.closest('form');
       const selection = $(this).val() || [];
+      if (selection.length) {
+        const direct = form.querySelector('#direct_procurement_override');
+        if (direct?.checked) {
+          direct.checked = false;
+          direct.dispatchEvent(new Event('change', {bubbles: true}));
+          const reason = form.querySelector('#direct_procurement_reason');
+          if (reason) reason.value = '';
+        }
+      }
       sourceRequest?.abort();
       const request = new AbortController(); sourceRequest = request;
       const url = new URL(form.dataset.sourceUrl, location.href);

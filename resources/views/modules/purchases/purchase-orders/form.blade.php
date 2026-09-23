@@ -133,6 +133,23 @@
                     </x-forms.select>
                     <div class="form-text" data-source-loading aria-live="polite"></div>
                 </div>
+                @can('purchases.direct_procurement.override')
+                    <div class="row g-2 mb-3">
+                        <div class="col-12">
+                            <div class="form-check">
+                                <x-forms.input class="form-check-input" type="checkbox" id="direct_procurement_override" name="direct_procurement_override" value="1" :checked="(bool) old('direct_procurement_override', $record?->direct_procurement_override ?? false)" />
+                                <label class="form-check-label" for="direct_procurement_override">{{ __('purchase_orders.attributes.direct_procurement_override') }}</label>
+                            </div>
+                            <div class="form-text">{{ __('purchase_orders.messages.direct_procurement_override_help') }}</div>
+                            <div class="invalid-feedback d-block" data-error-for="direct_procurement_override"></div>
+                        </div>
+                        <div class="col-12" data-direct-purchase-reason @if(! old('direct_procurement_override', $record?->direct_procurement_override ?? false)) hidden @endif>
+                            <label class="form-label" for="direct_procurement_reason">{{ __('purchase_orders.attributes.direct_procurement_reason') }}</label>
+                            <x-forms.textarea class="form-control" id="direct_procurement_reason" name="direct_procurement_reason" rows="2">{{ old('direct_procurement_reason', $record?->direct_procurement_reason) }}</x-forms.textarea>
+                            <div class="invalid-feedback d-block" data-error-for="direct_procurement_reason"></div>
+                        </div>
+                    </div>
+                @endcan
                 @endunless
                 <h6 class="text-700 mb-3">{{ __('purchase_orders.sections.header') }}</h6>
                 <div class="row g-3">

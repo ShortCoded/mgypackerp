@@ -16,7 +16,6 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
-use Modules\Sales\Services\SalesCycleReadService;
 
 class StoreProductionOrderRequest extends FormRequest
 {
@@ -81,6 +80,7 @@ class StoreProductionOrderRequest extends FormRequest
                 'distinct',
                 Rule::exists('production_stages', 'public_id')->where(fn ($query) => $query
                     ->where('company_id', $context['company_id'])
+                    ->where(fn ($branches) => $branches->whereNull('branch_id')->orWhere('branch_id', $context['branch_id']))
                     ->where('status', 'active')
                     ->whereNull('deleted_at')),
             ],
@@ -98,6 +98,12 @@ class StoreProductionOrderRequest extends FormRequest
                 'distinct',
                 Rule::exists('product_production_stages', 'public_id')->where(fn ($query) => $query
                     ->where('company_id', $context['company_id'])
+                    ->whereExists(fn ($stages) => $stages
+                        ->selectRaw('1')
+                        ->from('production_stages')
+                        ->whereColumn('production_stages.id', 'product_production_stages.production_stage_id')
+                        ->where(fn ($branches) => $branches->whereNull('production_stages.branch_id')->orWhere('production_stages.branch_id', $context['branch_id']))
+                        ->whereNull('production_stages.deleted_at'))
                     ->where('status', 'active')
                     ->whereNull('deleted_at')),
             ],
@@ -151,11 +157,12 @@ class StoreProductionOrderRequest extends FormRequest
                                 : [($sourceType === 'sales_order' ? 'sales_order_line:' : 'customer_invoice_line:').$reference => (string) $line->quantity];
                         })
                     : ($sourceType === 'sales_order'
-                    ? app(SalesCycleReadService::class)
-                        ->backorders((int) $context['company_id'], (int) $source->branch_id, ['order_id' => $source->getKey()])
-                        ->filter(fn (array $row): bool => bccomp((string) $row['unplanned_base'], '0', 8) > 0)
-                        ->mapWithKeys(fn (array $row): array => [
-                            'sales_order_line:'.$row['line']->public_id => bcdiv((string) $row['unplanned_base'], (string) $row['line']->conversion_factor, 8),
+                    ? $source->lines()
+                        ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
+                        ->get()
+                        ->filter(fn (SalesOrderLine $line): bool => bccomp($line->remainingProductionDemandQuantity(), '0', 8) > 0)
+                        ->mapWithKeys(fn (SalesOrderLine $line): array => [
+                            'sales_order_line:'.$line->public_id => $line->remainingProductionDemandQuantity(),
                         ])
                     : $source->lines()
                         ->where('is_service', false)

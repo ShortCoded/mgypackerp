@@ -4,8 +4,10 @@ use App\Services\PostingAccountResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\ArchiveFileUsage;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
@@ -63,7 +65,23 @@ test('return duplicate rows cannot exceed the remaining invoiced quantity', func
     expect(DB::table('sales_returns')->count())->toBe(0);
 });
 
-test('production demand is limited to shortage after stock and prior planning', function (): void {
+test('sales order can be approved without finished stock while explicit reservation still checks stock', function (): void {
+    $fixture = salesCycleFixture();
+    InventoryTransaction::query()
+        ->where('posting_key', 'sales-cycle-opening-stock')
+        ->update(['quantity_in' => '0', 'total_cost' => '0']);
+
+    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture));
+    $approved = app(SalesOrderService::class)->approve($order);
+    $line = $approved->lines->first();
+
+    expect($approved->status)->toBe(SalesOrder::StatusApproved)
+        ->and($line->reserved_quantity)->toBe('0.00000000')
+        ->and(fn () => app(SalesFulfillmentService::class)->reserve($line, '1'))->toThrow(DomainException::class)
+        ->and(DB::table('inventory_reservations')->count())->toBe(0);
+});
+
+test('production demand ignores finished stock and reservations but remains capped by the sales line', function (): void {
     $fixture = salesCycleFixture();
     $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
         'lines' => [['product_id' => $fixture['finished']->id, 'unit_id' => $fixture['unit']->id, 'quantity' => '150', 'unit_price' => '10']],
@@ -72,12 +90,60 @@ test('production demand is limited to shortage after stock and prior planning', 
     $line = $order->lines->first();
     app(SalesFulfillmentService::class)->reserve($line, '100');
     $service = app(SalesProductionDemandService::class);
-    expect(fn () => $service->create($order, [['sales_order_line_id' => $line->id, 'quantity' => '51']]))->toThrow(DomainException::class);
-    $production = $service->create($order, [['sales_order_line_id' => $line->id, 'quantity' => '50']]);
-    expect($production->lines->first()->quantity)->toBe('50.00000000');
+    $production = $service->create($order, [['sales_order_line_id' => $line->id, 'quantity' => '150']]);
+    expect($production->lines->first()->quantity)->toBe('150.00000000');
     expect(fn () => $service->create($order, [['sales_order_line_id' => $line->id, 'quantity' => '1']]))->toThrow(DomainException::class);
     expect(ProductionOrder::query()->count())->toBe(1);
     expect(fn () => app(SalesOrderService::class)->cancel($order, 'Customer cancelled'))->toThrow(DomainException::class);
+});
+
+test('production order source selection and validation use sales demand instead of finished stock', function (): void {
+    $fixture = salesCycleFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    Permission::findOrCreate('production.orders.create', 'web');
+    $fixture['user']->givePermissionTo('production.orders.create');
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [['product_id' => $fixture['finished']->id, 'unit_id' => $fixture['unit']->id, 'quantity' => '150', 'unit_price' => '10']],
+        'payment_schedules' => [],
+    ])));
+    $line = $order->lines->firstOrFail();
+    $openingStock = InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->sole();
+    $openingStock->update(['quantity_in' => '150', 'total_cost' => '750']);
+    app(SalesFulfillmentService::class)->reserve($line, '150');
+
+    $session = salesCycleSession($fixture);
+    $lookup = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.work-orders.select2.products', [
+            'source_type' => 'sales_order',
+            'source_doc_num' => $order->doc_num,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('results.0.required_quantity', '150.00000000');
+    $lineReference = $lookup->json('results.0.id');
+    $payload = [
+        'source_type' => 'sales_order',
+        'source_doc_num' => $order->doc_num,
+        'production_order_date' => now()->toDateString(),
+        'priority' => 'normal',
+        'overproduction_tolerance_percent' => '0',
+        'lines' => [[
+            'source_line_reference' => $lineReference,
+            'quantity' => '149',
+            'description' => $line->description,
+        ]],
+    ];
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.work-orders.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('lines.0.quantity');
+
+    $payload['lines'][0]['quantity'] = '150';
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.work-orders.store'), $payload)
+        ->assertCreated();
 });
 
 test('sales delivery reversal respects invoice dependency and restores unbilled order quantities', function (): void {
