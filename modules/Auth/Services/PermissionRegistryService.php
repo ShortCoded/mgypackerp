@@ -3,6 +3,7 @@
 namespace Modules\Auth\Services;
 
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\MenuConfigFileOrder;
@@ -173,7 +174,9 @@ class PermissionRegistryService
         return $this->memo->remember('permissions.registry.all', function (): array {
             $permissions = array_merge(
                 $this->fromMenus(),
-                $this->erpUiScreens->permissions(excludedScreenKeys: ['core_user_tasks']),
+                $this->fromProtectedRoutes(),
+                $this->fromLiveScreenActions(),
+                config('permissions', []),
             );
 
             $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');
@@ -213,6 +216,51 @@ class PermissionRegistryService
 
             return $permissions;
         });
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function fromProtectedRoutes(): array
+    {
+        $permissions = [];
+
+        foreach (Route::getRoutes() as $route) {
+            foreach ($route->gatherMiddleware() as $middleware) {
+                if (! is_string($middleware) || ! str_starts_with($middleware, 'can:')) {
+                    continue;
+                }
+
+                $permissions[] = explode(',', substr($middleware, 4), 2)[0];
+            }
+        }
+
+        return array_values(array_unique($permissions));
+    }
+
+    /**
+     * Screen blueprints can describe future or retired screens. Only their
+     * explicitly declared actions for a live route belong in the registry.
+     *
+     * @return list<string>
+     */
+    private function fromLiveScreenActions(): array
+    {
+        $permissions = [];
+
+        foreach ($this->erpUiScreens->screens() as $screen) {
+            if ($screen->key() === 'core_user_tasks'
+                || ! in_array($screen->get('classification'), ['CANONICAL', 'WORKING_REAL_SCREEN'], true)
+                || ! Route::has($screen->get('canonical_route') ?: $screen->route('index'))) {
+                continue;
+            }
+
+            foreach ($screen->get('declared_actions', []) as $action) {
+                $permissions[] = $screen->permission($action);
+            }
+        }
+
+        return array_values(array_unique($permissions));
     }
 
     /**

@@ -240,6 +240,7 @@ return [
     'general_accounting' => 'الحسابات العامة',
     'treasury_banks' => 'الخزينة والبنوك',
     'finance_reports' => 'تقارير المالية',
+    'finance_report_overview' => 'نظرة عامة على التقارير المالية',
     'financial_analysis_reports' => 'تقارير التحليلات المالية',
     'expense_analysis' => 'تحليل المصروفات',
     'financial_ratios' => 'النسب المالية',

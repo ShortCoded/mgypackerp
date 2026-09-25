@@ -458,6 +458,7 @@ return [
     'my_board.view_trashed' => 'عرض عناصر لوحتي المحذوفة',
     'quick_tasks.board' => 'عرض شاشة عرض المهام',
     'quick_tasks.change_status' => 'تغيير حالة المهام السريعة',
+    'quick_tasks.bulk_delete' => 'حذف المهام السريعة جماعيًا',
     'quick_tasks.create' => 'إنشاء المهام السريعة',
     'quick_tasks.delete' => 'حذف المهام السريعة',
     'quick_tasks.manage_attachments' => 'إدارة مرفقات المهام السريعة',
@@ -531,4 +532,8 @@ return [
     'screen_data_visibility_rules.view_trashed' => 'عرض سياسات رؤية البيانات المحذوفة',
     'screen_data_visibility_rules.restore' => 'استعادة سياسات رؤية البيانات',
     'screen_data_visibility_rules.bypass' => 'تجاوز قيود رؤية البيانات',
+    'reports.costing.product_cost.view' => 'عرض تقرير تكلفة المنتج',
+    'reports.costing.product_cost.print' => 'طباعة تقرير تكلفة المنتج',
+    'reports.costing.product_cost.export' => 'تصدير تقرير تكلفة المنتج',
+    'purchases.supplier_payment_allocations.create' => 'تخصيص مدفوعات الموردين',
 ];

@@ -43,11 +43,8 @@ class PermissionRegistryCoverageTest extends TestCase
             // Finance reports overview permission (referenced in modules/Core/Services/PlasticsDashboardService.php)
             ['reports.finance.view'],
 
-            // Purchase order clone permission (referenced in resources/views/modules/purchases/purchase-orders/form.blade.php)
-            ['purchase_orders.clone'],
-
-            // Production work orders view permission (referenced in resources/views/modules/sales/cycle/partials/workflow-actions.blade.php)
-            ['production.work_orders.view'],
+            // Production work orders use the canonical production.orders permission.
+            ['production.orders.view'],
 
             // Screen data visibility rules permissions (referenced in modules/Core/Services/ScreenDataVisibilityService.php
             //   and resources/views/modules/auth/screen-data-visibility-rules/)
@@ -132,6 +129,68 @@ class PermissionRegistryCoverageTest extends TestCase
         }
     }
 
+    public function test_retired_procurement_redirects_use_the_destination_permission(): void
+    {
+        $destinations = [
+            'admin.purchases.purchase-requisition-lines.index' => 'purchases.purchase_requisitions.view',
+            'admin.purchases.purchase-requisition-approvals.index' => 'purchases.purchase_requisitions.view',
+            'admin.purchases.supplier-quotation-lines.index' => 'purchases.supplier_quotation_entry.view',
+            'admin.purchases.purchase-order-lines.index' => 'purchase_orders.view',
+            'admin.purchases.purchase-order-approvals.index' => 'purchase_orders.view',
+            'admin.purchases.goods-receipt-lines.index' => 'purchases.goods_receipt_notes.view',
+            'admin.purchases.purchase-invoice-lines.index' => 'purchase_invoices.view',
+            'admin.purchases.purchase-invoice-payments.index' => 'purchase_invoices.view',
+            'admin.purchases.purchase-invoice-allocations.index' => 'purchase_invoices.view',
+            'admin.purchases.purchase-return-lines.index' => 'purchases.purchase_returns.view',
+            'admin.purchases.supplier-payment-allocations.index' => 'supplier_payments.view',
+            'admin.purchases.supplier-debit-notes.index' => 'purchases.purchase_returns.view',
+        ];
+        $permissions = app(PermissionRegistryService::class)->all();
+
+        foreach ($destinations as $routeName => $destinationPermission) {
+            $route = Route::getRoutes()->getByName($routeName);
+
+            $this->assertNotNull($route, $routeName);
+            $this->assertContains('can:'.$destinationPermission, $route->gatherMiddleware(), $routeName);
+        }
+
+        foreach ([
+            'purchases.purchase_requisition_lines.view',
+            'purchases.purchase_requisition_approvals.view',
+            'purchases.supplier_quotation_lines.view',
+            'purchases.purchase_order_lines.view',
+            'purchases.purchase_order_approvals.view',
+            'purchases.goods_receipt_lines.view',
+            'purchases.purchase_invoice_lines.view',
+            'purchases.purchase_invoice_payments.view',
+            'purchases.purchase_invoice_allocations.view',
+            'purchases.purchase_return_lines.view',
+            'purchases.supplier_payment_allocations.view',
+            'purchases.supplier_debit_notes.view',
+        ] as $retiredPermission) {
+            $this->assertNotContains($retiredPermission, $permissions);
+        }
+    }
+
+    public function test_supplier_payment_allocation_action_is_grouped_with_supplier_payments(): void
+    {
+        app()->setLocale('ar');
+        $groups = app(PermissionRegistryService::class)->groupedForForm(app(PermissionRegistryService::class)->all());
+        $matchingNodes = [];
+        $visit = function (array $nodes) use (&$visit, &$matchingNodes): void {
+            foreach ($nodes as $node) {
+                if (in_array('purchases.supplier_payment_allocations.create', array_column($node['permissions'] ?? [], 'name'), true)) {
+                    $matchingNodes[] = $node['label'];
+                }
+
+                $visit($node['children'] ?? []);
+            }
+        };
+        $visit($groups);
+
+        $this->assertSame(['مدفوعات الموردين'], $matchingNodes);
+    }
+
     public function test_role_form_lists_every_assignable_permission_once_in_arabic(): void
     {
         app()->setLocale('ar');
@@ -157,9 +216,25 @@ class PermissionRegistryCoverageTest extends TestCase
         $names = array_column($shown, 'name');
         $groupLabels = array_column($groups, 'label');
         $this->assertCount(count($groupLabels), array_unique($groupLabels));
+        $this->assertNotContains('التقارير', $groupLabels);
         $this->assertSame($registry->all(), collect($names)->sort()->values()->all());
         $this->assertCount(count($names), array_unique($names));
         $this->assertSame('مقارنة تقييم المخزون', $valuationGroup);
+
+        $accountingGroup = collect($groups)->firstWhere('key', 'accounting_costing');
+        $accountingPermissions = [];
+        $collectAccountingPermissions = function (array $nodes) use (&$collectAccountingPermissions, &$accountingPermissions): void {
+            foreach ($nodes as $node) {
+                array_push($accountingPermissions, ...array_column($node['permissions'] ?? [], 'name'));
+                $collectAccountingPermissions($node['children'] ?? []);
+            }
+        };
+        $collectAccountingPermissions([$accountingGroup]);
+
+        $this->assertContains('reports.costing.product_cost.view', $accountingPermissions);
+        $this->assertContains('reports.costing.product_cost.print', $accountingPermissions);
+        $this->assertContains('reports.costing.product_cost.export', $accountingPermissions);
+        $this->assertContains('reports.finance.cashbox_balances.view', $accountingPermissions);
 
         foreach ($shown as $row) {
             $this->assertMatchesRegularExpression('/[\x{0600}-\x{06FF}]/u', $row['label'], $row['name']);

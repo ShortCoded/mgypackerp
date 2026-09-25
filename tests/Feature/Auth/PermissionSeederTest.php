@@ -154,7 +154,10 @@ test('permission registry collects permissions from menu configs', function () {
         ->toContain('settings.pwa.update')
         ->not->toContain('tools.'.'temperature'.'_logs.view');
 
-    expect(config('permissions'))->toBe([])
+    expect(config('permissions'))->toBe([
+        'screen_data_visibility_rules.view_trashed',
+        'screen_data_visibility_rules.bypass',
+    ])
         ->and($permissions)->toBe(array_values(array_unique($permissions)))
         ->and($permissions)->not->toContain('users.index')
         ->and($permissions)->not->toContain('users.bulk_delete')

@@ -107,13 +107,17 @@ HELP;
             ? $adminRole->permissions()->pluck('name')->sort()->values()->all()
             : [];
 
-        $adminPermissionsToRemove = array_values(array_diff($adminCurrentPermissions, $permissionNames));
+        $adminPermissionsToRemove = $prune
+            ? array_values(array_diff($adminCurrentPermissions, $permissionNames))
+            : [];
         $adminPermissionsToAdd = array_values(array_diff($permissionNames, $adminCurrentPermissions));
-        $adminPermissionsRemaining = array_values(array_intersect($adminCurrentPermissions, $permissionNames));
+        $adminPermissionsRemaining = $prune
+            ? array_values(array_intersect($adminCurrentPermissions, $permissionNames))
+            : $adminCurrentPermissions;
 
         $suspiciousCount = $this->collectedCountLooksSuspicious($permissionNameCollection->count(), $currentPermissions->count());
 
-        if (! $dryRun && $suspiciousCount && ! $force) {
+        if (! $dryRun && $prune && $suspiciousCount && ! $force) {
             $this->error(sprintf(
                 'Discovered permission count [%d] is suspiciously low compared to current DB count [%d]. Re-run with --force after verifying menu/config discovery.',
                 $permissionNameCollection->count(),
@@ -198,7 +202,7 @@ HELP;
 
         if ($dryRun) {
             $wouldAssignAdminPermissionsCount = ($adminRole instanceof Role && ! $skipAdminSync)
-                ? $permissionNameCollection->count()
+                ? count(array_unique(array_merge($adminPermissionsRemaining, $adminPermissionsToAdd)))
                 : 0;
 
             $this->printSummary(
@@ -283,8 +287,11 @@ HELP;
                     $adminRole->restore();
                 }
 
-                $adminRole->syncPermissions($validPermissions);
-                $adminAssignedPermissionsCount = $validPermissions->count();
+                $permissionsToAssign = $prune
+                    ? $validPermissions
+                    : $adminRole->permissions()->get()->concat($validPermissions)->unique('id');
+                $adminRole->syncPermissions($permissionsToAssign);
+                $adminAssignedPermissionsCount = $permissionsToAssign->count();
             }
 
             $permissionRegistrar->forgetCachedPermissions();

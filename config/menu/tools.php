@@ -174,6 +174,13 @@ return [
                     'quick_tasks_start' => 'quick_tasks.start',
                     'quick_tasks_mark_ready' => 'quick_tasks.mark_ready',
                     'quick_tasks_mark_done' => 'quick_tasks.mark_done',
+                    'quick_tasks_view' => 'quick_tasks.view',
+                    'quick_tasks_create' => 'quick_tasks.create',
+                    'quick_tasks_update' => 'quick_tasks.update',
+                    'quick_tasks_delete' => 'quick_tasks.delete',
+                    'quick_tasks_restore' => 'quick_tasks.restore',
+                    'quick_tasks_change_status' => 'quick_tasks.change_status',
+                    'quick_tasks_bulk_delete' => 'quick_tasks.bulk_delete',
                 ],
                 'active' => [
                     'admin.tools.team-board.*',

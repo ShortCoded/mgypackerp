@@ -136,6 +136,7 @@ test('--show-admin-diff displays permissions to add and remove from admin', func
 
     $this->artisan('erp:permissions:sync', [
         '--dry-run' => true,
+        '--prune' => true,
         '--show-admin-diff' => true,
     ])
         ->expectsOutputToContain('Admin role permission diff')
@@ -207,14 +208,16 @@ test('stale permissions are not deleted unless --prune is passed', function (): 
         $mock->shouldReceive('all')->andReturn(['dashboard.view', 'users.view']);
     });
 
-    Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+    $adminRole = Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
 
-    Permission::query()->create(['name' => 'obsolete.permission', 'guard_name' => 'web']);
+    $stalePermission = Permission::query()->create(['name' => 'obsolete.permission', 'guard_name' => 'web']);
+    $adminRole->givePermissionTo($stalePermission);
 
     $this->artisan('erp:permissions:sync')
         ->assertSuccessful();
 
     expect(Permission::query()->where('name', 'obsolete.permission')->exists())->toBeTrue()
+        ->and($adminRole->refresh()->permissions()->where('name', 'obsolete.permission')->exists())->toBeTrue()
         ->and(Permission::query()->whereIn('name', ['dashboard.view', 'users.view'])->count())->toBe(2);
 
     $this->artisan('erp:permissions:sync', [

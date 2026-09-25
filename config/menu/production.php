@@ -164,7 +164,11 @@ return [
                         'route' => 'admin.production.reports.index',
                         'permission' => 'production.reports.operational',
                         'keywords' => ['production overview', 'production kpis', 'ملخص الإنتاج'],
-                        'actions' => [],
+                        'actions' => [
+                            'view' => 'production.reports.operational',
+                            'financial' => 'production.reports.financial',
+                            'export' => 'production.reports.export',
+                        ],
                         'active' => ['admin.production.reports.index'],
                         'children' => [],
                     ],

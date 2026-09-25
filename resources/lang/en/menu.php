@@ -240,6 +240,7 @@ return [
     'general_accounting' => 'General Accounting',
     'treasury_banks' => 'Treasury & Banks',
     'finance_reports' => 'Finance Reports',
+    'finance_report_overview' => 'Financial Reports Overview',
     'financial_analysis_reports' => 'Financial Analytics Reports',
     'expense_analysis' => 'Expense Analysis',
     'financial_ratios' => 'Financial Ratios',

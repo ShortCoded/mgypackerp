@@ -165,6 +165,7 @@ return [
                 'actions' => [
                     'view' => 'supplier_payments.view', 'create' => 'supplier_payments.create',
                     'approve' => 'supplier_payments.approve', 'cancel' => 'supplier_payments.cancel', 'print' => 'supplier_payments.print',
+                    'allocate' => 'purchases.supplier_payment_allocations.create',
                 ],
                 'active' => ['admin.purchases.supplier-payments.*'], 'children' => [],
             ],

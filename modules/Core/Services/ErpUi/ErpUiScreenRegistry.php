@@ -3,6 +3,7 @@
 namespace Modules\Core\Services\ErpUi;
 
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Route;
 use LogicException;
 
 class ErpUiScreenRegistry
@@ -73,7 +74,8 @@ class ErpUiScreenRegistry
     {
         return $this->collection()
             ->filter(fn (ErpUiScreenDefinition $screen): bool => $screen->get('menu_visible', true) !== false
-                && in_array($screen->get('classification'), ['CANONICAL', 'WORKING_REAL_SCREEN'], true))
+                && in_array($screen->get('classification'), ['CANONICAL', 'WORKING_REAL_SCREEN'], true)
+                && Route::has($screen->get('canonical_route') ?: $screen->route('index')))
             ->groupBy(fn (ErpUiScreenDefinition $screen): string => (string) $screen->get('menu_label'))
             ->map(function (Collection $moduleScreens): array {
                 /** @var ErpUiScreenDefinition $first */
@@ -200,7 +202,7 @@ class ErpUiScreenRegistry
             'label' => $screen->key(),
             'title' => $screen->title(),
             'icon' => (string) $screen->get('icon', 'file-alt'),
-            'route' => $screen->route('index'),
+            'route' => $screen->get('canonical_route') ?: $screen->route('index'),
             'permission' => $screen->permission('view'),
             'actions' => $actions,
             'phase_modes' => ['expanded'],

@@ -1,7 +1,7 @@
 <?php
 
 return [
-    // Permissions are discovered from config/menu/*.php.
-    // Keep this file only for exceptional global permissions that cannot
-    // logically belong to a menu-owned feature.
+    // These checks remain active when the feature is hidden from navigation.
+    'screen_data_visibility_rules.view_trashed',
+    'screen_data_visibility_rules.bypass',
 ];

@@ -147,6 +147,16 @@ return [
                 'active' => ['admin.finance.opening-balances.*'],
                 'children' => [],
             ],
+            [
+                'label' => 'finance_report_overview',
+                'title' => 'Financial Reports Overview',
+                'icon' => 'chart-line',
+                'route' => 'admin.reports.finance.index',
+                'permission' => 'reports.finance.view',
+                'actions' => ['view' => 'reports.finance.view'],
+                'active' => ['admin.reports.finance.index'],
+                'children' => [],
+            ],
         ],
     ],
 ];

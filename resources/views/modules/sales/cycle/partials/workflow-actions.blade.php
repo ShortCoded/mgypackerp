@@ -92,7 +92,7 @@
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h6 class="mb-0">{{ __('Canonical manufacturing execution') }}</h6>
-            @can('production.work_orders.view')
+            @can('production.orders.view')
                 <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.production.runs.index', ['production_order' => $record->doc_num]) }}">{{ __('Plan or review runs') }}</a>
             @endcan
         </div>

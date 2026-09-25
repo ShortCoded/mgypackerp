@@ -226,8 +226,8 @@ Route::middleware('auth')
                 Route::post('/{purchaseRequisition}/cancel', 'cancelRequisition')->middleware('can:purchases.purchase_requisitions.cancel')->name('cancel');
                 Route::post('/{purchaseRequisition}/close', 'closeRequisition')->middleware('can:purchases.purchase_requisitions.close')->name('close');
             });
-            Route::get('purchase-requisition-lines', 'requisitionLinesIndex')->middleware('can:purchases.purchase_requisition_lines.view')->name('purchase-requisition-lines.index');
-            Route::get('purchase-requisition-approvals', 'requisitionApprovalsIndex')->middleware('can:purchases.purchase_requisition_approvals.view')->name('purchase-requisition-approvals.index');
+            Route::get('purchase-requisition-lines', 'requisitionLinesIndex')->middleware('can:purchases.purchase_requisitions.view')->name('purchase-requisition-lines.index');
+            Route::get('purchase-requisition-approvals', 'requisitionApprovalsIndex')->middleware('can:purchases.purchase_requisitions.view')->name('purchase-requisition-approvals.index');
 
             Route::prefix('request-for-quotations')->name('request-for-quotations.')->group(function (): void {
                 Route::get('/{record}/edit', 'editRfq')->middleware('can:purchases.request_for_quotations.edit')->name('edit');
@@ -254,7 +254,7 @@ Route::middleware('auth')
                 Route::get('/{supplierQuotation}', 'showQuotation')->middleware('can:purchases.supplier_quotation_entry.view')->name('show');
                 Route::post('/{supplierQuotation}/submit', 'submitQuotation')->middleware('can:purchases.supplier_quotation_entry.edit')->name('submit');
             });
-            Route::get('supplier-quotation-lines', 'quotationLinesIndex')->middleware('can:purchases.supplier_quotation_lines.view')->name('supplier-quotation-lines.index');
+            Route::get('supplier-quotation-lines', 'quotationLinesIndex')->middleware('can:purchases.supplier_quotation_entry.view')->name('supplier-quotation-lines.index');
             Route::get('supplier-quotation-comparison', 'comparisonIndex')->middleware('can:purchases.supplier_quotation_comparison.view')->name('supplier-quotation-comparison.index');
             Route::get('supplier-quotation-comparison/{requestForQuotation}', 'compare')->middleware('can:purchases.supplier_quotation_comparison.view')->name('supplier-quotation-comparison.show');
 
@@ -266,8 +266,8 @@ Route::middleware('auth')
                 Route::post('/{supplierSelection}/approve', 'approveSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('approve');
             });
 
-            Route::get('purchase-order-lines', 'inquiry')->defaults('procurement_screen', 'purchase_order_lines')->middleware('can:purchases.purchase_order_lines.view')->name('purchase-order-lines.index');
-            Route::get('purchase-order-approvals', 'inquiry')->defaults('procurement_screen', 'purchase_order_approvals')->middleware('can:purchases.purchase_order_approvals.view')->name('purchase-order-approvals.index');
+            Route::get('purchase-order-lines', 'inquiry')->defaults('procurement_screen', 'purchase_order_lines')->middleware('can:purchase_orders.view')->name('purchase-order-lines.index');
+            Route::get('purchase-order-approvals', 'inquiry')->defaults('procurement_screen', 'purchase_order_approvals')->middleware('can:purchase_orders.view')->name('purchase-order-approvals.index');
             Route::prefix('purchase-order-change-requests')->name('purchase-order-change-requests.')->group(function (): void {
                 Route::get('/', 'changeRequestsIndex')->middleware('can:purchases.purchase_order_change_requests.view')->name('index');
                 Route::get('/create/{purchaseOrder}', 'createChangeRequest')->middleware(['can:purchases.purchase_order_change_requests.create', 'can:purchases.prices.view'])->name('create');
@@ -307,7 +307,7 @@ Route::middleware('auth')
                 Route::post('/{goodsReceiptNote}/reverse', 'reverseReceipt')->middleware('can:purchases.goods_receipt_notes.reverse')->name('reverse');
                 Route::post('/{goodsReceiptNote}/cancel', 'cancelReceipt')->middleware('can:purchases.goods_receipt_notes.edit')->name('cancel');
             });
-            Route::get('goods-receipt-lines', 'receiptLinesIndex')->middleware('can:purchases.goods_receipt_lines.view')->name('goods-receipt-lines.index');
+            Route::get('goods-receipt-lines', 'receiptLinesIndex')->middleware('can:purchases.goods_receipt_notes.view')->name('goods-receipt-lines.index');
             Route::prefix('goods-receipt-inspection')->name('goods-receipt-inspection.')->group(function (): void {
                 Route::get('/', 'inspectionsIndex')->middleware('can:purchases.goods_receipt_inspection.view')->name('index');
                 Route::get('/create', 'chooseSource')->defaults('screen', 'goods_receipt_inspections')->middleware('can:purchases.goods_receipt_inspection.create')->name('choose-source');
@@ -316,9 +316,9 @@ Route::middleware('auth')
                 Route::get('/{goodsReceiptInspection}', 'showInspection')->middleware('can:purchases.goods_receipt_inspection.view')->name('show');
             });
 
-            Route::get('purchase-invoice-lines', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_lines')->middleware('can:purchases.purchase_invoice_lines.view')->name('purchase-invoice-lines.index');
-            Route::get('purchase-invoice-payments', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_payments')->middleware('can:purchases.purchase_invoice_payments.view')->name('purchase-invoice-payments.index');
-            Route::get('purchase-invoice-allocations', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_allocations')->middleware('can:purchases.purchase_invoice_allocations.view')->name('purchase-invoice-allocations.index');
+            Route::get('purchase-invoice-lines', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_lines')->middleware('can:purchase_invoices.view')->name('purchase-invoice-lines.index');
+            Route::get('purchase-invoice-payments', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_payments')->middleware('can:purchase_invoices.view')->name('purchase-invoice-payments.index');
+            Route::get('purchase-invoice-allocations', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_allocations')->middleware('can:purchase_invoices.view')->name('purchase-invoice-allocations.index');
 
             Route::prefix('purchase-returns')->name('purchase-returns.')->group(function (): void {
                 Route::get('/', 'returnsIndex')->middleware('can:purchases.purchase_returns.view')->name('index');
@@ -331,7 +331,7 @@ Route::middleware('auth')
                 Route::post('/{purchaseReturn}/approve', 'approveReturn')->middleware('can:purchases.purchase_returns.post')->name('approve');
                 Route::post('/{purchaseReturn}/reverse', 'reverseReturn')->middleware('can:purchases.purchase_returns.reverse')->name('reverse');
             });
-            Route::get('purchase-return-lines', 'returnLinesIndex')->middleware('can:purchases.purchase_return_lines.view')->name('purchase-return-lines.index');
+            Route::get('purchase-return-lines', 'returnLinesIndex')->middleware('can:purchases.purchase_returns.view')->name('purchase-return-lines.index');
 
             Route::get('supplier-advances', 'supplierAdvancesIndex')->middleware('can:purchases.supplier_advances.view')->name('supplier-advances.index');
             Route::prefix('supplier-payments')->name('supplier-payments.')->middleware('can:purchases.prices.view')->group(function (): void {
@@ -342,9 +342,9 @@ Route::middleware('auth')
                 Route::post('/{supplierPayment}/approve', 'approveSupplierPayment')->middleware('can:supplier_payments.approve')->name('approve');
                 Route::post('/{supplierPayment}/cancel', 'cancelSupplierPayment')->middleware('can:supplier_payments.cancel')->name('cancel');
             });
-            Route::get('supplier-payment-allocations', 'inquiry')->defaults('procurement_screen', 'supplier_payment_allocations')->middleware('can:purchases.supplier_payment_allocations.view')->name('supplier-payment-allocations.index');
+            Route::get('supplier-payment-allocations', 'inquiry')->defaults('procurement_screen', 'supplier_payment_allocations')->middleware('can:supplier_payments.view')->name('supplier-payment-allocations.index');
             Route::post('supplier-payment-allocations/{supplierPayment}', 'allocateSupplierPayment')->middleware(['can:purchases.supplier_payment_allocations.create', 'can:purchases.prices.view'])->name('supplier-payment-allocations.store');
-            Route::get('supplier-debit-notes', 'inquiry')->defaults('procurement_screen', 'supplier_debit_notes')->middleware('can:purchases.supplier_debit_notes.view')->name('supplier-debit-notes.index');
+            Route::get('supplier-debit-notes', 'inquiry')->defaults('procurement_screen', 'supplier_debit_notes')->middleware('can:purchases.purchase_returns.view')->name('supplier-debit-notes.index');
 
             Route::prefix('procurement-cycle-report')->name('procurement-cycle-report.')->group(function (): void {
                 Route::get('/', 'report')->middleware('can:reports.purchases.view')->name('index');

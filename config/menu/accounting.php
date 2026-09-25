@@ -82,6 +82,21 @@ return [
                 'children' => [],
             ],
             [
+                'label' => 'costing_reports',
+                'title' => 'Costing Reports',
+                'icon' => 'chart-bar',
+                'route' => 'admin.reports.costing.product-cost.index',
+                'permission' => 'reports.costing.view',
+                'actions' => [
+                    'view' => 'reports.costing.view',
+                    'product_cost_view' => 'reports.costing.product_cost.view',
+                    'product_cost_print' => 'reports.costing.product_cost.print',
+                    'product_cost_export' => 'reports.costing.product_cost.export',
+                ],
+                'active' => ['admin.reports.costing.*'],
+                'children' => [],
+            ],
+            [
                 'label' => 'period_closing',
                 'title' => 'Period Closing & Carry Forward',
                 'icon' => 'lock',

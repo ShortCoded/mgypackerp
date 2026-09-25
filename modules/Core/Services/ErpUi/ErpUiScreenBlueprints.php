@@ -54,6 +54,7 @@ class ErpUiScreenBlueprints
             'order' => (int) ($screen['order'] ?? $screenOrder),
             'icon' => (string) ($screen['icon'] ?? $this->iconFor($profile)),
             'actions' => array_values(array_unique($actions)),
+            'declared_actions' => array_values(array_unique($screen['actions'] ?? [])),
             'modes' => array_values(array_unique($modes)),
             'index_columns' => $indexColumns,
             'tabs' => $tabs,
