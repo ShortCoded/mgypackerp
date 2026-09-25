@@ -13,7 +13,7 @@ use Throwable;
 
 class OperationalDataResetService
 {
-    private const POLICY_VERSION = '2026-09-25.3';
+    private const POLICY_VERSION = '2026-09-25.4';
 
     private const OPERATIONAL_MODULES = [
         'accounting', 'finance', 'inventory', 'sales', 'purchases',
@@ -64,6 +64,7 @@ class OperationalDataResetService
             'source_sha256' => [
                 'service' => hash_file('sha256', __FILE__),
                 'command' => hash_file('sha256', app_path('Console/Commands/ResetOperationalDataCommand.php')),
+                'automatic_command' => hash_file('sha256', app_path('Console/Commands/ResetOperationalDataNowCommand.php')),
                 'verify_command' => hash_file('sha256', app_path('Console/Commands/VerifyOperationalResetBackupCommand.php')),
                 'manifest' => hash_file('sha256', config_path('operational_reset.php')),
             ],
@@ -533,6 +534,11 @@ class OperationalDataResetService
 
     private function schemaFingerprint(): string
     {
+        return hash('sha256', json_encode($this->schemaCatalog(), JSON_THROW_ON_ERROR));
+    }
+
+    public function schemaCatalog(): array
+    {
         $catalogQueries = [
             'relations' => <<<'SQL'
                 SELECT c.relname, c.relkind, c.relpersistence, c.relrowsecurity,
@@ -601,7 +607,7 @@ class OperationalDataResetService
             $catalog[$name] = DB::select($query);
         }
 
-        return hash('sha256', json_encode($catalog, JSON_THROW_ON_ERROR));
+        return $catalog;
     }
 
     private function sequenceFingerprint(): string

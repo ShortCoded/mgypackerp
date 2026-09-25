@@ -364,13 +364,19 @@ return [
      * Unlisted links stop the reset for review.
      */
     'deleted_master_links' => [
+        'cost_center_accounts_account_id_foreign' => ['child' => 'cost_center_accounts', 'parent' => 'accounts', 'column' => 'account_id', 'action' => 'delete_child'],
         'cost_center_accounts_cost_center_id_foreign' => ['child' => 'cost_center_accounts', 'parent' => 'cost_centers', 'column' => 'cost_center_id', 'action' => 'delete_child'],
         'fixed_asset_category_mappings_asset_group_account_id_foreign' => ['child' => 'fixed_asset_category_mappings', 'parent' => 'accounts', 'column' => 'asset_group_account_id', 'action' => 'delete_child'],
         'fixed_assets_cost_center_id_foreign' => ['child' => 'fixed_assets', 'parent' => 'cost_centers', 'column' => 'cost_center_id', 'action' => 'null_reference'],
+        'hr_employees_department_id_foreign' => ['child' => 'hr_employees', 'parent' => 'hr_departments', 'column' => 'department_id', 'action' => 'null_reference'],
         'hr_employees_section_id_foreign' => ['child' => 'hr_employees', 'parent' => 'hr_sections', 'column' => 'section_id', 'action' => 'null_reference'],
+        'my_board_task_comments_user_task_id_foreign' => ['child' => 'my_board_task_comments', 'parent' => 'user_tasks', 'column' => 'user_task_id', 'action' => 'delete_child'],
+        'my_board_task_label_user_task_id_foreign' => ['child' => 'my_board_task_label', 'parent' => 'user_tasks', 'column' => 'user_task_id', 'action' => 'delete_child'],
+        'my_board_task_views_user_task_id_foreign' => ['child' => 'my_board_task_views', 'parent' => 'user_tasks', 'column' => 'user_task_id', 'action' => 'delete_child'],
         'product_components_product_id_foreign' => ['child' => 'product_components', 'parent' => 'products', 'column' => 'product_id', 'action' => 'delete_child'],
         'product_components_component_product_id_foreign' => ['child' => 'product_components', 'parent' => 'products', 'column' => 'component_product_id', 'action' => 'delete_child'],
         'role_has_permissions_role_id_foreign' => ['child' => 'role_has_permissions', 'parent' => 'roles', 'column' => 'role_id', 'action' => 'delete_child'],
+        'user_task_assignees_user_task_id_foreign' => ['child' => 'user_task_assignees', 'parent' => 'user_tasks', 'column' => 'user_task_id', 'action' => 'delete_child'],
     ],
 
 ];

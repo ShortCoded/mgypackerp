@@ -33,7 +33,7 @@ class VerifyOperationalResetBackupCommand extends Command
 
             if (preg_match('/\A[a-zA-Z_][a-zA-Z0-9_]*\z/', $restoredDatabase) !== 1
                 || preg_match('/\A[a-f0-9]{64}\z/', $digest) !== 1
-                || ! str_starts_with($proofFile, '/') || ! is_dir(dirname($proofFile))) {
+                || ! $this->isAbsolutePath($proofFile) || ! is_dir(dirname($proofFile))) {
                 throw new RuntimeException('Provide a restored database, backup digest, and absolute proof file path.');
             }
 
@@ -74,6 +74,9 @@ class VerifyOperationalResetBackupCommand extends Command
                 'delete_rows', 'purge_soft_deleted', 'unclassified_operational_notifications',
                 'policy_hash', 'schema_fingerprint', 'sequence_fingerprint'] as $field) {
                 if ($source[$field] !== $restored[$field]) {
+                    if ($field === 'schema_fingerprint') {
+                        throw new RuntimeException($this->schemaDifference($reset, $originalConnection));
+                    }
                     throw new RuntimeException("Restored {$field} differs from the source snapshot.");
                 }
             }
@@ -127,5 +130,43 @@ class VerifyOperationalResetBackupCommand extends Command
         unset($proof['signature']);
 
         return hash_hmac('sha256', json_encode($proof, JSON_THROW_ON_ERROR), (string) config('app.key'));
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        return str_starts_with($path, '/')
+            || preg_match('/\A[A-Za-z]:[\\\\\/]/', $path) === 1;
+    }
+
+    private function schemaDifference(OperationalDataResetService $reset, string $originalConnection): string
+    {
+        $source = $reset->schemaCatalog();
+
+        try {
+            DB::setDefaultConnection('operational_reset_verify');
+            $restored = $reset->schemaCatalog();
+        } finally {
+            DB::setDefaultConnection($originalConnection);
+            DB::disconnect('operational_reset_verify');
+        }
+
+        foreach ($source as $section => $sourceRows) {
+            $restoredRows = $restored[$section] ?? [];
+            if (json_encode($sourceRows, JSON_THROW_ON_ERROR) === json_encode($restoredRows, JSON_THROW_ON_ERROR)) {
+                continue;
+            }
+
+            $rowCount = max(count($sourceRows), count($restoredRows));
+            for ($index = 0; $index < $rowCount; $index++) {
+                $sourceRow = json_encode($sourceRows[$index] ?? null, JSON_THROW_ON_ERROR);
+                $restoredRow = json_encode($restoredRows[$index] ?? null, JSON_THROW_ON_ERROR);
+                if ($sourceRow !== $restoredRow) {
+                    return "Restored schema {$section} differs at row {$index}; source: "
+                        .mb_substr($sourceRow, 0, 500).' restored: '.mb_substr($restoredRow, 0, 500);
+                }
+            }
+        }
+
+        return 'Restored schema fingerprint differs from the source snapshot.';
     }
 }
